@@ -1,0 +1,40 @@
+# Visual Relay Progress
+
+## Goal
+Rebuild the Relay-style staged task system in this repository as a C#/Avalonia GUI app with a test-driven core, root-folder selection, queue controls, task reordering, pause-at-boundary, task/stage/LLM-command inspection, reproducible tooling, commit hooks, screenshots, and a single build/launch entry point.
+
+## Source Relay Findings
+- Existing Relay is a Bun/TypeScript non-LLM driver that runs one task at a time through stages 1-11.
+- Tasks live under `llm-tasks`; flat tasks are `llm-tasks/<id>.md`, nested tasks can include sibling context files.
+- Queue discovery skips `DONE-*`, `IGNORE-*`, `_ideation`, `completed`, and `.relay/<task>/NEEDS-REVIEW`.
+- `.relay/ACTIVE` is an atomic directory lock with pid and nonce.
+- Stage definitions include tier, allowed files, allowed commands, system prompt, and a fenced JSON contract.
+- Driver emits JSONL logs under `.relay/logs`, writes ledgers/seals/manifests, runs red and green test gates, loops verify/fix-verify, and commits with `Task:` and `Relay-Seal:` trailers.
+- Swival traces are JSONL and expose assistant turns, tool calls, and tool results; these map directly to GUI command/trace panes.
+
+## Design Direction
+- Keep orchestration in framework-neutral C# libraries.
+- Keep the Avalonia app as a thin shell over observable application services.
+- Treat real Swival/LiteLLM execution and mocked execution as the same `ISubagentRunner` contract.
+- Model pause as "finish current task or stage, then stop at a boundary" so the active process is not torn down unsafely.
+- Support manual task ordering in the GUI without changing on-disk task discovery semantics.
+- Use JSONL event streams as the durable source for run history and live UI updates.
+- Preserve Relay's proof artifacts enough for a real run: `.relay/config.json`, `.relay/ACTIVE`, `.relay/<task>/ledger.md`, `.relay/<task>/manifest`, `.relay/<task>/<task>.seals`, and `.relay/logs/relay-*.jsonl`.
+
+## Waypoints
+- [x] Inspect existing Relay implementation.
+- [x] Initialize git repository.
+- [x] Add design and progress notes.
+- [ ] Scaffold .NET/Avalonia solution.
+- [ ] Write failing core tests before implementation.
+- [ ] Implement core domain, queue, locking, config, logs, trace parsing, and mocked driver.
+- [ ] Build Avalonia GUI with root picker, queue controls, task details, stage timeline, logs, and command traces.
+- [ ] Add linting, file-size guard, Nix flake, launch script, and conventional commit hook.
+- [ ] Run automated tests.
+- [ ] Run at least one real integration path using available local tooling/environment.
+- [ ] Visually verify UI and add screenshots to README.
+- [ ] Final cleanup and commit.
+
+## Current Checkpoint
+Repository initialized and Relay research complete enough to start the C# design. Next step: scaffold the solution and write the first failing tests for queue discovery and pause/reorder orchestration.
+
