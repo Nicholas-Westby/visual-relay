@@ -67,11 +67,33 @@ public sealed class RelayDriver : IRelayTaskRunner
                 {
                     var testFiles = ReadStringArray(json, "testFiles");
                     var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-                    var testResult = await _dependencies.TestRunner.RunAsync(rootPath, command, cancellationToken);
+                    var gateResult = await AuthorTestGate.RunAsync(
+                        rootPath,
+                        taskId,
+                        runId,
+                        manifest,
+                        testFiles,
+                        command,
+                        _dependencies.TestRunner,
+                        cancellationToken);
+                    if (gateResult.Error is not null)
+                    {
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, cancellationToken);
+                    }
+
+                    if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
+                    {
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", cancellationToken);
+                    }
+
+                    var testResult = gateResult.TestResult;
                     check = testResult.ExitCode == 0 ? "green" : "red";
                     if (check != "red")
                     {
-                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "author-tests did not go red", cancellationToken);
+                        var reason = gateResult.StashedImplementation
+                            ? "author-tests passed after implementation files were stripped"
+                            : "author-tests did not go red";
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, cancellationToken);
                     }
                 }
 

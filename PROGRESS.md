@@ -33,7 +33,14 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Run automated tests.
 - [x] Run at least one real integration path using available local tooling/environment.
 - [x] Visually verify UI and add screenshots to README.
+- [x] Pull applicable current Relay fixes from the original Relay implementation.
 - [ ] Final cleanup and commit.
 
 ## Current Checkpoint
 Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and the existing LiteLLM proxy accepted a live `cheap-kimi` chat completion returning `visual relay ok`. Existing the route test has a Bun parse bug around `?? ... ||`, so the live API smoke used direct `curl` against the proxy.
+
+## 2026-05-29 Relay Fix Sync
+- Reviewed current Relay history. The new applicable fix was `45d7f4e fix(relay): skip absent strip-set paths so the red-gate stash succeeds`.
+- Ported the red-gate strip helper into C# and wired stage 5 author-tests through it so premature implementation edits are temporarily stashed while authored tests prove red.
+- Matched the upstream absent-path behavior: manifest entries that are not present on disk are skipped before `git stash push`, while the stash list is trusted if Git creates the stash despite a pathspec quirk.
+- Added regression coverage for direct red-gate stash/restore and for the driver restoring a premature implementation before continuing to green verify.

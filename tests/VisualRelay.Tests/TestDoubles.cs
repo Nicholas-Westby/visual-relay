@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
@@ -130,3 +131,29 @@ internal sealed class RecordingTaskRunner : IRelayTaskRunner
     }
 }
 
+internal static class TestGit
+{
+    public static string Run(string rootPath, params string[] arguments)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("git")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        process.StartInfo.ArgumentList.Add("-C");
+        process.StartInfo.ArgumentList.Add(rootPath);
+        foreach (var argument in arguments)
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, stderr);
+        return stdout;
+    }
+}
