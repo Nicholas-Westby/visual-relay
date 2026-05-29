@@ -29,11 +29,11 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Write failing core tests before implementation.
 - [x] Implement core domain, queue, locking, config, logs, trace parsing, and mocked driver.
 - [x] Build Avalonia GUI with root picker, queue controls, task details, stage timeline, logs, and command traces.
-- [ ] Add linting, file-size guard, Nix flake, launch script, and conventional commit hook.
-- [ ] Run automated tests.
-- [ ] Run at least one real integration path using available local tooling/environment.
+- [x] Add linting, file-size guard, Nix flake, launch script, and conventional commit hook.
+- [x] Run automated tests.
+- [x] Run at least one real integration path using available local tooling/environment.
 - [x] Visually verify UI and add screenshots to README.
 - [ ] Final cleanup and commit.
 
 ## Current Checkpoint
-Avalonia control-room UI is implemented and headless-rendered to `docs/images/visual-relay-main.png`. Tests remain green. Next step: add launch/check scripts, Nix reproducibility, commit hooks, file-size guard, README, and then run the full verification set.
+Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and the existing LiteLLM proxy accepted a live `cheap-kimi` chat completion returning `visual relay ok`. Existing the route test has a Bun parse bug around `?? ... ||`, so the live API smoke used direct `curl` against the proxy.

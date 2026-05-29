@@ -96,7 +96,25 @@ public sealed class RelayDriver : IRelayTaskRunner
             await PublishAsync("info", "stage_done", rootPath, runId, taskId, stage, cancellationToken);
         }
 
-        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, _options.CreateGitCommit ? "not-yet-implemented" : "simulated", null);
+        var commitSha = "simulated";
+        if (_options.CreateGitCommit)
+        {
+            var proofFiles = new[]
+            {
+                Path.Combine(".relay", taskId, "ledger.md"),
+                Path.Combine(".relay", taskId, $"{taskId}.seals"),
+                Path.Combine(".relay", taskId, "manifest")
+            };
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, manifest, proofFiles, cancellationToken);
+            if (!commit.Success)
+            {
+                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", cancellationToken);
+            }
+
+            commitSha = commit.CommitSha ?? "unknown";
+        }
+
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
     }
 
     private StageInvocation BuildInvocation(
@@ -223,4 +241,3 @@ public sealed class RelayDriver : IRelayTaskRunner
             new RelayEvent(DateTimeOffset.UtcNow, level, eventName, runId, rootPath, taskId, stage.Number, stage.Tier),
             cancellationToken);
 }
-

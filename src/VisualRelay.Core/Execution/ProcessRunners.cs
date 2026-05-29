@@ -139,14 +139,38 @@ internal static class ProcessCapture
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo(fileName, arguments)
+        var startInfo = new ProcessStartInfo(fileName, arguments);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken);
+    }
+
+    public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+        string fileName,
+        IEnumerable<string> arguments,
+        string workingDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var startInfo = new ProcessStartInfo(fileName);
+        foreach (var argument in arguments)
         {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken);
+    }
+
+    private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+        ProcessStartInfo startInfo,
+        string workingDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var process = new Process();
+        process.StartInfo = startInfo;
+        process.StartInfo.WorkingDirectory = workingDirectory;
+        process.StartInfo.RedirectStandardOutput = true;
+        process.StartInfo.RedirectStandardError = true;
+        process.StartInfo.UseShellExecute = false;
         var output = new StringBuilder();
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
         process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
