@@ -9,7 +9,5 @@ public sealed record RelayConfig(
     int MaxVerifyLoops,
     int MaxStageFailures,
     int MaxTurns,
-    int HeartbeatMilliseconds,
     bool BaselineVerify,
     int SubagentTimeoutMilliseconds);
-

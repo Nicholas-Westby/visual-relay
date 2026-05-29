@@ -26,6 +26,7 @@ public partial class App : Application
             viewModel.UseFolderPicker(new AvaloniaFolderPicker(window));
             window.DataContext = viewModel;
             desktop.MainWindow = window;
+            _ = viewModel.LoadInitialAsync();
         }
 
         base.OnFrameworkInitializationCompleted();

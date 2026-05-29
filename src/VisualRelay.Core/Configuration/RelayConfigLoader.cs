@@ -21,7 +21,6 @@ public static class RelayConfigLoader
             MaxVerifyLoops: 5,
             MaxStageFailures: 3,
             MaxTurns: 200,
-            HeartbeatMilliseconds: 30_000,
             BaselineVerify: true,
             SubagentTimeoutMilliseconds: 1_200_000);
 
@@ -56,7 +55,6 @@ public static class RelayConfigLoader
             MaxVerifyLoops = OptionalInt(root, "maxVerifyLoops", defaults.MaxVerifyLoops),
             MaxStageFailures = OptionalInt(root, "maxStageFailures", defaults.MaxStageFailures),
             MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
-            HeartbeatMilliseconds = OptionalInt(root, "heartbeatMs", defaults.HeartbeatMilliseconds),
             BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
             SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds)
         };
@@ -95,4 +93,3 @@ public static class RelayConfigLoader
         return value.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
     }
 }
-

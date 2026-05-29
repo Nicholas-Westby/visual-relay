@@ -30,12 +30,13 @@ public sealed class RelayDriverGitCommitTests
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         Assert.False(string.IsNullOrWhiteSpace(outcome.CommitSha));
         var message = RunGit(repo.Root, "log -1 --pretty=%B");
-        Assert.Contains("chore(relay): ship-status", message);
+        Assert.Contains("fix(sample): ship status", message);
         Assert.Contains("Task: ship-status", message);
         Assert.Contains("Relay-Seal:", message);
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains(".relay/ship-status/manifest", names);
         Assert.Contains("src/status.txt", names);
+        Assert.DoesNotContain("src/ghost.txt", names);
     }
 
     private static string RunGit(string rootPath, string arguments)
@@ -73,12 +74,12 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test"]}""",
+            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test","src/ghost.txt"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified"}""",
+            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status with a very long subject that should be cleanly truncated around a word boundary\n\n- update status output\n- keep proof files staged\nthis prose gets dropped"}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));

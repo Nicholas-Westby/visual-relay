@@ -6,6 +6,7 @@ internal static class GitCommitter
         string rootPath,
         string taskId,
         string taskHash,
+        string commitMessage,
         IReadOnlyList<string> manifest,
         IReadOnlyList<string> proofFiles,
         CancellationToken cancellationToken)
@@ -17,13 +18,23 @@ internal static class GitCommitter
         }
 
         await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
-        var add = await GitAsync(rootPath, ["add", "--", .. manifest, .. proofFiles], cancellationToken);
+        IReadOnlyList<string> manifestFilesToStage;
+        try
+        {
+            manifestFilesToStage = await ResolveManifestFilesToStageAsync(rootPath, manifest, cancellationToken);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return GitCommitResult.Failed(ex.Message);
+        }
+
+        var add = await GitAsync(rootPath, ["add", "--", .. manifestFilesToStage, .. proofFiles], cancellationToken);
         if (add.ExitCode != 0)
         {
             return GitCommitResult.Failed($"git add failed: {add.Output.Trim()}");
         }
 
-        var message = $"chore(relay): {taskId}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";
+        var message = $"{commitMessage}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";
         var commit = await GitAsync(rootPath, ["commit", "-m", message], cancellationToken, TimeSpan.FromMinutes(2));
         if (commit.ExitCode != 0)
         {
@@ -47,6 +58,35 @@ internal static class GitCommitter
             rootPath,
             timeout ?? TimeSpan.FromSeconds(30),
             cancellationToken);
+
+    private static async Task<IReadOnlyList<string>> ResolveManifestFilesToStageAsync(
+        string rootPath,
+        IReadOnlyList<string> manifest,
+        CancellationToken cancellationToken)
+    {
+        var files = new List<string>();
+        foreach (var relative in manifest.Distinct(StringComparer.Ordinal))
+        {
+            var fullPath = Path.Combine(rootPath, relative);
+            if (File.Exists(fullPath))
+            {
+                files.Add(relative);
+                continue;
+            }
+
+            var tracked = await GitAsync(rootPath, ["ls-files", "--error-unmatch", "--", relative], cancellationToken);
+            if (tracked.ExitCode == 0)
+            {
+                var remove = await GitAsync(rootPath, ["rm", "-q", "--", relative], cancellationToken);
+                if (remove.ExitCode != 0)
+                {
+                    throw new InvalidOperationException($"git rm failed for {relative}: {remove.Output.Trim()}");
+                }
+            }
+        }
+
+        return files;
+    }
 }
 
 internal sealed record GitCommitResult(bool Success, string? CommitSha, string? Error)

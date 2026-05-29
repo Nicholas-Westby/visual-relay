@@ -33,6 +33,7 @@ public sealed class RelayDriver : IRelayTaskRunner
         var seals = new List<string>();
         var previousSeal = string.Empty;
         var taskHash = string.Empty;
+        string? commitMessage = null;
 
         foreach (var stage in RelayStages.All)
         {
@@ -78,6 +79,7 @@ public sealed class RelayDriver : IRelayTaskRunner
                 {
                     var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                     check = testResult.ExitCode == 0 ? "green" : "red";
+                    commitMessage = ReadOptionalString(json, "commitMessage") ?? commitMessage;
                     if (check != "green")
                     {
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, "verify failed", cancellationToken);
@@ -105,7 +107,8 @@ public sealed class RelayDriver : IRelayTaskRunner
                 Path.Combine(".relay", taskId, $"{taskId}.seals"),
                 Path.Combine(".relay", taskId, "manifest")
             };
-            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, manifest, proofFiles, cancellationToken);
+            var subject = CommitMessageSanitizer.FromRawOrFallback(commitMessage, taskId);
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, subject, manifest, proofFiles, cancellationToken);
             if (!commit.Success)
             {
                 return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", cancellationToken);
@@ -196,6 +199,11 @@ public sealed class RelayDriver : IRelayTaskRunner
             .Where(x => x.Length > 0)
             .ToArray();
     }
+
+    private static string? ReadOptionalString(JsonElement json, string propertyName) =>
+        json.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static string WorkingTreeHash(string rootPath, IReadOnlyList<string> manifest)
     {

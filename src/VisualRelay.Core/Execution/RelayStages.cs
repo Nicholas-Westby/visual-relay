@@ -14,7 +14,7 @@ public static class RelayStages
         Stage(6, "Implement", "balanced", "all", "all", """{ "summary": string }"""),
         Stage(7, "Review", "frontier", "some", "all", """{ "verdict": "pass"|"changes", "issues": [] }"""),
         Stage(8, "Fix", "balanced", "all", "all", """{ "summary": string }"""),
-        Stage(9, "Verify", "cheap", "some", "all", """{ "summary": string }"""),
+        Stage(9, "Verify", "cheap", "some", "all", """{ "summary": string, "commitMessage"?: string }"""),
         Stage(10, "Fix-verify", "balanced", "all", "all", """{ "summary": string, "amendManifest"?: string[] }"""),
         new(11, "Commit", "cheap", "driver", "none", "git", string.Empty, string.Empty)
     ];
