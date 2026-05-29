@@ -28,12 +28,12 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Scaffold .NET/Avalonia solution.
 - [x] Write failing core tests before implementation.
 - [x] Implement core domain, queue, locking, config, logs, trace parsing, and mocked driver.
-- [ ] Build Avalonia GUI with root picker, queue controls, task details, stage timeline, logs, and command traces.
+- [x] Build Avalonia GUI with root picker, queue controls, task details, stage timeline, logs, and command traces.
 - [ ] Add linting, file-size guard, Nix flake, launch script, and conventional commit hook.
 - [ ] Run automated tests.
 - [ ] Run at least one real integration path using available local tooling/environment.
-- [ ] Visually verify UI and add screenshots to README.
+- [x] Visually verify UI and add screenshots to README.
 - [ ] Final cleanup and commit.
 
 ## Current Checkpoint
-Core TDD loop is green: config loading, task discovery, context inlining, trace parsing, queue reordering, pause-at-boundary, active lock cleanup, and mocked staged driver artifacts are covered. Next step: replace the template Avalonia screen with the operational GUI and bind it to the core services.
+Avalonia control-room UI is implemented and headless-rendered to `docs/images/visual-relay-main.png`. Tests remain green. Next step: add launch/check scripts, Nix reproducibility, commit hooks, file-size guard, README, and then run the full verification set.

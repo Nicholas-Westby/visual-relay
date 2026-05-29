@@ -4,6 +4,7 @@ using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using System.Linq;
 using Avalonia.Markup.Xaml;
+using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 
@@ -20,10 +21,11 @@ public partial class App : Application
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            desktop.MainWindow = new MainWindow
-            {
-                DataContext = new MainWindowViewModel(),
-            };
+            var window = new MainWindow();
+            var viewModel = new MainWindowViewModel();
+            viewModel.UseFolderPicker(new AvaloniaFolderPicker(window));
+            window.DataContext = viewModel;
+            desktop.MainWindow = window;
         }
 
         base.OnFrameworkInitializationCompleted();
