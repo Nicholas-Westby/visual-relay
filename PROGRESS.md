@@ -25,7 +25,7 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Inspect existing Relay implementation.
 - [x] Initialize git repository.
 - [x] Add design and progress notes.
-- [ ] Scaffold .NET/Avalonia solution.
+- [x] Scaffold .NET/Avalonia solution.
 - [ ] Write failing core tests before implementation.
 - [ ] Implement core domain, queue, locking, config, logs, trace parsing, and mocked driver.
 - [ ] Build Avalonia GUI with root picker, queue controls, task details, stage timeline, logs, and command traces.
@@ -36,5 +36,4 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [ ] Final cleanup and commit.
 
 ## Current Checkpoint
-Repository initialized and Relay research complete enough to start the C# design. Next step: scaffold the solution and write the first failing tests for queue discovery and pause/reorder orchestration.
-
+Avalonia/.NET solution scaffolded and build-verified. Next step: write failing tests for queue discovery, pause-at-boundary, queue reordering, log parsing, and trace rendering before implementing the core services.
