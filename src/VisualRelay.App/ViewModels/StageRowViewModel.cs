@@ -8,15 +8,16 @@ public sealed class StageRowViewModel : ViewModelBase
 {
     private static readonly IBrush MutedBrush = Brush.Parse("#7F8794");
     private static readonly IBrush SuccessBrush = Brush.Parse("#5AD47D");
-    private static readonly IBrush RunningBrush = Brush.Parse("#5B7CFA");
+    private static readonly IBrush RunningBrush = Brush.Parse("#5AD47D");
     private static readonly IBrush FlaggedBrush = Brush.Parse("#F36F63");
     private static readonly IBrush WaitingCardBrush = Brush.Parse("#171A20");
-    private static readonly IBrush ActiveCardBrush = Brush.Parse("#18233B");
+    private static readonly IBrush ActiveCardBrush = Brush.Parse("#14231B");
     private static readonly IBrush SelectedCardBrush = Brush.Parse("#162B57");
     private static readonly IBrush WaitingBorderBrush = Brush.Parse("#2A303A");
     private static readonly IBrush SelectedBorderBrush = Brush.Parse("#3191FF");
     private static readonly BoxShadows NoShadow = BoxShadows.Parse("0 0 0 0 #00000000");
     private static readonly BoxShadows SelectedShadow = BoxShadows.Parse("0 0 20 0 #553F8CFF");
+    private static readonly BoxShadows RunningShadow = BoxShadows.Parse("0 0 20 0 #445AD47D");
 
     public StageRowViewModel(RelayStageDefinition stage)
     {
@@ -39,10 +40,10 @@ public sealed class StageRowViewModel : ViewModelBase
         "Flagged" => FlaggedBrush,
         _ => MutedBrush
     };
-    public IBrush CardBackgroundBrush => IsSelected ? SelectedCardBrush : Status == "Running" ? ActiveCardBrush : WaitingCardBrush;
-    public IBrush BorderBrush => IsSelected ? SelectedBorderBrush : Status == "Running" ? RunningBrush : WaitingBorderBrush;
-    public Thickness CardBorderThickness => IsSelected ? new Thickness(2) : new Thickness(1);
-    public BoxShadows CardShadow => IsSelected ? SelectedShadow : NoShadow;
+    public IBrush CardBackgroundBrush => Status == "Running" ? ActiveCardBrush : IsSelected ? SelectedCardBrush : WaitingCardBrush;
+    public IBrush BorderBrush => Status == "Running" ? RunningBrush : IsSelected ? SelectedBorderBrush : WaitingBorderBrush;
+    public Thickness CardBorderThickness => Status == "Running" || IsSelected ? new Thickness(2) : new Thickness(1);
+    public BoxShadows CardShadow => Status == "Running" ? RunningShadow : IsSelected ? SelectedShadow : NoShadow;
 
     private string _status = "Waiting";
     private bool _isSelected;

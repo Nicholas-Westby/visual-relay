@@ -79,3 +79,8 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 ## 2026-05-31 Sample Reset
 - Regenerated `/Users/admin/Dev/sample-tasks` to the pre-run state with three pending tasks: `add-multiply`, `improve-slugify`, and `nested-todo-summary`.
 - Updated the sample generator to include `scripts/reset-sample.sh`; the script reruns `./visual-relay sample-reset`, stages the regenerated sample state, and commits it when a real run has changed the repo.
+
+## 2026-05-31 Live State Accuracy
+- Split queue cards into task row view models so persisted task state (`Pending`, `Needs review`, `Completed`) no longer hides live execution state.
+- Running tasks now keep a green rail, border, status, and current step label even when the selected/log-filtered task or stage changes.
+- Stage cards now distinguish blue log-filter selection from green execution state, and live task events are retained per task so clicking away and back reconstructs the active stage instead of falling back to stale report history.

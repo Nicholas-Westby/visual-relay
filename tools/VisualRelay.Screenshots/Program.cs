@@ -77,9 +77,11 @@ static MainWindowViewModel BuildViewModel()
         RootPath = root,
         StatusText = "1 running · 2 queued · 1 review",
         SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01",
-        LogScopeLabel = "stage 03"
+        LogScopeLabel = "stage 02"
     };
-    var task = new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0064, DurationSeconds: 138, CompletedStageCount: 6);
+    var task = new TaskRowViewModel(
+        new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0064, DurationSeconds: 138, CompletedStageCount: 6));
+    task.MarkRunning(3, "Diagnose");
     viewModel.Tasks.Add(task);
     viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 3));
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 11));
@@ -98,9 +100,9 @@ static MainWindowViewModel BuildViewModel()
     viewModel.Stages[1].CostLabel = "$0.00";
     viewModel.Stages[2].DurationLabel = "42s";
     viewModel.Stages[2].CostLabel = "$0.00";
-    viewModel.Stages[2].IsSelected = true;
-    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_start", "demo", root, task.Id, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "$0.00" }));
+    viewModel.Stages[1].IsSelected = true;
+    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_report", "demo", root, task.Id, 2, "cheap",
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "stage_done", "demo", root, task.Id, 2, "cheap",
         Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-28), "info", "tests_written", "demo", root, task.Id, 5, "balanced"));
@@ -115,16 +117,16 @@ static string WriteTask(string root, string id, string markdown)
     return path;
 }
 
-static RelayTaskItem DemoTask(string root, string id, string? reviewReason = null, double costUsd = 0, double seconds = 0, int stages = 0)
+static TaskRowViewModel DemoTask(string root, string id, string? reviewReason = null, double costUsd = 0, double seconds = 0, int stages = 0)
 {
     var path = WriteTask(root, id, $"# {id}\n\nDemo task used to exercise the Visual Relay control room.");
-    return new RelayTaskItem(id, path, Path.GetDirectoryName(path)!, false, [], reviewReason, CostUsd: costUsd, DurationSeconds: seconds, CompletedStageCount: stages);
+    return new TaskRowViewModel(new RelayTaskItem(id, path, Path.GetDirectoryName(path)!, false, [], reviewReason, CostUsd: costUsd, DurationSeconds: seconds, CompletedStageCount: stages));
 }
 
 static void SeedTraceEntries(MainWindowViewModel viewModel)
 {
     viewModel.SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01";
-    viewModel.LogScopeLabel = "stage 03";
+    viewModel.LogScopeLabel = "stage 02";
     foreach (var stage in viewModel.Stages)
     {
         stage.IsSelected = false;
@@ -139,19 +141,19 @@ static void SeedTraceEntries(MainWindowViewModel viewModel)
     viewModel.Stages[2].Status = "Running";
     viewModel.Stages[2].DurationLabel = "42s";
     viewModel.Stages[2].CostLabel = "$0.00";
-    viewModel.Stages[2].IsSelected = true;
+    viewModel.Stages[1].IsSelected = true;
 
     var root = viewModel.RootPath;
     var taskId = viewModel.SelectedTask?.Id ?? "add-multiply-helper";
     viewModel.Events.Clear();
-    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_start", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "$0.00" }));
-    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "trace", "demo", root, taskId, 3, "balanced",
+    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_report", "demo", root, taskId, 2, "cheap",
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
+    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "trace", "demo", root, taskId, 2, "cheap",
         Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" }));
 
     viewModel.TraceEntries.Clear();
-    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Diagnose", "pytest tests/test_math_tools.py\n1 failing assertion", 3));
-    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.AssistantText, "Evidence", "Existing CLI dispatcher omits the mul verb; tests cover add/sub/div only.", 3));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Research", "rg \"COMMANDS|add\" src tests", 2));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.AssistantText, "Findings", "Existing CLI dispatcher omits the mul verb; tests cover add/sub/div only.", 2));
 }
 
 static void SaveBitmap(Bitmap bitmap, string path)

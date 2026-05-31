@@ -16,7 +16,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _pauseRequested;
     private readonly List<RelayEvent> _allTaskEvents = [];
     private readonly List<TraceEntry> _allTraceEntries = [];
+    private readonly Dictionary<string, List<RelayEvent>> _liveEventsByTask = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, List<TraceEntry>> _liveTraceEntriesByTask = new(StringComparer.Ordinal);
     private int? _selectedStageFilter;
+    private TaskRowViewModel? _runningTask;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker())
@@ -33,7 +36,7 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    public ObservableCollection<RelayTaskItem> Tasks { get; } = [];
+    public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
     public ObservableCollection<StageRowViewModel> Stages { get; } = [];
     public ObservableCollection<RelayEvent> Events { get; } = [];
     public ObservableCollection<TraceEntry> TraceEntries { get; } = [];
@@ -53,7 +56,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
-    private RelayTaskItem? _selectedTask;
+    private TaskRowViewModel? _selectedTask;
 
     [ObservableProperty]
     private string _statusText = "Idle";
@@ -118,15 +121,7 @@ public partial class MainWindowViewModel : ViewModelBase
         await RunBusyAsync(async () =>
         {
             StatusText = "Refreshing";
-            Tasks.Clear();
-            var repository = new RelayTaskRepository(RootPath);
-            var tasks = ShowArchive ? await repository.ListCompletedAsync() : await repository.ListAsync();
-            foreach (var task in tasks)
-            {
-                Tasks.Add(task);
-            }
-
-            SelectedTask = Tasks.FirstOrDefault();
+            await ReloadTaskListAsync();
             StatusText = FormatQueueStatus();
         });
     }
@@ -139,10 +134,12 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        var taskId = SelectedTask.Id;
-        await RunOneAsync(SelectedTask);
-        await RefreshAsync();
-        SelectedTask = Tasks.FirstOrDefault(task => task.Id == taskId) ?? Tasks.FirstOrDefault();
+        var task = SelectedTask;
+        await RunBusyAsync(async () =>
+        {
+            await RunOneAsync(task);
+            await ReloadTaskListAsync(task.Id);
+        });
     }
 
     [RelayCommand(CanExecute = nameof(CanDrain))]
@@ -214,29 +211,44 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    partial void OnSelectedTaskChanged(RelayTaskItem? value)
+    partial void OnSelectedTaskChanged(TaskRowViewModel? value)
     {
         _selectedStageFilter = null;
         LogScopeLabel = "full";
+        foreach (var task in Tasks)
+        {
+            task.IsSelected = ReferenceEquals(task, value);
+        }
+
         _ = LoadSelectedTaskAsync(value);
     }
 
-    private async Task<RelayTaskOutcome> RunOneAsync(RelayTaskItem task)
+    private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task)
     {
         ResetStages();
         ClearLogState();
         StatusText = $"Running {task.Id}";
+        _runningTask = task;
+        task.MarkRunning();
         var config = await RelayConfigLoader.LoadAsync(RootPath);
         var sink = new ObservableRelayEventSink(HandleRelayEvent);
         var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(), sink);
         var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
-        var outcome = await driver.RunTaskAsync(RootPath, task.Id);
-        StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
-        await LoadRunHistoryAsync(task.Id);
-        return outcome;
+        try
+        {
+            var outcome = await driver.RunTaskAsync(RootPath, task.Id);
+            StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
+            await LoadRunHistoryAsync(task.Id);
+            return outcome;
+        }
+        finally
+        {
+            task.MarkIdle();
+            _runningTask = null;
+        }
     }
 
-    private async Task LoadSelectedTaskAsync(RelayTaskItem? task)
+    private async Task LoadSelectedTaskAsync(TaskRowViewModel? task)
     {
         if (task is null)
         {
@@ -249,7 +261,7 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         ResetStages();
-        var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task);
+        var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task);
         SelectedTaskMarkdown = input.Markdown;
         SelectedTaskContext = input.Context ?? string.Empty;
         await LoadRunHistoryAsync(task.Id);

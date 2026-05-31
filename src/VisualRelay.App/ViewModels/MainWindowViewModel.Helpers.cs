@@ -7,48 +7,103 @@ public partial class MainWindowViewModel
 {
     private void HandleRelayEvent(RelayEvent relayEvent)
     {
+        if (relayEvent.TaskId is { } taskId)
+        {
+            EventsFor(taskId).Insert(0, relayEvent);
+        }
+
+        var traceEntry = relayEvent.EventName == "trace" ? BuildTraceEntry(relayEvent) : null;
+        if (traceEntry is not null && relayEvent.TaskId is { } traceTaskId)
+        {
+            TraceEntriesFor(traceTaskId).Insert(0, traceEntry);
+        }
+
+        UpdateRunningTask(relayEvent);
+        if (relayEvent.TaskId != SelectedTask?.Id)
+        {
+            return;
+        }
+
         _allTaskEvents.Insert(0, relayEvent);
         if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
         {
             Events.Insert(0, relayEvent);
         }
 
-        if (relayEvent.EventName == "trace")
+        if (traceEntry is not null)
         {
-            AppendTraceEntry(relayEvent);
+            _allTraceEntries.Insert(0, traceEntry);
+            if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
+            {
+                TraceEntries.Insert(0, traceEntry);
+            }
         }
 
+        ApplyStageEventToBoard(relayEvent);
+    }
+
+    private void UpdateRunningTask(RelayEvent relayEvent)
+    {
         if (relayEvent.StageNumber is { } stageNumber)
         {
             var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
-            if (stage is not null)
+            if (relayEvent.EventName == "stage_start" &&
+                _runningTask is { } runningTask &&
+                relayEvent.TaskId == runningTask.Id)
             {
-                stage.Status = relayEvent.EventName switch
-                {
-                    "stage_start" => "Running",
-                    "stage_done" => "Done",
-                    "flagged" => "Flagged",
-                    _ => stage.Status
-                };
-                if (relayEvent.EventName == "stage_done")
-                {
-                    ApplyStageEventMetric(stage, relayEvent);
-                }
+                var stageName = relayEvent.Data is not null && relayEvent.Data.TryGetValue("name", out var name)
+                    ? name
+                    : stage?.Name;
+                runningTask.MarkRunning(stageNumber, stageName ?? stage?.Name);
             }
+        }
+    }
+
+    private void ApplyStageEventToBoard(RelayEvent relayEvent)
+    {
+        if (relayEvent.StageNumber is not { } stageNumber)
+        {
+            return;
+        }
+
+        var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
+        if (stage is null)
+        {
+            return;
+        }
+
+        stage.Status = relayEvent.EventName switch
+        {
+            "stage_start" => "Running",
+            "stage_done" or "stage_report" => "Done",
+            "flagged" => "Flagged",
+            _ => stage.Status
+        };
+        if (relayEvent.EventName is "stage_done" or "stage_report")
+        {
+            ApplyStageEventMetric(stage, relayEvent);
         }
     }
 
     private async Task RefreshTasksAfterDrainAsync()
     {
+        await ReloadTaskListAsync();
+        StatusText = StatusText == "Queue drained" ? FormatQueueStatus() : StatusText;
+    }
+
+    private async Task ReloadTaskListAsync(string? preferredTaskId = null)
+    {
         var repository = new RelayTaskRepository(RootPath);
         Tasks.Clear();
-        foreach (var task in await repository.ListAsync())
+        var tasks = ShowArchive ? await repository.ListCompletedAsync() : await repository.ListAsync();
+        foreach (var task in tasks)
         {
-            Tasks.Add(task);
+            Tasks.Add(new TaskRowViewModel(task));
         }
 
-        SelectedTask = Tasks.FirstOrDefault();
-        StatusText = StatusText == "Queue drained" ? FormatQueueStatus() : StatusText;
+        SelectedTask = preferredTaskId is null
+            ? Tasks.FirstOrDefault()
+            : Tasks.FirstOrDefault(task => task.Id == preferredTaskId) ?? Tasks.FirstOrDefault();
     }
 
     private async Task RunBusyAsync(Func<Task> action)
@@ -90,22 +145,17 @@ public partial class MainWindowViewModel
         return review == 0 ? $"{pending} pending" : $"{pending} pending · {review} review";
     }
 
-    private void AppendTraceEntry(RelayEvent relayEvent)
+    private static TraceEntry? BuildTraceEntry(RelayEvent relayEvent)
     {
         if (relayEvent.Data is null ||
             !relayEvent.Data.TryGetValue("title", out var title) ||
             !relayEvent.Data.TryGetValue("content", out var content))
         {
-            return;
+            return null;
         }
 
         relayEvent.Data.TryGetValue("kind", out var kind);
-        var entry = new TraceEntry(ParseTraceKind(kind), title, content, relayEvent.StageNumber);
-        _allTraceEntries.Insert(0, entry);
-        if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
-        {
-            TraceEntries.Insert(0, entry);
-        }
+        return new TraceEntry(ParseTraceKind(kind), title, content, relayEvent.StageNumber);
     }
 
     private static TraceEntryKind ParseTraceKind(string? kind) =>
@@ -131,8 +181,16 @@ public partial class MainWindowViewModel
             }
         }
 
+        var liveEvents = EventsFor(taskId);
+        _allTaskEvents.AddRange(liveEvents);
         _allTaskEvents.AddRange(RelayRunHistory.ReadTaskEvents(RootPath, taskId));
+        _allTraceEntries.AddRange(TraceEntriesFor(taskId));
         _allTraceEntries.AddRange(await RelayRunHistory.ReadTraceEntriesAsync(RootPath, taskId));
+        foreach (var relayEvent in liveEvents.OrderBy(item => item.Timestamp))
+        {
+            ApplyStageEventToBoard(relayEvent);
+        }
+
         ApplyLogFilter();
     }
 
@@ -142,6 +200,28 @@ public partial class MainWindowViewModel
         TraceEntries.Clear();
         _allTaskEvents.Clear();
         _allTraceEntries.Clear();
+    }
+
+    private List<RelayEvent> EventsFor(string taskId)
+    {
+        if (!_liveEventsByTask.TryGetValue(taskId, out var events))
+        {
+            events = [];
+            _liveEventsByTask[taskId] = events;
+        }
+
+        return events;
+    }
+
+    private List<TraceEntry> TraceEntriesFor(string taskId)
+    {
+        if (!_liveTraceEntriesByTask.TryGetValue(taskId, out var entries))
+        {
+            entries = [];
+            _liveTraceEntriesByTask[taskId] = entries;
+        }
+
+        return entries;
     }
 
     private void ApplyLogFilter()
