@@ -48,7 +48,7 @@ nix develop
 - Runs one task at a time through the Relay stage model with `.relay/ACTIVE`, ledger, manifest, seal, event, report, and trace artifacts.
 - Shows native root selection, queue/archive controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls in a dense command-center layout.
 - Streams Swival trace events into the GUI as assistant text, tool calls, tool results, and thinking records.
-- Estimates time and cents per task and per stage from Swival reports, using Relay's current pricing model.
+- Estimates time and rounded dollar cost per task and per stage from Swival reports, using Relay's current pricing model.
 - Lets stage cards act as log filters: click a stage for that step's events/traces, click it again to return to the full task log.
 - Marks committed tasks `DONE-` and archives batch tasks under `llm-tasks/completed/batch-N`.
 - Uses Verify-supplied Conventional Commit subjects when available and allows the final staged set to be a subset of the manifest, matching current Relay behavior.

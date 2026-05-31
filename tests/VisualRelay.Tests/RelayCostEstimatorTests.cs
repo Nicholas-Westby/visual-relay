@@ -1,10 +1,19 @@
 using System.Text.Json;
 using VisualRelay.Core.Costs;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
 public sealed class RelayCostEstimatorTests
 {
+    [Fact]
+    public void Dollars_RoundsToNearestCent()
+    {
+        Assert.Equal("$0.00", MoneyFormatter.Dollars(0.003));
+        Assert.Equal("$0.30", MoneyFormatter.Dollars(0.304));
+        Assert.Equal("$0.31", MoneyFormatter.Dollars(0.305));
+    }
+
     [Fact]
     public void EstimateReport_UsesCachedPromptTokensAndEstimatedOutput()
     {

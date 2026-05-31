@@ -76,7 +76,7 @@ static MainWindowViewModel BuildViewModel()
     {
         RootPath = root,
         StatusText = "1 running · 2 queued · 1 review",
-        SelectedTaskMetricLabel = "6 steps  2m 18s  0.64c",
+        SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01",
         LogScopeLabel = "stage 03"
     };
     var task = new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0064, DurationSeconds: 138, CompletedStageCount: 6);
@@ -93,16 +93,16 @@ static MainWindowViewModel BuildViewModel()
     viewModel.Stages[1].Status = "Done";
     viewModel.Stages[2].Status = "Running";
     viewModel.Stages[0].DurationLabel = "19s";
-    viewModel.Stages[0].CostLabel = "0.09c";
+    viewModel.Stages[0].CostLabel = "$0.00";
     viewModel.Stages[1].DurationLabel = "22s";
-    viewModel.Stages[1].CostLabel = "0.11c";
+    viewModel.Stages[1].CostLabel = "$0.00";
     viewModel.Stages[2].DurationLabel = "42s";
-    viewModel.Stages[2].CostLabel = "0.21c";
+    viewModel.Stages[2].CostLabel = "$0.00";
     viewModel.Stages[2].IsSelected = true;
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_start", "demo", root, task.Id, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "0.21c" }));
+        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "stage_done", "demo", root, task.Id, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "0.11c" }));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-28), "info", "tests_written", "demo", root, task.Id, 5, "balanced"));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-36), "info", "plan_accepted", "demo", root, task.Id, 4, "balanced"));
     return viewModel;
@@ -123,7 +123,7 @@ static RelayTaskItem DemoTask(string root, string id, string? reviewReason = nul
 
 static void SeedTraceEntries(MainWindowViewModel viewModel)
 {
-    viewModel.SelectedTaskMetricLabel = "6 steps  2m 18s  0.64c";
+    viewModel.SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01";
     viewModel.LogScopeLabel = "stage 03";
     foreach (var stage in viewModel.Stages)
     {
@@ -132,22 +132,22 @@ static void SeedTraceEntries(MainWindowViewModel viewModel)
 
     viewModel.Stages[0].Status = "Done";
     viewModel.Stages[0].DurationLabel = "19s";
-    viewModel.Stages[0].CostLabel = "0.09c";
+    viewModel.Stages[0].CostLabel = "$0.00";
     viewModel.Stages[1].Status = "Done";
     viewModel.Stages[1].DurationLabel = "22s";
-    viewModel.Stages[1].CostLabel = "0.11c";
+    viewModel.Stages[1].CostLabel = "$0.00";
     viewModel.Stages[2].Status = "Running";
     viewModel.Stages[2].DurationLabel = "42s";
-    viewModel.Stages[2].CostLabel = "0.21c";
+    viewModel.Stages[2].CostLabel = "$0.00";
     viewModel.Stages[2].IsSelected = true;
 
     var root = viewModel.RootPath;
     var taskId = viewModel.SelectedTask?.Id ?? "add-multiply-helper";
     viewModel.Events.Clear();
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_start", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "0.21c" }));
+        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced-kimi", ["time"] = "42s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "trace", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "0.21c" }));
+        Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" }));
 
     viewModel.TraceEntries.Clear();
     viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Diagnose", "pytest tests/test_math_tools.py\n1 failing assertion", 3));

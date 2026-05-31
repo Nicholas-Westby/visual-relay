@@ -34,7 +34,7 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 - Root bar: selected repository, browse button, refresh button, install/config status.
 - Queue column: pending, needs-review, and archived completed tasks, review reason, task-level time/cost, button reorder, start selected, drain queue, pause/resume.
 - Task detail: task markdown preview, nested context files, status, manifest, proof artifacts.
-- Stage timeline: current stage, active selection, attempts, tier escalation, red/green checks, elapsed time, and cents.
+- Stage timeline: current stage, active selection, attempts, tier escalation, red/green checks, elapsed time, and rounded dollar cost.
 - LLM command pane: rendered trace records with assistant text, tool calls, and tool results.
 - Run log pane: structured events filtered by task, stage, level, and run id; clicking a stage toggles between that stage log and the full task log.
 

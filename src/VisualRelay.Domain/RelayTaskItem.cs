@@ -15,7 +15,7 @@ public sealed record RelayTaskItem(
 {
     public bool NeedsReview => !string.IsNullOrWhiteSpace(ReviewReason);
     public string StateLabel => IsArchived ? "Completed" : NeedsReview ? "Needs review" : "Pending";
-    public string CostLabel => CompletedStageCount == 0 ? "No cost yet" : $"{CostUsd * 100:0.##}c";
+    public string CostLabel => CompletedStageCount == 0 ? "No cost yet" : MoneyFormatter.Dollars(CostUsd);
     public string DurationLabel => CompletedStageCount == 0 ? "No run yet" : FormatDuration(DurationSeconds);
     public string MetricsLine => CompletedStageCount == 0 ? "No run history" : $"{DurationLabel}  {CostLabel}";
 

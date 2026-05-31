@@ -237,8 +237,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         {
             ["name"] = stage.Name,
             ["time"] = FormatDuration(cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds),
-            ["cost"] = $"{(cost?.CostUsd ?? 0) * 100:0.##}c",
-            ["sessionCost"] = $"{sessionCostUsd * 100:0.##}c"
+            ["cost"] = MoneyFormatter.Dollars(cost?.CostUsd ?? 0),
+            ["sessionCost"] = MoneyFormatter.Dollars(sessionCostUsd)
         };
         if (!string.IsNullOrWhiteSpace(cost?.Model))
         {

@@ -73,7 +73,7 @@ public sealed class RelayTaskRepositoryTests
         Assert.Equal(1, task.CompletedStageCount);
         Assert.Equal(2.5, task.DurationSeconds, precision: 2);
         Assert.True(task.CostUsd > 0);
-        Assert.Contains("c", task.MetricsLine, StringComparison.Ordinal);
+        Assert.Contains("$", task.MetricsLine, StringComparison.Ordinal);
     }
 
     [Fact]

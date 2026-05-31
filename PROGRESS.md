@@ -65,8 +65,13 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 
 ## 2026-05-31 Cost, Archive, And Step Logs
 - Added a C# cost estimator that matches Relay's report-based pricing model: prompt tokens are read from Swival timelines, cache hits from report stats, and output tokens are estimated from answer length plus turn count.
-- Task cards and the task header now show run time and cents; stage cards show per-step time and cents.
+- Task cards and the task header now show run time and rounded dollar cost; stage cards show per-step time and rounded dollar cost.
 - Added archive mode for `llm-tasks/completed/batch-*`, including nested completed task folders with sibling context files.
 - Stage cards now act as log filters: selecting a stage narrows the run log and LLM command pane to that step, and selecting the same stage again restores the full task log.
 - Active task and active stage styling were strengthened with selected borders, darker selected surfaces, and clearer scope chips.
 - Verification added for archive toggling, run-history metrics, cost estimation, and stage-log filter toggling.
+
+## 2026-05-31 Active State And Dollar Costs
+- Compared the Visual Relay selected queue card against the reference active state and moved the styling closer: full bright outline, blue left rail, selected fill, and a subtle glow.
+- Strengthened selected stage cards with the same brighter outline/glow language so stage log filtering is visually obvious.
+- Replaced cent labels with rounded dollar labels everywhere (`$0.30`, `$0.00` for sub-cent estimates), including task cards, stage cards, run events, screenshots, and tests.
