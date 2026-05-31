@@ -7,7 +7,12 @@ public partial class MainWindowViewModel
 {
     private void HandleRelayEvent(RelayEvent relayEvent)
     {
-        Events.Insert(0, relayEvent);
+        _allTaskEvents.Insert(0, relayEvent);
+        if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
+        {
+            Events.Insert(0, relayEvent);
+        }
+
         if (relayEvent.EventName == "trace")
         {
             AppendTraceEntry(relayEvent);
@@ -25,6 +30,10 @@ public partial class MainWindowViewModel
                     "flagged" => "Flagged",
                     _ => stage.Status
                 };
+                if (relayEvent.EventName == "stage_done")
+                {
+                    ApplyStageEventMetric(stage, relayEvent);
+                }
             }
         }
     }
@@ -69,6 +78,8 @@ public partial class MainWindowViewModel
         foreach (var stage in Stages)
         {
             stage.Status = "Waiting";
+            stage.IsSelected = false;
+            stage.ClearMetric();
         }
     }
 
@@ -89,14 +100,91 @@ public partial class MainWindowViewModel
         }
 
         relayEvent.Data.TryGetValue("kind", out var kind);
-        TraceEntries.Insert(0, new TraceEntry(ParseTraceKind(kind), title, content));
+        var entry = new TraceEntry(ParseTraceKind(kind), title, content, relayEvent.StageNumber);
+        _allTraceEntries.Insert(0, entry);
+        if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
+        {
+            TraceEntries.Insert(0, entry);
+        }
     }
 
     private static TraceEntryKind ParseTraceKind(string? kind) =>
         Enum.TryParse<TraceEntryKind>(kind, out var parsed) ? parsed : TraceEntryKind.AssistantText;
 
     private bool CanRefresh() => !IsBusy && Directory.Exists(RootPath);
-    private bool CanRunSelected() => !IsBusy && SelectedTask is not null;
-    private bool CanDrain() => !IsBusy && Tasks.Any(task => !task.NeedsReview);
-    private bool HasSelection() => SelectedTask is not null && !IsBusy;
+    private bool CanRunSelected() => !IsBusy && SelectedTask is not null && !SelectedTask.IsArchived;
+    private bool CanDrain() => !IsBusy && !ShowArchive && Tasks.Any(task => !task.NeedsReview);
+    private bool HasSelection() => SelectedTask is not null && !IsBusy && !ShowArchive;
+
+    private async Task LoadRunHistoryAsync(string taskId)
+    {
+        ClearLogState();
+        var metric = RelayRunHistory.ReadTaskMetric(RootPath, taskId);
+        SelectedTaskMetricLabel = metric.SummaryLabel;
+        foreach (var stage in Stages)
+        {
+            stage.ClearMetric();
+            var stageMetric = metric.Stages.FirstOrDefault(item => item.StageNumber == stage.Number);
+            if (stageMetric is not null)
+            {
+                stage.ApplyMetric(stageMetric);
+            }
+        }
+
+        _allTaskEvents.AddRange(RelayRunHistory.ReadTaskEvents(RootPath, taskId));
+        _allTraceEntries.AddRange(await RelayRunHistory.ReadTraceEntriesAsync(RootPath, taskId));
+        ApplyLogFilter();
+    }
+
+    private void ClearLogState()
+    {
+        Events.Clear();
+        TraceEntries.Clear();
+        _allTaskEvents.Clear();
+        _allTraceEntries.Clear();
+    }
+
+    private void ApplyLogFilter()
+    {
+        Events.Clear();
+        foreach (var relayEvent in _allTaskEvents.Where(IsInSelectedStage))
+        {
+            Events.Add(relayEvent);
+        }
+
+        TraceEntries.Clear();
+        foreach (var entry in _allTraceEntries.Where(IsInSelectedStage))
+        {
+            TraceEntries.Add(entry);
+        }
+    }
+
+    private bool IsInSelectedStage(RelayEvent relayEvent) =>
+        _selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter;
+
+    private bool IsInSelectedStage(TraceEntry entry) =>
+        _selectedStageFilter is null || entry.StageNumber == _selectedStageFilter;
+
+    private static void ApplyStageEventMetric(StageRowViewModel stage, RelayEvent relayEvent)
+    {
+        if (relayEvent.Data is null)
+        {
+            return;
+        }
+
+        if (relayEvent.Data.TryGetValue("time", out var time))
+        {
+            stage.DurationLabel = time;
+        }
+
+        if (relayEvent.Data.TryGetValue("cost", out var cost))
+        {
+            stage.CostLabel = cost;
+        }
+
+        if (relayEvent.Data.TryGetValue("model", out var model))
+        {
+            stage.ModelLabel = model;
+        }
+    }
 }

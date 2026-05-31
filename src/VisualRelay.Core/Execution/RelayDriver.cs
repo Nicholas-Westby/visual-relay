@@ -1,12 +1,14 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Costs;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
-public sealed class RelayDriver : IRelayTaskRunner
+public sealed partial class RelayDriver : IRelayTaskRunner
 {
     private readonly RelayDriverDependencies _dependencies;
     private readonly RelayDriverOptions _options;
@@ -36,13 +38,16 @@ public sealed class RelayDriver : IRelayTaskRunner
             var seals = new List<string>();
             var previousSeal = string.Empty;
             var taskHash = string.Empty;
+            var sessionCostUsd = 0d;
             string? commitMessage = null;
 
             foreach (var stage in RelayStages.All)
             {
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
+                var stopwatch = Stopwatch.StartNew();
                 string body;
                 string? check = null;
+                RelayCostEstimate? cost = null;
 
                 if (stage.Kind == "driver")
                 {
@@ -52,6 +57,8 @@ public sealed class RelayDriver : IRelayTaskRunner
                 {
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
+                    cost = TryEstimateCost(invocation.ReportFile);
+                    sessionCostUsd += cost?.CostUsd ?? 0;
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, cancellationToken);
@@ -120,7 +127,7 @@ public sealed class RelayDriver : IRelayTaskRunner
                 taskHash = seal;
                 seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
                 await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
-                await PublishAsync("info", "stage_done", rootPath, runId, taskId, stage, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, cancellationToken);
             }
 
             var commitSha = "simulated";
@@ -203,83 +210,6 @@ public sealed class RelayDriver : IRelayTaskRunner
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
     }
 
-    private static async Task WriteManifestAsync(string taskDirectory, IReadOnlyList<string> manifest, CancellationToken cancellationToken)
-    {
-        await File.WriteAllTextAsync(
-            Path.Combine(taskDirectory, "manifest"),
-            string.Join(Environment.NewLine, manifest) + Environment.NewLine,
-            cancellationToken);
-    }
-
-    private static async Task WriteArtifactsAsync(
-        string taskDirectory,
-        string taskId,
-        string ledger,
-        IReadOnlyList<string> seals,
-        CancellationToken cancellationToken)
-    {
-        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "ledger.md"), ledger, cancellationToken);
-        await File.WriteAllTextAsync(Path.Combine(taskDirectory, $"{taskId}.seals"), string.Join(Environment.NewLine, seals) + Environment.NewLine, cancellationToken);
-    }
-
-    private static void AppendLedgerSection(StringBuilder ledger, RelayStageDefinition stage, string body)
-    {
-        ledger.AppendLine($"## Stage {stage.Number} - {stage.Name}");
-        ledger.AppendLine();
-        ledger.AppendLine(body);
-        ledger.AppendLine();
-    }
-
-    private static IReadOnlyList<string> ReadStringArray(JsonElement json, string propertyName)
-    {
-        if (!json.TryGetProperty(propertyName, out var array) || array.ValueKind != JsonValueKind.Array)
-        {
-            return [];
-        }
-
-        return array.EnumerateArray()
-            .Select(x => x.GetString() ?? string.Empty)
-            .Where(x => x.Length > 0)
-            .ToArray();
-    }
-
-    private static string? ReadOptionalString(JsonElement json, string propertyName) =>
-        json.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
-    private static string WorkingTreeHash(string rootPath, IReadOnlyList<string> manifest)
-    {
-        var parts = new List<string>();
-        foreach (var relative in manifest.Order(StringComparer.Ordinal))
-        {
-            var fullPath = Path.Combine(rootPath, relative);
-            parts.Add(relative);
-            parts.Add(File.Exists(fullPath) ? File.ReadAllText(fullPath) : string.Empty);
-        }
-
-        return Hashing.Sha256Hex(parts.ToArray());
-    }
-
-    private static string SerializeSeal(int stageNumber, string artifactHash, string treeHash, string seal, string? check)
-    {
-        var payload = new Dictionary<string, object?>
-        {
-            ["kind"] = "stage",
-            ["n"] = stageNumber,
-            ["ts"] = DateTimeOffset.UtcNow.ToString("O"),
-            ["artifactHash"] = artifactHash,
-            ["treeHash"] = treeHash,
-            ["seal"] = seal
-        };
-        if (check is not null)
-        {
-            payload["check"] = check;
-        }
-
-        return JsonSerializer.Serialize(payload);
-    }
-
     private Task PublishAsync(
         string level,
         string eventName,
@@ -292,4 +222,32 @@ public sealed class RelayDriver : IRelayTaskRunner
             new RelayEvent(DateTimeOffset.UtcNow, level, eventName, runId, rootPath, taskId, stage.Number, stage.Tier,
                 Data: new Dictionary<string, string> { ["name"] = stage.Name }),
             cancellationToken);
+
+    private Task PublishStageDoneAsync(
+        string rootPath,
+        string runId,
+        string taskId,
+        RelayStageDefinition stage,
+        TimeSpan elapsed,
+        RelayCostEstimate? cost,
+        double sessionCostUsd,
+        CancellationToken cancellationToken)
+    {
+        var data = new Dictionary<string, string>
+        {
+            ["name"] = stage.Name,
+            ["time"] = FormatDuration(cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds),
+            ["cost"] = $"{(cost?.CostUsd ?? 0) * 100:0.##}c",
+            ["sessionCost"] = $"{sessionCostUsd * 100:0.##}c"
+        };
+        if (!string.IsNullOrWhiteSpace(cost?.Model))
+        {
+            data["model"] = cost.Model;
+        }
+
+        return _dependencies.EventSink.PublishAsync(
+            new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_done", runId, rootPath, taskId, stage.Number, stage.Tier, Data: data),
+            cancellationToken);
+    }
+
 }

@@ -46,8 +46,10 @@ nix develop
 - Discovers `llm-tasks` while skipping `DONE-*`, `IGNORE-*`, `_ideation`, and `completed`; tasks marked `NEEDS-REVIEW` stay visible in the GUI with their review reason.
 - Loads `.relay/config.json` and keeps Relay defaults for stages, tier profiles, test commands, and verify limits.
 - Runs one task at a time through the Relay stage model with `.relay/ACTIVE`, ledger, manifest, seal, event, report, and trace artifacts.
-- Shows native root selection, queue controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls in a dense command-center layout.
+- Shows native root selection, queue/archive controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls in a dense command-center layout.
 - Streams Swival trace events into the GUI as assistant text, tool calls, tool results, and thinking records.
+- Estimates time and cents per task and per stage from Swival reports, using Relay's current pricing model.
+- Lets stage cards act as log filters: click a stage for that step's events/traces, click it again to return to the full task log.
 - Marks committed tasks `DONE-` and archives batch tasks under `llm-tasks/completed/batch-N`.
 - Uses Verify-supplied Conventional Commit subjects when available and allows the final staged set to be a subset of the manifest, matching current Relay behavior.
 - Owns Swival execution directly, including temporary profile generation for the local LiteLLM proxy; it does not route work through its own runner.
@@ -67,6 +69,6 @@ nix develop
 ./visual-relay check
 ```
 
-The current automated coverage includes config loading, task discovery, review-marker surfacing, nested task context, queue reordering, pause-at-boundary, trace parsing, Swival profile/trace handling, crash flagging, and mocked staged driver artifacts.
+The current automated coverage includes config loading, task discovery, archive listing, cost estimation, review-marker surfacing, nested task context, queue reordering, pause-at-boundary, stage log filtering, trace parsing, Swival profile/trace handling, crash flagging, and mocked staged driver artifacts.
 
 Real smoke last run: `./visual-relay run-task /Users/admin/Dev/sample-tasks nested-todo-summary` completed stages 1-11, streamed trace events, ran the Python tests red/green, committed `81013f0`, and archived the nested task folder under `llm-tasks/completed/batch-1`.

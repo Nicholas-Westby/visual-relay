@@ -17,6 +17,23 @@ public sealed record RelayEvent(
 
     public string DetailLine =>
         Data is { Count: > 0 }
-            ? string.Join("  ", Data.Select(pair => $"{pair.Key}: {pair.Value}"))
+            ? string.Join("  ", OrderedData().Select(pair => $"{pair.Key}: {pair.Value}"))
             : Level;
+
+    private IEnumerable<KeyValuePair<string, string>> OrderedData()
+    {
+        var priority = new[] { "time", "cost", "sessionCost", "model", "name", "reason" };
+        foreach (var key in priority)
+        {
+            if (Data?.TryGetValue(key, out var value) == true)
+            {
+                yield return new KeyValuePair<string, string>(key, value);
+            }
+        }
+
+        foreach (var pair in Data?.Where(pair => !priority.Contains(pair.Key)) ?? [])
+        {
+            yield return pair;
+        }
+    }
 }

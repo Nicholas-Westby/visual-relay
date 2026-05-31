@@ -62,3 +62,11 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Ported Relay's post-commit completion behavior: committed tasks are renamed `DONE-` and batch tasks move under `llm-tasks/completed/batch-N`, with failures logged but not converted into task failures after a real commit.
 - Real smoke: `./visual-relay run-task /Users/admin/Dev/sample-tasks nested-todo-summary` completed stages 1-11, produced trace/report artifacts, ran the Python tests red then green, committed `81013f0` in the sample repo, and archived the nested task folder in `llm-tasks/completed/batch-1`.
 - Verification: `./visual-relay check` builds the full solution, passes 20 tests, verifies formatting/file-size limits, and regenerates both README screenshots.
+
+## 2026-05-31 Cost, Archive, And Step Logs
+- Added a C# cost estimator that matches Relay's report-based pricing model: prompt tokens are read from Swival timelines, cache hits from report stats, and output tokens are estimated from answer length plus turn count.
+- Task cards and the task header now show run time and cents; stage cards show per-step time and cents.
+- Added archive mode for `llm-tasks/completed/batch-*`, including nested completed task folders with sibling context files.
+- Stage cards now act as log filters: selecting a stage narrows the run log and LLM command pane to that step, and selecting the same stage again restores the full task log.
+- Active task and active stage styling were strengthened with selected borders, darker selected surfaces, and clearer scope chips.
+- Verification added for archive toggling, run-history metrics, cost estimation, and stage-log filter toggling.

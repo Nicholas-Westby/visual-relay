@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
@@ -7,7 +6,6 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Core.Tasks;
-using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -16,6 +14,9 @@ public partial class MainWindowViewModel : ViewModelBase
 {
     private IFolderPicker _folderPicker;
     private bool _pauseRequested;
+    private readonly List<RelayEvent> _allTaskEvents = [];
+    private readonly List<TraceEntry> _allTraceEntries = [];
+    private int? _selectedStageFilter;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker())
@@ -39,6 +40,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyPropertyChangedFor(nameof(RootName))]
@@ -47,6 +49,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _rootPath;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
@@ -62,6 +65,22 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _selectedTaskContext = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
+    [NotifyPropertyChangedFor(nameof(TaskListTitle))]
+    [NotifyPropertyChangedFor(nameof(TaskListToggleText))]
+    private bool _showArchive;
+
+    [ObservableProperty]
+    private string _selectedTaskMetricLabel = "No run history";
+
+    [ObservableProperty]
+    private string _logScopeLabel = "full";
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     private bool _isBusy;
@@ -77,6 +96,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public string RootName => RootFolderDisplay.Name(RootPath);
     public string RootParentPath => RootFolderDisplay.Parent(RootPath);
     public string WindowTitle => $"Visual Relay - {RootName}";
+    public string TaskListTitle => ShowArchive ? "ARCHIVE" : "QUEUE";
+    public string TaskListToggleText => ShowArchive ? "Queue" : "Archive";
 
     [RelayCommand]
     private async Task BrowseAsync()
@@ -99,7 +120,8 @@ public partial class MainWindowViewModel : ViewModelBase
             StatusText = "Refreshing";
             Tasks.Clear();
             var repository = new RelayTaskRepository(RootPath);
-            foreach (var task in await repository.ListAsync())
+            var tasks = ShowArchive ? await repository.ListCompletedAsync() : await repository.ListAsync();
+            foreach (var task in tasks)
             {
                 Tasks.Add(task);
             }
@@ -170,6 +192,13 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
+    private async Task ToggleArchiveAsync()
+    {
+        ShowArchive = !ShowArchive;
+        await RefreshAsync();
+    }
+
     [RelayCommand(CanExecute = nameof(HasSelection))]
     private void MoveDown()
     {
@@ -187,14 +216,15 @@ public partial class MainWindowViewModel : ViewModelBase
 
     partial void OnSelectedTaskChanged(RelayTaskItem? value)
     {
+        _selectedStageFilter = null;
+        LogScopeLabel = "full";
         _ = LoadSelectedTaskAsync(value);
     }
 
     private async Task<RelayTaskOutcome> RunOneAsync(RelayTaskItem task)
     {
         ResetStages();
-        Events.Clear();
-        TraceEntries.Clear();
+        ClearLogState();
         StatusText = $"Running {task.Id}";
         var config = await RelayConfigLoader.LoadAsync(RootPath);
         var sink = new ObservableRelayEventSink(HandleRelayEvent);
@@ -202,7 +232,7 @@ public partial class MainWindowViewModel : ViewModelBase
         var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
         var outcome = await driver.RunTaskAsync(RootPath, task.Id);
         StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
-        await LoadTraceAsync(task.Id);
+        await LoadRunHistoryAsync(task.Id);
         return outcome;
     }
 
@@ -212,30 +242,38 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             SelectedTaskMarkdown = string.Empty;
             SelectedTaskContext = string.Empty;
-            TraceEntries.Clear();
+            SelectedTaskMetricLabel = "No run history";
+            ClearLogState();
+            ResetStages();
             return;
         }
 
+        ResetStages();
         var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task);
         SelectedTaskMarkdown = input.Markdown;
         SelectedTaskContext = input.Context ?? string.Empty;
-        await LoadTraceAsync(task.Id);
+        await LoadRunHistoryAsync(task.Id);
     }
 
-    private async Task LoadTraceAsync(string taskId)
+    [RelayCommand]
+    private void SelectStage(StageRowViewModel stage)
     {
-        TraceEntries.Clear();
-        var file = RelayTraceLocator.FindLatestTraceFile(RootPath, taskId);
-        if (file is null)
+        if (_selectedStageFilter == stage.Number)
         {
+            _selectedStageFilter = null;
+            stage.IsSelected = false;
+            LogScopeLabel = "full";
+            ApplyLogFilter();
             return;
         }
 
-        var text = await File.ReadAllTextAsync(file);
-        foreach (var entry in RelayTraceParser.Parse(text))
+        _selectedStageFilter = stage.Number;
+        foreach (var item in Stages)
         {
-            TraceEntries.Add(entry);
+            item.IsSelected = item.Number == stage.Number;
         }
-    }
 
+        LogScopeLabel = $"stage {stage.Number:00}";
+        ApplyLogFilter();
+    }
 }

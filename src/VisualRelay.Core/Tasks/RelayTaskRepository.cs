@@ -39,8 +39,25 @@ public sealed class RelayTaskRepository
         Walk(tasksRoot, tasksRoot, tasks);
         return tasks
             .Select(AttachReviewState)
+            .Select(AttachRunMetrics)
             .Where(task => includeNeedsReview || !task.NeedsReview)
             .OrderBy(task => task.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<RelayTaskItem>> ListCompletedAsync(CancellationToken cancellationToken = default)
+    {
+        var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
+        var completedRoot = Path.Combine(RootPath, config.TasksDir, "completed");
+        if (!Directory.Exists(completedRoot))
+        {
+            return [];
+        }
+
+        return Directory.EnumerateFiles(completedRoot, "DONE-*.md", SearchOption.AllDirectories)
+            .Select(path => ArchivedTaskFromPath(completedRoot, path))
+            .Select(AttachRunMetrics)
+            .OrderByDescending(task => File.GetLastWriteTimeUtc(task.MarkdownPath))
             .ToArray();
     }
 
@@ -98,6 +115,45 @@ public sealed class RelayTaskRepository
 
         var reason = File.ReadLines(reviewFile).FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
         return task with { ReviewReason = reason ?? "Needs review" };
+    }
+
+    private RelayTaskItem AttachRunMetrics(RelayTaskItem task)
+    {
+        var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);
+        return task with
+        {
+            CostUsd = metric.CostUsd,
+            DurationSeconds = metric.DurationSeconds,
+            CompletedStageCount = metric.CompletedStageCount
+        };
+    }
+
+    private static RelayTaskItem ArchivedTaskFromPath(string completedRoot, string markdownPath)
+    {
+        var directory = Path.GetDirectoryName(markdownPath)!;
+        var fileName = Path.GetFileNameWithoutExtension(markdownPath);
+        var id = fileName.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ? fileName[5..] : fileName;
+        var batchName = FindBatchName(completedRoot, markdownPath);
+        var batchDirectory = batchName is null ? completedRoot : Path.Combine(completedRoot, batchName);
+        var siblings = Directory.EnumerateFiles(directory)
+            .Where(file => !file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        return new RelayTaskItem(
+            id,
+            markdownPath,
+            directory,
+            !string.Equals(directory, batchDirectory, StringComparison.Ordinal),
+            siblings,
+            IsArchived: true,
+            ArchiveBatch: batchName);
+    }
+
+    private static string? FindBatchName(string completedRoot, string path)
+    {
+        var relative = Path.GetRelativePath(completedRoot, path);
+        var first = relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).FirstOrDefault();
+        return first?.StartsWith("batch-", StringComparison.OrdinalIgnoreCase) == true ? first : null;
     }
 
     private static bool IsSkippedName(string name) =>

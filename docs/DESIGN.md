@@ -32,11 +32,11 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 
 ## GUI Views
 - Root bar: selected repository, browse button, refresh button, install/config status.
-- Queue column: pending and needs-review tasks, review reason, button reorder, start selected, drain queue, pause/resume.
+- Queue column: pending, needs-review, and archived completed tasks, review reason, task-level time/cost, button reorder, start selected, drain queue, pause/resume.
 - Task detail: task markdown preview, nested context files, status, manifest, proof artifacts.
-- Stage timeline: current stage, attempts, tier escalation, red/green checks, elapsed time.
+- Stage timeline: current stage, active selection, attempts, tier escalation, red/green checks, elapsed time, and cents.
 - LLM command pane: rendered trace records with assistant text, tool calls, and tool results.
-- Run log pane: structured events filtered by task, stage, level, and run id.
+- Run log pane: structured events filtered by task, stage, level, and run id; clicking a stage toggles between that stage log and the full task log.
 
 ## Execution Model
 Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. The app invokes Swival directly through a C# runner, generates a temporary local proxy profile when needed, tails Swival JSONL traces live, and supports reliable simulated runners for tests.

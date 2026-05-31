@@ -1,0 +1,99 @@
+using VisualRelay.App.ViewModels;
+
+namespace VisualRelay.Tests;
+
+public sealed class MainWindowViewModelTests
+{
+    [Fact]
+    public async Task SelectStageCommand_TogglesBetweenStageLogAndFullTaskLog()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        WriteReportAndTrace(repo.Root, "alpha", 1, "stage one");
+        WriteReportAndTrace(repo.Root, "alpha", 2, "stage two");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        await WaitUntilAsync(() => viewModel.TraceEntries.Count == 2);
+
+        Assert.Equal("full", viewModel.LogScopeLabel);
+        Assert.Equal(2, viewModel.Events.Count);
+        viewModel.SelectStageCommand.Execute(viewModel.Stages[0]);
+
+        Assert.Equal("stage 01", viewModel.LogScopeLabel);
+        Assert.Single(viewModel.Events);
+        Assert.All(viewModel.Events, item => Assert.Equal(1, item.StageNumber));
+        Assert.Single(viewModel.TraceEntries);
+        Assert.Contains("stage one", viewModel.TraceEntries[0].Content);
+        Assert.True(viewModel.Stages[0].IsSelected);
+
+        viewModel.SelectStageCommand.Execute(viewModel.Stages[0]);
+
+        Assert.Equal("full", viewModel.LogScopeLabel);
+        Assert.Equal(2, viewModel.Events.Count);
+        Assert.False(viewModel.Stages[0].IsSelected);
+    }
+
+    [Fact]
+    public async Task ToggleArchiveCommand_LoadsCompletedTasksAndDisablesRunActions()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("pending", "# Pending\n");
+        var completed = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-1");
+        Directory.CreateDirectory(completed);
+        await File.WriteAllTextAsync(Path.Combine(completed, "DONE-finished.md"), "# Finished\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        Assert.Equal("QUEUE", viewModel.TaskListTitle);
+        Assert.Equal("pending", Assert.Single(viewModel.Tasks).Id);
+
+        await viewModel.ToggleArchiveCommand.ExecuteAsync(null);
+
+        Assert.Equal("ARCHIVE", viewModel.TaskListTitle);
+        var archived = Assert.Single(viewModel.Tasks);
+        Assert.Equal("finished", archived.Id);
+        Assert.True(archived.IsArchived);
+        Assert.False(viewModel.RunSelectedCommand.CanExecute(null));
+        Assert.False(viewModel.DrainQueueCommand.CanExecute(null));
+    }
+
+    private static void WriteReportAndTrace(string root, string taskId, int stage, string content)
+    {
+        var taskDirectory = Path.Combine(root, ".relay", taskId);
+        Directory.CreateDirectory(taskDirectory);
+        File.WriteAllText(
+            Path.Combine(taskDirectory, $"stage{stage}-attempt1.report.json"),
+            $$"""
+            {
+              "timestamp": "2026-05-31T20:00:0{{stage}}+00:00",
+              "model": "cheap-kimi",
+              "result": { "answer": "{{content}}" },
+              "stats": { "total_llm_time_s": {{stage}}, "prompt_cache": { "cached_tokens": 0 } },
+              "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
+            }
+            """);
+        var traceDirectory = Path.Combine(taskDirectory, $"stage{stage}-attempt1");
+        Directory.CreateDirectory(traceDirectory);
+        File.WriteAllText(
+            Path.Combine(traceDirectory, $"{Guid.NewGuid():N}.jsonl"),
+            $"{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{content}\"}}]}}}}\n");
+    }
+
+    private static async Task WaitUntilAsync(Func<bool> condition)
+    {
+        for (var i = 0; i < 50; i++)
+        {
+            if (condition())
+            {
+                return;
+            }
+
+            await Task.Delay(20);
+        }
+
+        Assert.True(condition());
+    }
+}

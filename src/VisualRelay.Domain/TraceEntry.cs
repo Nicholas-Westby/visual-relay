@@ -9,4 +9,11 @@ public enum TraceEntryKind
     UserText
 }
 
-public sealed record TraceEntry(TraceEntryKind Kind, string Title, string Content);
+public sealed record TraceEntry(
+    TraceEntryKind Kind,
+    string Title,
+    string Content,
+    int? StageNumber = null)
+{
+    public string ScopeLabel => StageNumber is null ? "task" : $"s{StageNumber:00}";
+}
