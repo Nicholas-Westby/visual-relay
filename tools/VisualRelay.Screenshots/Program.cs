@@ -10,6 +10,8 @@ using VisualRelay.Domain;
 var output = args.Length > 0
     ? Path.GetFullPath(args[0])
     : Path.GetFullPath(Path.Combine("docs", "images", "visual-relay-main.png"));
+var width = args.Length > 1 ? double.Parse(args[1]) : 1440;
+var height = args.Length > 2 ? double.Parse(args[2]) : 900;
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
 using var session = HeadlessUnitTestSession.StartNew(typeof(ScreenshotAppBuilder));
@@ -19,8 +21,8 @@ await session.Dispatch(async () =>
     var window = new MainWindow
     {
         DataContext = viewModel,
-        Width = 1280,
-        Height = 820
+        Width = width,
+        Height = height
     };
     window.Show();
     await Task.Delay(100);
@@ -51,34 +53,71 @@ static MainWindowViewModel BuildViewModel()
           "logSources": ["logs/app.log"]
         }
         """);
-    var taskPath = Path.Combine(root, "llm-tasks", "repair-login-flow.md");
-    File.WriteAllText(taskPath, "# Repair login flow\n\nReproduce the redirect issue, add a red test, implement the fix, and verify the suite.");
+    var taskPath = WriteTask(
+        root,
+        "add-multiply-helper",
+        """
+        # Add multiply helper
+
+        Implement a typed multiply(a, b) in src/math_tools.py and expose it through the CLI dispatcher so users can run relay calc mul 6 7.
+
+        ## Requirements
+
+        - Mirror the existing add() helper signature and docstring style.
+        - Register the verb in COMMANDS and update the --help table.
+        - Cover ints, floats and overflow in tests/test_math_tools.py.
+
+        ## Run
+
+        relay run add-multiply
+        """);
 
     var viewModel = new MainWindowViewModel
     {
         RootPath = root,
-        StatusText = "1 pending"
+        StatusText = "Running add-multiply-helper"
     };
-    var task = new RelayTaskItem("repair-login-flow", taskPath, Path.GetDirectoryName(taskPath)!, false, []);
+    var task = new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, []);
     viewModel.Tasks.Add(task);
+    viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding"));
+    viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware"));
+    viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test"));
+    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens"));
     viewModel.SelectedTask = task;
     viewModel.SelectedTaskMarkdown = File.ReadAllText(taskPath);
-    viewModel.SelectedTaskContext = "### logs/app.log\nPOST /session returned 302 without the expected returnUrl.";
+    viewModel.SelectedTaskContext = "### logs/app.log\n12:04:41 [plan] 3 edits planned across 3 files\n13:08:54 [implement] stage complete in 28s";
 
     viewModel.Stages[0].Status = "Done";
     viewModel.Stages[1].Status = "Done";
     viewModel.Stages[2].Status = "Running";
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_start", "demo", root, task.Id, 3, "balanced"));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "stage_done", "demo", root, task.Id, 2, "cheap"));
+    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-28), "info", "tests_written", "demo", root, task.Id, 5, "balanced"));
+    viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-36), "info", "plan_accepted", "demo", root, task.Id, 4, "balanced"));
     return viewModel;
+}
+
+static string WriteTask(string root, string id, string markdown)
+{
+    var path = Path.Combine(root, "llm-tasks", $"{id}.md");
+    File.WriteAllText(path, markdown);
+    return path;
+}
+
+static RelayTaskItem DemoTask(string root, string id)
+{
+    var path = WriteTask(root, id, $"# {id}\n\nDemo task used to exercise the Visual Relay control room.");
+    return new RelayTaskItem(id, path, Path.GetDirectoryName(path)!, false, []);
 }
 
 static void SeedTraceEntries(MainWindowViewModel viewModel)
 {
     viewModel.TraceEntries.Clear();
-    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.AssistantText, "text", "I am checking the login handler and the failing redirect test."));
-    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "shell", "{\"cmd\":\"dotnet test --filter Login\"}"));
-    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolResult, "tool_result", "Failed: LoginRedirectTests.PreservesReturnUrl"));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.AssistantText, "Implement", "src/math_tools.py (+14 lines)\nsrc/cli.py (+3 -1)"));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Plan", "claude-sonnet-4.6\n9.1k tok  $0.21  11s"));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolResult, "Author tests", "tests/test_math_tools.py\n6 cases written in 16s"));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Diagnose", "pytest tests/test_math_tools.py\n1 failing assertion"));
+    viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolResult, "Research", "Existing add() helper uses decimal-safe coercion."));
 }
 
 static void SaveBitmap(Bitmap bitmap, string path)

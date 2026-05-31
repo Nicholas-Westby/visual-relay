@@ -1,6 +1,6 @@
 # Visual Relay
 
-Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It rebuilds the staged Relay pipeline from the original Relay implementation with a GUI for choosing a repository root, inspecting the task queue, reordering work, pausing at safe boundaries, and drilling into stages, logs, and LLM command traces.
+Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It rebuilds the staged Relay pipeline from the original Relay implementation with a modern dark GUI for choosing a repository root, inspecting the task queue, reordering work, pausing at safe boundaries, and drilling into stages, logs, and LLM command traces.
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
 
@@ -40,7 +40,7 @@ nix develop
 - Discovers pending `llm-tasks` while skipping `DONE-*`, `IGNORE-*`, `_ideation`, `completed`, and tasks marked `NEEDS-REVIEW`.
 - Loads `.relay/config.json` and keeps Relay defaults for stages, tier profiles, test commands, and verify limits.
 - Runs one task at a time through the Relay stage model with `.relay/ACTIVE`, ledger, manifest, seal, event, and trace artifacts.
-- Shows root selection, queue controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls.
+- Shows native root selection, queue controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls in a dense command-center layout.
 - Uses Verify-supplied Conventional Commit subjects when available and allows the final staged set to be a subset of the manifest, matching current Relay behavior.
 - Supports mocked execution in tests and real Swival/test command execution in the app.
 
@@ -48,7 +48,7 @@ nix develop
 
 - `Directory.Build.props` enables nullable, latest analyzers, code style checks, and warnings as errors.
 - `.githooks/commit-msg` enforces Conventional Commits after `./visual-relay install-hooks`.
-- `tools/guards/check-file-size.sh` keeps C# source files under 300 lines by default.
+- `tools/guards/check-file-size.sh` keeps C# and Avalonia XAML source files under 300 lines by default.
 - `tools/VisualRelay.Screenshots` renders the README screenshot through Avalonia Headless.
 
 ## Tests

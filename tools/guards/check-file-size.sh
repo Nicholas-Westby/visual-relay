@@ -10,7 +10,6 @@ while IFS= read -r file; do
     echo "file too large: $file has $lines lines (limit $limit)" >&2
     failed=1
   fi
-done < <(find src tests tools -name '*.cs' -not -path '*/bin/*' -not -path '*/obj/*' | sort)
+done < <(find src tests tools \( -name '*.cs' -o -name '*.axaml' \) -not -path '*/bin/*' -not -path '*/obj/*' | sort)
 
 exit "$failed"
-

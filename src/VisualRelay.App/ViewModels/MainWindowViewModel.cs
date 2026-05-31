@@ -24,7 +24,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public MainWindowViewModel(IFolderPicker folderPicker)
     {
         _folderPicker = folderPicker;
-        _rootPath = DefaultRootPath();
+        _rootPath = RootFolderDisplay.DefaultPath();
         foreach (var stage in RelayStages.All)
         {
             Stages.Add(new StageRowViewModel(stage));
@@ -40,7 +40,9 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
-    [NotifyPropertyChangedFor(nameof(RootDisplayPath))]
+    [NotifyPropertyChangedFor(nameof(RootName))]
+    [NotifyPropertyChangedFor(nameof(RootParentPath))]
+    [NotifyPropertyChangedFor(nameof(WindowTitle))]
     private string _rootPath;
 
     [ObservableProperty]
@@ -71,8 +73,9 @@ public partial class MainWindowViewModel : ViewModelBase
     public Task LoadInitialAsync() =>
         Directory.Exists(RootPath) ? RefreshAsync() : Task.CompletedTask;
 
-    public string RootDisplayPath =>
-        string.IsNullOrWhiteSpace(RootPath) ? "Choose a Relay project folder" : RootPath;
+    public string RootName => RootFolderDisplay.Name(RootPath);
+    public string RootParentPath => RootFolderDisplay.Parent(RootPath);
+    public string WindowTitle => $"Visual Relay - {RootName}";
 
     [RelayCommand]
     private async Task BrowseAsync()
@@ -280,12 +283,4 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanDrain() => !IsBusy && Tasks.Count > 0;
     private bool HasSelection() => SelectedTask is not null && !IsBusy;
 
-    private static string DefaultRootPath()
-    {
-        var sample = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Dev",
-            "sample-tasks");
-        return Directory.Exists(sample) ? sample : string.Empty;
-    }
 }

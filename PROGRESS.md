@@ -44,3 +44,10 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Ported the red-gate strip helper into C# and wired stage 5 author-tests through it so premature implementation edits are temporarily stashed while authored tests prove red.
 - Matched the upstream absent-path behavior: manifest entries that are not present on disk are skipped before `git stash push`, while the stash list is trusted if Git creates the stash despite a pathspec quirk.
 - Added regression coverage for direct red-gate stash/restore and for the driver restoring a premature implementation before continuing to green verify.
+
+## 2026-05-30 Visual Refresh
+- Reworked the Avalonia shell toward the provided dark command-center inspiration: compact top rail, native folder-picker surface, dense queue cards, task tabs, stage board, terminal-style run log, and LLM command cards.
+- Split the window into focused controls (`TopBar`, `QueuePanel`, `TaskDetailPanel`, `StageBoard`, `ActivityColumn`) and moved shared styles into `VisualRelayTheme.axaml`.
+- Added root folder display helpers and tests so the selected project name remains visible while parent paths are trimmed.
+- Hardened the single entry point for managed/sandboxed machines by disabling Avalonia/.NET telemetry, forcing single-node MSBuild, and rendering screenshots without rebuilding during `check`.
+- Verified the refreshed UI at 1440x900 and 1060x720; text wraps or truncates inside its containers at the smaller size.
