@@ -24,7 +24,45 @@ Write(
     ```
 
     The tasks are deliberately small so an LLM agent can add tests, make a focused code change, verify, and commit.
+
+    Reset this repository back to three pending tasks after a run:
+
+    ```bash
+    ./scripts/reset-sample.sh
+    ```
     """);
+Write(
+    "scripts/reset-sample.sh",
+    """
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    visual_relay_root="${VISUAL_RELAY_ROOT:-}"
+
+    if [[ -z "$visual_relay_root" ]]; then
+      visual_relay_root="$(cd "$repo_root/../visual-relay" 2>/dev/null && pwd || true)"
+    fi
+
+    if [[ ! -x "$visual_relay_root/visual-relay" ]]; then
+      echo "Set VISUAL_RELAY_ROOT to the Visual Relay checkout, or keep it beside sample-tasks." >&2
+      exit 1
+    fi
+
+    (cd "$visual_relay_root" && ./visual-relay sample-reset "$repo_root")
+
+    if git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+      git -C "$repo_root" add -A
+      if git -C "$repo_root" diff --cached --quiet; then
+        echo "sample-tasks already matches the reset state."
+      else
+        git -C "$repo_root" commit -m "chore: reset sample relay project"
+      fi
+    fi
+
+    echo "sample-tasks reset to three pending tasks."
+    """);
+MakeExecutable("scripts/reset-sample.sh");
 Write(
     ".relay/config.json",
     """
@@ -188,6 +226,25 @@ void Write(string relativePath, string content)
     var path = Path.Combine(target, relativePath);
     Directory.CreateDirectory(Path.GetDirectoryName(path)!);
     File.WriteAllText(path, content.TrimEnd() + Environment.NewLine);
+}
+
+void MakeExecutable(string relativePath)
+{
+    if (OperatingSystem.IsWindows())
+    {
+        return;
+    }
+
+    var path = Path.Combine(target, relativePath);
+    File.SetUnixFileMode(
+        path,
+        UnixFileMode.UserRead
+            | UnixFileMode.UserWrite
+            | UnixFileMode.UserExecute
+            | UnixFileMode.GroupRead
+            | UnixFileMode.GroupExecute
+            | UnixFileMode.OtherRead
+            | UnixFileMode.OtherExecute);
 }
 
 static void ResetDirectory(string path)

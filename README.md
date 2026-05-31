@@ -34,6 +34,8 @@ Common commands:
 ./visual-relay install-hooks
 ```
 
+The generated sample repository also includes `./scripts/reset-sample.sh`, which returns it to three pending tasks and commits that reset state after a real run.
+
 With Nix:
 
 ```bash
@@ -61,7 +63,7 @@ nix develop
 - `.githooks/commit-msg` enforces Conventional Commits after `./visual-relay install-hooks`.
 - `tools/guards/check-file-size.sh` keeps C# and Avalonia XAML source files under 300 lines by default.
 - `tools/VisualRelay.Screenshots` renders the README screenshots through Avalonia Headless at desktop and compact widths.
-- `tools/VisualRelay.SampleTasks` regenerates `/Users/admin/Dev/sample-tasks`.
+- `tools/VisualRelay.SampleTasks` regenerates `/Users/admin/Dev/sample-tasks` with a local reset script for repeatable demos.
 
 ## Tests
 

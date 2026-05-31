@@ -75,3 +75,7 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Compared the Visual Relay selected queue card against the reference active state and moved the styling closer: full bright outline, blue left rail, selected fill, and a subtle glow.
 - Strengthened selected stage cards with the same brighter outline/glow language so stage log filtering is visually obvious.
 - Replaced cent labels with rounded dollar labels everywhere (`$0.30`, `$0.00` for sub-cent estimates), including task cards, stage cards, run events, screenshots, and tests.
+
+## 2026-05-31 Sample Reset
+- Regenerated `/Users/admin/Dev/sample-tasks` to the pre-run state with three pending tasks: `add-multiply`, `improve-slugify`, and `nested-todo-summary`.
+- Updated the sample generator to include `scripts/reset-sample.sh`; the script reruns `./visual-relay sample-reset`, stages the regenerated sample state, and commits it when a real run has changed the repo.
