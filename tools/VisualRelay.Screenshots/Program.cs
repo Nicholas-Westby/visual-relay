@@ -75,14 +75,14 @@ static MainWindowViewModel BuildViewModel()
     var viewModel = new MainWindowViewModel
     {
         RootPath = root,
-        StatusText = "Running add-multiply-helper"
+        StatusText = "1 running · 2 queued · 1 review"
     };
     var task = new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, []);
     viewModel.Tasks.Add(task);
     viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding"));
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware"));
     viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test"));
-    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens"));
+    viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "swival exit 2"));
     viewModel.SelectedTask = task;
     viewModel.SelectedTaskMarkdown = File.ReadAllText(taskPath);
     viewModel.SelectedTaskContext = "### logs/app.log\n12:04:41 [plan] 3 edits planned across 3 files\n13:08:54 [implement] stage complete in 28s";
@@ -104,10 +104,10 @@ static string WriteTask(string root, string id, string markdown)
     return path;
 }
 
-static RelayTaskItem DemoTask(string root, string id)
+static RelayTaskItem DemoTask(string root, string id, string? reviewReason = null)
 {
     var path = WriteTask(root, id, $"# {id}\n\nDemo task used to exercise the Visual Relay control room.");
-    return new RelayTaskItem(id, path, Path.GetDirectoryName(path)!, false, []);
+    return new RelayTaskItem(id, path, Path.GetDirectoryName(path)!, false, [], reviewReason);
 }
 
 static void SeedTraceEntries(MainWindowViewModel viewModel)

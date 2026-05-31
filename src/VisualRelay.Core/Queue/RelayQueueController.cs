@@ -64,6 +64,7 @@ public sealed class RelayQueueController
     public async Task<IReadOnlyList<RelayTaskOutcome>> DrainAsync(CancellationToken cancellationToken = default)
     {
         var results = new List<RelayTaskOutcome>();
+        var circuitBreaker = new DrainCircuitBreaker();
         _pauseRequested = false;
         State = RelayQueueState.Running;
 
@@ -73,6 +74,12 @@ public sealed class RelayQueueController
             var outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
             results.Add(outcome);
             Tasks.RemoveAt(0);
+
+            if (circuitBreaker.ShouldHalt(RootPath, outcome))
+            {
+                State = RelayQueueState.Failed;
+                return results;
+            }
 
             if (_pauseRequested)
             {
@@ -98,4 +105,3 @@ public sealed class RelayQueueController
         return -1;
     }
 }
-

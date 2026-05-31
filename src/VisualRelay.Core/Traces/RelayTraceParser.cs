@@ -87,6 +87,10 @@ public static class RelayTraceParser
             var input = block.TryGetProperty("input", out var rawInput) ? rawInput.GetRawText() : string.Empty;
             entries.Add(new TraceEntry(TraceEntryKind.ToolCall, name, input));
         }
+        else if (type is "thinking" or "reasoning")
+        {
+            entries.Add(new TraceEntry(TraceEntryKind.Thinking, "thinking", ReadString(block, "thinking", "text", "content")));
+        }
         else if (type == "tool_result")
         {
             entries.Add(new TraceEntry(TraceEntryKind.ToolResult, "tool_result", ReadString(block, "content")));
@@ -106,4 +110,3 @@ public static class RelayTraceParser
         return string.Empty;
     }
 }
-

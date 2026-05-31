@@ -10,4 +10,5 @@ public sealed record RelayConfig(
     int MaxStageFailures,
     int MaxTurns,
     bool BaselineVerify,
+    bool ArchiveOnDone,
     int SubagentTimeoutMilliseconds);

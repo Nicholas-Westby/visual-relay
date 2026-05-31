@@ -22,6 +22,7 @@ public static class RelayConfigLoader
             MaxStageFailures: 3,
             MaxTurns: 200,
             BaselineVerify: true,
+            ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 1_200_000);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
@@ -56,6 +57,7 @@ public static class RelayConfigLoader
             MaxStageFailures = OptionalInt(root, "maxStageFailures", defaults.MaxStageFailures),
             MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
             BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
+            ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
             SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds)
         };
     }

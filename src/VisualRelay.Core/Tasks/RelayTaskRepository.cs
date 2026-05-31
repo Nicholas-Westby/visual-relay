@@ -19,6 +19,15 @@ public sealed class RelayTaskRepository
 
     public async Task<IReadOnlyList<RelayTaskItem>> ListPendingAsync(CancellationToken cancellationToken = default)
     {
+        return (await ListAsync(includeNeedsReview: false, cancellationToken))
+            .Where(task => !task.NeedsReview)
+            .ToArray();
+    }
+
+    public async Task<IReadOnlyList<RelayTaskItem>> ListAsync(
+        bool includeNeedsReview = true,
+        CancellationToken cancellationToken = default)
+    {
         var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
         var tasksRoot = Path.Combine(RootPath, config.TasksDir);
         if (!Directory.Exists(tasksRoot))
@@ -29,7 +38,8 @@ public sealed class RelayTaskRepository
         var tasks = new List<RelayTaskItem>();
         Walk(tasksRoot, tasksRoot, tasks);
         return tasks
-            .Where(task => !File.Exists(Path.Combine(RootPath, ".relay", task.Id, "NEEDS-REVIEW")))
+            .Select(AttachReviewState)
+            .Where(task => includeNeedsReview || !task.NeedsReview)
             .OrderBy(task => task.Id, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -76,6 +86,18 @@ public sealed class RelayTaskRepository
                 : [];
             tasks.Add(new RelayTaskItem(id, path, directory, nested, siblings));
         }
+    }
+
+    private RelayTaskItem AttachReviewState(RelayTaskItem task)
+    {
+        var reviewFile = Path.Combine(RootPath, ".relay", task.Id, "NEEDS-REVIEW");
+        if (!File.Exists(reviewFile))
+        {
+            return task;
+        }
+
+        var reason = File.ReadLines(reviewFile).FirstOrDefault(line => !string.IsNullOrWhiteSpace(line));
+        return task with { ReviewReason = reason ?? "Needs review" };
     }
 
     private static bool IsSkippedName(string name) =>
@@ -133,4 +155,3 @@ public sealed class RelayTaskRepository
         return string.Join($"{Environment.NewLine}{Environment.NewLine}", parts);
     }
 }
-

@@ -3,6 +3,7 @@ namespace VisualRelay.Domain;
 public sealed record StageInvocation(
     RelayStageDefinition Stage,
     string Tier,
+    string RunId,
     string TargetRoot,
     string TaskName,
     string TaskInput,
@@ -14,4 +15,3 @@ public sealed record StageInvocation(
     int MaxTurns,
     string? LastTestOutput = null,
     string? TaskContext = null);
-

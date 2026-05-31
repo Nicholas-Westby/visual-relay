@@ -17,7 +17,11 @@ internal static class GitCommitter
             return GitCommitResult.Failed("target root is not a git repository");
         }
 
-        await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
+        var reset = await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
+        if (reset.ExitCode != 0)
+        {
+            return GitCommitResult.Failed($"git reset failed: {reset.Output.Trim()}");
+        }
         IReadOnlyList<string> manifestFilesToStage;
         try
         {
@@ -28,7 +32,7 @@ internal static class GitCommitter
             return GitCommitResult.Failed(ex.Message);
         }
 
-        var add = await GitAsync(rootPath, ["add", "--", .. manifestFilesToStage, .. proofFiles], cancellationToken);
+        var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage, .. proofFiles], cancellationToken);
         if (add.ExitCode != 0)
         {
             return GitCommitResult.Failed($"git add failed: {add.Output.Trim()}");
@@ -38,13 +42,13 @@ internal static class GitCommitter
         var commit = await GitAsync(rootPath, ["commit", "-m", message], cancellationToken, TimeSpan.FromMinutes(2));
         if (commit.ExitCode != 0)
         {
-            return GitCommitResult.Failed($"git commit failed: {commit.Output.Trim()}");
+            return GitCommitResult.Failed($"commit rejected: {commit.Output.Trim()}");
         }
 
         var sha = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
         return sha.ExitCode == 0
             ? GitCommitResult.Committed(sha.Output.Trim())
-            : GitCommitResult.Failed("commit landed but rev-parse failed");
+            : GitCommitResult.Failed($"git rev-parse failed after commit: {sha.Output.Trim()}");
     }
 
     private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
@@ -68,20 +72,16 @@ internal static class GitCommitter
         foreach (var relative in manifest.Distinct(StringComparer.Ordinal))
         {
             var fullPath = Path.Combine(rootPath, relative);
-            if (File.Exists(fullPath))
+            if (File.Exists(fullPath) || Directory.Exists(fullPath))
             {
                 files.Add(relative);
                 continue;
             }
 
-            var tracked = await GitAsync(rootPath, ["ls-files", "--error-unmatch", "--", relative], cancellationToken);
-            if (tracked.ExitCode == 0)
+            var tracked = await GitAsync(rootPath, ["ls-files", "--", relative], cancellationToken);
+            if (!string.IsNullOrWhiteSpace(tracked.Output))
             {
-                var remove = await GitAsync(rootPath, ["rm", "-q", "--", relative], cancellationToken);
-                if (remove.ExitCode != 0)
-                {
-                    throw new InvalidOperationException($"git rm failed for {relative}: {remove.Output.Trim()}");
-                }
+                files.Add(relative);
             }
         }
 

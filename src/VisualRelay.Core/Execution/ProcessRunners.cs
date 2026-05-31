@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using VisualRelay.Core.Logging;
+using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -17,17 +19,23 @@ public sealed class ShellTestRunner : ITestRunner
 public sealed class SwivalSubagentRunner : ISubagentRunner
 {
     private readonly RelayConfig _config;
+    private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
 
-    public SwivalSubagentRunner(RelayConfig config, string swivalBinary = "swival")
+    public SwivalSubagentRunner(RelayConfig config, string swivalBinary = "swival", IRelayEventSink? eventSink = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
+        _eventSink = eventSink;
     }
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         Directory.CreateDirectory(invocation.TraceDirectory);
+        await using var profileSession = await SwivalProfileSession.PrepareAsync(invocation.TargetRoot, cancellationToken);
+        await using var traceTailer = _eventSink is null
+            ? null
+            : RelayTraceTailer.Start(invocation.TraceDirectory, (entry, token) => PublishTraceAsync(invocation, entry, token));
         var args = BuildArguments(invocation);
         var prompt = BuildPrompt(invocation);
         var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
@@ -39,12 +47,29 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
 
         if (result.ExitCode != 0)
         {
-            return new SubagentResult(result.Output, null, false, $"swival exit {result.ExitCode}");
+            return new SubagentResult(result.Output, null, false, $"swival exit {result.ExitCode}: {TrimForError(result.Output)}");
         }
 
         var json = ExtractLastFencedJson(result.Output);
         return new SubagentResult(result.Output, json, json is not null, json is null ? "no valid fenced json block" : null);
     }
+
+    private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
+        _eventSink!.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow,
+            "info",
+            "trace",
+            invocation.RunId,
+            invocation.TargetRoot,
+            invocation.TaskName,
+            invocation.Stage.Number,
+            invocation.Tier,
+            Data: new Dictionary<string, string>
+            {
+                ["kind"] = entry.Kind.ToString(),
+                ["title"] = entry.Title,
+                ["content"] = TrimForTrace(entry.Content)
+            }), cancellationToken);
 
     private string BuildArguments(StageInvocation invocation)
     {
@@ -109,7 +134,7 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             return null;
         }
 
-        var end = text.IndexOf("```", start + 1, StringComparison.Ordinal);
+        var end = FindClosingFence(text, start + 1);
         if (end < 0)
         {
             return null;
@@ -128,6 +153,41 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
     }
 
     private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
+
+    private static int FindClosingFence(string text, int start)
+    {
+        var cursor = start;
+        while (cursor < text.Length)
+        {
+            var lineEnd = text.IndexOf('\n', cursor);
+            if (lineEnd < 0)
+            {
+                lineEnd = text.Length;
+            }
+
+            var line = text[cursor..lineEnd].Trim();
+            if (line == "```")
+            {
+                return cursor;
+            }
+
+            cursor = lineEnd + 1;
+        }
+
+        return -1;
+    }
+
+    private static string TrimForError(string value)
+    {
+        var text = value.Trim();
+        return text.Length <= 600 ? text : string.Concat(text.AsSpan(0, 600), "...");
+    }
+
+    private static string TrimForTrace(string value)
+    {
+        var text = value.Trim();
+        return text.Length <= 1_500 ? text : string.Concat(text.AsSpan(0, 1_500), "...");
+    }
 }
 
 internal static class ProcessCapture

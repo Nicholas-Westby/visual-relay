@@ -32,14 +32,14 @@ Each stage carries its tier, file access scope, command scope, prompt, and JSON 
 
 ## GUI Views
 - Root bar: selected repository, browse button, refresh button, install/config status.
-- Queue column: pending tasks, drag or button reorder, start selected, drain queue, pause/resume.
+- Queue column: pending and needs-review tasks, review reason, button reorder, start selected, drain queue, pause/resume.
 - Task detail: task markdown preview, nested context files, status, manifest, proof artifacts.
 - Stage timeline: current stage, attempts, tier escalation, red/green checks, elapsed time.
 - LLM command pane: rendered trace records with assistant text, tool calls, and tool results.
 - Run log pane: structured events filtered by task, stage, level, and run id.
 
 ## Execution Model
-Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. The first implementation supports a reliable simulated runner for tests and UI verification, plus a real process runner that can invoke Swival when a compatible environment is present.
+Runs are serialized. A `RelayQueueController` owns the in-memory queue order, selected task, run state, pause request, and boundary decisions. A `RelayDriver` owns one task's staged execution and emits structured events. The app invokes Swival directly through a C# runner, generates a temporary local proxy profile when needed, tails Swival JSONL traces live, and supports reliable simulated runners for tests.
 
 ## Safety
 - The app never runs two Relay tasks at once.
@@ -47,4 +47,5 @@ Runs are serialized. A `RelayQueueController` owns the in-memory queue order, se
 - Root selection must contain or be installable with `.relay/config.json`.
 - Git and process calls are wrapped behind interfaces so tests can use fakes.
 - Commit hooks in this repo enforce conventional commits for Visual Relay itself.
-
+- Unexpected runner crashes are flagged into `.relay/<task>/NEEDS-REVIEW` with details so queue drains do not loop on the same broken task.
+- Repeated commit-gate rejections halt drain with `.relay/DRAIN-HALTED`.

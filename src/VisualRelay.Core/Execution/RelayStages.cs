@@ -34,7 +34,7 @@ public static class RelayStages
             files,
             commands,
             SystemPromptFor(name),
-            $"End your reply with a single fenced ```json block matching: {contract}");
+            $"End your reply with a single fenced ```json block, nothing after it, matching: {contract}");
 
     private static string SystemPromptFor(string name) => name switch
     {

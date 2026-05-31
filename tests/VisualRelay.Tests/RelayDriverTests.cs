@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -65,6 +66,47 @@ public sealed class RelayDriverTests
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.txt")));
         Assert.DoesNotContain("relay-redgate:repair-status:", TestGit.Run(repo.Root, "stash", "list"));
     }
+
+    [Fact]
+    public async Task RunTaskAsync_FlagsUnexpectedRunnerCrashAndSkipsFuturePendingLists()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("crashy", "# Crashy\n");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(new ThrowingSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "crashy");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        var review = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "crashy", "NEEDS-REVIEW"));
+        Assert.Contains("exception: kaboom", review, StringComparison.Ordinal);
+        Assert.Contains(nameof(ThrowingSubagentRunner), review, StringComparison.Ordinal);
+        Assert.Empty(await new RelayTaskRepository(repo.Root).ListPendingAsync());
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_RetriesTaskThatWasAlreadyNeedsReview()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("retry-me", "# Retry\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "retry-me"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "retry-me", "NEEDS-REVIEW"), "old failure\n");
+        var runner = new ScriptedSubagentRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                runner,
+                new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "retry-me");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "retry-me", "NEEDS-REVIEW")));
+    }
 }
 
 internal sealed class PrematureImplementationRunner : ISubagentRunner
@@ -98,6 +140,14 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
         };
 
         return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
+internal sealed class ThrowingSubagentRunner : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        throw new InvalidOperationException("kaboom");
     }
 }
 

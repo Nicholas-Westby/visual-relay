@@ -24,6 +24,23 @@ public sealed class RelayTaskRepositoryTests
     }
 
     [Fact]
+    public async Task ListAsync_IncludesNeedsReviewTasksWithReason()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "alpha"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW"), "swival exit 2\nstage 1\n");
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListAsync();
+
+        var task = Assert.Single(tasks);
+        Assert.True(task.NeedsReview);
+        Assert.Equal("Needs review", task.StateLabel);
+        Assert.Equal("swival exit 2", task.ReviewReason);
+    }
+
+    [Fact]
     public async Task ReadTaskContextAsync_InlinesSmallTextSiblingFilesForNestedTasks()
     {
         using var repo = TestRepository.Create();
@@ -43,4 +60,3 @@ public sealed class RelayTaskRepositoryTests
         Assert.Contains("### mock.json", input.Context);
     }
 }
-

@@ -34,10 +34,10 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Run at least one real integration path using available local tooling/environment.
 - [x] Visually verify UI and add screenshots to README.
 - [x] Pull applicable current Relay fixes from the original Relay implementation.
-- [ ] Final cleanup and commit.
+- [x] Final cleanup and commit.
 
 ## Current Checkpoint
-Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and the existing LiteLLM proxy accepted a live `cheap-kimi` chat completion returning `visual relay ok`. Existing the route test has a Bun parse bug around `?? ... ||`, so the live API smoke used direct `curl` against the proxy.
+Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and Visual Relay now completes a real Swival-backed sample task without routing through its own runner.
 
 ## 2026-05-29 Relay Fix Sync
 - Reviewed current Relay history. The new applicable fix was `45d7f4e fix(relay): skip absent strip-set paths so the red-gate stash succeeds`.
@@ -51,3 +51,14 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Added root folder display helpers and tests so the selected project name remains visible while parent paths are trimmed.
 - Hardened the single entry point for managed/sandboxed machines by disabling Avalonia/.NET telemetry, forcing single-node MSBuild, and rendering screenshots without rebuilding during `check`.
 - Verified the refreshed UI at 1440x900 and 1060x720; text wraps or truncates inside its containers at the smaller size.
+
+## 2026-05-31 Direct Runner And Review Visibility
+- Synced applicable Relay fixes from the original Relay implementation: crash-to-`NEEDS-REVIEW`, repeated commit-gate halt marker, scoped git diagnostics, broader Swival profile aliases, and commit-gate handling for deleted files under a manifest directory.
+- Fixed the GUI queue so `NEEDS-REVIEW` tasks remain visible with their reason instead of disappearing from the task list; retrying a review task clears the marker before execution.
+- Made Visual Relay own Swival execution directly by generating a temporary `swival.toml` in the selected root when one is absent. The default profile set targets the local LiteLLM proxy and includes the current cheap/balanced/frontier/vision plus direct model aliases.
+- Added live trace streaming from Swival JSONL into the GUI event/LLM-command panes, including assistant text, tool calls, tool results, and thinking entries.
+- Hardened fenced JSON parsing so JSON string content containing nested Markdown fences no longer breaks stage parsing.
+- Added `./visual-relay sample-reset` to regenerate `/Users/admin/Dev/sample-tasks` and `./visual-relay run-task` for real end-to-end smoke runs through the same core runner the GUI uses.
+- Ported Relay's post-commit completion behavior: committed tasks are renamed `DONE-` and batch tasks move under `llm-tasks/completed/batch-N`, with failures logged but not converted into task failures after a real commit.
+- Real smoke: `./visual-relay run-task /Users/admin/Dev/sample-tasks nested-todo-summary` completed stages 1-11, produced trace/report artifacts, ran the Python tests red then green, committed `81013f0` in the sample repo, and archived the nested task folder in `llm-tasks/completed/batch-1`.
+- Verification: `./visual-relay check` builds the full solution, passes 20 tests, verifies formatting/file-size limits, and regenerates both README screenshots.

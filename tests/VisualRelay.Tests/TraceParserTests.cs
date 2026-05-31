@@ -12,6 +12,7 @@ public sealed class TraceParserTests
             Environment.NewLine,
             """{"type":"system","content":"hidden"}""",
             """{"type":"assistant","message":{"content":[{"type":"text","text":"I will inspect."},{"type":"tool_use","name":"shell","input":{"cmd":"ls"}}]}}""",
+            """{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"checking assumptions"}]}}""",
             """{"type":"assistant","message":{"content":[{"type":"tool_result","content":"README.md"}]}}""",
             """{"type":"last-prompt","lastPrompt":"hidden"}""",
             "{not json");
@@ -19,10 +20,10 @@ public sealed class TraceParserTests
         var entries = RelayTraceParser.Parse(jsonl);
 
         Assert.Equal(
-            [TraceEntryKind.AssistantText, TraceEntryKind.ToolCall, TraceEntryKind.ToolResult],
+            [TraceEntryKind.AssistantText, TraceEntryKind.ToolCall, TraceEntryKind.Thinking, TraceEntryKind.ToolResult],
             entries.Select(e => e.Kind));
         Assert.Contains(entries, e => e.Title == "shell" && e.Content.Contains("\"cmd\":\"ls\"", StringComparison.Ordinal));
+        Assert.Contains(entries, e => e.Kind == TraceEntryKind.Thinking && e.Content == "checking assumptions");
         Assert.Contains(entries, e => e.Content == "README.md");
     }
 }
-

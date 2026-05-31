@@ -28,8 +28,8 @@ public sealed class RelayConfigLoaderTests
         Assert.Equal(["logs/app.log"], config.LogSources);
         Assert.Equal(2, config.MaxVerifyLoops);
         Assert.True(config.BaselineVerify);
+        Assert.True(config.ArchiveOnDone);
         Assert.Equal("local-cheap", config.TierProfiles["cheap"]);
         Assert.Equal("balanced", config.TierProfiles["balanced"]);
     }
 }
-

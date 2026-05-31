@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Queue;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
@@ -98,13 +99,13 @@ public partial class MainWindowViewModel : ViewModelBase
             StatusText = "Refreshing";
             Tasks.Clear();
             var repository = new RelayTaskRepository(RootPath);
-            foreach (var task in await repository.ListPendingAsync())
+            foreach (var task in await repository.ListAsync())
             {
                 Tasks.Add(task);
             }
 
             SelectedTask = Tasks.FirstOrDefault();
-            StatusText = $"{Tasks.Count} pending";
+            StatusText = FormatQueueStatus();
         });
     }
 
@@ -116,9 +117,10 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var taskId = SelectedTask.Id;
         await RunOneAsync(SelectedTask);
-        Tasks.Remove(SelectedTask);
-        SelectedTask = Tasks.FirstOrDefault();
+        await RefreshAsync();
+        SelectedTask = Tasks.FirstOrDefault(task => task.Id == taskId) ?? Tasks.FirstOrDefault();
     }
 
     [RelayCommand(CanExecute = nameof(CanDrain))]
@@ -127,16 +129,22 @@ public partial class MainWindowViewModel : ViewModelBase
         _pauseRequested = false;
         await RunBusyAsync(async () =>
         {
-            while (Tasks.Count > 0 && !_pauseRequested)
+            var circuitBreaker = new DrainCircuitBreaker();
+            while (Tasks.FirstOrDefault(task => !task.NeedsReview) is { } task && !_pauseRequested)
             {
-                var task = Tasks[0];
                 SelectedTask = task;
-                await RunOneAsync(task);
-                Tasks.RemoveAt(0);
+                var outcome = await RunOneAsync(task);
+                Tasks.Remove(task);
+                if (circuitBreaker.ShouldHalt(RootPath, outcome))
+                {
+                    StatusText = "Drain halted: commit gate rejected consecutive tasks";
+                    await RefreshTasksAfterDrainAsync();
+                    return;
+                }
             }
 
             StatusText = _pauseRequested ? "Paused" : "Queue drained";
-            SelectedTask = Tasks.FirstOrDefault();
+            await RefreshTasksAfterDrainAsync();
         });
     }
 
@@ -182,7 +190,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _ = LoadSelectedTaskAsync(value);
     }
 
-    private async Task RunOneAsync(RelayTaskItem task)
+    private async Task<RelayTaskOutcome> RunOneAsync(RelayTaskItem task)
     {
         ResetStages();
         Events.Clear();
@@ -190,11 +198,12 @@ public partial class MainWindowViewModel : ViewModelBase
         StatusText = $"Running {task.Id}";
         var config = await RelayConfigLoader.LoadAsync(RootPath);
         var sink = new ObservableRelayEventSink(HandleRelayEvent);
-        var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config), new ShellTestRunner(), sink);
+        var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(), sink);
         var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
         var outcome = await driver.RunTaskAsync(RootPath, task.Id);
         StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
         await LoadTraceAsync(task.Id);
+        return outcome;
     }
 
     private async Task LoadSelectedTaskAsync(RelayTaskItem? task)
@@ -228,59 +237,5 @@ public partial class MainWindowViewModel : ViewModelBase
             TraceEntries.Add(entry);
         }
     }
-
-    private void HandleRelayEvent(RelayEvent relayEvent)
-    {
-        Events.Insert(0, relayEvent);
-        if (relayEvent.StageNumber is { } stageNumber)
-        {
-            var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
-            if (stage is not null)
-            {
-                stage.Status = relayEvent.EventName switch
-                {
-                    "stage_start" => "Running",
-                    "stage_done" => "Done",
-                    "flagged" => "Flagged",
-                    _ => stage.Status
-                };
-            }
-        }
-    }
-
-    private async Task RunBusyAsync(Func<Task> action)
-    {
-        if (IsBusy)
-        {
-            return;
-        }
-
-        try
-        {
-            IsBusy = true;
-            await action();
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-        }
-        finally
-        {
-            IsBusy = false;
-        }
-    }
-
-    private void ResetStages()
-    {
-        foreach (var stage in Stages)
-        {
-            stage.Status = "Waiting";
-        }
-    }
-
-    private bool CanRefresh() => !IsBusy && Directory.Exists(RootPath);
-    private bool CanRunSelected() => !IsBusy && SelectedTask is not null;
-    private bool CanDrain() => !IsBusy && Tasks.Count > 0;
-    private bool HasSelection() => SelectedTask is not null && !IsBusy;
 
 }
