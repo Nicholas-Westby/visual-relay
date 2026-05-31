@@ -1,5 +1,6 @@
 namespace VisualRelay.Core.Costs;
 
+// Rates are USD per 1,000,000 tokens, matching Relay's pricing.json unit.
 internal sealed record ModelPricing(double Input, double Output, double? CachedInput = null);
 
 internal static class RelayPricing

@@ -12,6 +12,8 @@ public sealed class RelayCostEstimatorTests
         Assert.Equal("$0.00", MoneyFormatter.Dollars(0.003));
         Assert.Equal("$0.30", MoneyFormatter.Dollars(0.304));
         Assert.Equal("$0.31", MoneyFormatter.Dollars(0.305));
+        Assert.Equal("$1.23", MoneyFormatter.Dollars(1.234));
+        Assert.Equal("$30.00", MoneyFormatter.Dollars(30));
     }
 
     [Fact]
@@ -45,4 +47,70 @@ public sealed class RelayCostEstimatorTests
         Assert.Equal(1.75, cost.DurationSeconds, precision: 2);
         Assert.True(cost.CostUsd > 0);
     }
+
+    [Fact]
+    public void EstimateReport_UsesUsdPerMillionTokenScale()
+    {
+        using var document = JsonDocument.Parse(
+            $$"""
+            {
+              "model": "balanced-kimi",
+              "result": { "answer": "{{new string('x', 400)}}" },
+              "stats": { "prompt_cache": { "cached_tokens": 2000 } },
+              "timeline": [
+                { "type": "llm_call", "prompt_tokens_est": 1000 },
+                { "type": "llm_call", "prompt_tokens_est": 1500 },
+                { "type": "tool_call", "prompt_tokens_est": 99999 }
+              ]
+            }
+            """);
+
+        var cost = RelayCostEstimator.EstimateReport(document.RootElement);
+
+        Assert.Equal(2_500, cost.PromptTokens);
+        Assert.Equal(2_000, cost.CachedTokens);
+        Assert.Equal(200, cost.OutputTokens);
+        Assert.Equal(0.00039875, cost.CostUsd, precision: 10);
+    }
+
+    [Fact]
+    public void EstimateReport_UsesInputRateForCachedTokensWithoutCacheDiscount()
+    {
+        using var document = JsonDocument.Parse(
+            $$"""
+            {
+              "model": "vision",
+              "result": { "answer": "{{new string('y', 40)}}" },
+              "stats": { "prompt_cache": { "cached_tokens": 1000 } },
+              "timeline": [
+                { "type": "llm_call", "prompt_tokens_est": 1000 }
+              ]
+            }
+            """);
+
+        var cost = RelayCostEstimator.EstimateReport(document.RootElement);
+
+        Assert.Equal(1_000, cost.PromptTokens);
+        Assert.Equal(1_000, cost.CachedTokens);
+        Assert.Equal(60, cost.OutputTokens);
+        Assert.Equal(0.00039, cost.CostUsd, precision: 10);
+    }
+
+    [Fact]
+    public void TaskRunMetric_SumsAndFormatsUsdWithoutCentConversion()
+    {
+        var metric = new TaskRunMetric(
+            "alpha",
+            [
+                Stage(1, 0.30),
+                Stage(2, 1.20)
+            ]);
+
+        Assert.Equal(1.50, metric.CostUsd, precision: 2);
+        Assert.Equal("$1.50", metric.CostLabel);
+        Assert.Equal("2 steps  3s  $1.50", metric.SummaryLabel);
+    }
+
+    private static StageRunMetric Stage(int number, double costUsd) =>
+        new(number, $"Stage {number}", "balanced", "balanced-kimi", DateTimeOffset.UtcNow, 1.5, costUsd, true, 0, 0, 0, "/tmp/report.json", null);
 }

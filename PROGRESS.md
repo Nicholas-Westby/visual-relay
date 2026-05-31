@@ -89,3 +89,7 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Reworked pause as an explicit task-boundary control: the button now says `Pause after task`, switches to `Resume` when armed, and shows that the current task will finish before the queue stops.
 - Keeping pause armed blocks new runs until resumed instead of silently resetting the state.
 - Archive browsing is now allowed while a task is running; the drain loop uses a stable queue snapshot so switching to archive cannot disturb the active run.
+
+## 2026-05-31 Cost Scale Audit
+- Verified Visual Relay keeps cost values internally as USD, with model rates expressed as USD per 1,000,000 tokens.
+- Added regression coverage for the exact cached/uncached/output token formula, no-cache-discount pricing, and dollar formatting so future changes cannot accidentally divide or multiply by 100.
