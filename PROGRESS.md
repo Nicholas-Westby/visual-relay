@@ -93,3 +93,10 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 ## 2026-05-31 Cost Scale Audit
 - Verified Visual Relay keeps cost values internally as USD, with model rates expressed as USD per 1,000,000 tokens.
 - Added regression coverage for the exact cached/uncached/output token formula, no-cache-discount pricing, and dollar formatting so future changes cannot accidentally divide or multiply by 100.
+
+## 2026-05-31 Run-State Troubleshooting
+- Confirmed the apparent step-5 hang was a stale selected-task view: `add-multiply` was flagged at stage 5, while `nested-todo-summary` had already advanced through stages 6-9 before failing verify.
+- Found the deeper runner issue: Run All continued after a task flagged, leaving authored tests/edits from the failed task in the working tree and contaminating the next task's verification.
+- Added ID-based live run state so a running task keeps its green queue card after Archive/Queue reloads, plus a `Viewing X · running Y` banner and `Follow` action when the user has clicked away from the active run.
+- Changed drain safety so the queue halts at the first non-commit task needing review, writes `.relay/DRAIN-HALTED`, refreshes the flagged task into view, and preserves the existing repeated commit-gate circuit breaker.
+- Verification: targeted live-state/queue tests pass, then `./visual-relay check` passes and regenerates the desktop screenshots.

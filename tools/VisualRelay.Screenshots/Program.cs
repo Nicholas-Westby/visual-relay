@@ -83,12 +83,12 @@ static MainWindowViewModel BuildViewModel()
     };
     var task = new TaskRowViewModel(
         new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0064, DurationSeconds: 138, CompletedStageCount: 6));
-    task.MarkRunning(3, "Diagnose");
     viewModel.Tasks.Add(task);
     viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 3));
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 11));
     viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 4));
     viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "swival exit 2", costUsd: 0.0009, seconds: 31, stages: 2));
+    viewModel.RestoreRunningTaskState(task.Id, 3, "Diagnose");
     viewModel.SelectedTask = task;
     viewModel.SelectedTaskMarkdown = File.ReadAllText(taskPath);
     viewModel.SelectedTaskContext = "### logs/app.log\n12:04:41 [plan] 3 edits planned across 3 files\n13:08:54 [implement] stage complete in 28s";

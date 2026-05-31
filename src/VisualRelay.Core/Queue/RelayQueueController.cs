@@ -66,6 +66,7 @@ public sealed class RelayQueueController
         var results = new List<RelayTaskOutcome>();
         var circuitBreaker = new DrainCircuitBreaker();
         _pauseRequested = false;
+        DrainCircuitBreaker.ClearHaltMarker(RootPath);
         State = RelayQueueState.Running;
 
         while (Tasks.Count > 0)
@@ -77,7 +78,9 @@ public sealed class RelayQueueController
 
             if (circuitBreaker.ShouldHalt(RootPath, outcome))
             {
-                State = RelayQueueState.Failed;
+                State = outcome.Reason?.StartsWith("commit rejected:", StringComparison.OrdinalIgnoreCase) == true
+                    ? RelayQueueState.Failed
+                    : RelayQueueState.ReviewNeeded;
                 return results;
             }
 

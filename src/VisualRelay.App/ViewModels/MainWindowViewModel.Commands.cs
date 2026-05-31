@@ -62,6 +62,7 @@ public partial class MainWindowViewModel
         await RunBusyAsync(async () =>
         {
             var circuitBreaker = new DrainCircuitBreaker();
+            DrainCircuitBreaker.ClearHaltMarker(RootPath);
             var queue = Tasks.Where(task => !task.NeedsReview).ToList();
             while (queue.FirstOrDefault() is { } task && !PauseRequested)
             {
@@ -75,8 +76,8 @@ public partial class MainWindowViewModel
 
                 if (circuitBreaker.ShouldHalt(RootPath, outcome))
                 {
-                    StatusText = "Drain halted: commit gate rejected consecutive tasks";
-                    await RefreshTasksAfterDrainAsync();
+                    StatusText = $"Drain halted: {circuitBreaker.HaltMessage ?? "task needs review"}";
+                    await RefreshTasksAfterDrainAsync(outcome.TaskId);
                     return;
                 }
             }
@@ -91,8 +92,30 @@ public partial class MainWindowViewModel
     {
         PauseRequested = !PauseRequested;
         StatusText = PauseRequested
-            ? IsBusy ? $"Pause armed: finishing {_runningTask?.Id ?? "current task"} before stopping" : "Paused: no new task will start"
-            : IsBusy ? $"Running {_runningTask?.Id ?? "task"}" : FormatQueueStatus();
+            ? IsBusy ? $"Pause armed: finishing {_runningTaskId ?? "current task"} before stopping" : "Paused: no new task will start"
+            : IsBusy ? $"Running {_runningTaskId ?? "task"}" : FormatQueueStatus();
+    }
+
+    [RelayCommand(CanExecute = nameof(CanFollowRunningTask))]
+    private async Task FollowRunningTaskAsync()
+    {
+        if (_runningTaskId is not { } taskId)
+        {
+            return;
+        }
+
+        if (ShowArchive)
+        {
+            ShowArchive = false;
+            await ReloadTaskListAsync(taskId);
+            return;
+        }
+
+        SelectedTask = Tasks.FirstOrDefault(task => task.Id == taskId);
+        if (SelectedTask is null)
+        {
+            await ReloadTaskListAsync(taskId);
+        }
     }
 
     [RelayCommand(CanExecute = nameof(HasSelection))]
@@ -142,6 +165,7 @@ public partial class MainWindowViewModel
             task.IsSelected = ReferenceEquals(task, value);
         }
 
+        NotifyRunningTaskContextChanged();
         _ = LoadSelectedTaskAsync(value);
     }
 
@@ -150,9 +174,8 @@ public partial class MainWindowViewModel
         ResetStages();
         ClearLogState();
         StatusText = $"Running {task.Id}";
-        _runningTask = task;
+        BeginRunningTask(task);
         NotifyPauseStateChanged();
-        task.MarkRunning();
         var config = await RelayConfigLoader.LoadAsync(RootPath);
         var sink = new ObservableRelayEventSink(HandleRelayEvent);
         var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(), sink);
@@ -171,8 +194,7 @@ public partial class MainWindowViewModel
         }
         finally
         {
-            task.MarkIdle();
-            _runningTask = null;
+            ClearRunningTask(task.Id);
             NotifyPauseStateChanged();
         }
     }

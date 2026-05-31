@@ -7,7 +7,7 @@ public enum RelayQueueState
     Running,
     PauseRequested,
     Paused,
+    ReviewNeeded,
     Completed,
     Failed
 }
-

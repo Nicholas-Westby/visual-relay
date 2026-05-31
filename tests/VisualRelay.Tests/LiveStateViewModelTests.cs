@@ -7,6 +7,48 @@ namespace VisualRelay.Tests;
 public sealed class LiveStateViewModelTests
 {
     [Fact]
+    public async Task MainWindow_ReconcilesRunningTaskAcrossTaskListReload()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("nested", "# Nested\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        viewModel.RestoreRunningTaskState("nested", 5, "Author-tests");
+
+        await viewModel.RefreshCommand.ExecuteAsync(null);
+
+        var row = Assert.Single(viewModel.Tasks, task => task.Id == "nested");
+        Assert.True(row.IsRunning);
+        Assert.Equal("Step 05 · Author-tests", row.MetricsLine);
+    }
+
+    [Fact]
+    public async Task MainWindow_ExposesFollowActionWhenSelectionDiffersFromRunningTask()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("nested", "# Nested\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        viewModel.RestoreRunningTaskState("nested", 8, "Fix");
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "alpha");
+
+        Assert.True(viewModel.IsViewingDifferentTaskDuringRun);
+        Assert.Equal("Viewing alpha · running nested", viewModel.ViewingRunContextText);
+        Assert.True(viewModel.FollowRunningTaskCommand.CanExecute(null));
+
+        await viewModel.FollowRunningTaskCommand.ExecuteAsync(null);
+
+        Assert.Equal("nested", viewModel.SelectedTask?.Id);
+        Assert.False(viewModel.IsViewingDifferentTaskDuringRun);
+    }
+
+    [Fact]
     public void TaskRow_RunningStateOverridesPersistedTaskState()
     {
         var task = new RelayTaskItem("add-multiply", "/tmp/llm-tasks/add-multiply.md", "/tmp/llm-tasks", false, []);

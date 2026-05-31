@@ -48,13 +48,13 @@ public partial class MainWindowViewModel
         {
             var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
             if (relayEvent.EventName == "stage_start" &&
-                _runningTask is { } runningTask &&
-                relayEvent.TaskId == runningTask.Id)
+                relayEvent.TaskId is { } taskId &&
+                string.Equals(taskId, _runningTaskId, StringComparison.Ordinal))
             {
                 var stageName = relayEvent.Data is not null && relayEvent.Data.TryGetValue("name", out var name)
                     ? name
                     : stage?.Name;
-                runningTask.MarkRunning(stageNumber, stageName ?? stage?.Name);
+                UpdateRunningStage(taskId, stageNumber, stageName ?? stage?.Name);
             }
         }
     }
@@ -85,9 +85,9 @@ public partial class MainWindowViewModel
         }
     }
 
-    private async Task RefreshTasksAfterDrainAsync()
+    private async Task RefreshTasksAfterDrainAsync(string? preferredTaskId = null)
     {
-        await ReloadTaskListAsync();
+        await ReloadTaskListAsync(preferredTaskId);
         StatusText = StatusText == "Queue drained" ? FormatQueueStatus() : StatusText;
     }
 
@@ -101,6 +101,7 @@ public partial class MainWindowViewModel
             Tasks.Add(new TaskRowViewModel(task));
         }
 
+        ApplyRunningTaskToRows();
         SelectedTask = preferredTaskId is null
             ? Tasks.FirstOrDefault()
             : Tasks.FirstOrDefault(task => task.Id == preferredTaskId) ?? Tasks.FirstOrDefault();

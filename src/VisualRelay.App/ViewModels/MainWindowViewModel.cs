@@ -23,6 +23,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, List<TraceEntry>> _liveTraceEntriesByTask = new(StringComparer.Ordinal);
     private int? _selectedStageFilter;
     private TaskRowViewModel? _runningTask;
+    private string? _runningTaskId;
+    private int? _runningStageNumber;
+    private string? _runningStageName;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker())
@@ -70,6 +73,9 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
+    [NotifyCanExecuteChangedFor(nameof(FollowRunningTaskCommand))]
+    [NotifyPropertyChangedFor(nameof(IsViewingDifferentTaskDuringRun))]
+    [NotifyPropertyChangedFor(nameof(ViewingRunContextText))]
     private TaskRowViewModel? _selectedTask;
 
     [ObservableProperty]
@@ -118,11 +124,14 @@ public partial class MainWindowViewModel : ViewModelBase
     public string TaskListToggleText => ShowArchive ? "Queue" : "Archive";
     public string PauseButtonText => PauseRequested ? "Resume" : "Pause after task";
     public string PauseNoticeText => PauseRequested
-        ? IsBusy ? $"Stops after {_runningTask?.Id ?? "current task"}" : "Paused before next task"
+        ? IsBusy ? $"Stops after {_runningTaskId ?? "current task"}" : "Paused before next task"
         : string.Empty;
     public bool IsPauseNoticeVisible => PauseRequested;
     public IBrush PauseButtonBackground => PauseRequested ? PauseActiveBackground : PauseIdleBackground;
     public IBrush PauseButtonBorderBrush => PauseRequested ? PauseActiveBorder : PauseIdleBorder;
     public IBrush PauseButtonForeground => PauseRequested ? PauseActiveForeground : PauseIdleForeground;
+    public bool IsViewingDifferentTaskDuringRun =>
+        _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);
+    public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $"Viewing {SelectedTask!.Id} · running {_runningTaskId}" : string.Empty;
 
 }
