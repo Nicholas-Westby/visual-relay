@@ -60,6 +60,57 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.DrainQueueCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task ToggleArchiveCommand_CanLoadArchiveWhileRunnerIsBusy()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("pending", "# Pending\n");
+        var completed = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-1");
+        Directory.CreateDirectory(completed);
+        await File.WriteAllTextAsync(Path.Combine(completed, "DONE-finished.md"), "# Finished\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        viewModel.IsBusy = true;
+
+        Assert.True(viewModel.ToggleArchiveCommand.CanExecute(null));
+
+        await viewModel.ToggleArchiveCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.ShowArchive);
+        Assert.Equal("finished", Assert.Single(viewModel.Tasks).Id);
+    }
+
+    [Fact]
+    public void TogglePauseCommand_ShowsTaskBoundarySemanticsAndBlocksNewRuns()
+    {
+        var viewModel = new MainWindowViewModel();
+        viewModel.Tasks.Add(new TaskRowViewModel(new("alpha", "/tmp/llm-tasks/alpha.md", "/tmp/llm-tasks", false, [])));
+        viewModel.SelectedTask = viewModel.Tasks[0];
+
+        Assert.Equal("Pause after task", viewModel.PauseButtonText);
+        Assert.False(viewModel.IsPauseNoticeVisible);
+        Assert.True(viewModel.DrainQueueCommand.CanExecute(null));
+
+        viewModel.TogglePauseCommand.Execute(null);
+
+        Assert.True(viewModel.PauseRequested);
+        Assert.Equal("Resume", viewModel.PauseButtonText);
+        Assert.True(viewModel.IsPauseNoticeVisible);
+        Assert.Equal("Paused before next task", viewModel.PauseNoticeText);
+        Assert.Equal("Paused: no new task will start", viewModel.StatusText);
+        Assert.False(viewModel.DrainQueueCommand.CanExecute(null));
+        Assert.False(viewModel.RunSelectedCommand.CanExecute(null));
+
+        viewModel.TogglePauseCommand.Execute(null);
+
+        Assert.False(viewModel.PauseRequested);
+        Assert.Equal("Pause after task", viewModel.PauseButtonText);
+        Assert.False(viewModel.IsPauseNoticeVisible);
+        Assert.True(viewModel.DrainQueueCommand.CanExecute(null));
+    }
+
     private static void WriteReportAndTrace(string root, string taskId, int stage, string content)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

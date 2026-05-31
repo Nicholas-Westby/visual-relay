@@ -84,3 +84,8 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Split queue cards into task row view models so persisted task state (`Pending`, `Needs review`, `Completed`) no longer hides live execution state.
 - Running tasks now keep a green rail, border, status, and current step label even when the selected/log-filtered task or stage changes.
 - Stage cards now distinguish blue log-filter selection from green execution state, and live task events are retained per task so clicking away and back reconstructs the active stage instead of falling back to stale report history.
+
+## 2026-05-31 Pause And Archive UX
+- Reworked pause as an explicit task-boundary control: the button now says `Pause after task`, switches to `Resume` when armed, and shows that the current task will finish before the queue stops.
+- Keeping pause armed blocks new runs until resumed instead of silently resetting the state.
+- Archive browsing is now allowed while a task is running; the drain loop uses a stable queue snapshot so switching to archive cannot disturb the active run.

@@ -75,9 +75,11 @@ static MainWindowViewModel BuildViewModel()
     var viewModel = new MainWindowViewModel
     {
         RootPath = root,
-        StatusText = "1 running · 2 queued · 1 review",
+        StatusText = "Pause armed: finishing add-multiply-helper before stopping",
         SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01",
-        LogScopeLabel = "stage 02"
+        LogScopeLabel = "stage 02",
+        IsBusy = true,
+        PauseRequested = true
     };
     var task = new TaskRowViewModel(
         new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0064, DurationSeconds: 138, CompletedStageCount: 6));

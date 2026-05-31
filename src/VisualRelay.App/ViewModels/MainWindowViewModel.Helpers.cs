@@ -162,8 +162,9 @@ public partial class MainWindowViewModel
         Enum.TryParse<TraceEntryKind>(kind, out var parsed) ? parsed : TraceEntryKind.AssistantText;
 
     private bool CanRefresh() => !IsBusy && Directory.Exists(RootPath);
-    private bool CanRunSelected() => !IsBusy && SelectedTask is not null && !SelectedTask.IsArchived;
-    private bool CanDrain() => !IsBusy && !ShowArchive && Tasks.Any(task => !task.NeedsReview);
+    private bool CanToggleArchive() => Directory.Exists(RootPath);
+    private bool CanRunSelected() => !IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived;
+    private bool CanDrain() => !IsBusy && !PauseRequested && !ShowArchive && Tasks.Any(task => !task.NeedsReview);
     private bool HasSelection() => SelectedTask is not null && !IsBusy && !ShowArchive;
 
     private async Task LoadRunHistoryAsync(string taskId)
@@ -222,6 +223,12 @@ public partial class MainWindowViewModel
         }
 
         return entries;
+    }
+
+    private void NotifyPauseStateChanged()
+    {
+        OnPropertyChanged(nameof(PauseNoticeText));
+        OnPropertyChanged(nameof(PauseButtonText));
     }
 
     private void ApplyLogFilter()
