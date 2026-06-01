@@ -1,12 +1,8 @@
 # Visual Relay
 
-Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It rebuilds the staged Relay pipeline from the original Relay implementation with a modern dark GUI for choosing a repository root, inspecting the task queue, reordering work, pausing at safe boundaries, and drilling into stages, logs, and LLM command traces.
+Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It brings a staged task pipeline into a modern dark GUI for choosing a repository root, inspecting the task queue, reordering work, pausing at safe boundaries, and drilling into stages, logs, and LLM command traces.
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
-
-Compact-width check:
-
-![Visual Relay compact window](docs/images/visual-relay-compact.png)
 
 ## Run
 
@@ -34,14 +30,9 @@ Common commands:
 ./visual-relay install-hooks
 ```
 
+The launcher uses an existing `dotnet` installation when available. If `dotnet` is missing and `nix` is installed, it automatically re-enters the command through `nix develop`, so a separate shell step is not required.
+
 The generated sample repository also includes `./scripts/reset-sample.sh`, which returns it to three pending tasks and commits that reset state after a real run.
-
-With Nix:
-
-```bash
-nix develop
-./visual-relay launch
-```
 
 ## What It Does
 
@@ -54,7 +45,7 @@ nix develop
 - Lets stage cards act as log filters: click a stage for that step's events/traces, click it again to return to the full task log.
 - Marks committed tasks `DONE-` and archives batch tasks under `llm-tasks/completed/batch-N`.
 - Uses Verify-supplied Conventional Commit subjects when available and allows the final staged set to be a subset of the manifest, matching current Relay behavior.
-- Owns Swival execution directly, including temporary profile generation for the local LiteLLM proxy; it does not route work through its own runner.
+- Owns Swival execution directly, including temporary profile generation for the local LiteLLM proxy.
 - Supports mocked execution in tests and real Swival/test command execution in the app and `run-task` smoke command.
 
 ## Development Rails

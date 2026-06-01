@@ -33,11 +33,11 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - [x] Run automated tests.
 - [x] Run at least one real integration path using available local tooling/environment.
 - [x] Visually verify UI and add screenshots to README.
-- [x] Pull applicable current Relay fixes from the original Relay implementation.
+- [x] Pull applicable current Relay fixes into Visual Relay.
 - [x] Final cleanup and commit.
 
 ## Current Checkpoint
-Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and Visual Relay now completes a real Swival-backed sample task without routing through its own runner.
+Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .NET 10.0.300, commit hooks are installed, a real temporary git repo gets an actual Relay commit in tests, and Visual Relay now completes a real Swival-backed sample task through its own runner.
 
 ## 2026-05-29 Relay Fix Sync
 - Reviewed current Relay history. The new applicable fix was `45d7f4e fix(relay): skip absent strip-set paths so the red-gate stash succeeds`.
@@ -53,7 +53,7 @@ Tooling rails are in place: `./visual-relay check` passes, Nix shell resolves .N
 - Verified the refreshed UI at 1440x900 and 1060x720; text wraps or truncates inside its containers at the smaller size.
 
 ## 2026-05-31 Direct Runner And Review Visibility
-- Synced applicable Relay fixes from the original Relay implementation: crash-to-`NEEDS-REVIEW`, repeated commit-gate halt marker, scoped git diagnostics, broader Swival profile aliases, and commit-gate handling for deleted files under a manifest directory.
+- Synced applicable Relay fixes: crash-to-`NEEDS-REVIEW`, repeated commit-gate halt marker, scoped git diagnostics, broader Swival profile aliases, and commit-gate handling for deleted files under a manifest directory.
 - Fixed the GUI queue so `NEEDS-REVIEW` tasks remain visible with their reason instead of disappearing from the task list; retrying a review task clears the marker before execution.
 - Made Visual Relay own Swival execution directly by generating a temporary `swival.toml` in the selected root when one is absent. The default profile set targets the local LiteLLM proxy and includes the current cheap/balanced/frontier/vision plus direct model aliases.
 - Added live trace streaming from Swival JSONL into the GUI event/LLM-command panes, including assistant text, tool calls, tool results, and thinking entries.
