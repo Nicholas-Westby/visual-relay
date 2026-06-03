@@ -9,11 +9,53 @@ public sealed class RelayCostEstimatorTests
     [Fact]
     public void Dollars_RoundsToNearestCent()
     {
-        Assert.Equal("$0.00", MoneyFormatter.Dollars(0.003));
         Assert.Equal("$0.30", MoneyFormatter.Dollars(0.304));
         Assert.Equal("$0.31", MoneyFormatter.Dollars(0.305));
         Assert.Equal("$1.23", MoneyFormatter.Dollars(1.234));
         Assert.Equal("$30.00", MoneyFormatter.Dollars(30));
+    }
+
+    [Fact]
+    public void Dollars_ShowsNonZeroForSubCentAmounts()
+    {
+        // Sub-cent amounts must not collapse to "$0.00": keep enough
+        // significant digits (2 sig figs) that real spend stays visible.
+        Assert.Equal("$0.0005", MoneyFormatter.Dollars(0.0005));
+        Assert.Equal("$0.00051", MoneyFormatter.Dollars(0.00051));
+        Assert.Equal("$0.003", MoneyFormatter.Dollars(0.003));
+        Assert.Equal("$0.0099", MoneyFormatter.Dollars(0.0099));
+        Assert.Equal("$0.0000012", MoneyFormatter.Dollars(0.0000012));
+    }
+
+    [Fact]
+    public void Dollars_ReservesZeroStringForZeroOrNegative()
+    {
+        Assert.Equal("$0.00", MoneyFormatter.Dollars(0));
+        Assert.Equal("$0.00", MoneyFormatter.Dollars(-1.5));
+    }
+
+    [Fact]
+    public void Dollars_KeepsTwoDecimalsAtAndAboveOneCent()
+    {
+        Assert.Equal("$0.01", MoneyFormatter.Dollars(0.01));
+        Assert.Equal("$0.01", MoneyFormatter.Dollars(0.014));
+        Assert.Equal("$0.02", MoneyFormatter.Dollars(0.015));
+    }
+
+    [Fact]
+    public void Dollars_DoesNotThrowOnExtremelyTinyAmount()
+    {
+        // Sub-cent branch computes decimals = SubCentSignificantFigures - 1 - magnitude.
+        // For 1e-15 that yields 16, but Math.Round only accepts 0–15 digits.
+        // The formatter must clamp and not throw ArgumentOutOfRangeException.
+        var result15 = MoneyFormatter.Dollars(1e-15);
+        Assert.NotNull(result15);
+        Assert.NotEmpty(result15);
+        Assert.StartsWith("$", result15);
+
+        var result10 = MoneyFormatter.Dollars(1e-10);
+        Assert.NotNull(result10);
+        Assert.StartsWith("$", result10);
     }
 
     [Fact]
