@@ -77,6 +77,35 @@ public sealed class SwivalSubagentRunnerTests
         Assert.Contains("```python", result.Json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunAsync_PassesPromptAsRawArgumentWithoutJsonEscaping()
+    {
+        using var repo = TestRepository.Create();
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-prompt",
+            """
+            #!/usr/bin/env bash
+            last="${@: -1}"
+            printf '%s' "$last" > prompt-capture.txt
+            printf '```json\n{"ok":true}\n```\n'
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script);
+        var invocation = Invocation(repo.Root) with
+        {
+            TaskInput = "Implement `multiply(left, right)` and return the product."
+        };
+
+        var result = await runner.RunAsync(invocation);
+
+        Assert.True(result.IsValid);
+        var captured = await File.ReadAllTextAsync(Path.Combine(repo.Root, "prompt-capture.txt"));
+        Assert.Contains("`", captured, StringComparison.Ordinal);
+        Assert.Contains("\n", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\u0060", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain("\\n", captured, StringComparison.Ordinal);
+    }
+
     private static StageInvocation Invocation(string rootPath) =>
         new(
             RelayStages.All[0],

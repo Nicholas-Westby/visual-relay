@@ -36,10 +36,10 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         await using var traceTailer = _eventSink is null
             ? null
             : RelayTraceTailer.Start(invocation.TraceDirectory, (entry, token) => PublishTraceAsync(invocation, entry, token));
-        var args = BuildArguments(invocation);
-        var prompt = BuildPrompt(invocation);
+        var arguments = BuildArguments(invocation);
+        arguments.Add(BuildPrompt(invocation));
         var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
-        var result = await ProcessCapture.RunAsync(_swivalBinary, $"{args} {JsonSerializer.Serialize(prompt)}", invocation.TargetRoot, timeout, cancellationToken);
+        var result = await ProcessCapture.RunAsync(_swivalBinary, arguments, invocation.TargetRoot, timeout, cancellationToken);
         if (result.TimedOut)
         {
             return new SubagentResult(result.Output, null, false, $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms");
@@ -71,10 +71,10 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
                 ["content"] = TrimForTrace(entry.Content)
             }), cancellationToken);
 
-    private string BuildArguments(StageInvocation invocation)
+    private List<string> BuildArguments(StageInvocation invocation)
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
-        var parts = new[]
+        return new List<string>
         {
             "-q",
             "--profile", profile,
@@ -89,7 +89,6 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
         };
-        return string.Join(" ", parts.Select(Quote));
     }
 
     private static string BuildPrompt(StageInvocation invocation)
@@ -151,8 +150,6 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             return null;
         }
     }
-
-    private static string Quote(string value) => $"\"{value.Replace("\"", "\\\"", StringComparison.Ordinal)}\"";
 
     private static int FindClosingFence(string text, int start)
     {
