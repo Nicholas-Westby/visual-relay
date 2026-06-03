@@ -48,6 +48,7 @@ public sealed class TaskRowViewModel : ViewModelBase
     public Thickness CardBorderThickness => IsRunning || IsSelected ? new Thickness(2) : new Thickness(1);
     public BoxShadows CardShadow => IsRunning ? RunningShadow : IsSelected ? SelectedShadow : NoShadow;
     public string ProgressText => Task.CompletedStageCount == 0 ? "0 / 11" : $"{Task.CompletedStageCount} / 11";
+    public double ProgressFraction => System.Math.Clamp(Task.CompletedStageCount / 11.0, 0, 1);
 
     public bool IsSelected
     {
