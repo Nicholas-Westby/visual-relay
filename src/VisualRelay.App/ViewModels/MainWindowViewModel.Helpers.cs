@@ -168,6 +168,20 @@ public partial class MainWindowViewModel
     private bool CanDrain() => !IsBusy && !PauseRequested && !ShowArchive && Tasks.Any(task => !task.NeedsReview);
     private bool HasSelection() => SelectedTask is not null && !IsBusy && !ShowArchive;
 
+    private bool CanMoveUp() =>
+        HasSelection() && SelectedTask is { } selected && Tasks.IndexOf(selected) > 0;
+
+    private bool CanMoveDown()
+    {
+        if (!HasSelection() || SelectedTask is not { } selected)
+        {
+            return false;
+        }
+
+        var index = Tasks.IndexOf(selected);
+        return index >= 0 && index < Tasks.Count - 1;
+    }
+
     private async Task LoadRunHistoryAsync(string taskId)
     {
         ClearLogState();

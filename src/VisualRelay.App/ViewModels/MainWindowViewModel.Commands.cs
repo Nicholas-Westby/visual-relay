@@ -118,7 +118,7 @@ public partial class MainWindowViewModel
         }
     }
 
-    [RelayCommand(CanExecute = nameof(HasSelection))]
+    [RelayCommand(CanExecute = nameof(CanMoveUp))]
     private void MoveUp()
     {
         if (SelectedTask is null)
@@ -141,7 +141,7 @@ public partial class MainWindowViewModel
         StatusText = PauseRequested ? "Paused: no new task will start" : FormatQueueStatus();
     }
 
-    [RelayCommand(CanExecute = nameof(HasSelection))]
+    [RelayCommand(CanExecute = nameof(CanMoveDown))]
     private void MoveDown()
     {
         if (SelectedTask is null)

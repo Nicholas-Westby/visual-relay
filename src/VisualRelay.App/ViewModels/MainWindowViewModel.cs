@@ -40,6 +40,12 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             Stages.Add(new StageRowViewModel(stage));
         }
+
+        Tasks.CollectionChanged += (_, _) =>
+        {
+            MoveUpCommand.NotifyCanExecuteChanged();
+            MoveDownCommand.NotifyCanExecuteChanged();
+        };
     }
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];

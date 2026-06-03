@@ -111,6 +111,31 @@ public sealed class MainWindowViewModelTests
         Assert.True(viewModel.DrainQueueCommand.CanExecute(null));
     }
 
+    [Fact]
+    public void MoveCommands_TrackSelectedTaskPosition()
+    {
+        var viewModel = new MainWindowViewModel();
+        viewModel.Tasks.Add(new TaskRowViewModel(new("a", "/tmp/llm-tasks/a.md", "/tmp/llm-tasks", false, [])));
+        viewModel.Tasks.Add(new TaskRowViewModel(new("b", "/tmp/llm-tasks/b.md", "/tmp/llm-tasks", false, [])));
+        viewModel.Tasks.Add(new TaskRowViewModel(new("c", "/tmp/llm-tasks/c.md", "/tmp/llm-tasks", false, [])));
+
+        viewModel.SelectedTask = viewModel.Tasks[0];
+        Assert.False(viewModel.MoveUpCommand.CanExecute(null));
+        Assert.True(viewModel.MoveDownCommand.CanExecute(null));
+
+        viewModel.SelectedTask = viewModel.Tasks[1];
+        Assert.True(viewModel.MoveUpCommand.CanExecute(null));
+        Assert.True(viewModel.MoveDownCommand.CanExecute(null));
+
+        viewModel.SelectedTask = viewModel.Tasks[2];
+        Assert.True(viewModel.MoveUpCommand.CanExecute(null));
+        Assert.False(viewModel.MoveDownCommand.CanExecute(null));
+
+        viewModel.SelectedTask = null;
+        Assert.False(viewModel.MoveUpCommand.CanExecute(null));
+        Assert.False(viewModel.MoveDownCommand.CanExecute(null));
+    }
+
     private static void WriteReportAndTrace(string root, string taskId, int stage, string content)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
