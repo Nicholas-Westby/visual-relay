@@ -76,7 +76,7 @@ static MainWindowViewModel BuildViewModel()
     {
         RootPath = root,
         StatusText = "Pause armed: finishing add-multiply-helper before stopping",
-        SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01",
+        SelectedTaskMetricLabel = "6 stages  2m 18s  $0.01",
         LogScopeLabel = "stage 02",
         IsBusy = true,
         PauseRequested = true
@@ -127,7 +127,7 @@ static TaskRowViewModel DemoTask(string root, string id, string? reviewReason = 
 
 static void SeedTraceEntries(MainWindowViewModel viewModel)
 {
-    viewModel.SelectedTaskMetricLabel = "6 steps  2m 18s  $0.01";
+    viewModel.SelectedTaskMetricLabel = "6 stages  2m 18s  $0.01";
     viewModel.LogScopeLabel = "stage 02";
     foreach (var stage in viewModel.Stages)
     {
