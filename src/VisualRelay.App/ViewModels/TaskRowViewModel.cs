@@ -39,7 +39,7 @@ public sealed class TaskRowViewModel : ViewModelBase
     public string StateLabel => IsRunning ? "Running" : Task.StateLabel;
     public string MetricsLine => IsRunning ? RunningStepLabel : Task.MetricsLine;
     public string RunningStepLabel => _runningStageNumber is { } number
-        ? $"Step {number:00} · {_runningStageName ?? "Running"}"
+        ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
         : "Starting task";
     public IBrush AccentBrush => IsRunning ? RunningBrush : NeedsReview ? ReviewBrush : SelectedBrush;
     public IBrush RailBrush => IsRunning ? RunningBrush : IsSelected ? SelectedBrush : Brushes.Transparent;

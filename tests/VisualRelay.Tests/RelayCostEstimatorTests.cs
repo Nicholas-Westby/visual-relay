@@ -150,7 +150,18 @@ public sealed class RelayCostEstimatorTests
 
         Assert.Equal(1.50, metric.CostUsd, precision: 2);
         Assert.Equal("$1.50", metric.CostLabel);
-        Assert.Equal("2 steps  3s  $1.50", metric.SummaryLabel);
+        Assert.Equal("2 stages  3s  $1.50", metric.SummaryLabel);
+    }
+
+    [Fact]
+    public void TaskRunMetric_UsesSingularStageWordForSingleStage()
+    {
+        var metric = new TaskRunMetric("x", [Stage(1, 0.30)]);
+
+        Assert.Equal(1, metric.CompletedStageCount);
+        // Singular: "1 stage " must NOT be followed by another "s".
+        Assert.StartsWith("1 stage  ", metric.SummaryLabel);
+        Assert.DoesNotContain("1 stages", metric.SummaryLabel);
     }
 
     private static StageRunMetric Stage(int number, double costUsd) =>

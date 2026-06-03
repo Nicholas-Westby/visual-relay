@@ -43,7 +43,7 @@ public sealed record TaskRunMetric(
     public string DurationLabel => CompletedStageCount == 0 ? "No run yet" : FormatDuration(DurationSeconds);
     public string SummaryLabel => CompletedStageCount == 0
         ? "No run history"
-        : $"{CompletedStageCount} steps  {DurationLabel}  {CostLabel}";
+        : $"{CompletedStageCount} {(CompletedStageCount == 1 ? "stage" : "stages")}  {DurationLabel}  {CostLabel}";
 
     private static string FormatDuration(double seconds)
     {

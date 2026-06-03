@@ -22,7 +22,7 @@ public sealed class LiveStateViewModelTests
 
         var row = Assert.Single(viewModel.Tasks, task => task.Id == "nested");
         Assert.True(row.IsRunning);
-        Assert.Equal("Step 05 · Author-tests", row.MetricsLine);
+        Assert.Equal("Stage 05 · Author-tests", row.MetricsLine);
     }
 
     [Fact]
@@ -58,7 +58,7 @@ public sealed class LiveStateViewModelTests
 
         Assert.True(row.IsRunning);
         Assert.Equal("Running", row.StateLabel);
-        Assert.Equal("Step 05 · Author-tests", row.MetricsLine);
+        Assert.Equal("Stage 05 · Author-tests", row.MetricsLine);
         Assert.Equal("#ff5ad47d", ColorOf(row.AccentBrush));
     }
 
