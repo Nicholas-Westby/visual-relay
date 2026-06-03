@@ -96,7 +96,42 @@ public static partial class RelayRunHistory
             estimate.CachedTokens,
             estimate.OutputTokens,
             reportPath,
-            Directory.Exists(traceDirectory) ? traceDirectory : null);
+            Directory.Exists(traceDirectory) ? traceDirectory : null,
+            ReadStageSucceeded(reportPath));
+    }
+
+    private static bool ReadStageSucceeded(string reportPath)
+    {
+        try
+        {
+            using var stream = File.OpenRead(reportPath);
+            using var document = JsonDocument.Parse(stream);
+            if (!document.RootElement.TryGetProperty("result", out var result) ||
+                result.ValueKind != JsonValueKind.Object)
+            {
+                return true;
+            }
+
+            if (result.TryGetProperty("outcome", out var outcome) &&
+                outcome.ValueKind == JsonValueKind.String &&
+                !string.Equals(outcome.GetString(), "ok", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (result.TryGetProperty("exit_code", out var exitCode) &&
+                exitCode.ValueKind == JsonValueKind.Number &&
+                exitCode.TryGetInt32(out var code) &&
+                code != 0)
+            {
+                return false;
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        return true;
     }
 
     private static StageRunMetric SquashAttempts(IGrouping<int, StageRunMetric> attempts)

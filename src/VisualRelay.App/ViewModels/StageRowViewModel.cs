@@ -119,7 +119,7 @@ public sealed class StageRowViewModel : ViewModelBase
         ModelLabel = metric.Model;
         if (Status == "Waiting")
         {
-            Status = "Done";
+            Status = metric.Succeeded ? "Done" : "Flagged";
         }
     }
 
