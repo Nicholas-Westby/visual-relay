@@ -42,16 +42,19 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         var result = await ProcessCapture.RunAsync(_swivalBinary, arguments, invocation.TargetRoot, timeout, cancellationToken);
         if (result.TimedOut)
         {
-            return new SubagentResult(result.Output, null, false, $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms");
+            var reason = $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms";
+            return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
         }
 
         if (result.ExitCode != 0)
         {
-            return new SubagentResult(result.Output, null, false, $"swival exit {result.ExitCode}: {TrimForError(result.Output)}");
+            var reason = $"swival exit {result.ExitCode}: {TrimForError(result.Output)}";
+            return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
         }
 
         var json = ExtractLastFencedJson(result.Output);
-        return new SubagentResult(result.Output, json, json is not null, json is null ? "no valid fenced json block" : null);
+        var error = json is null ? ErrorHintClassifier.WithHint("no valid fenced json block") : null;
+        return new SubagentResult(result.Output, json, json is not null, error);
     }
 
     private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
