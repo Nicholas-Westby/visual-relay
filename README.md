@@ -34,6 +34,32 @@ The launcher uses an existing `dotnet` installation when available. If `dotnet` 
 
 The generated sample repository also includes `./scripts/reset-sample.sh`, which returns it to three pending tasks and commits that reset state after a real run.
 
+## Model Backend
+
+Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook calls `tools/backend/backend.sh start` best-effort. When the backend is already healthy this is a fast no-op, and if it cannot start (for example LiteLLM is not installed) the app still launches and the in-app pre-flight probe surfaces the down backend.
+
+Manage the proxy directly with:
+
+```bash
+tools/backend/backend.sh start    # idempotent; brings the proxy up on 127.0.0.1:4000 and waits for /health/readiness
+tools/backend/backend.sh status   # reports up/down
+tools/backend/backend.sh stop     # SIGTERM then SIGKILL, and removes the PID file
+```
+
+`start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under the git-ignored `.relay-scratch/` (`litellm.pid`, `litellm.log`).
+
+### Provider keys (`.env`)
+
+The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap-kimi`, `balanced-kimi`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`. Provide the keys you need in a git-ignored `.env`:
+
+```bash
+cp .env.example .env   # then fill in the provider keys you use
+```
+
+`backend.sh start` sources `.env` automatically. A request only fails if its specific provider key is missing, so you can set just the providers you actually call.
+
+To install the proxy: `pip install 'litellm[proxy]'`.
+
 ## What It Does
 
 - Discovers `llm-tasks` while skipping `DONE-*`, `IGNORE-*`, `_ideation`, and `completed`; tasks marked `NEEDS-REVIEW` stay visible in the GUI with their review reason.
