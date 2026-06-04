@@ -21,8 +21,16 @@ public static class RelayTraceLocator
 
         var pattern = stageNumber is null ? "stage*-attempt*" : $"stage{stageNumber}-attempt*";
         return Directory.EnumerateDirectories(taskDirectory, pattern, SearchOption.TopDirectoryOnly)
-            .Order(StringComparer.Ordinal)
+            .Select(directory => (Directory: directory, Match: ParseDirectory(directory)))
+            .Where(item => item.Match is not null)
+            .GroupBy(item => item.Match!.Value.Stage)
+            .Select(group => group.MaxBy(item => item.Match!.Value.Attempt).Directory)
             .SelectMany(directory => Directory.EnumerateFiles(directory, "*.jsonl").Order(StringComparer.Ordinal))
             .ToArray();
     }
+
+    private static (int Stage, int Attempt)? ParseDirectory(string directory) =>
+        RelayAttempt.TryParse(Path.GetFileName(directory), out var stage, out var attempt)
+            ? (stage, attempt)
+            : null;
 }

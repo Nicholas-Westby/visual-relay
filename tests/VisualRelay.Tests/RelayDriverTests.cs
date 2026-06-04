@@ -87,6 +87,43 @@ public sealed class RelayDriverTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_AllocatesNextAttemptIndexOnEachReRun()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("re-run", "# Re-run\n");
+
+        await RunHappyPath(repo, "re-run");
+        await RunHappyPath(repo, "re-run");
+        await RunHappyPath(repo, "re-run");
+
+        var taskDirectory = Path.Combine(repo.Root, ".relay", "re-run");
+        // First run -> attempt1, each re-run -> attempt2, attempt3. Stage 1 is a subagent stage.
+        // The artifact-writing runner materializes the report/trace at the paths the driver chose,
+        // so existence here proves the driver threaded an incrementing index (not a fixed attempt1).
+        Assert.True(File.Exists(Path.Combine(taskDirectory, "stage1-attempt1.report.json")));
+        Assert.True(File.Exists(Path.Combine(taskDirectory, "stage1-attempt2.report.json")));
+        Assert.True(File.Exists(Path.Combine(taskDirectory, "stage1-attempt3.report.json")));
+        Assert.True(Directory.Exists(Path.Combine(taskDirectory, "stage1-attempt1")));
+        Assert.True(Directory.Exists(Path.Combine(taskDirectory, "stage1-attempt2")));
+        Assert.True(Directory.Exists(Path.Combine(taskDirectory, "stage1-attempt3")));
+    }
+
+    private static async Task RunHappyPath(TestRepository repo, string taskId)
+    {
+        var runner = new ArtifactWritingSubagentRunner();
+        runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                runner,
+                new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+        var outcome = await driver.RunTaskAsync(repo.Root, taskId);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+    }
+
+    [Fact]
     public async Task RunTaskAsync_RetriesTaskThatWasAlreadyNeedsReview()
     {
         using var repo = TestRepository.Create();
@@ -140,6 +177,29 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
         };
 
         return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
+internal sealed class ArtifactWritingSubagentRunner : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _scripted = new();
+
+    public void SeedHappyPath(string codeFile, string testFile) => _scripted.SeedHappyPath(codeFile, testFile);
+
+    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        // Mimic Swival: materialize the trace dir + a session file and the report at the
+        // exact paths the driver allocated, so re-runs surface as distinct attempt artifacts.
+        Directory.CreateDirectory(invocation.TraceDirectory);
+        await File.WriteAllTextAsync(
+            Path.Combine(invocation.TraceDirectory, $"{Guid.NewGuid():N}.jsonl"),
+            """{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}""",
+            cancellationToken);
+        await File.WriteAllTextAsync(
+            invocation.ReportFile,
+            """{ "model": "cheap-kimi", "result": { "outcome": "ok" }, "stats": {}, "timeline": [] }""",
+            cancellationToken);
+        return await _scripted.RunAsync(invocation, cancellationToken);
     }
 }
 

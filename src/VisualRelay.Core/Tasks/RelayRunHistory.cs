@@ -60,7 +60,7 @@ public static partial class RelayRunHistory
         var entries = new List<TraceEntry>();
         foreach (var file in RelayTraceLocator.FindTraceFiles(rootPath, taskId, stageNumber))
         {
-            var stage = StageNumberFromPath(file);
+            var stage = RelayAttempt.StageNumber(file);
             var text = await File.ReadAllTextAsync(file, cancellationToken);
             entries.AddRange(RelayTraceParser.Parse(text).Select(entry => entry with { StageNumber = stage }));
         }
@@ -136,7 +136,9 @@ public static partial class RelayRunHistory
 
     private static StageRunMetric SquashAttempts(IGrouping<int, StageRunMetric> attempts)
     {
-        var ordered = attempts.OrderBy(metric => metric.ReportPath, StringComparer.Ordinal).ToArray();
+        // Order by the parsed attempt index, not the report path string: an ordinal sort ranks
+        // "attempt10" before "attempt2", which would pick a stale attempt as the latest outcome.
+        var ordered = attempts.OrderBy(metric => RelayAttempt.AttemptNumber(Path.GetFileName(metric.ReportPath))).ToArray();
         var latest = ordered[^1];
         return latest with
         {
@@ -168,15 +170,6 @@ public static partial class RelayRunHistory
         return File.GetLastWriteTimeUtc(reportPath);
     }
 
-    private static int? StageNumberFromPath(string path)
-    {
-        var match = StageDirectoryRegex().Match(path);
-        return match.Success ? int.Parse(match.Groups[1].Value) : null;
-    }
-
     [GeneratedRegex(@"^stage(\d+)-attempt\d+\.report\.json$")]
     private static partial Regex ReportNameRegex();
-
-    [GeneratedRegex(@"stage(\d+)-attempt\d+")]
-    private static partial Regex StageDirectoryRegex();
 }

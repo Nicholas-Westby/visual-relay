@@ -4,6 +4,7 @@ using System.Text.Json;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Costs;
 using VisualRelay.Core.Tasks;
+using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -164,6 +165,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         StringBuilder ledger,
         IReadOnlyList<string> manifest)
     {
+        var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
             stage,
             stage.Tier,
@@ -174,8 +176,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             ledger.ToString(),
             manifest,
             config.LogSources,
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt1"),
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt1.report.json"),
+            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}"),
+            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}.report.json"),
             config.MaxTurns,
             TaskContext: input.Context);
     }

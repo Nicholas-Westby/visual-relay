@@ -16,6 +16,9 @@ internal sealed class TestRepository : IDisposable
 
     public static TestRepository Create() => new();
 
+    public string AttemptReportPath(string taskId, int stage, int attempt) =>
+        Path.Combine(Root, ".relay", taskId, $"stage{stage}-attempt{attempt}.report.json");
+
     public void WriteConfig(string testCommand, string[] logSources)
     {
         Directory.CreateDirectory(Path.Combine(Root, ".relay"));
