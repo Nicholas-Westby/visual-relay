@@ -161,6 +161,31 @@ public sealed class MainWindowViewModelTests
         Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
     }
 
+    [Fact]
+    public async Task RevealStageArtifactsCommand_DisabledUntilStageWithArtifactsIsSelected()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        WriteReportAndTrace(repo.Root, "alpha", 1, "stage one");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        await WaitUntilAsync(() => viewModel.TraceEntries.Count == 1);
+
+        // No stage selected yet, so there is no reveal target.
+        Assert.False(viewModel.RevealStageArtifactsCommand.CanExecute(null));
+
+        viewModel.SelectStageCommand.Execute(viewModel.Stages[0]);
+
+        // Stage 1 has a run, so its report path becomes the reveal target.
+        Assert.True(viewModel.RevealStageArtifactsCommand.CanExecute(null));
+
+        viewModel.SelectStageCommand.Execute(viewModel.Stages[0]);
+
+        Assert.False(viewModel.RevealStageArtifactsCommand.CanExecute(null));
+    }
+
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

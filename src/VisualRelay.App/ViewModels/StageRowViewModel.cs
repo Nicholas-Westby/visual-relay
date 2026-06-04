@@ -112,11 +112,19 @@ public sealed class StageRowViewModel : ViewModelBase
         set => SetProperty(ref _modelLabel, value);
     }
 
+    public string? ReportPath { get; private set; }
+    public string? TraceDirectory { get; private set; }
+
+    // Prefer the report (always exists for a run); fall back to the trace dir.
+    public string? RevealTarget => ReportPath ?? TraceDirectory;
+
     public void ApplyMetric(StageRunMetric metric)
     {
         DurationLabel = metric.DurationLabel;
         CostLabel = metric.CostLabel;
         ModelLabel = metric.Model;
+        ReportPath = metric.ReportPath;
+        TraceDirectory = metric.TraceDirectory;
         if (Status == "Waiting")
         {
             Status = metric.Succeeded ? "Done" : "Flagged";
@@ -128,5 +136,7 @@ public sealed class StageRowViewModel : ViewModelBase
         DurationLabel = "No run yet";
         CostLabel = "No cost yet";
         ModelLabel = string.Empty;
+        ReportPath = null;
+        TraceDirectory = null;
     }
 }

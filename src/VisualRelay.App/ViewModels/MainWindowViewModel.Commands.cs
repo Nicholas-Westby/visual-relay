@@ -228,6 +228,7 @@ public partial class MainWindowViewModel
             stage.IsSelected = false;
             LogScopeLabel = "full";
             ApplyLogFilter();
+            RevealStageArtifactsCommand.NotifyCanExecuteChanged();
             return;
         }
 
@@ -239,5 +240,21 @@ public partial class MainWindowViewModel
 
         LogScopeLabel = $"stage {stage.Number:00}";
         ApplyLogFilter();
+        RevealStageArtifactsCommand.NotifyCanExecuteChanged();
     }
+
+    [RelayCommand(CanExecute = nameof(CanRevealStageArtifacts))]
+    private void RevealStageArtifacts()
+    {
+        var target = SelectedStageRow?.RevealTarget;
+        if (!string.IsNullOrEmpty(target))
+        {
+            FileReveal.Reveal(target);
+        }
+    }
+
+    private bool CanRevealStageArtifacts() => !string.IsNullOrEmpty(SelectedStageRow?.RevealTarget);
+
+    private StageRowViewModel? SelectedStageRow =>
+        Stages.FirstOrDefault(stage => stage.Number == _selectedStageFilter);
 }

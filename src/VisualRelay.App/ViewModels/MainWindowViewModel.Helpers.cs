@@ -202,6 +202,8 @@ public partial class MainWindowViewModel
             }
         }
 
+        RevealStageArtifactsCommand.NotifyCanExecuteChanged();
+
         var liveEvents = EventsFor(taskId);
         _allTaskEvents.AddRange(liveEvents);
         _allTaskEvents.AddRange(RelayRunHistory.ReadTaskEvents(RootPath, taskId));
