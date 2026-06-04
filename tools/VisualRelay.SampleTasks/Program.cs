@@ -11,7 +11,7 @@ ResetDirectory(Path.Combine(target, "__pycache__"));
 ResetDirectory(Path.Combine(target, ".swival"));
 DeleteFile(Path.Combine(target, ".DS_Store"));
 
-Write(".gitignore", ".DS_Store\n.swival/\n.relay/*/stage*-attempt*/\n.relay/*/*.report.json\n__pycache__/\n*.pyc\n");
+Write(".gitignore", ".DS_Store\n.swival/\n.relay/*/stage*-attempt*/\n.relay/*/*.report.json\n.relay/*/*.log\n__pycache__/\n*.pyc\n");
 Write(
     "README.md",
     """

@@ -42,6 +42,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var sessionCostUsd = 0d;
             string? commitMessage = null;
 
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                DateTimeOffset.UtcNow,
+                "info",
+                "run_start",
+                runId,
+                rootPath,
+                taskId,
+                Data: new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl }), cancellationToken);
+
             foreach (var stage in RelayStages.All)
             {
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);

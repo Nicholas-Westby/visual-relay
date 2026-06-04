@@ -38,6 +38,9 @@ public sealed class RelayDriverTests
 
         Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 1);
         Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 11);
+        Assert.Contains(
+            sink.Events,
+            e => e.EventName == "run_start" && e.Data is not null && e.Data["base_url"] == ModelBackend.BaseUrl);
     }
 
     [Fact]
