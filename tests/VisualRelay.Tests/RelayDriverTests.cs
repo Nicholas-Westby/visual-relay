@@ -30,7 +30,7 @@ public sealed class RelayDriverTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "add-status", "ledger.md")));
         Assert.Equal(
             $"src/status.cs{Environment.NewLine}tests/status.tests.cs{Environment.NewLine}",
-            await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "add-status", "manifest")));
+            await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "add-status", "manifest.txt")));
 
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "add-status", "add-status.seals"));
         Assert.Contains(seals, line => line.Contains("\"n\":5", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));

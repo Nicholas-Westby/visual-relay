@@ -49,3 +49,6 @@ Runs are serialized. A `RelayQueueController` owns the in-memory queue order, se
 - Commit hooks in this repo enforce conventional commits for Visual Relay itself.
 - Unexpected runner crashes are flagged into `.relay/<task>/NEEDS-REVIEW` with details so queue drains do not loop on the same broken task.
 - Repeated commit-gate rejections halt drain with `.relay/DRAIN-HALTED`.
+
+## Artifacts
+Every file Visual Relay reads or writes under a target's `.relay/`, the Swival-owned files, and the `logSources` contract are catalogued in [relay-artifacts.md](relay-artifacts.md): what each file is, who writes/reads it, and whether it is committed.

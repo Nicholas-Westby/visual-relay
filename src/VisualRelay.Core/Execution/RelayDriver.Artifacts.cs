@@ -10,7 +10,7 @@ public sealed partial class RelayDriver
     private static async Task WriteManifestAsync(string taskDirectory, IReadOnlyList<string> manifest, CancellationToken cancellationToken)
     {
         await File.WriteAllTextAsync(
-            Path.Combine(taskDirectory, "manifest"),
+            Path.Combine(taskDirectory, "manifest.txt"),
             string.Join(Environment.NewLine, manifest) + Environment.NewLine,
             cancellationToken);
     }

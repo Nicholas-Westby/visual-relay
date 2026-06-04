@@ -19,7 +19,7 @@ Rebuild the Relay-style staged task system in this repository as a C#/Avalonia G
 - Model pause as "finish current task or stage, then stop at a boundary" so the active process is not torn down unsafely.
 - Support manual task ordering in the GUI without changing on-disk task discovery semantics.
 - Use JSONL event streams as the durable source for run history and live UI updates.
-- Preserve Relay's proof artifacts enough for a real run: `.relay/config.json`, `.relay/ACTIVE`, `.relay/<task>/ledger.md`, `.relay/<task>/manifest`, `.relay/<task>/<task>.seals`, and `.relay/logs/relay-*.jsonl`.
+- Preserve Relay's proof artifacts enough for a real run: `.relay/config.json`, `.relay/ACTIVE`, `.relay/<task>/ledger.md`, `.relay/<task>/manifest.txt`, `.relay/<task>/<task>.seals`, and `.relay/logs/relay-*.jsonl`.
 
 ## Waypoints
 - [x] Inspect existing Relay implementation.

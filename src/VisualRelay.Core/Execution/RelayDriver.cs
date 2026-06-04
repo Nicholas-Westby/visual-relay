@@ -143,7 +143,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var commitSha = "simulated";
             if (_options.CreateGitCommit)
             {
-                var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest") };
+                var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt") };
                 var subject = CommitMessageSanitizer.FromRawOrFallback(commitMessage, taskId);
                 var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, subject, manifest, proofFiles, cancellationToken);
                 if (!commit.Success)

@@ -25,6 +25,13 @@ Write(
 
     The tasks are deliberately small so an LLM agent can add tests, make a focused code change, verify, and commit.
 
+    ## Layout
+
+    - `src/` and `tests/` — the demo application under test (a few small Python modules and their unit tests). This is the code the tasks change.
+    - `logs/app.log` — the demo app's own runtime log. It is surfaced to the agent via the `logSources` entry in `.relay/config.json` (injected into stage prompts under `## Log sources`). It is read by the LLM and is **NOT** a Visual Relay log.
+    - `llm-tasks/` — the pending task descriptions (one Markdown file per task). Completed tasks are archived under `llm-tasks/completed/`.
+    - `.relay/` — Relay's per-task working and proof artifacts (config, manifest, ledger, seals, reports, traces, run log). Every file is catalogued in Visual Relay's `docs/relay-artifacts.md` reference: what each file is, who writes/reads it, and whether it is committed.
+
     Reset this repository back to three pending tasks after a run:
 
     ```bash

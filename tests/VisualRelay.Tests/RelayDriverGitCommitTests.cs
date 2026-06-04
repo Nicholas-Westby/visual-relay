@@ -34,7 +34,7 @@ public sealed class RelayDriverGitCommitTests
         Assert.Contains("Task: ship-status", message);
         Assert.Contains("Relay-Seal:", message);
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
-        Assert.Contains(".relay/ship-status/manifest", names);
+        Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("src/status.txt", names);
         Assert.DoesNotContain("src/ghost.txt", names);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
