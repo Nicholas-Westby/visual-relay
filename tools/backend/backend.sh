@@ -21,6 +21,11 @@ BASE_URL="http://${HOST}:${PORT}"          # == ModelBackend.BaseUrl
 READINESS_URL="${BASE_URL}/health/readiness" # == ModelBackend.ReadinessUrl
 CONFIG="${SCRIPT_DIR}/litellm-config.yaml"
 
+PYTHON_VERSION="3.13"                          # litellm's uvloop crashes on 3.14+
+VENV_DIR="${SCRIPT_DIR}/.venv"                 # git-ignored; provisioned via uv
+VENV_PY="${VENV_DIR}/bin/python"
+LITELLM_BIN="${VENV_DIR}/bin/litellm"
+
 SCRATCH="${REPO_ROOT}/.relay-scratch"        # git-ignored
 PID_FILE="${SCRATCH}/litellm.pid"
 LOG_FILE="${SCRATCH}/litellm.log"
@@ -49,27 +54,49 @@ live_pid() {
   fi
 }
 
-# Discover how to launch litellm: the standalone CLI, else `python3 -m litellm`.
-# Echoes the launcher words; empty output => toolchain unavailable.
-litellm_launcher() {
-  if command -v litellm >/dev/null 2>&1; then
-    echo "litellm"
-  elif command -v python3 >/dev/null 2>&1 && python3 -c "import litellm" >/dev/null 2>&1; then
-    echo "python3 -m litellm"
+# Make a litellm executable available and set LITELLM_BIN. Prefers a project-local
+# venv pinned to a litellm-compatible Python (uvloop crashes on 3.14+), which uv
+# provisions on first run (uv fetches the pinned Python itself). Falls back to a
+# litellm already on PATH only when uv is unavailable. Returns non-zero when none
+# of those work.
+ensure_litellm() {
+  if [[ -x "${LITELLM_BIN}" ]]; then
+    return 0
   fi
+
+  if command -v uv >/dev/null 2>&1; then
+    log "provisioning litellm into ${VENV_DIR} (one-time; Python ${PYTHON_VERSION})"
+    if uv venv "${VENV_DIR}" --python "${PYTHON_VERSION}" >&2 \
+       && uv pip install --python "${VENV_PY}" "litellm[proxy]" >&2 \
+       && [[ -x "${LITELLM_BIN}" ]]; then
+      return 0
+    fi
+    log "uv could not provision litellm (see output above)"
+    return 1
+  fi
+
+  # Fallback: a litellm already on PATH (may run on a Python that crashes uvloop).
+  if command -v litellm >/dev/null 2>&1; then
+    LITELLM_BIN="$(command -v litellm)"
+    log "using PATH litellm at ${LITELLM_BIN} (install uv for a pinned Python ${PYTHON_VERSION} venv)"
+    return 0
+  fi
+
+  return 1
 }
 
 missing_toolchain_message() {
   cat >&2 <<EOF
-backend: litellm is not installed, so the model backend cannot be started.
+backend: could not start the model backend (litellm) on ${BASE_URL}.
 
-  The proxy provides ${BASE_URL} for Visual Relay's profiles. To enable it:
-    1. Install the proxy:   pip install 'litellm[proxy]'
-    2. Provide provider keys: cp .env.example .env  (then fill in the keys)
-    3. Start it again:        tools/backend/backend.sh start
+  Launch normally provisions litellm into ${VENV_DIR} using uv. To enable it:
+    1. Install uv (one-time):  curl -LsSf https://astral.sh/uv/install.sh | sh
+       (uv fetches a pinned Python ${PYTHON_VERSION} and litellm[proxy] for you.)
+    2. Provide provider keys:  cp .env.example .env   (then fill in the keys)
+    3. Start it again:         tools/backend/backend.sh start
 
-Visual Relay can still launch without the backend; tasks that call the model
-will surface a "backend down" message from the in-app pre-flight probe.
+Visual Relay still launches without the backend; tasks that call the model will
+surface a "backend down" message from the in-app pre-flight probe.
 EOF
 }
 
@@ -95,16 +122,10 @@ cmd_start() {
       rm -f "${PID_FILE}"
     fi
 
-    local launcher
-    launcher="$(litellm_launcher)"
-    if [[ -z "${launcher}" ]]; then
+    if ! ensure_litellm; then
       missing_toolchain_message
       return 1
     fi
-
-    # Split into words on purpose: the launcher may be "python3 -m litellm".
-    local -a launcher_cmd
-    read -ra launcher_cmd <<<"${launcher}"
 
     # Load provider keys from .env if present (keys are read via os.environ).
     if [[ -f "${REPO_ROOT}/.env" ]]; then
@@ -117,7 +138,7 @@ cmd_start() {
 
     log "starting litellm proxy on ${BASE_URL} (logs: ${LOG_FILE})"
     # Disown so the proxy outlives this script; capture stdout+stderr to the log.
-    nohup "${launcher_cmd[@]}" --config "${CONFIG}" --host "${HOST}" --port "${PORT}" \
+    nohup "${LITELLM_BIN}" --config "${CONFIG}" --host "${HOST}" --port "${PORT}" \
       >"${LOG_FILE}" 2>&1 &
     echo "$!" >"${PID_FILE}"
     log "pid $(cat "${PID_FILE}") recorded at ${PID_FILE}"

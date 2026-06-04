@@ -36,7 +36,9 @@ The generated sample repository also includes `./scripts/reset-sample.sh`, which
 
 ## Model Backend
 
-Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook calls `tools/backend/backend.sh start` best-effort. When the backend is already healthy this is a fast no-op, and if it cannot start (for example LiteLLM is not installed) the app still launches and the in-app pre-flight probe surfaces the down backend.
+Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook calls `tools/backend/backend.sh start` best-effort. When the backend is already healthy this is a fast no-op, and if it cannot start the app still launches and the in-app pre-flight probe surfaces the down backend.
+
+On first start the script provisions LiteLLM itself — there is no manual install step. It uses [`uv`](https://docs.astral.sh/uv/) to create a project-local virtualenv at `tools/backend/.venv` pinned to Python 3.13 (LiteLLM's `uvloop` crashes on 3.14+) and installs `litellm[proxy]` into it; `uv` fetches the pinned Python automatically. The venv is git-ignored and reused on later starts, so only the first launch pays the install cost. The single prerequisite is `uv` on `PATH` (`curl -LsSf https://astral.sh/uv/install.sh | sh`); if a `litellm` is already on `PATH` and `uv` is absent, the script falls back to that.
 
 Manage the proxy directly with:
 
@@ -56,9 +58,7 @@ The proxy config `tools/backend/litellm-config.yaml` defines the model aliases t
 cp .env.example .env   # then fill in the provider keys you use
 ```
 
-`backend.sh start` sources `.env` automatically. A request only fails if its specific provider key is missing, so you can set just the providers you actually call.
-
-To install the proxy: `pip install 'litellm[proxy]'`.
+`backend.sh start` sources `.env` automatically, and the proxy boots even with no keys set (readiness does not require any provider key). A request only fails if its specific provider key is missing, so you can set just the providers you actually call — `MOONSHOT_API_KEY` (frontier/kimi), `DEEPSEEK_API_KEY` (balanced/cheap), and `HF_TOKEN` (vision/qwen-coder) cover the default pipeline tiers; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` add the `claude` and `gpt-5` aliases.
 
 ## What It Does
 

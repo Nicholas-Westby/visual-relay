@@ -1,74 +1,105 @@
 # LiteLLM proxy config for Visual Relay's local model backend.
 #
-# This proxy is served on http://127.0.0.1:4000 (see
-# src/VisualRelay.Domain/ModelBackend.cs `BaseUrl`) and answers the readiness
-# probe at /health/readiness (`ModelBackend.ReadinessPath`).
+# Served on http://127.0.0.1:4000 (see src/VisualRelay.Domain/ModelBackend.cs
+# `BaseUrl`); answers the readiness probe at /health/readiness
+# (`ModelBackend.ReadinessPath`). tools/backend/backend.sh start launches it.
 #
-# `model_name` entries are the SOURCE-OF-TRUTH aliases that Visual Relay's
-# generated swival.toml targets (see
-# src/VisualRelay.Core/Execution/SwivalProfileSession.cs `DefaultToml`). Keep
-# these names in sync with that file.
+# Clients (Swival) request a name; LiteLLM dispatches to the upstream provider.
+# The `model_name`/alias set here is the SOURCE-OF-TRUTH that Visual Relay's
+# generated swival.toml targets (src/VisualRelay.Core/Execution/SwivalProfileSession.cs
+# `DefaultToml`) — keep the names in sync with that file.
 #
 # No secrets live here: every `api_key` reads from the environment via
-# `os.environ/<KEY>`. Copy .env.example -> .env and fill in the provider keys
-# you actually need. A request only fails if its specific provider key is unset;
-# unused providers can stay blank.
+# `os.environ/<KEY>`. Copy .env.example -> .env and fill in the provider keys you
+# have; backend.sh sources .env at start. A request only fails if its specific
+# provider key is unset — unused providers can stay blank, and the proxy still
+# boots (readiness does not require any key).
+
 model_list:
   # --- Moonshot (Kimi) -----------------------------------------------------
-  - model_name: cheap-kimi
-    litellm_params:
-      model: moonshot/moonshot-v1-8k
-      api_key: os.environ/MOONSHOT_API_KEY
-
-  - model_name: balanced-kimi
-    litellm_params:
-      model: moonshot/moonshot-v1-32k
-      api_key: os.environ/MOONSHOT_API_KEY
-
   - model_name: kimi-k2
     litellm_params:
-      model: moonshot/kimi-k2-0711-preview
+      model: moonshot/kimi-k2.6
       api_key: os.environ/MOONSHOT_API_KEY
 
-  # --- Anthropic (Claude) --------------------------------------------------
-  - model_name: claude
+  # --- DeepSeek (first-party) ---------------------------------------------
+  - model_name: deepseek-v4-pro
     litellm_params:
-      model: anthropic/claude-3-7-sonnet-latest
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: deepseek/deepseek-v4-pro
+      api_key: os.environ/DEEPSEEK_API_KEY
 
-  - model_name: claude-sonnet
+  - model_name: deepseek-v4-flash
     litellm_params:
-      model: anthropic/claude-3-7-sonnet-latest
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: deepseek/deepseek-v4-flash
+      api_key: os.environ/DEEPSEEK_API_KEY
 
+  # --- Hugging Face Inference Providers (one HF_TOKEN, many upstreams) -----
+  # Path after `huggingface/` is `<provider>/<hf_org>/<hf_repo>`.
+  - model_name: hf-qwen3-coder-next
+    litellm_params:
+      model: huggingface/novita/Qwen/Qwen3-Coder-480B-A35B-Instruct
+      api_key: os.environ/HF_TOKEN
+
+  # Vision (multimodal) for the Relay describe pre-step; 30B is the cheaper
+  # fallback target.
+  - model_name: hf-qwen3-vl-235b
+    litellm_params:
+      model: huggingface/novita/Qwen/Qwen3-VL-235B-A22B-Instruct
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-qwen3-vl-30b
+    litellm_params:
+      model: huggingface/deepinfra/Qwen/Qwen3-VL-30B-A3B-Instruct
+      api_key: os.environ/HF_TOKEN
+
+  # --- Anthropic (Claude) — needs ANTHROPIC_API_KEY ------------------------
+  # claude-opus-1m enables the 1M-context beta via extra_headers.
   - model_name: claude-opus-1m
     litellm_params:
       model: anthropic/claude-opus-4-1
       api_key: os.environ/ANTHROPIC_API_KEY
+      extra_headers:
+        anthropic-beta: "context-1m-2025-08-07"
 
-  # --- OpenAI --------------------------------------------------------------
+  - model_name: claude-sonnet
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # --- OpenAI — needs OPENAI_API_KEY ---------------------------------------
   - model_name: gpt-5
     litellm_params:
       model: openai/gpt-5
       api_key: os.environ/OPENAI_API_KEY
 
-  # --- Frontier / vision (Anthropic-backed defaults) -----------------------
-  - model_name: frontier
-    litellm_params:
-      model: anthropic/claude-opus-4-1
-      api_key: os.environ/ANTHROPIC_API_KEY
+# Tier aliases give clients a stable name that resolves to a concrete model.
+# Re-target the right-hand side when a new winner shows up; clients keep asking
+# for the tier name. These are the tier names Visual Relay's swival profiles use.
+router_settings:
+  model_group_alias:
+    frontier: kimi-k2
+    # The "-kimi" suffix on the balanced/cheap tiers is a Swival quirk (it only
+    # preserves reasoning_content when the model id contains "kimi"); the tiers
+    # themselves resolve to DeepSeek V4.
+    balanced-kimi: deepseek-v4-pro
+    cheap-kimi: deepseek-v4-flash
+    vision: hf-qwen3-vl-235b
+    claude: claude-opus-1m
 
-  - model_name: vision
-    litellm_params:
-      model: anthropic/claude-3-7-sonnet-latest
-      api_key: os.environ/ANTHROPIC_API_KEY
+  # Provider-diversified fallbacks: on 429/5xx/timeout/auth-error, cascade to
+  # alternates on different providers. Keyed by the requested tier alias (LiteLLM
+  # looks up fallbacks before resolving the alias).
+  fallbacks:
+    - frontier: [deepseek-v4-pro, hf-qwen3-coder-next]
+    - balanced-kimi: [kimi-k2, deepseek-v4-flash]
+    - cheap-kimi: [deepseek-v4-pro]
+    - vision: [hf-qwen3-vl-30b, kimi-k2]
+    - claude: [claude-sonnet]
 
-  # --- Together (Qwen3 Coder) ----------------------------------------------
-  - model_name: hf-qwen3-coder-next
-    litellm_params:
-      model: together_ai/Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8
-      api_key: os.environ/TOGETHER_API_KEY
-
-# Loopback binding (--host 127.0.0.1) and the port are set by the start script
-# (tools/backend/backend.sh), which also polls the /health/readiness endpoint
-# LiteLLM exposes. No general_settings are needed here.
+litellm_settings:
+  # Drop request params the upstream provider doesn't recognise instead of 400ing
+  # — friendlier when swapping models with different feature sets.
+  drop_params: true
+  # Structured per-request JSON logs to stdout (backend.sh redirects into
+  # .relay-scratch/litellm.log).
+  json_logs: true
