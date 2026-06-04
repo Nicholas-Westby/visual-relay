@@ -12,6 +12,8 @@ public sealed record RelayEvent(
     int? Attempt = null,
     IReadOnlyDictionary<string, string>? Data = null)
 {
+    public bool IsAttention => Level is "warn" or "error";
+
     public string DisplayLine =>
         StageNumber is null ? EventName : $"s{StageNumber}/{Tier ?? "?"} {EventName}";
 
