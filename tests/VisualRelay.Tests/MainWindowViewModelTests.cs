@@ -136,6 +136,48 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.MoveDownCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task SelectingTask_SurfacesErrorFromFailedLatestRunAndClearsOnCleanTask()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("broken", "# Broken\n");
+        repo.WriteTask("clean", "# Clean\n");
+        WriteErroredReport(repo.Root, "broken", 1, "the runner exploded");
+        WriteReportAndTrace(repo.Root, "clean", 1, "all good");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
+        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+
+        Assert.True(viewModel.HasSelectedTaskError);
+        Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
+
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "clean");
+        await WaitUntilAsync(() => !viewModel.HasSelectedTaskError);
+
+        Assert.False(viewModel.HasSelectedTaskError);
+        Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
+    }
+
+    private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
+    {
+        var taskDirectory = Path.Combine(root, ".relay", taskId);
+        Directory.CreateDirectory(taskDirectory);
+        File.WriteAllText(
+            Path.Combine(taskDirectory, $"stage{stage}-attempt1.report.json"),
+            $$"""
+            {
+              "timestamp": "2026-05-31T20:00:0{{stage}}+00:00",
+              "model": "cheap-kimi",
+              "result": { "outcome": "error", "exit_code": 1, "error_message": "{{errorMessage}}" },
+              "stats": { "total_llm_time_s": {{stage}}, "prompt_cache": { "cached_tokens": 0 } },
+              "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
+            }
+            """);
+    }
+
     private static void WriteReportAndTrace(string root, string taskId, int stage, string content)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

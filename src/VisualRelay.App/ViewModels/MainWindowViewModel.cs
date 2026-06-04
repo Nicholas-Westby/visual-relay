@@ -106,6 +106,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private string _selectedTaskMetricLabel = "No run history";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSelectedTaskError))]
+    private string? _selectedTaskError;
+
+    public bool HasSelectedTaskError => !string.IsNullOrEmpty(SelectedTaskError);
+
+    [ObservableProperty]
     private string _logScopeLabel = "full";
 
     [ObservableProperty]

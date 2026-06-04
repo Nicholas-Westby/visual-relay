@@ -94,6 +94,45 @@ public sealed class RelayRunHistoryTests
     }
 
     [Fact]
+    public void ReadTaskMetric_CapturesErrorMessageFromErroredReport()
+    {
+        using var repo = TestRepository.Create();
+        WriteReport(repo.Root, "add-multiply", 1, """{ "outcome": "error", "exit_code": 1, "error_message": "the runner exploded" }""");
+
+        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
+
+        var stage = metric.Stages.Single(item => item.StageNumber == 1);
+        Assert.False(stage.Succeeded);
+        Assert.Equal("the runner exploded", stage.ErrorMessage);
+    }
+
+    [Fact]
+    public void ReadTaskMetric_LeavesErrorMessageNullForCleanReport()
+    {
+        using var repo = TestRepository.Create();
+        WriteReport(repo.Root, "add-multiply", 1, """{ "answer": "framed" }""");
+
+        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
+
+        var stage = metric.Stages.Single(item => item.StageNumber == 1);
+        Assert.True(stage.Succeeded);
+        Assert.Null(stage.ErrorMessage);
+    }
+
+    [Fact]
+    public void ReadTaskMetric_LeavesErrorMessageNullWhenFailedResultOmitsMessage()
+    {
+        using var repo = TestRepository.Create();
+        WriteReport(repo.Root, "add-multiply", 1, """{ "outcome": "error" }""");
+
+        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
+
+        var stage = metric.Stages.Single(item => item.StageNumber == 1);
+        Assert.False(stage.Succeeded);
+        Assert.Null(stage.ErrorMessage);
+    }
+
+    [Fact]
     public void ApplyMetric_SetsFlaggedForFailedStage()
     {
         var row = new StageRowViewModel(RelayStages.All[0]);

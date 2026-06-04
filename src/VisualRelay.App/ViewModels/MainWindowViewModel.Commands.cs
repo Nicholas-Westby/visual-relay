@@ -206,6 +206,7 @@ public partial class MainWindowViewModel
             SelectedTaskMarkdown = string.Empty;
             SelectedTaskContext = string.Empty;
             SelectedTaskMetricLabel = "No run history";
+            SelectedTaskError = null;
             ClearLogState();
             ResetStages();
             return;

@@ -14,7 +14,8 @@ public sealed record StageRunMetric(
     int OutputTokens,
     string ReportPath,
     string? TraceDirectory,
-    bool Succeeded = true)
+    bool Succeeded = true,
+    string? ErrorMessage = null)
 {
     public string CostLabel => MoneyFormatter.Dollars(CostUsd);
     public string DurationLabel => FormatDuration(DurationSeconds);

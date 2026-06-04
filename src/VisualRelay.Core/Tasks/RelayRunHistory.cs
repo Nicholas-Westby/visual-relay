@@ -83,6 +83,7 @@ public static partial class RelayRunHistory
         var traceDirectory = Path.Combine(
             Path.GetDirectoryName(reportPath)!,
             Path.GetFileName(reportPath).Replace(".report.json", "", StringComparison.Ordinal));
+        var (succeeded, errorMessage) = ReadResult(reportPath);
         return new StageRunMetric(
             stageNumber,
             stage?.Name ?? $"Stage {stageNumber}",
@@ -97,10 +98,11 @@ public static partial class RelayRunHistory
             estimate.OutputTokens,
             reportPath,
             Directory.Exists(traceDirectory) ? traceDirectory : null,
-            ReadStageSucceeded(reportPath));
+            succeeded,
+            errorMessage);
     }
 
-    private static bool ReadStageSucceeded(string reportPath)
+    private static (bool Succeeded, string? ErrorMessage) ReadResult(string reportPath)
     {
         try
         {
@@ -109,14 +111,20 @@ public static partial class RelayRunHistory
             if (!document.RootElement.TryGetProperty("result", out var result) ||
                 result.ValueKind != JsonValueKind.Object)
             {
-                return true;
+                return (true, null);
             }
+
+            var errorMessage = result.TryGetProperty("error_message", out var message) &&
+                message.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrEmpty(message.GetString())
+                    ? message.GetString()
+                    : null;
 
             if (result.TryGetProperty("outcome", out var outcome) &&
                 outcome.ValueKind == JsonValueKind.String &&
                 !string.Equals(outcome.GetString(), "ok", StringComparison.Ordinal))
             {
-                return false;
+                return (false, errorMessage);
             }
 
             if (result.TryGetProperty("exit_code", out var exitCode) &&
@@ -124,14 +132,14 @@ public static partial class RelayRunHistory
                 exitCode.TryGetInt32(out var code) &&
                 code != 0)
             {
-                return false;
+                return (false, errorMessage);
             }
         }
         catch (JsonException)
         {
         }
 
-        return true;
+        return (true, null);
     }
 
     private static StageRunMetric SquashAttempts(IGrouping<int, StageRunMetric> attempts)
