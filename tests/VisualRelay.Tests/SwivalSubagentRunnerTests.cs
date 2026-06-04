@@ -6,6 +6,13 @@ namespace VisualRelay.Tests;
 
 public sealed class SwivalSubagentRunnerTests
 {
+    // These tests exercise the real runner's swival-output handling, not the
+    // pre-flight guard, so they inject an always-ready probe rather than depend
+    // on a live backend on 127.0.0.1:4000. The guard itself is covered by
+    // BackendReadinessProbeTests and SwivalSubagentRunnerGuardTests.
+    private static Task<BackendReadiness> AlwaysReady(CancellationToken _) =>
+        Task.FromResult(new BackendReadiness(true, null));
+
     [Fact]
     public async Task RunAsync_CreatesTemporarySwivalProfileAndKeepsFailureOutput()
     {
@@ -19,7 +26,7 @@ public sealed class SwivalSubagentRunnerTests
             echo "profile was available" >&2
             exit 2
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
 
         var result = await runner.RunAsync(Invocation(repo.Root));
 
@@ -46,7 +53,7 @@ public sealed class SwivalSubagentRunnerTests
             printf '```json\n{"summary":"ok"}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(TestConfig(), script, sink);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, sink, AlwaysReady);
 
         var result = await runner.RunAsync(Invocation(repo.Root));
 
@@ -69,7 +76,7 @@ public sealed class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             printf '```json\n{"plan":"insert a ```python fence inside the plan","manifest":["src/calculator.py"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
 
         var result = await runner.RunAsync(Invocation(repo.Root) with { Stage = RelayStages.All[3] });
 
@@ -90,7 +97,7 @@ public sealed class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"ok":true}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
         var invocation = Invocation(repo.Root) with
         {
             TaskInput = "Implement `multiply(left, right)` and return the product."

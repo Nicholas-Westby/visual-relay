@@ -6,12 +6,10 @@ namespace VisualRelay.Domain;
 // callers use WithHint to append the hint and keep the original text.
 public static class ErrorHintClassifier
 {
-    // User-facing copy. The base URL is duplicated from SwivalProfileSession on
-    // purpose for now (a later task centralizes it); here it is display text.
-    private const string BackendUrl = "http://127.0.0.1:4000";
-
+    // User-facing copy. The base URL comes from the centralized ModelBackend so
+    // the port lives in exactly one place; here it is display text.
     private const string ConnectionHint =
-        "Hint: Can't reach the model backend at " + BackendUrl +
+        "Hint: Can't reach the model backend at " + ModelBackend.BaseUrl +
         " — is the LiteLLM proxy running? Start it (see " +
         "autostart-model-backend-on-launch.md) and re-run.";
 

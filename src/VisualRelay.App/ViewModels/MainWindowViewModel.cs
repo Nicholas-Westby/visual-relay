@@ -121,13 +121,42 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
+    // Backend reachability surfaced to the UI. Defaults to reachable so the
+    // startup banner stays hidden until a probe says otherwise. The later
+    // top-bar status task reuses this state + RefreshBackendStatusAsync rather
+    // than running a second probe.
+    [ObservableProperty]
+    private bool _isBackendReachable = true;
+
+    [ObservableProperty]
+    private string? _backendStatusMessage;
+
     public void UseFolderPicker(IFolderPicker folderPicker)
     {
         _folderPicker = folderPicker;
     }
 
-    public Task LoadInitialAsync() =>
-        Directory.Exists(RootPath) ? RefreshAsync() : Task.CompletedTask;
+    public async Task LoadInitialAsync()
+    {
+        if (Directory.Exists(RootPath))
+        {
+            await RefreshAsync();
+        }
+
+        // Non-blocking: probe runs off the UI thread (HttpClient async) and the
+        // window is already displayed, so a down backend never freezes startup.
+        await RefreshBackendStatusAsync();
+    }
+
+    // Reusable seam: probes the model backend once and updates the VM state.
+    // Safe to call from the UI thread (the probe never throws) and reusable by
+    // the later persistent top-bar indicator.
+    public async Task RefreshBackendStatusAsync()
+    {
+        var readiness = await BackendReadinessProbe.CheckAsync();
+        IsBackendReachable = readiness.IsReady;
+        BackendStatusMessage = readiness.Message;
+    }
 
     public string RootName => RootFolderDisplay.Name(RootPath);
     public string RootParentPath => RootFolderDisplay.Parent(RootPath);

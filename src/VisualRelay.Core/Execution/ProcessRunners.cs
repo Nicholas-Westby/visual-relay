@@ -18,19 +18,36 @@ public sealed class ShellTestRunner : ITestRunner
 
 public sealed class SwivalSubagentRunner : ISubagentRunner
 {
+    private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+
     private readonly RelayConfig _config;
     private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
+    private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
 
-    public SwivalSubagentRunner(RelayConfig config, string swivalBinary = "swival", IRelayEventSink? eventSink = null)
+    public SwivalSubagentRunner(
+        RelayConfig config,
+        string swivalBinary = "swival",
+        IRelayEventSink? eventSink = null,
+        Func<CancellationToken, Task<BackendReadiness>>? backendProbe = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
         _eventSink = eventSink;
+        _probe = backendProbe
+            ?? (token => BackendReadinessProbe.CheckAsync(ModelBackend.BaseUrl, ProbeTimeout, token));
     }
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
+        // Pre-flight guard: fail fast (~1-2s) when the backend is down instead
+        // of burning ~36s of LLM-call retries before flagging the task.
+        var readiness = await _probe(cancellationToken);
+        if (!readiness.IsReady)
+        {
+            return new SubagentResult(string.Empty, null, false, readiness.Message);
+        }
+
         Directory.CreateDirectory(invocation.TraceDirectory);
         await using var profileSession = await SwivalProfileSession.PrepareAsync(invocation.TargetRoot, cancellationToken);
         await using var traceTailer = _eventSink is null
