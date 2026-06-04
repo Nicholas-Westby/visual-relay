@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
 using VisualRelay.Core.Configuration;
@@ -32,7 +33,38 @@ public partial class MainWindowViewModel
             await ReloadTaskListAsync();
             StatusText = FormatQueueStatus();
         });
+
+        // Manual Refresh also re-probes so the top-bar status dot stays current.
+        await RefreshBackendStatusAsync();
     }
+
+    [RelayCommand(CanExecute = nameof(CanStartBackend))]
+    private async Task StartBackendAsync()
+    {
+        // Best-effort one-click recovery: spawn the autostart script off the UI
+        // thread, never throw, then re-probe so the dot reflects the result.
+        try
+        {
+            var start = new ProcessStartInfo("tools/backend/backend.sh", "start")
+            {
+                WorkingDirectory = Environment.CurrentDirectory,
+                UseShellExecute = false
+            };
+            using var process = Process.Start(start);
+            if (process is not null)
+            {
+                await process.WaitForExitAsync();
+            }
+        }
+        catch
+        {
+            // Toolchain missing, script absent, etc. — leave the dot red.
+        }
+
+        await RefreshBackendStatusAsync();
+    }
+
+    private bool CanStartBackend() => !IsBackendReachable;
 
     [RelayCommand(CanExecute = nameof(CanRunSelected))]
     private async Task RunSelectedAsync()

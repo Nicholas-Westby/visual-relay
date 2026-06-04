@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using Avalonia.Media;
+using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using VisualRelay.App.Services;
 using VisualRelay.Core.Execution;
@@ -15,6 +16,8 @@ public partial class MainWindowViewModel : ViewModelBase
     private static readonly IBrush PauseActiveBackground = Brush.Parse("#3A2D12");
     private static readonly IBrush PauseActiveBorder = Brush.Parse("#F2C66D");
     private static readonly IBrush PauseActiveForeground = Brush.Parse("#FFE7A4");
+    private static readonly IBrush BackendUpBrush = Brush.Parse("#5AD47D");
+    private static readonly IBrush BackendDownBrush = Brush.Parse("#F36F63");
 
     private IFolderPicker _folderPicker;
     private readonly List<RelayEvent> _allTaskEvents = [];
@@ -22,6 +25,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, List<RelayEvent>> _liveEventsByTask = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<TraceEntry>> _liveTraceEntriesByTask = new(StringComparer.Ordinal);
     private int? _selectedStageFilter;
+    private DispatcherTimer? _backendMonitor;
     private TaskRowViewModel? _runningTask;
     private string? _runningTaskId;
     private int? _runningStageNumber;
@@ -126,6 +130,9 @@ public partial class MainWindowViewModel : ViewModelBase
     // top-bar status task reuses this state + RefreshBackendStatusAsync rather
     // than running a second probe.
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(BackendStatusBrush))]
+    [NotifyPropertyChangedFor(nameof(BackendStatusLabel))]
+    [NotifyCanExecuteChangedFor(nameof(StartBackendCommand))]
     private bool _isBackendReachable = true;
 
     [ObservableProperty]
@@ -138,14 +145,18 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public async Task LoadInitialAsync()
     {
+        // RefreshAsync now also probes the backend, so probe directly only when
+        // there is no root to refresh. Non-blocking either way: the probe runs
+        // off the UI thread (HttpClient async) and the window is already shown,
+        // so a down backend never freezes startup.
         if (Directory.Exists(RootPath))
         {
             await RefreshAsync();
         }
-
-        // Non-blocking: probe runs off the UI thread (HttpClient async) and the
-        // window is already displayed, so a down backend never freezes startup.
-        await RefreshBackendStatusAsync();
+        else
+        {
+            await RefreshBackendStatusAsync();
+        }
     }
 
     // Reusable seam: probes the model backend once and updates the VM state.
@@ -158,6 +169,20 @@ public partial class MainWindowViewModel : ViewModelBase
         BackendStatusMessage = readiness.Message;
     }
 
+    // Starts a light-interval poll that keeps the top-bar status dot honest
+    // without blocking. Called ONLY from App startup (never the ctor or
+    // LoadInitialAsync) so unit tests spin no timer.
+    public void StartBackendMonitoring()
+    {
+        _backendMonitor?.Stop();
+        _backendMonitor = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(15)
+        };
+        _backendMonitor.Tick += (_, _) => _ = RefreshBackendStatusAsync();
+        _backendMonitor.Start();
+    }
+
     public string RootName => RootFolderDisplay.Name(RootPath);
     public string RootParentPath => RootFolderDisplay.Parent(RootPath);
     public string WindowTitle => $"Visual Relay - {RootName}";
@@ -168,6 +193,10 @@ public partial class MainWindowViewModel : ViewModelBase
         ? IsBusy ? $"Stops after {_runningTaskId ?? "current task"}" : "Paused before next task"
         : string.Empty;
     public bool IsPauseNoticeVisible => PauseRequested;
+    public IBrush BackendStatusBrush => IsBackendReachable ? BackendUpBrush : BackendDownBrush;
+    public string BackendStatusLabel => IsBackendReachable
+        ? $"backend: {new Uri(ModelBackend.BaseUrl).Authority}"
+        : "backend down";
     public IBrush PauseButtonBackground => PauseRequested ? PauseActiveBackground : PauseIdleBackground;
     public IBrush PauseButtonBorderBrush => PauseRequested ? PauseActiveBorder : PauseIdleBorder;
     public IBrush PauseButtonForeground => PauseRequested ? PauseActiveForeground : PauseIdleForeground;
