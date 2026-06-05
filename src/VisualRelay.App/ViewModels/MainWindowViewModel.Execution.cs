@@ -80,6 +80,7 @@ public partial class MainWindowViewModel
         if (result.IsRunnable)
         {
             NeedsInitialization = false;
+            ConfigDiagnostic = null;
             return true;
         }
 
