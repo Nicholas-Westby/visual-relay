@@ -75,6 +75,31 @@ public partial class MainWindowViewModel
         });
     }
 
+    private bool CanFindTestCommand() => IsBackendReachable;
+
+    [RelayCommand(CanExecute = nameof(CanFindTestCommand))]
+    private async Task FindTestCommandAsync()
+    {
+        StatusText = "Asking the frontier model for the test command…";
+        try
+        {
+            var command = await TestCommandFinder.FindAsync(RootPath);
+            if (!string.IsNullOrWhiteSpace(command))
+            {
+                InitTestCommandInput = command.Trim();
+                StatusText = "Detected a test command — review it, then Create config.";
+            }
+            else
+            {
+                StatusText = "The model didn't return a command — enter one manually.";
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Couldn't reach the model backend: {ex.Message}";
+        }
+    }
+
     private bool CanCreateConfig() => !IsBusy && !string.IsNullOrWhiteSpace(InitTestCommandInput);
 
     [RelayCommand(CanExecute = nameof(CanCreateConfig))]

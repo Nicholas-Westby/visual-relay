@@ -1,4 +1,5 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Init;
 
 namespace VisualRelay.Tests;
 
@@ -273,6 +274,23 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.NeedsInitialization);
         Assert.Equal("alpha", Assert.Single(viewModel.Tasks).Id);
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    [Fact]
+    public async Task FindTestCommand_PopulatesInputFromFinder()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            TestCommandFinder = new LlmTestCommandFinder((_, _) => Task.FromResult("go test ./..."))
+        };
+        await viewModel.LoadInitialAsync();
+
+        await viewModel.FindTestCommandCommand.ExecuteAsync(null);
+
+        Assert.Equal("go test ./...", viewModel.InitTestCommandInput);
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

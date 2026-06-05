@@ -4,6 +4,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using VisualRelay.App.Services;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -146,10 +147,14 @@ public partial class MainWindowViewModel : ViewModelBase
     // startup banner stays hidden until a probe says otherwise. The later
     // top-bar status task reuses this state + RefreshBackendStatusAsync rather
     // than running a second probe.
+    // Injectable so tests can supply a fake completer; defaults to the frontier proxy.
+    public LlmTestCommandFinder TestCommandFinder { get; init; } = new();
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(BackendStatusBrush))]
     [NotifyPropertyChangedFor(nameof(BackendStatusLabel))]
     [NotifyCanExecuteChangedFor(nameof(StartBackendCommand))]
+    [NotifyCanExecuteChangedFor(nameof(FindTestCommandCommand))]
     private bool _isBackendReachable = true;
 
     [ObservableProperty]
