@@ -97,6 +97,37 @@ public sealed class RelayTaskRepositoryTests
         Assert.All(tasks, task => Assert.Equal("Completed", task.StateLabel));
     }
 
+    [Fact]
+    public async Task ListAsync_NoConfig_StillListsTasks()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n"); // note: no WriteConfig
+        var tasks = await new RelayTaskRepository(repo.Root).ListAsync();
+        Assert.Equal(["alpha"], tasks.Select(t => t.Id));
+    }
+
+    [Fact]
+    public async Task ListAsync_IncompleteConfig_StillListsTasks()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), """{ "logSources": [] }""");
+        var tasks = await new RelayTaskRepository(repo.Root).ListAsync();
+        Assert.Equal(["alpha"], tasks.Select(t => t.Id));
+    }
+
+    [Fact]
+    public async Task ListAsync_MalformedConfig_ReturnsNoTasks()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), "{ not json");
+        var tasks = await new RelayTaskRepository(repo.Root).ListAsync();
+        Assert.Empty(tasks);
+    }
+
     private static void WriteReport(string root, string taskId, int stage, string model, double duration, int tokens)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

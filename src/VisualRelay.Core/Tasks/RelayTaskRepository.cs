@@ -28,7 +28,13 @@ public sealed class RelayTaskRepository
         bool includeNeedsReview = true,
         CancellationToken cancellationToken = default)
     {
-        var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
+        var loaded = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
+        if (loaded.Status == RelayConfigStatus.Malformed)
+        {
+            return [];
+        }
+
+        var config = loaded.Config;
         var tasksRoot = Path.Combine(RootPath, config.TasksDir);
         if (!Directory.Exists(tasksRoot))
         {
@@ -47,7 +53,13 @@ public sealed class RelayTaskRepository
 
     public async Task<IReadOnlyList<RelayTaskItem>> ListCompletedAsync(CancellationToken cancellationToken = default)
     {
-        var config = await RelayConfigLoader.LoadAsync(RootPath, cancellationToken);
+        var loaded = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
+        if (loaded.Status == RelayConfigStatus.Malformed)
+        {
+            return [];
+        }
+
+        var config = loaded.Config;
         var completedRoot = Path.Combine(RootPath, config.TasksDir, "completed");
         if (!Directory.Exists(completedRoot))
         {
