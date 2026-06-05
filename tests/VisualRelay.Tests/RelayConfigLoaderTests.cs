@@ -1,4 +1,5 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -31,5 +32,62 @@ public sealed class RelayConfigLoaderTests
         Assert.True(config.ArchiveOnDone);
         Assert.Equal("local-cheap", config.TierProfiles["cheap"]);
         Assert.Equal("balanced", config.TierProfiles["balanced"]);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_NoFile_ReturnsDefaulted()
+    {
+        using var repo = TestRepository.Create();
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Defaulted, result.Status);
+        Assert.Equal("llm-tasks", result.Config.TasksDir);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_OmittedLogSources_DefaultsToEmptyAndLoads()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test" }""");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Empty(result.Config.LogSources);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_MissingTestCmd_ReturnsIncomplete()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"), """{ "logSources": [] }""");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Incomplete, result.Status);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_LogSourcesWrongType_ReturnsMalformedWithDiagnostic()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "logSources": "logs/app.log" }""");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Malformed, result.Status);
+        Assert.Contains("logSources must be an array", result.Diagnostic);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_InvalidJson_ReturnsMalformed()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"), "{ not json");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Malformed, result.Status);
     }
 }

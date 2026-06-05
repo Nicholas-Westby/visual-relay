@@ -27,49 +27,109 @@ public static class RelayConfigLoader
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
-        var configPath = Path.Combine(rootPath, ".relay", "config.json");
-        if (!File.Exists(configPath))
+        var result = await TryLoadAsync(rootPath, cancellationToken);
+        return result.Status switch
         {
-            throw new FileNotFoundException($".relay/config.json not found in {rootPath}", configPath);
-        }
-
-        await using var stream = File.OpenRead(configPath);
-        using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
-        var root = doc.RootElement;
-        var testCommand = RequiredString(root, "testCmd");
-        var defaults = Defaults(testCommand, ReadStringArray(root, "logSources"));
-        var tiers = new Dictionary<string, string>(defaults.TierProfiles);
-
-        if (root.TryGetProperty("tierProfiles", out var tierProfiles))
-        {
-            foreach (var property in tierProfiles.EnumerateObject())
-            {
-                tiers[property.Name] = property.Value.GetString() ?? tiers.GetValueOrDefault(property.Name, property.Name);
-            }
-        }
-
-        return defaults with
-        {
-            TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
-            TestFileCommand = OptionalString(root, "testFileCmd", defaults.TestFileCommand),
-            TierProfiles = tiers,
-            MaxVerifyLoops = OptionalInt(root, "maxVerifyLoops", defaults.MaxVerifyLoops),
-            MaxStageFailures = OptionalInt(root, "maxStageFailures", defaults.MaxStageFailures),
-            MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
-            BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
-            ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
-            SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds)
+            RelayConfigStatus.Loaded => result.Config,
+            RelayConfigStatus.Defaulted => throw new FileNotFoundException(
+                $".relay/config.json not found in {rootPath}",
+                Path.Combine(rootPath, ".relay", "config.json")),
+            _ => throw new InvalidOperationException(result.Diagnostic ?? "relay config: invalid configuration")
         };
     }
 
-    private static string RequiredString(JsonElement root, string name)
+    public static async Task<RelayConfigResult> TryLoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
-        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+        var configPath = Path.Combine(rootPath, ".relay", "config.json");
+        if (!File.Exists(configPath))
         {
-            throw new InvalidOperationException($"relay config: required field {name} is missing");
+            return new RelayConfigResult(Defaults(), RelayConfigStatus.Defaulted, null);
         }
 
-        return value.GetString()!;
+        JsonDocument doc;
+        try
+        {
+            await using var stream = File.OpenRead(configPath);
+            doc = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        }
+        catch (JsonException ex)
+        {
+            return new RelayConfigResult(Defaults(), RelayConfigStatus.Malformed,
+                $"relay config: invalid JSON in {configPath}: {ex.Message}");
+        }
+
+        using (doc)
+        {
+            var root = doc.RootElement;
+
+            if (!TryGetString(root, "testCmd", out var testCommand) || string.IsNullOrWhiteSpace(testCommand))
+            {
+                return new RelayConfigResult(Defaults(), RelayConfigStatus.Incomplete,
+                    $"relay config: required field testCmd is missing or blank in {configPath}");
+            }
+
+            if (!TryReadStringArray(root, "logSources", out var logSources, out var arrayError))
+            {
+                return new RelayConfigResult(Defaults(), RelayConfigStatus.Malformed, arrayError);
+            }
+
+            var defaults = Defaults(testCommand, logSources);
+            var tiers = new Dictionary<string, string>(defaults.TierProfiles);
+            if (root.TryGetProperty("tierProfiles", out var tierProfiles) && tierProfiles.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in tierProfiles.EnumerateObject())
+                {
+                    tiers[property.Name] = property.Value.GetString() ?? tiers.GetValueOrDefault(property.Name, property.Name);
+                }
+            }
+
+            var config = defaults with
+            {
+                TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
+                TestFileCommand = OptionalString(root, "testFileCmd", defaults.TestFileCommand),
+                TierProfiles = tiers,
+                MaxVerifyLoops = OptionalInt(root, "maxVerifyLoops", defaults.MaxVerifyLoops),
+                MaxStageFailures = OptionalInt(root, "maxStageFailures", defaults.MaxStageFailures),
+                MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
+                BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
+                ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
+                SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds)
+            };
+            return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
+        }
+    }
+
+    private static bool TryGetString(JsonElement root, string name, out string value)
+    {
+        if (root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String)
+        {
+            value = element.GetString() ?? string.Empty;
+            return true;
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
+    // Optional array: absent -> empty (ok); present-but-not-array -> error.
+    private static bool TryReadStringArray(JsonElement root, string name, out IReadOnlyList<string> values, out string? error)
+    {
+        error = null;
+        if (!root.TryGetProperty(name, out var element))
+        {
+            values = [];
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            values = [];
+            error = $"relay config: {name} must be an array";
+            return false;
+        }
+
+        values = element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
+        return true;
     }
 
     private static string OptionalString(JsonElement root, string name, string fallback) =>
@@ -84,14 +144,4 @@ public static class RelayConfigLoader
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : fallback;
-
-    private static IReadOnlyList<string> ReadStringArray(JsonElement root, string name)
-    {
-        if (!root.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Array)
-        {
-            throw new InvalidOperationException($"relay config: {name} must be an array");
-        }
-
-        return value.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
-    }
 }
