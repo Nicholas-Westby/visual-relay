@@ -1,4 +1,5 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Init;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
@@ -97,6 +98,11 @@ public partial class MainWindowViewModel
         var configResult = await RelayConfigLoader.TryLoadAsync(RootPath);
         NeedsInitialization = !ShowArchive && configResult.NeedsInitialization;
         ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
+
+        if (NeedsInitialization && string.IsNullOrEmpty(InitTestCommandInput))
+        {
+            InitTestCommandInput = TestCommandDetector.Detect(RootPath);
+        }
 
         var repository = new RelayTaskRepository(RootPath);
         Tasks.Clear();

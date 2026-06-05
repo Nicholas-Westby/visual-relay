@@ -244,6 +244,37 @@ public sealed class MainWindowViewModelTests
             $"{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{content}\"}}]}}}}\n");
     }
 
+    [Fact]
+    public async Task NoConfig_PrefillsDetectedTestCommand()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "App.csproj"), "<Project/>");
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+
+        Assert.True(viewModel.NeedsInitialization);
+        Assert.Equal("dotnet test", viewModel.InitTestCommandInput);
+    }
+
+    [Fact]
+    public async Task CreateConfig_WritesConfigAndPopulatesQueue()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.NeedsInitialization);
+        Assert.Equal("alpha", Assert.Single(viewModel.Tasks).Id);
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
     private static async Task WaitUntilAsync(Func<bool> condition)
     {
         for (var i = 0; i < 50; i++)

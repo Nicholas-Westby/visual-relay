@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Services;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Init;
 using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Core.Tasks;
@@ -72,6 +73,27 @@ public partial class MainWindowViewModel
             StatusText = PauseRequested ? "Paused at task boundary" : "Queue drained";
             await RefreshTasksAfterDrainAsync();
         });
+    }
+
+    private bool CanCreateConfig() => !string.IsNullOrWhiteSpace(InitTestCommandInput);
+
+    [RelayCommand(CanExecute = nameof(CanCreateConfig))]
+    private async Task CreateConfigAsync()
+    {
+        RelayConfigWriter.Write(RootPath, InitTestCommandInput.Trim());
+        await RefreshAsync();
+
+        // If a Run was blocked by the missing config, resume it now that it loads.
+        if (_pendingRunTaskId is { } pending && !ShowArchive)
+        {
+            var resumed = Tasks.FirstOrDefault(task => task.Id == pending);
+            _pendingRunTaskId = null;
+            if (resumed is not null)
+            {
+                SelectedTask = resumed;
+                await RunSelectedCommand.ExecuteAsync(null);
+            }
+        }
     }
 
     private async Task<bool> EnsureRunnableAsync(string? pendingTaskId)

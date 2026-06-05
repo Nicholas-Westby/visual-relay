@@ -92,6 +92,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _needsInitialization;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
+    private string _initTestCommandInput = string.Empty;
+
+    [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]
     private string? _configDiagnostic;
 
