@@ -99,6 +99,8 @@ public partial class MainWindowViewModel
         NeedsInitialization = !ShowArchive && configResult.NeedsInitialization;
         ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
 
+        // IsNullOrEmpty (not WhiteSpace) so detection runs only when the user hasn't
+        // touched the box yet; never clobbers a value the user has typed.
         if (NeedsInitialization && string.IsNullOrEmpty(InitTestCommandInput))
         {
             InitTestCommandInput = TestCommandDetector.Detect(RootPath);

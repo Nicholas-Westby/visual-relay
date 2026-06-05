@@ -75,7 +75,7 @@ public partial class MainWindowViewModel
         });
     }
 
-    private bool CanCreateConfig() => !string.IsNullOrWhiteSpace(InitTestCommandInput);
+    private bool CanCreateConfig() => !IsBusy && !string.IsNullOrWhiteSpace(InitTestCommandInput);
 
     [RelayCommand(CanExecute = nameof(CanCreateConfig))]
     private async Task CreateConfigAsync()
@@ -83,11 +83,15 @@ public partial class MainWindowViewModel
         RelayConfigWriter.Write(RootPath, InitTestCommandInput.Trim());
         await RefreshAsync();
 
-        // If a Run was blocked by the missing config, resume it now that it loads.
-        if (_pendingRunTaskId is { } pending && !ShowArchive)
+        // If a Run was blocked by the missing config, resume it now that the config
+        // loads. The pending id is cleared unconditionally so a non-resumable state
+        // (archive view, task gone) can't leave it stale. NOTE: the actual resumed run
+        // drives the real Swival pipeline (no runner injection seam), so it is verified
+        // manually, not in unit tests.
+        if (_pendingRunTaskId is { } pending)
         {
-            var resumed = Tasks.FirstOrDefault(task => task.Id == pending);
             _pendingRunTaskId = null;
+            var resumed = ShowArchive ? null : Tasks.FirstOrDefault(task => task.Id == pending);
             if (resumed is not null)
             {
                 SelectedTask = resumed;
