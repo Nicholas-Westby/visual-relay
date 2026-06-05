@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
@@ -93,6 +94,10 @@ public partial class MainWindowViewModel
 
     private async Task ReloadTaskListAsync(string? preferredTaskId = null)
     {
+        var configResult = await RelayConfigLoader.TryLoadAsync(RootPath);
+        NeedsInitialization = !ShowArchive && configResult.NeedsInitialization;
+        ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
+
         var repository = new RelayTaskRepository(RootPath);
         Tasks.Clear();
         var tasks = ShowArchive ? await repository.ListCompletedAsync() : await repository.ListAsync();

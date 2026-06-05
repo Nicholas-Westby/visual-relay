@@ -186,6 +186,25 @@ public sealed class MainWindowViewModelTests
         Assert.False(viewModel.RevealStageArtifactsCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task RunSelected_WithNoConfig_BlocksAndFlagsInitialization()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n"); // no WriteConfig
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        Assert.True(viewModel.NeedsInitialization);
+        Assert.Equal("alpha", Assert.Single(viewModel.Tasks).Id);
+
+        viewModel.SelectedTask = viewModel.Tasks[0];
+        await viewModel.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.NeedsInitialization);
+        Assert.Contains("initialize", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.False(viewModel.IsBusy);
+    }
+
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

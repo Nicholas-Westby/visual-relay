@@ -19,6 +19,11 @@ public partial class MainWindowViewModel
             return;
         }
 
+        if (!await EnsureRunnableAsync(SelectedTask.Id))
+        {
+            return;
+        }
+
         var task = SelectedTask;
         await RunBusyAsync(async () =>
         {
@@ -33,6 +38,11 @@ public partial class MainWindowViewModel
         if (PauseRequested)
         {
             StatusText = "Paused: no new task will start";
+            return;
+        }
+
+        if (!await EnsureRunnableAsync(null))
+        {
             return;
         }
 
@@ -62,6 +72,24 @@ public partial class MainWindowViewModel
             StatusText = PauseRequested ? "Paused at task boundary" : "Queue drained";
             await RefreshTasksAfterDrainAsync();
         });
+    }
+
+    private async Task<bool> EnsureRunnableAsync(string? pendingTaskId)
+    {
+        var result = await RelayConfigLoader.TryLoadAsync(RootPath);
+        if (result.IsRunnable)
+        {
+            NeedsInitialization = false;
+            return true;
+        }
+
+        _pendingRunTaskId = pendingTaskId;
+        NeedsInitialization = result.NeedsInitialization;
+        ConfigDiagnostic = result.Status == RelayConfigStatus.Malformed ? result.Diagnostic : null;
+        StatusText = result.Status == RelayConfigStatus.Malformed
+            ? result.Diagnostic!
+            : "No usable .relay/config.json — initialize this project to run.";
+        return false;
     }
 
     private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task)

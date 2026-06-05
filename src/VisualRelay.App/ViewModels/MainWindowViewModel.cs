@@ -89,6 +89,18 @@ public partial class MainWindowViewModel : ViewModelBase
     private TaskRowViewModel? _selectedTask;
 
     [ObservableProperty]
+    private bool _needsInitialization;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]
+    private string? _configDiagnostic;
+
+    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;
+
+    // Set when a Run was blocked by a missing config so guided init can resume it.
+    private string? _pendingRunTaskId;
+
+    [ObservableProperty]
     private string _statusText = "Idle";
 
     [ObservableProperty]
