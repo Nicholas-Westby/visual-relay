@@ -81,6 +81,17 @@ public sealed class RelayConfigLoaderTests
     }
 
     [Fact]
+    public async Task TryLoadAsync_BlankTestCmd_ReturnsIncomplete()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"), """{ "testCmd": "   " }""");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Incomplete, result.Status);
+    }
+
+    [Fact]
     public async Task TryLoadAsync_InvalidJson_ReturnsMalformed()
     {
         using var repo = TestRepository.Create();

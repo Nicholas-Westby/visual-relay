@@ -70,7 +70,7 @@ public static class RelayConfigLoader
 
             if (!TryReadStringArray(root, "logSources", out var logSources, out var arrayError))
             {
-                return new RelayConfigResult(Defaults(), RelayConfigStatus.Malformed, arrayError);
+                return new RelayConfigResult(Defaults(), RelayConfigStatus.Malformed, $"{arrayError} in {configPath}");
             }
 
             var defaults = Defaults(testCommand, logSources);
