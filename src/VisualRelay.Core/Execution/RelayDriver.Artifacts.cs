@@ -50,6 +50,27 @@ public sealed partial class RelayDriver
             .ToArray();
     }
 
+    /// <summary>
+    /// Sanitizes each raw candidate via <see cref="CommitMessageSanitizer.TrySanitizeSubject"/>,
+    /// drops non-Conventional entries, and appends the guaranteed <c>chore(relay): {taskId}</c>
+    /// fallback so the list is never empty.
+    /// </summary>
+    private static IReadOnlyList<string> BuildCommitChain(IReadOnlyList<string> rawCandidates, string taskId)
+    {
+        var chain = new List<string>(rawCandidates.Count + 1);
+        foreach (var raw in rawCandidates)
+        {
+            var subject = CommitMessageSanitizer.TrySanitizeSubject(raw);
+            if (subject is not null)
+            {
+                chain.Add(subject);
+            }
+        }
+
+        chain.Add(CommitMessageSanitizer.FromRawOrFallback(null, taskId));
+        return chain;
+    }
+
     private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv"

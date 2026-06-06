@@ -147,6 +147,110 @@ public sealed class RelayDriverGitCommitTests
         Assert.Contains("D\tdata/http_log.json", names);
     }
 
+    [Fact]
+    public async Task RunTaskAsync_CommitMsgHookRejectsFileNames_FallsBackToLaterCandidate()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.cs", []);
+        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        RunGit(repo.Root, "init");
+        RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RunGit(repo.Root, "add .");
+        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+
+        // Install a commit-msg hook that rejects subjects containing "foo.cs".
+        InstallRejectingCommitMsgHook(repo.Root, "foo\\.cs");
+
+        var runner = new FileNameFirstCandidateRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        // The first candidate ("fix(src): update foo.cs logic") contains foo.cs and
+        // should be rejected by the hook.  The second candidate should land.
+        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        Assert.Equal("fix: correct update logic", subject.Trim());
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_LegacyCommitMessageString_StillCommits()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.cs", []);
+        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        RunGit(repo.Root, "init");
+        RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RunGit(repo.Root, "add .");
+        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+
+        var runner = new LegacyCommitMessageRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        Assert.Equal("fix(legacy): use old field", subject.Trim());
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_MissingCommitMessages_CommitsViaSlugFallback()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.cs", []);
+        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        RunGit(repo.Root, "init");
+        RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RunGit(repo.Root, "add .");
+        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+
+        var runner = new NoCommitMessageRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        Assert.Equal("chore(relay): ship-status", subject.Trim());
+    }
+
+    private static void InstallRejectingCommitMsgHook(string repoRoot, string rejectPattern)
+    {
+        var hooksDir = Path.Combine(repoRoot, ".git", "hooks");
+        Directory.CreateDirectory(hooksDir);
+        var hookPath = Path.Combine(hooksDir, "commit-msg");
+        File.WriteAllText(hookPath,
+            $"#!/usr/bin/env bash{System.Environment.NewLine}" +
+            $"set -euo pipefail{System.Environment.NewLine}" +
+            $"subject=\"$(head -n 1 \"$1\")\"{System.Environment.NewLine}" +
+            $"if echo \"$subject\" | grep -qE '{rejectPattern}'; then{System.Environment.NewLine}" +
+            $"  echo \"hook: subject matches rejected pattern\" >&2{System.Environment.NewLine}" +
+            $"  exit 1{System.Environment.NewLine}" +
+            $"fi{System.Environment.NewLine}" +
+            $"exit 0{System.Environment.NewLine}");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hookPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
     private static string RunGit(string rootPath, string arguments)
     {
         using var process = Process.Start(new ProcessStartInfo("/bin/sh", $"-lc \"git -C '{rootPath}' {arguments}\"")
@@ -160,141 +264,5 @@ public sealed class RelayDriverGitCommitTests
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, stderr);
         return stdout;
-    }
-}
-
-internal sealed class EditingSubagentRunner : ISubagentRunner
-{
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == 5)
-        {
-            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "status.test"), "red first");
-        }
-        else if (invocation.Stage.Number == 6)
-        {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
-        }
-
-        var json = invocation.Stage.Number switch
-        {
-            1 => """{"summary":"framed","options":["small"]}""",
-            2 => """{"findings":"found","constraints":[]}""",
-            3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.cs","tests/status.test","src/ghost.cs"]}""",
-            5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
-            6 => """{"summary":"implemented"}""",
-            7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status"}""",
-            _ => """{"summary":"ok"}"""
-        };
-        return Task.FromResult(new SubagentResult(json, json, true, null));
-    }
-}
-
-internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
-{
-    private readonly string _root;
-
-    public MidRunCommittingSubagentRunner(string root) => _root = root;
-
-    /// True after the hook rejected the agent's git commit at stage 8.
-    /// The test asserts this to confirm the authority gate is working.
-    public bool AgentCommitRejected { get; private set; }
-
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == 5)
-        {
-            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "status.test"), "red first");
-        }
-        else if (invocation.Stage.Number == 6)
-        {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
-        }
-        else if (invocation.Stage.Number == 8)
-        {
-            // The agent tries to commit — the hook should reject it (no token,
-            // .relay/ACTIVE/ present). The agent ignores the failure and continues.
-            var exitCode = Git("add -A");
-            if (exitCode == 0)
-            {
-                exitCode = Git("commit -m \"agent: premature commit of work in progress\"");
-                if (exitCode != 0)
-                {
-                    AgentCommitRejected = true;
-                }
-            }
-        }
-
-        var json = invocation.Stage.Number switch
-        {
-            1 => """{"summary":"framed","options":["small"]}""",
-            2 => """{"findings":"found","constraints":[]}""",
-            3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.cs","tests/status.test"]}""",
-            5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
-            6 => """{"summary":"implemented"}""",
-            7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status"}""",
-            _ => """{"summary":"ok"}"""
-        };
-        return Task.FromResult(new SubagentResult(json, json, true, null));
-    }
-
-    private int Git(string arguments)
-    {
-        var startInfo = new ProcessStartInfo("git")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        startInfo.ArgumentList.Add("-C");
-        startInfo.ArgumentList.Add(_root);
-        foreach (var arg in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-        {
-            startInfo.ArgumentList.Add(arg);
-        }
-
-        using var process = Process.Start(startInfo)!;
-        process.WaitForExit();
-        return process.ExitCode;
-    }
-}
-
-internal sealed class DeletingDirectorySubagentRunner : ISubagentRunner
-{
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == 5)
-        {
-            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "data.test"), "red first");
-        }
-        else if (invocation.Stage.Number == 6)
-        {
-            File.Delete(Path.Combine(invocation.TargetRoot, "data", "company.json"));
-            File.Delete(Path.Combine(invocation.TargetRoot, "data", "http_log.json"));
-        }
-
-        var json = invocation.Stage.Number switch
-        {
-            1 => """{"summary":"framed","options":["delete"]}""",
-            2 => """{"findings":"found","constraints":[]}""",
-            3 => """{"evidence":"stale fixtures","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"delete stale data","manifest":["src/delete.cs","data","tests/data.test"]}""",
-            5 => """{"testFiles":["tests/data.test"],"rationale":"red first"}""",
-            6 => """{"summary":"deleted stale data"}""",
-            7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessage":"fix(sample): remove stale data"}""",
-            _ => """{"summary":"ok"}"""
-        };
-        return Task.FromResult(new SubagentResult(json, json, true, null));
     }
 }

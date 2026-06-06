@@ -129,7 +129,7 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"fixed review notes"}""",
-            9 => """{"summary":"verified"}""",
+            9 => """{"summary":"verified","commitMessages":["feat: implement feature","fix: address edge case","chore: update project files"]}""",
             10 => """{"summary":"fixed verify"}""",
             _ => """{"summary":"ok"}"""
         };

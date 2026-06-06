@@ -31,6 +31,22 @@ internal static class CommitMessageSanitizer
             : $"{subject}{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, bullets)}";
     }
 
+    /// <summary>
+    /// Returns the sanitized first-line subject if it has a Conventional Commit
+    /// prefix; otherwise <c>null</c>.  Does not attach bullet points.
+    /// </summary>
+    internal static string? TrySanitizeSubject(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var lines = raw.Trim().Split('\n');
+        var subject = SanitizeSubject(lines[0]);
+        return HasConventionalPrefix(subject) ? subject : null;
+    }
+
     private static string SanitizeSubject(string subject)
     {
         var clean = subject.Replace("\u2014", "-", StringComparison.Ordinal).TrimEnd();

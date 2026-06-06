@@ -6,7 +6,7 @@ internal static class GitCommitter
         string rootPath,
         string taskId,
         string taskHash,
-        string commitMessage,
+        IReadOnlyList<string> commitMessages,
         IReadOnlyList<string> manifest,
         IReadOnlyList<string> proofFiles,
         string? commitToken,
@@ -66,20 +66,26 @@ internal static class GitCommitter
             }
         }
 
-        var message = $"{commitMessage}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";
-        var commitEnv = commitToken is not null
-            ? new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = commitToken }
-            : null;
-        var commit = await GitAsync(rootPath, ["commit", "-m", message], cancellationToken, TimeSpan.FromMinutes(2), commitEnv);
-        if (commit.ExitCode != 0)
+        string? lastError = null;
+        foreach (var candidate in commitMessages)
         {
-            return GitCommitResult.Failed($"commit rejected: {commit.Output.Trim()}");
+            var attemptMessage = $"{candidate}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";
+            var attemptEnv = commitToken is not null
+                ? new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = commitToken }
+                : null;
+            var attempt = await GitAsync(rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv);
+            if (attempt.ExitCode == 0)
+            {
+                var sha = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
+                return sha.ExitCode == 0
+                    ? GitCommitResult.Committed(sha.Output.Trim())
+                    : GitCommitResult.Failed($"git rev-parse failed after commit: {sha.Output.Trim()}");
+            }
+
+            lastError = attempt.Output.Trim();
         }
 
-        var sha = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
-        return sha.ExitCode == 0
-            ? GitCommitResult.Committed(sha.Output.Trim())
-            : GitCommitResult.Failed($"git rev-parse failed after commit: {sha.Output.Trim()}");
+        return GitCommitResult.Failed($"commit rejected: {lastError}");
     }
 
     private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(

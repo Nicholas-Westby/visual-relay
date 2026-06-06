@@ -14,7 +14,7 @@ public static class RelayStages
         Stage(6, "Implement", "balanced", "all", "all", """{ "summary": string }"""),
         Stage(7, "Review", "frontier", "some", "all", """{ "verdict": "pass"|"changes", "issues": [] }"""),
         Stage(8, "Fix", "balanced", "all", "all", """{ "summary": string }"""),
-        Stage(9, "Verify", "cheap", "some", "all", """{ "summary": string, "commitMessage"?: string }"""),
+        Stage(9, "Verify", "cheap", "some", "all", """{ "summary": string, "commitMessages": string[] }"""),
         Stage(10, "Fix-verify", "balanced", "all", "all", """{ "summary": string, "amendManifest"?: string[] }"""),
         new(11, "Commit", "cheap", "driver", "none", "git", string.Empty, string.Empty)
     ];
@@ -46,7 +46,7 @@ public static class RelayStages
         "Implement" => "Implement the change within the manifest files.",
         "Review" => "Review the actual diff and classify issues.",
         "Fix" => "Resolve every blocker and warning from review.",
-        "Verify" => "Summarize the final state; the driver decides pass/fail mechanically.",
+        "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
         "Fix-verify" => "Fix failures from the pinned suite.",
         _ => string.Empty
     };

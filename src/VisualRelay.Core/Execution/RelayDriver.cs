@@ -41,7 +41,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var taskHash = string.Empty;
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
-            string? commitMessage = null;
+            IReadOnlyList<string> commitMessages = [];
 
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow,
@@ -143,7 +143,16 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     {
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                         check = testResult.ExitCode == 0 ? "green" : "red";
-                        commitMessage = ReadOptionalString(json, "commitMessage") ?? commitMessage;
+                        commitMessages = ReadStringArray(json, "commitMessages");
+                        if (commitMessages.Count == 0)
+                        {
+                            var legacy = ReadOptionalString(json, "commitMessage");
+                            if (legacy is not null)
+                            {
+                                commitMessages = [legacy];
+                            }
+                        }
+
                         if (check != "green")
                         {
                             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, "verify failed", testResult.Output, cancellationToken);
@@ -166,8 +175,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             if (_options.CreateGitCommit)
             {
                 var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt") };
-                var subject = CommitMessageSanitizer.FromRawOrFallback(commitMessage, taskId);
-                var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, subject, manifest, proofFiles, activeLock.Nonce, cancellationToken);
+                var chain = BuildCommitChain(commitMessages, taskId);
+                var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLock.Nonce, cancellationToken);
                 if (!commit.Success)
                 {
                     return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, cancellationToken);
@@ -214,47 +223,23 @@ public sealed partial class RelayDriver : IRelayTaskRunner
     }
 
     private async Task<RelayTaskOutcome> FlagAsync(
-        string rootPath,
-        string runId,
-        string taskId,
-        string taskDirectory,
-        int stage,
-        string reason,
-        string? details,
-        CancellationToken cancellationToken)
+        string rootPath, string runId, string taskId, string taskDirectory,
+        int stage, string reason, string? details, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(taskDirectory);
-        var body = $"{reason}{Environment.NewLine}stage {stage}{Environment.NewLine}";
+        var body = $"{reason}\nstage {stage}\n";
         if (!string.IsNullOrWhiteSpace(details))
-        {
-            body += $"{Environment.NewLine}{details.Trim()}{Environment.NewLine}";
-        }
+            body += $"\n{details.Trim()}\n";
 
         await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow,
-            "error",
-            "flagged",
-            runId,
-            rootPath,
-            taskId,
-            stage,
+            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, stage,
             Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
     }
 
-    private Task PublishAsync(
-        string level,
-        string eventName,
-        string rootPath,
-        string runId,
-        string taskId,
-        RelayStageDefinition stage,
-        CancellationToken cancellationToken) =>
-        _dependencies.EventSink.PublishAsync(
-            new RelayEvent(DateTimeOffset.UtcNow, level, eventName, runId, rootPath, taskId, stage.Number, stage.Tier,
-                Data: new Dictionary<string, string> { ["name"] = stage.Name }),
-            cancellationToken);
+    private Task PublishAsync(string level, string eventName, string rootPath, string runId, string taskId, RelayStageDefinition stage, CancellationToken cancellationToken) =>
+        _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, level, eventName, runId, rootPath, taskId, stage.Number, stage.Tier, Data: new Dictionary<string, string> { ["name"] = stage.Name }), cancellationToken);
 
     private Task PublishStageDoneAsync(
         string rootPath,
