@@ -10,6 +10,12 @@ if (!Directory.Exists(rootPath))
 var detected = TestCommandDetector.Detect(rootPath);
 var path = RelayConfigWriter.Write(rootPath, detected);
 
+var hookResult = await HookInstaller.InstallAsync(rootPath, CancellationToken.None);
+if (!hookResult.Installed && hookResult.Warning is not null)
+{
+    Console.Error.WriteLine(hookResult.Warning);
+}
+
 if (string.IsNullOrEmpty(detected))
 {
     Console.WriteLine($"Wrote {path} with an empty testCmd — project type was not recognized.");

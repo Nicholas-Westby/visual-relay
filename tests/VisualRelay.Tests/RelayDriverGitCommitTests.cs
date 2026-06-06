@@ -76,12 +76,10 @@ public sealed class RelayDriverGitCommitTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_WhenAnAgentCommitsMidRun_FoldsItIntoOneSealedCommit()
+    public async Task RunTaskAsync_WhenAnAgentCommitsMidRun_AgentCommitIsRejectedByHook()
     {
-        // Stage agents have git shell access (Review reads the diff) and sometimes
-        // run `git commit` themselves. The driver's stage-11 commit must fold any
-        // such commits into ITS single sealed commit, otherwise the source lands in
-        // a rogue agent commit and the sealed Relay-Seal commit carries only proof.
+        // The pre-commit hook rejects commits lacking the RELAY_COMMIT_TOKEN during
+        // an active run. The driver's stage-11 commit sets the token and gets through.
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
@@ -94,6 +92,9 @@ public sealed class RelayDriverGitCommitTests
         RunGit(repo.Root, "commit -m \"chore: seed repo\"");
         var seed = RunGit(repo.Root, "rev-parse HEAD").Trim();
 
+        // Install the project's pre-commit hook so the agent's commit is rejected.
+        RepoSetup.InstallPreCommitHook(repo.Root);
+
         var runner = new MidRunCommittingSubagentRunner(repo.Root);
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
@@ -101,8 +102,15 @@ public sealed class RelayDriverGitCommitTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
+        // The agent's attempt to commit at stage 8 should be rejected by the hook
+        // (no RELAY_COMMIT_TOKEN). The agent ignores the failure and continues.
+        Assert.True(runner.AgentCommitRejected,
+            "agent's git commit should have been rejected by the pre-commit hook");
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+
+        // Only the driver's sealed commit should land on top of the seed.
         Assert.Equal("1", RunGit(repo.Root, $"rev-list --count {seed}..HEAD").Trim());
+
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains("src/status.cs", names);
         Assert.Contains(".relay/ship-status/manifest.txt", names);
@@ -179,7 +187,7 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status with a very long subject that should be cleanly truncated around a word boundary\n\n- update status output\n- keep proof files staged\nthis prose gets dropped"}""",
+            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status"}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -191,6 +199,10 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
     private readonly string _root;
 
     public MidRunCommittingSubagentRunner(string root) => _root = root;
+
+    /// True after the hook rejected the agent's git commit at stage 8.
+    /// The test asserts this to confirm the authority gate is working.
+    public bool AgentCommitRejected { get; private set; }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
@@ -205,9 +217,17 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
         }
         else if (invocation.Stage.Number == 8)
         {
-            // The rogue agent commits its own work before the driver's commit stage.
-            Git("add -A");
-            Git("commit -m \"agent: premature commit of work in progress\"");
+            // The agent tries to commit — the hook should reject it (no token,
+            // .relay/ACTIVE/ present). The agent ignores the failure and continues.
+            var exitCode = Git("add -A");
+            if (exitCode == 0)
+            {
+                exitCode = Git("commit -m \"agent: premature commit of work in progress\"");
+                if (exitCode != 0)
+                {
+                    AgentCommitRejected = true;
+                }
+            }
         }
 
         var json = invocation.Stage.Number switch
@@ -226,15 +246,24 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
         return Task.FromResult(new SubagentResult(json, json, true, null));
     }
 
-    private void Git(string arguments)
+    private int Git(string arguments)
     {
-        using var process = Process.Start(new ProcessStartInfo("/bin/sh", $"-lc \"git -C '{_root}' {arguments}\"")
+        var startInfo = new ProcessStartInfo("git")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
-        })!;
+        };
+        startInfo.ArgumentList.Add("-C");
+        startInfo.ArgumentList.Add(_root);
+        foreach (var arg in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            startInfo.ArgumentList.Add(arg);
+        }
+
+        using var process = Process.Start(startInfo)!;
         process.WaitForExit();
+        return process.ExitCode;
     }
 }
 

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Visual Relay pre-commit hook
+#
+# Enforces commit authority during an active Visual Relay run: when
+# .relay/ACTIVE/info.json exists, only the driver's stage-11 commit
+# (which carries RELAY_COMMIT_TOKEN in its environment) may commit.
+# Commits outside a run are unaffected.
+set -euo pipefail
+
+# Resolve the repository root — git sets GIT_DIR but we need the
+# working-tree root where .relay/ lives.
+repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+active_info="${repo_root}/.relay/ACTIVE/info.json"
+
+if [[ ! -f "$active_info" ]]; then
+    # No active Visual Relay run — allow the commit.
+    exit 0
+fi
+
+# A run is active. Extract the nonce from info.json.
+# The nonce is Guid.ToString("N") — 32 lowercase hex chars.
+# We use grep+sed to avoid a jq dependency.
+nonce="$(grep -o '"nonce" *: *"[^"]*"' "$active_info" 2>/dev/null \
+    | sed 's/.*"nonce" *: *"//' | sed 's/"//' | head -1)"
+
+if [[ -z "$nonce" ]]; then
+    echo "Visual Relay: .relay/ACTIVE/info.json is malformed (no nonce)." >&2
+    echo "A Visual Relay run is active — stage agents must not run git commit." >&2
+    exit 1
+fi
+
+# Compare against the token set by the driver on its commit process.
+# RELAY_COMMIT_TOKEN is only set on the single git-commit invocation,
+# never exported to the driver environment or inherited by agents.
+if [[ "${RELAY_COMMIT_TOKEN:-}" = "$nonce" ]]; then
+    exit 0
+fi
+
+cat >&2 <<'MSG'
+Visual Relay: commit rejected — a run is active.
+Only the driver's stage-11 sealed commit may land during a run.
+Stage agents must not run git commit — the driver produces the single
+sealed commit with Task: / Relay-Seal: trailers.
+MSG
+exit 1

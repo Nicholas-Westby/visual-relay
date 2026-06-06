@@ -106,6 +106,12 @@ public partial class MainWindowViewModel
     private async Task CreateConfigAsync()
     {
         RelayConfigWriter.Write(RootPath, InitTestCommandInput.Trim());
+        var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None);
+        if (!hookResult.Installed && hookResult.Warning is not null)
+        {
+            StatusText = hookResult.Warning;
+        }
+
         await RefreshAsync();
 
         // If a Run was blocked by the missing config, resume it now that the config
