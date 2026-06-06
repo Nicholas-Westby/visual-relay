@@ -12,12 +12,13 @@ public sealed record StageRunMetric(
     int PromptTokens,
     int CachedTokens,
     int OutputTokens,
+    int CacheWriteTokens,
     string ReportPath,
     string? TraceDirectory,
     bool Succeeded = true,
     string? ErrorMessage = null)
 {
-    public string CostLabel => MoneyFormatter.Dollars(CostUsd);
+    public string CostLabel => Priced ? MoneyFormatter.Dollars(CostUsd) : "?";
     public string DurationLabel => FormatDuration(DurationSeconds);
     public string DetailLabel => $"{DurationLabel}  {CostLabel}";
 
@@ -41,7 +42,11 @@ public sealed record TaskRunMetric(
     public double CostUsd => Stages.Sum(stage => stage.CostUsd);
     public double DurationSeconds => Stages.Sum(stage => stage.DurationSeconds);
     public int CompletedStageCount => Stages.Count;
-    public string CostLabel => CompletedStageCount == 0 ? "No cost yet" : MoneyFormatter.Dollars(CostUsd);
+    public string CostLabel => CompletedStageCount == 0
+        ? "No cost yet"
+        : Stages.All(s => s.Priced)
+            ? MoneyFormatter.Dollars(CostUsd)
+            : "?";
     public string DurationLabel => CompletedStageCount == 0 ? "No run yet" : FormatDuration(DurationSeconds);
     public string SummaryLabel => CompletedStageCount == 0
         ? "No run history"

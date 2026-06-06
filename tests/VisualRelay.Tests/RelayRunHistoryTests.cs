@@ -166,6 +166,7 @@ public sealed class RelayRunHistoryTests
         PromptTokens: 0,
         CachedTokens: 0,
         OutputTokens: 0,
+        CacheWriteTokens: 0,
         ReportPath: "report.json",
         TraceDirectory: null,
         Succeeded: succeeded);

@@ -43,6 +43,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var previousSeal = string.Empty;
             var taskHash = string.Empty;
             var sessionCostUsd = 0d;
+            var unknownCostStageCount = 0;
             string? commitMessage = null;
 
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
@@ -71,7 +72,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
-                    sessionCostUsd += cost?.CostUsd ?? 0;
+                    if (cost is not null)
+                    {
+                        sessionCostUsd += cost.CostUsd;
+                    }
+                    else
+                    {
+                        unknownCostStageCount++;
+                    }
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, cancellationToken);
@@ -150,7 +158,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 taskHash = seal;
                 seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
                 await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
-                await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken);
             }
 
             var commitSha = "simulated";
@@ -255,14 +263,24 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         TimeSpan elapsed,
         RelayCostEstimate? cost,
         double sessionCostUsd,
+        int unknownCostStageCount,
         CancellationToken cancellationToken)
     {
+        var costLabel = cost is not null
+            ? MoneyFormatter.Dollars(cost.CostUsd)
+            : stage.Kind == "driver"
+                ? MoneyFormatter.Dollars(0)
+                : "?";
+        var sessionLabel = unknownCostStageCount > 0
+            ? MoneyFormatter.Dollars(sessionCostUsd) + "?"
+            : MoneyFormatter.Dollars(sessionCostUsd);
+
         var data = new Dictionary<string, string>
         {
             ["name"] = stage.Name,
             ["time"] = FormatDuration(cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds),
-            ["cost"] = MoneyFormatter.Dollars(cost?.CostUsd ?? 0),
-            ["sessionCost"] = MoneyFormatter.Dollars(sessionCostUsd)
+            ["cost"] = costLabel,
+            ["sessionCost"] = sessionLabel
         };
         if (!string.IsNullOrWhiteSpace(cost?.Model))
         {

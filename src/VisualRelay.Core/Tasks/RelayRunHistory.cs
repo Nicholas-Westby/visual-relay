@@ -96,6 +96,7 @@ public static partial class RelayRunHistory
             estimate.PromptTokens,
             estimate.CachedTokens,
             estimate.OutputTokens,
+            estimate.CacheWriteTokens,
             reportPath,
             Directory.Exists(traceDirectory) ? traceDirectory : null,
             succeeded,
@@ -155,6 +156,7 @@ public static partial class RelayRunHistory
             PromptTokens = ordered.Sum(metric => metric.PromptTokens),
             CachedTokens = ordered.Sum(metric => metric.CachedTokens),
             OutputTokens = ordered.Sum(metric => metric.OutputTokens),
+            CacheWriteTokens = ordered.Sum(metric => metric.CacheWriteTokens),
             Priced = ordered.All(metric => metric.Priced)
         };
     }

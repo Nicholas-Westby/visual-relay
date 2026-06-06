@@ -1,0 +1,691 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-06-06T06:28:12.544254+00:00",
+  "task": "# Relay stage 4: Plan\nTask: author-edit-and-manage-task-attachments\n\n## Task input\n# Author, edit, and manage attachments for LLM tasks from the UI\n\nToday Visual Relay is read-only over the task backlog: you can browse, reorder,\nand run tasks, but you cannot **create** a new task, **edit** an existing one, or\n**manage the attachments** (the other files that travel with a task). All of that\nhas to happen in an editor/Finder outside the app. This task adds an in-app\nauthoring surface for all three, and fixes discovery so that a task folder can\nhold extra markdown files as attachments instead of mistaking them for separate\ntasks.\n\nThe data model already distinguishes two task shapes\n(`src/VisualRelay.Core/Tasks/RelayTaskRepository.cs:83` `Walk`):\n\n- **Flat task** \u2014 a single markdown file `llm-tasks/<slug>.md`.\n- **Nested task** \u2014 a folder `llm-tasks/<slug>/<slug>.md` plus sibling files. The\n  small text siblings are inlined into the task's Context (`ReadTaskInputAsync` \u2192\n  `BuildContext`, `RelayTaskRepository.cs:76` and `:194`, bounded by\n  `TextExtensions`/`PerFileContextLimit` 8 000 /`TotalContextLimit` 24 000 at\n  `RelayTaskRepository.cs:9-11`). A `RelayTaskItem` already carries\n  `MarkdownPath`, `TaskDirectory`, `IsNested`, and `SiblingPaths`\n  (`src/VisualRelay.Domain/RelayTaskItem.cs`).\n\nThe read side of attachments exists; what is missing is the write side, an edit\nsurface, and a discovery fix for extra markdown.\n\n## Current state (researched)\n\n- **No authoring.** Nothing in the app writes a task file; the only writer of the\n  nested layout is a test double (`tests/VisualRelay.Tests/TestDoubles.cs`\n  `WriteNestedTask`). The production precedent to mirror is `RelayConfigWriter`\n  (`src/VisualRelay.Core/Init/RelayConfigWriter.cs`) \u2014 a small pure writer the\n  view model calls before refreshing.\n- **No editing.** The selected task's markdown is shown **read-only**: a\n  `TextBlock Text=\"{Binding SelectedTaskMarkdown}\"` in the \"Markdown\" tab\n  (`src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml:98-122`), populated\n  by `LoadSelectedTaskAsync` (`MainWindowViewModel.Commands.cs:147-163`). There is\n  no editable field and no save path back to `task.MarkdownPath`.\n- **No attachment management.** The \"Context\" tab shows the inlined siblings, but\n  nothing lets you add, remove, or reveal one. A reveal-in-Finder service already\n  exists to reuse: `FileReveal` / `RevealStageArtifactsCommand`\n  (`MainWindowViewModel.Commands.cs:176-201`, shipped by\n  `DONE-reveal-stage-artifacts-in-finder.md`).\n- **Extra markdown in a task folder is mis-discovered as a separate task.** `Walk`\n  (`RelayTaskRepository.cs:83`) emits *every* `.md` in a folder as its own task,\n  and builds `SiblingPaths` from non-`.md` files only\n  (`RelayTaskRepository.cs:98-104`). So `llm-tasks/<slug>/notes.md` next to\n  `llm-tasks/<slug>/<slug>.md` shows up as a phantom second queue entry instead of\n  an attachment of `<slug>`.\n- Tasks live under `<root>/llm-tasks` (`RelayConfigLoader.Defaults` TasksDir);\n  discovery skips `DONE-*`/`IGNORE-*` names and `completed`/`_ideation` dirs\n  (`RelayTaskRepository.cs:8`, `IsSkippedName`). Every write must be followed by\n  `ReloadTaskListAsync`/`RefreshAsync`.\n\n## What to build\n\nAll filesystem work goes in one pure, unit-tested Core unit: `RelayTaskWriter`\n(`src/VisualRelay.Core/Tasks/RelayTaskWriter.cs`), called from new view-model\ncommands and a modest detail-pane UI.\n\n### Fix discovery first: one task per folder, the rest are attachments\n\nAdopt and enforce a single rule: **within a task subfolder, the task markdown is\nthe file named after the folder (`<folder>/<folder>.md`); every other entry in\nthat folder \u2014 including other `.md` files \u2014 is an attachment.** Top-level `.md`\nfiles directly in `llm-tasks/` stay flat tasks (unchanged).\n\n- Change `Walk` so that when it descends into a task subfolder it emits exactly\n  one `RelayTaskItem` (the folder-named markdown) and collects *all* other entries\n  as `SiblingPaths` \u2014 drop the `.md` exclusion in the sibling filter\n  (`RelayTaskRepository.cs:98-104`). Apply the same \"other markdown = attachment\"\n  rule to `ArchivedTaskFromPath` (`RelayTaskRepository.cs:131-150`) for completed\n  tasks. If a legacy folder has no file matching its name, the single markdown it\n  contains is the task; never surface a non-task markdown as its own queue entry.\n- `BuildContext` already lists `\"md\"` in `TextExtensions`, so once other `.md`\n  siblings are in `SiblingPaths` they inline into Context automatically (subject\n  to the existing 8 KB/24 KB caps). A task's own markdown is never an attachment\n  of itself.\n\n### Author a new task\n\n- Add a **New task** button to the queue panel header\n  (`src/VisualRelay.App/Views/Controls/QueuePanel.axaml`), next to the Archive\n  toggle. It collects a title and an initial markdown body.\n- `RelayTaskWriter.CreateAsync(root, slug, markdown)` writes\n  `llm-tasks/<slug>.md` (flat). Derive `<slug>` from the title as filesystem-safe\n  kebab-case. Reject and surface an inline error (writing nothing) when the slug\n  is empty, unsafe, carries a reserved `DONE-`/`IGNORE-` prefix, or collides with\n  an existing flat file or task folder.\n- After the write, `RefreshAsync` and select the new task so it is immediately\n  runnable.\n\n### Edit an existing task\n\n- Give the \"Markdown\" tab an explicit **Edit \u2192 Save** model: an Edit button swaps\n  the read-only `TextBlock` for a multiline `TextBox` bound to an edit buffer;\n  Save writes the buffer to `task.MarkdownPath` via\n  `RelayTaskWriter.SaveAsync(task, markdown)`, then reloads so Context\n  re-derives. Cancel discards the buffer.\n- Block editing of the **currently running** task (`_runningTaskId == task.Id`)\n  and of **archived/DONE** tasks, with a visible reason; the field stays\n  read-only in those states.\n\n### Manage attachments\n\n- Add an **Attachments** tab to the detail pane that lists the task's\n  `SiblingPaths` (filename + size), each row with **Reveal in Finder** (reuse\n  `FileReveal`) and **Remove** (delete the file after a confirmation).\n- **Add attachment**: a native file picker copies the chosen file(s) into the\n  task's folder. When the task is currently **flat**, adding the first attachment\n  promotes it to nested \u2014 create `llm-tasks/<slug>/`, move `<slug>.md` \u2192\n  `<slug>/<slug>.md`, then place the attachment beside it \u2014 so discovery keeps it\n  as one task and Context picks the new file up.\n- Refresh after every add/remove so the queue and Context reflect the new set.\n\n## Done when\n\n- **Discovery:** a markdown file inside a task folder that is not the\n  folder-named task (e.g. `llm-tasks/<slug>/notes.md`) is treated as an attachment\n  of `<slug>` and inlined into its Context \u2014 never listed as a separate task; the\n  folder-named markdown is the only queue entry for that folder. Existing\n  canonical nested tasks (`<slug>/<slug>.md` + non-markdown siblings) are\n  unchanged.\n- **Author:** the New task flow creates `llm-tasks/<slug>.md`, it appears in the\n  queue immediately and is runnable; empty/unsafe/reserved-prefix/colliding slugs\n  are rejected with a clear message and write nothing.\n- **Edit:** the selected task's markdown can be edited and saved back to its\n  `MarkdownPath`; the change persists and Context re-derives on reload; editing is\n  blocked (with a visible reason) for the running task and for archived/DONE\n  tasks.\n- **Attachments:** the Attachments tab lists a task's files with Reveal and\n  Remove; adding an attachment copies it into the task folder, promoting a flat\n  task to the nested `llm-tasks/<slug>/<slug>.md` layout on first add; removes\n  delete the file after confirmation; Context reflects adds/removes within the\n  existing inlining limits.\n- **No regressions:** discovery still skips `DONE-*`/`IGNORE-*`/`completed`/\n  `_ideation`; running, reordering, archiving, and run-history behave as before;\n  a flat task that never gains an attachment stays a single file.\n- `RelayTaskWriter` is a pure, unit-tested Core unit (create, save,\n  promote-to-nested, add/remove attachment, slug validation, collision handling),\n  and the discovery change has tests proving an extra `.md` in a task folder is an\n  attachment, not a task. Write the failing tests first; cover the view-model\n  commands and edit guards too.\n- Verify with `./visual-relay screenshot` (and eyeball `./visual-relay launch`\n  for the editable field and the attachment list if possible).\n- `./visual-relay check` green; C#/XAML files under 300 lines; Conventional\n  Commit subjects.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add in-app authoring (create/edit tasks + manage attachments) to Visual Relay and fix task-folder discovery so extra .md files are treated as attachments, not separate tasks. Three approaches range from minimal changes (Option A) through full spec compliance (Option B) to parallel delivery (Option C).\",\n  \"options\": [\n    \"Option A \u2014 Patch Walk + thin RelayTaskWriter + minimal button wiring: smallest diff, least risk, bare-bones UI.\",\n    \"Option B \u2014 Full RelayTaskWriter (all 5 ops + validation) + dedicated view-model commands + dedicated Attachments tab + Edit/Save cycle: complete spec, cleanest architecture, most testable.\",\n    \"Option C \u2014 Parallel subagent streams (fix-discovery / author-edit / attachments) integrated after independent completion: fastest wall-clock delivery, requires merge coordination on shared files.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is a .NET 10 Avalonia desktop app in three projects: Domain (records), Core (business logic, filesystem I/O), App (Avalonia UI + ViewModels). Task files live under `<root>/llm-tasks/` (default `TasksDir`). Discovery happens in `RelayTaskRepository.Walk()` (line 83\u2013118), which currently excludes `.md` files from sibling collection (`Walk` line 112, `ArchivedTaskFromPath` line 151), causing extra markdown in a task folder to appear as phantom queue entries. The read side is complete (`RelayTaskItem` has all fields, `BuildContext` inlines text siblings up to 8\u202fKB/24\u202fKB caps, `TextExtensions` includes `\\\"md\\\"`). The write side is absent \u2014 no production code writes a task file. The precedent for a pure Core writer is `RelayConfigWriter.Write()`. The ViewModel uses CommunityToolkit.Mvvm (`[RelayCommand]`, `[ObservableProperty]`) with pattern `partial class MainWindowViewModel` spread across 6 partial files. `_runningTaskId` (private field, line 31 of MainWindowViewModel.cs) and `SelectedTask.IsArchived` gate run-ability. Tests use xUnit with `TestRepository` (filesystem-based, no mocking library). `FileReveal.Reveal()` already exists in Core. `IFolderPicker` exists for folder selection but no file-picking service exists yet. The `QueuePanel.axaml` header uses `Grid ColumnDefinitions=\\\"*,Auto,Auto\\\"` with Archive toggle last. The `TaskDetailPanel.axaml` has two tabs (read-only Markdown TextBlock, Context) and needs an editable surface + third Attachments tab.\",\n  \"constraints\": [\n    \"`RelayTaskRepository.Walk()` (line 83\u2013118) and `ArchivedTaskFromPath()` (line 143\u2013162) both filter `.md` out of siblings via `!file.EndsWith(\\\".md\\\", \u2026)` \u2014 the fix must apply in both places and must keep the folder-named markdown as the task, not an attachment.\",\n    \"Per-file context limit is 8\u202f000 chars (`PerFileContextLimit`), total is 24\u202f000 (`TotalContextLimit`); once other `.md` files become siblings they inline automatically via `BuildContext` \u2014 no change needed there beyond the discovery fix.\",\n    \"`RelayTaskItem` is a `sealed record` \u2014 all mutations must produce new records via `with { \u2026 }`; `SiblingPaths` is `IReadOnlyList<string>`.\",\n    \"`ReloadTaskListAsync()` (Helpers.cs line 96\u2013121) creates a new `RelayTaskRepository` each time, clears `Tasks`, and rebuilds from disk \u2014 every write must call this (or `RefreshAsync`) to be visible in the queue.\",\n    \"`CanRunSelected()` (Helpers.cs line 180) checks `!IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived` \u2014 edit guards for running/archived tasks can reuse `_runningTaskId` and `IsArchived` patterns.\",\n    \"`MainWindowViewModel` is `partial class` with 6 partial files; new commands should follow the `[RelayCommand(CanExecute = \u2026)]` pattern in `.Commands.cs`.\",\n    \"All ViewModel properties bound from XAML must use `[ObservableProperty]` or manual `OnPropertyChanged`; bound commands use `[RelayCommand]` which generates `*Command` properties.\",\n    \"`NotifyCanExecuteChangedFor` attributes on `[ObservableProperty]` must list every command whose `CanExecute` depends on that property.\",\n    \"`TaskDetailPanel.axaml` currently has 2 `TabItem`s (Markdown read-only `TextBlock`, Context); an editable `TextBox` + Edit/Save/Cancel buttons and a third \\\"Attachments\\\" tab must be added.\",\n    \"`QueuePanel.axaml` header uses `Grid ColumnDefinitions=\\\"*,Auto,Auto\\\"` with Archive toggle as the last column; a \\\"New task\\\" button must fit before it (e.g. change to `*,Auto,Auto,Auto`).\",\n    \"No file-picking service exists \u2014 one must be added (or use Avalonia's `StorageProvider.OpenFilePickerAsync` directly).\",\n    \"`TestRepository` test double uses temp directories cleaned up in `Dispose()`; new `RelayTaskWriter` tests can reuse or extend it.\",\n    \"All Core filesystem code must be pure (no view-model references, no UI types) and unit-testable via temp directories.\",\n    \"No mocking library is available \u2014 tests rely on concrete test doubles and filesystem fakes (`TestRepository`).\",\n    \"C#/XAML files must stay under 300 lines per file; Conventional Commit subjects are required.\",\n    \"`./visual-relay check` must remain green; `./visual-relay screenshot` and `./visual-relay launch` are the verification tools.\",\n    \"`TaskCompletionArchive.MarkDone()` renames `task.md` \u2192 `DONE-task.md`; `Archive()` handles nested vs flat differently \u2014 promote-to-nested logic in RelayTaskWriter must not conflict.\",\n    \"`IsSkippedName()` (line 171\u2013173) skips `DONE-*` and `IGNORE-*` prefixes \u2014 new task creation must reject these as invalid slugs.\",\n    \"`SkippedDirectories` set includes `\\\"completed\\\"` and `\\\"_ideation\\\"` \u2014 these directories are never walked.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Four related gaps prevent in-app task authoring, editing, and attachment management:\\n\\n**1. Discovery bug \u2014 extra .md files become phantom tasks (RelayTaskRepository.cs:110\u2013116, :150\u2013153)**\\n\\n`Walk()` collects siblings for nested tasks at line 110\u2013116:\\n```csharp\\nvar siblings = nested\\n    ? Directory.EnumerateFiles(directory)\\n        .Where(file => !file.EndsWith(\\\".md\\\", StringComparison.OrdinalIgnoreCase))\\n        .Order(StringComparer.Ordinal)\\n        .ToArray()\\n    : [];\\n```\\nThe `.Where(file => !file.EndsWith(\\\".md\\\", \u2026))` filter explicitly excludes all `.md` files from `SiblingPaths`. Since the outer loop (line 85\u2013106) accepts every `.md` file it encounters, a file like `llm-tasks/my-task/notes.md` is never collected as a sibling of `my-task`. Instead, `Walk` encounters it as a separate filesystem entry, passes the `.md` check on line 103, and emits a phantom `RelayTaskItem(id: \\\"notes\\\", \u2026)` \u2014 a second, bogus queue entry. The folder-named markdown (`my-task.md`) also creates its own entry (assuming it exists), so the user sees two queue items for one logical task. The same `.md`-exclusion bug exists in `ArchivedTaskFromPath()` at line 150\u2013153, causing the same phantom-entry problem for completed tasks.\\n\\n`BuildContext` (line 206) already includes `\\\"md\\\"` in `TextExtensions` and would inline extra `.md` siblings automatically \u2014 the inlining pipeline is ready; only the discovery filter is wrong.\\n\\n**2. No write-side code at all (RelayTaskWriter does not exist)**\\n\\nA search for `RelayTaskWriter` across `src/**/*.cs` returns zero matches. The only code that writes a task file to disk is the test double `TestRepository.WriteNestedTask()` in `tests/VisualRelay.Tests/TestDoubles.cs:42-51`. The production precedent \u2014 a pure Core writer called from the ViewModel \u2014 exists as `RelayConfigWriter.Write()` (src/VisualRelay.Core/Init/RelayConfigWriter.cs:11-25) but there is no corresponding writer for tasks.\\n\\n**3. Markdown tab is read-only with no edit path (TaskDetailPanel.axaml:98\u2013109)**\\n\\nThe Markdown tab renders as a read-only `TextBlock`:\\n```xml\\n<TextBlock Text=\\\"{Binding SelectedTaskMarkdown}\\\"\\n           FontFamily=\\\"Menlo,Consolas,monospace\\\"\\n           FontSize=\\\"13\\\" \u2026 />\\n```\\nThere is no `TextBox`, no Edit/Save/Cancel button row, no `EditBuffer` or `IsEditing` property in the ViewModel, and no write-back path to `task.MarkdownPath`. `LoadSelectedTaskAsync` (MainWindowViewModel.Commands.cs:147\u2013165) populates `SelectedTaskMarkdown` from disk but there is no reverse operation.\\n\\n**4. No attachment management \u2014 no tab, no commands, no file picker**\\n\\nThe `TaskDetailPanel.axaml` `TabControl` (lines 98\u2013122) has exactly two `TabItem`s: \\\"Markdown\\\" and \\\"Context\\\". There is no \\\"Attachments\\\" tab. No `IFilePicker` interface or implementation exists in `src/`. No ViewModel properties for attachment lists, add/remove commands, or promote-to-nested logic exist. `FileReveal.Reveal()` (`src/VisualRelay.Core/Execution/FileReveal.cs:32-52`) exists and could be reused for a \\\"Reveal in Finder\\\" button, but nothing calls it for attachments.\",\n  \"excerpts\": [\n    \"RelayTaskRepository.cs:110-116 \u2014 Walk() filters `.md` out of sibling collection: `.Where(file => !file.EndsWith(\\\".md\\\", StringComparison.OrdinalIgnoreCase))`. This causes `llm-tasks/<slug>/notes.md` to be discovered as a separate phantom task instead of attached as a sibling of `<slug>`.\",\n    \"RelayTaskRepository.cs:150-153 \u2014 ArchivedTaskFromPath() has the same `.md` exclusion: `.Where(file => !file.EndsWith(\\\".md\\\", StringComparison.OrdinalIgnoreCase))`.\",\n    \"RelayTaskRepository.cs:103-106 \u2014 Unconditional acceptance of any `.md` file as a task: `if (!name.EndsWith(\\\".md\\\", \u2026)) { continue; }` combined with the sibling exclusion creates the phantom-entry bug.\",\n    \"src/VisualRelay.Core/Tasks/ \u2014 Directory contains only RelayRunHistory.cs, RelayTaskRepository.cs, and TaskCompletionArchive.cs. No RelayTaskWriter.cs exists.\",\n    \"TaskDetailPanel.axaml:103 \u2014 Markdown displayed via read-only `TextBlock Text=\\\"{Binding SelectedTaskMarkdown}\\\"`. No editable `TextBox`, no Edit/Save/Cancel buttons.\",\n    \"MainWindowViewModel.Commands.cs:147-165 \u2014 LoadSelectedTaskAsync writes into `SelectedTaskMarkdown` but there is no reverse method to persist edits back to `task.MarkdownPath`.\",\n    \"TaskDetailPanel.axaml:98-122 \u2014 TabControl has exactly two TabItems (\\\"Markdown\\\", \\\"Context\\\"). No \\\"Attachments\\\" tab exists.\",\n    \"MainWindowViewModel.cs:111-115 \u2014 ViewModel has `SelectedTaskMarkdown` and `SelectedTaskContext` properties but no `EditBuffer`, `IsEditing`, `Attachments`, or edit-guard properties.\",\n    \"TestDoubles.cs:42-51 \u2014 TestRepository.WriteNestedTask() is the only code in the entire repo that writes a task-file layout to disk; no production equivalent exists.\",\n    \"RelayConfigWriter.cs:11-25 \u2014 The precedent pattern for a pure Core writer called from the ViewModel. This pattern should be mirrored by RelayTaskWriter but hasn't been.\"\n  ],\n  \"repro\": \"# Reproduce the discovery bug:\\n# 1. Create a nested task with an extra .md file\\nmkdir -p /tmp/vr-repro/llm-tasks/my-feature\\ncat > /tmp/vr-repro/llm-tasks/my-feature/my-feature.md << 'EOF'\\n# My Feature\\nEOF\\ncat > /tmp/vr-repro/llm-tasks/my-feature/notes.md << 'EOF'\\n# Research notes\\nEOF\\n\\n# 2. Run the existing test suite to see the bug is NOT covered:\\n# (No test puts an extra .md in a task folder and asserts it becomes a sibling)\\ncd /Users/admin/Dev/visual-relay\\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 \\\\\\n  --filter \\\"FullyQualifiedName~RelayTaskRepositoryTests\\\"\\n# All 8 tests pass \u2014 none cover extra-.md-as-attachment scenario\\n\\n# 3. The expected behavior: Walk() should emit exactly one RelayTaskItem\\n# for my-feature with SiblingPaths containing notes.md.\\n# Actual behavior: Walk() would emit TWO items \u2014 my-feature and notes.\\n# Root cause: line 112 excludes .md from siblings; line 103 accepts any .md as a task.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced-kimi",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"plan\": \"## Phase 1: Fix Discovery \u2014 `RelayTaskRepository.cs`\\n\\n**Walk() rewrite (lines 83\u2013118):** Replace per-file-in-subdir iteration with per-folder handling. When Walk encounters a subdirectory of tasksRoot: find the folder-named `.md` (e.g. `feat/feat.md`), collect ALL other entries as SiblingPaths (remove `.md` exclusion on line 112), emit exactly one RelayTaskItem. Legacy folders without folder-named `.md` use the sole `.md` present. Top-level `.md` files stay flat tasks. Remove recursion into task subdirectories (line 97).\\n\\n**ArchivedTaskFromPath() fix (line 151):** Remove `.Where(file => !file.EndsWith(\\\".md\\\", \u2026))` \u2014 all siblings including `.md` are collected.\\n\\n## Phase 2: Core Writer \u2014 `RelayTaskWriter.cs` (new)\\n\\nPure static class (`Slugify`, `ValidateSlug`, `CreateAsync`, `SaveAsync`, `PromoteToNestedAsync`, `AddAttachmentsAsync`, `RemoveAttachment`). CreateAsync throws `InvalidOperationException` for invalid slugs (empty, unsafe chars, DONE-/IGNORE- prefix, collision). PromoteToNestedAsync moves `<slug>.md` \u2192 `<slug>/<slug>.md`. AddAttachmentsAsync promotes flat\u2192nested on first attachment then copies files.\\n\\n## Phase 3: File Picker Service (3 new files)\\n\\n`IFilePicker` interface, `AvaloniaFilePicker` (StorageProvider wrapper), `NullFilePicker` \u2014 mirror IFolderPicker pattern.\\n\\n## Phase 4: ViewModel \u2014 `MainWindowViewModel*.cs`\\n\\n**MainWindowViewModel.cs:** Add `_filePicker` field, `UseFilePicker()` method, `[ObservableProperty]` for `IsEditing`, `EditBuffer`, `NewTaskTitle`, `NewTaskBody`, `NewTaskError`, `IsShowingNewTaskForm`. Computed `EditBlockedReason` (null when allowed; \\\"Task is currently running\\\" / \\\"Archived tasks are read-only\\\" when blocked). `CanEditSelectedTask` computed gate.\\n\\n**MainWindowViewModel.Commands.cs:** Add `StartEdit`, `SaveEditAsync`, `CancelEdit`, `CreateTaskAsync`, `ShowNewTaskForm`, `HideNewTaskForm`, `RevealAttachment(string)`, `RemoveAttachmentAsync(string)`, `AddAttachmentAsync`. CanExecute gates: CanSaveEdit (IsEditing + non-empty buffer), CanCreateTask (!IsBusy + non-empty title), CanManageAttachments (has selection + !IsBusy + !ShowArchive).\\n\\n**MainWindowViewModel.Helpers.cs:** Reset `IsEditing = false` in `ReloadTaskListAsync`.\\n\\n**App.axaml.cs:** Wire `viewModel.UseFilePicker(new AvaloniaFilePicker(window))`.\\n\\n## Phase 5: UI \u2014 XAML\\n\\n**QueuePanel.axaml:** Columns `*,Auto,Auto,Auto` \u2014 New Task button before Archive toggle. Inline form (IsShowingNewTaskForm) with title TextBox, body TextBox, error TextBlock, Create/Cancel buttons.\\n\\n**TaskDetailPanel.axaml:** Markdown tab toggles TextBlock (read-only) / TextBox+Save/Cancel (editing) via IsEditing. EditBlockedReason banner when blocked. Third \\\"Attachments\\\" TabItem: Add button + ListBox bound to `SelectedTask.Task.SiblingPaths` with Reveal/Remove buttons per row (CommandParameter=\\\"{Binding .}\\\").\\n\\n## Phase 6: Tests\\n\\n**RelayTaskWriterTests.cs (new):** 14 tests covering Slugify, ValidateSlug (reject empty/unsafe/reserved/collision, accept valid), CreateAsync, SaveAsync, PromoteToNestedAsync, AddAttachmentsAsync (copy + promote), RemoveAttachment.\\n\\n**RelayTaskRepositoryTests.cs (add):** 4 tests: extra .md as sibling not task, multiple .md in folder only folder-named is task, legacy folder without folder-named .md, canonical nested unchanged.\\n\\n**MainWindowViewModelTaskEditingTests.cs (new):** Tests for edit save/cancel cycle, edit blocked for running task, edit blocked for archived task, create task valid/invalid slug, add attachment promotes flat task, remove attachment.\\n\\n**TestDoubles.cs:** Add convenience helpers for writer tests.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Tasks/RelayTaskWriter.cs\",\n    \"src/VisualRelay.Core/Tasks/RelayTaskRepository.cs\",\n    \"src/VisualRelay.App/Services/IFilePicker.cs\",\n    \"src/VisualRelay.App/Services/AvaloniaFilePicker.cs\",\n    \"src/VisualRelay.App/Services/NullFilePicker.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n    \"src/VisualRelay.App/Views/Controls/QueuePanel.axaml\",\n    \"src/VisualRelay.App/App.axaml.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskWriterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTaskEditingTests.cs\",\n    \"tests/VisualRelay.Tests/TestDoubles.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 18,
+    "tool_calls_total": 40,
+    "tool_calls_succeeded": 40,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 26,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "truncated_responses": 0,
+    "truncation_repairs": 1,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 18,
+    "total_llm_time_s": 297.831,
+    "prompt_cache": {
+      "cached_tokens": 650240,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 8.971,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.197,
+      "prompt_tokens_est": 8619,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/RelayTaskRepository.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9249
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayTaskItem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1325
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/RelayConfigWriter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1002
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5651
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9303
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 8.968,
+      "prompt_tokens_est": 14630,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 6751
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10841
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9800
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/FileReveal.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2082
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6074
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.783,
+      "prompt_tokens_est": 23392,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/ViewModels/MainWindowViewModel.*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.488,
+      "result_length": 317
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.432,
+      "result_length": 1443
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4070
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/Services/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.455,
+      "result_length": 204
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.543,
+      "prompt_tokens_est": 24964,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 6917
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1616
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3290
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6988
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.739,
+      "prompt_tokens_est": 29600,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11375
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/IFolderPicker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 195
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Core/Tasks/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.437,
+      "result_length": 147
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 250
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.563,
+      "prompt_tokens_est": 32566,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayTaskInput.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 134
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Core/Configuration/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.514,
+      "result_length": 55
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayConfigWriterTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1136
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.859,
+      "prompt_tokens_est": 32973,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6841
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Domain/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 1.439,
+      "result_length": 654
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 91.75,
+      "prompt_tokens_est": 34768,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.Core/Tasks/RelayTaskRepository.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml src/VisualRelay.App/Views/Controls/QueuePanel.axaml src/VisualRelay.Core/Execution/FileReveal.cs tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.026,
+      "result_length": 667
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/AvaloniaFolderPicker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 738
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.831,
+      "prompt_tokens_est": 35304,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "ls -la visual-relay && head -5 visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.024,
+      "result_length": 228
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 235
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 12.774,
+      "prompt_tokens_est": 35522,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/NullFolderPicker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 269
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 240
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 20.028,
+      "prompt_tokens_est": 35712,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me trace through all the changes needed, file by file, making sure the plan is executable.\n\n## File-by-file plan:\n\n### 1. `src/VisualRelay.Core/Tasks/RelayTaskRepository.cs` (225\u2192~245 lines)\n**Walk() rewrite (lines 83-118):** Replace the recursive approach with a flat-per-folder approach:\n- Top-level (directory==tasksRoot): for each subdirectory, treat it as one task folder \u2014 find folder-named .md, emit one task, collect all other entries as siblings (including .md). For top-level .md files, emit as flat tasks (unchanged).\n- Remove recursion into task subdirectories.\n- Remove the `.md` exclusion from sibling filter.\n\n**ArchivedTaskFromPath() fix (line 150-153):** Remove `.Where(file => !file.EndsWith(\".md\", \u2026))` so all sibling files \u2014 including .md \u2014 are collected.\n\n### 2. `src/VisualRelay.Core/Tasks/RelayTaskWriter.cs` (new, ~180 lines)\nStatic class with:\n- `Slugify(string title)` \u2192 kebab-case\n- `ValidateSlug(string slug, string tasksRoot)` \u2192 null or error\n- `CreateAsync(string rootPath, string tasksDir, string slug, string markdown)` \u2192 path\n- `SaveAsync(string markdownPath, string markdown)`\n- `PromoteToNestedAsync(string tasksDir, string slug)` \u2192 new MarkdownPath\n- `AddAttachmentsAsync(RelayTaskItem task, string tasksDir, IReadOnlyList<string> sourcePaths)` \u2192 new MarkdownPath (may promote)\n- `RemoveAttachment(string siblingPath)`\n\n### 3. `src/VisualRelay.App/Services/IFilePicker.cs` (new, ~8 lines)\nInterface with `Task<IReadOnlyList<string>?> PickFilesAsync(string title)`.\n\n### 4. `src/VisualRelay.App/Services/AvaloniaFilePicker.cs` (new, ~25 lines)\nImplementation using StorageProvider.OpenFilePickerAsync.\n\n### 5. `src/VisualRelay.App/Services/NullFilePicker.cs` (new, ~10 lines)\nNull implementation returning null.\n\n### 6. `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` (229\u2192~250)\nAdd properties:\n- `IsEditing` (bool, with NotifyCanExecuteChangedFor SaveEditCommand, CancelEditCommand)\n- `EditBuffer` (string)\n- `EditBlockedReason` (string?) \u2014 computed, no [ObservableProperty] needed\n- `NewTaskTitle` (string)\n- `NewTaskBody` (string)\n- `NewTaskError` (string?)\n- `IsShowingNewTaskForm` (bool)\n- `AttachmentRows` \u2014 actually, we can compute this from SelectedTask in XAML. Better to add an ObservableCollection<AttachmentRowViewModel>.\n  \nActually, simpler approach: no separate AttachmentRows \u2014 bind directly to SelectedTask.Task.SiblingPaths and convert in XAML or use a computed property.\n\nHmm, to keep things simple and avoid a new ViewModel class, I'll add:\n- `SelectedTaskSiblingCount` (int) \u2014 computed\n- Instead, for the Attachments tab, I'll use a `ListBox` bound to `SelectedTask.Task.SiblingPaths` with an IValueConverter or just use a ItemsControl with the path strings, and buttons that pass the path as CommandParameter.\n\nLet me add a simple record for the attachment display:\nActually, no. Let me use a minimal approach: bind directly to `SelectedTask.Task.SiblingPaths` (which is `IReadOnlyList<string>`) and use CommandParameter for Reveal/Remove.\n\nWait, `SelectedTask` is a `TaskRowViewModel`, which wraps `RelayTaskItem`. The `RelayTaskItem` has `SiblingPaths`. So I could bind to `SelectedTask.Task.SiblingPaths`. But `TaskRowViewModel` may not expose `Task` publicly. Let me check...\n\nLet me check TaskRowViewModel.<\uff5cend\u2581of\u2581thinking\uff5c>\n\n<\uff5c\uff5cDSML\uff5c\uff5ctool_calls>\n<\uff5c\uff5cDSML\uff5c\uff5cinvoke name=\"read_file\">\n<\uff5c\uff5cDSML\uff5c\uff5cparameter name=\"file_path\" string=\"true\">src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.55,
+      "prompt_tokens_est": 36729,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 4820
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 13.446,
+      "prompt_tokens_est": 37937,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "AvaloniaFolderPicker|UseFolderPicker|IFolderPicker",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.108,
+      "result_length": 766
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.158,
+      "prompt_tokens_est": 38169,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 1156
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 2.825,
+      "prompt_tokens_est": 38496,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "investigation-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 81
+    },
+    {
+      "turn": 16,
+      "type": "truncation_repair",
+      "name": "think",
+      "original_length": 19618,
+      "repaired_length": 19620,
+      "notes": [
+        "closed unterminated string"
+      ],
+      "original_preview": "{\"thought\": \"Consolidating the final plan. Let me make sure all details are concrete and actionable.\\n\\nKey architecture decisions:\\n1. `RelayTaskWriter` is a static class like `RelayConfigWriter` \u2014"
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 86.405,
+      "prompt_tokens_est": 38540,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Consolidating the final plan. Let me make sure all details are concrete and actionable.\n\nKey architecture decisions:\n1. `RelayTaskWriter` is a static class like `RelayConfigWriter` \u2014 pure, no DI, unit-testable\n2. `IFilePicker` follows the `IFolderPicker` pattern: interface + Avalonia impl + Null impl\n3. Edit state uses `IsEditing` + `EditBuffer` on the ViewModel\n4. New Task uses an inline expandable form in QueuePanel\n5. Attachments tab binds directly to `SelectedTask.Task.SiblingPaths` via XAML\n6. Discovery fix restructures Walk() to be per-folder, not per-file\n\nFile line budget:\n- All source files stay under 300 lines\n- MainWindowViewModel.Commands.cs at 205 \u2192 ~285 (adding ~80 lines of commands)\n- MainWindowViewModel.Helpers.cs at 277 \u2192 ~290 (adding slug helper)\n- New partial file for attachment-related commands/properties if needed to stay under 300\n\nActually, looking at the Commands file, 205 + ~80 = 285 which is under 300. And Helpers 277 + ~13 = 290. OK.\n\nFor the new properties on MainWindowViewModel.cs: 229 + ~21 = 250. OK.\n\nLet me now write the complete plan.<\uff5cend\u2581of\u2581thinking\uff5c>\n\n<\uff5c\uff5cDSML\uff5c\uff5cparameter name=\"thought\" string=\"true\">Final concrete plan in structured form ready. Let me also verify I haven't missed any edge cases:\n\n- Slug validation: empty, path-traversal chars (`..`, `/`, `\\`), reserved prefixes (`DONE-`, `IGNORE-`), collision with existing flat file or folder\n- Edit guard: running task blocked, archived task blocked, both with visible reason text\n- Promote-to-nested: flat task \u2192 nested on first attachment add; move .md into folder, keep same filename\n- Refresh after every write: calls ReloadTaskListAsync\n- Legacy folder support: if no folder-named .md, use the single .md that exists\n- DONE- prefix in completed tasks: ArchivedTaskFromPath strips the prefix for the Id\n\nAll good. Writing final plan now.<\uff5cend\u2581of\u2581thinking\uff5c>\n\n<\uff5c\uff5cDSML\uff5c\uff5cparameter name=\"thought\" string=\"true\">Final concrete plan in structured form ready. Let me also verify I haven't missed any edge cases:\n\n- Slug validation: empty, path-traversal chars (`..`, `/`, `\\`), reserved prefixes (`DONE-`, `IGNORE-`), collision with existing flat file or folder\n- Edit guard: running task blocked, archived task blocked, both with visible reason text\n- Promote-to-nested: flat task \u2192 nested on first attachment add; move .md into folder, keep same filename\n- Refresh after every write: calls ReloadTaskListAsync\n- Legacy folder support: if no folder-named .md, use the single .md that exists\n- DONE- prefix in completed tasks: ArchivedTaskFromPath strips the prefix for the Id\n\nAll good. Writing final plan now.<\uff5cend\u2581of\u2581thinking\uff5c>Now I have a complete understanding of the codebase. Let me write the concrete plan.\n\n---\n\n## Plan\n\n### Phase 1: Fix Discovery (1 file changed)\n\n**`src/VisualRelay.Core/Tasks/RelayTaskRepository.cs`** \u2014 Rewrite `Walk()` (lines 83\u2013118):\n- Replace the per-file iteration within subdirectories with a **per-folder** approach.\n- When `Walk` encounters a subdirectory of `tasksRoot` (a task folder), it no longer recurses into it. Instead it finds the folder-named `.md` file (e.g. `my-feature/my-feature.md`), collects **all** other file-system entries as `SiblingPaths` (removing the `.md` exclusion on line 112), and emits exactly one `RelayTaskItem`. Legacy folders lacking a folder-named `.md` use the single `.md` file present.\n- Top-level `.md` files in `tasksRoot` stay flat tasks \u2014 unchanged.\n- Remove the recursion into task subdirectories entirely (the old `Walk(tasksRoot, path, tasks)` call on line 97).\n- Fix `ArchivedTaskFromPath()` line 151: remove `.Where(file => !file.EndsWith(\".md\", \u2026))` so `.md` siblings are collected.\n\n### Phase 2: Core Writer (1 new file)\n\n**`src/VisualRelay.Core/Tasks/RelayTaskWriter.cs`** (new, ~180 lines) \u2014 Pure static class following `RelayConfigWriter` precedent:\n\n| Method | Signature | Behaviour |\n|---|---|---|\n| `Slugify` | `string Slugify(string title)` | Lowercase, replace whitespace/punctuation with hyphens, collapse runs, trim |\n| `ValidateSlug` | `string? ValidateSlug(string slug, string tasksRoot)` | null=valid; else error: empty, unsafe chars (`..`,`/`,`\\`), reserved `DONE-`/`IGNORE-` prefix, collision with existing flat `.md` or folder |\n| `CreateAsync` | `Task<string> CreateAsync(string rootPath, string tasksDir, string slug, string markdown)` | Writes `llm-tasks/<slug>.md`, returns path |\n| `SaveAsync` | `Task SaveAsync(string markdownPath, string markdown)` | Overwrites file at `markdownPath` |\n| `PromoteToNestedAsync` | `Task<string> PromoteToNestedAsync(string tasksDir, string slug)` | Creates `llm-tasks/<slug>/`, moves `<slug>.md` \u2192 `<slug>/<slug>.md`, returns new path |\n| `AddAttachmentsAsync` | `Task<string> AddAttachmentsAsync(RelayTaskItem task, string tasksDir, IReadOnlyList<string> sourcePaths)` | Copies files into `task.TaskDirectory`; if task is flat, calls `PromoteToNestedAsync` first; returns (possibly new) `MarkdownPath` |\n| `RemoveAttachment` | `void RemoveAttachment(string siblingPath)` | Deletes the file at `siblingPath` |\n\n`CreateAsync` throws `InvalidOperationException` with user-facing message for invalid slug (caller catches and surfaces as `NewTaskError`). `SaveAsync`, `AddAttachmentsAsync`, `RemoveAttachment` let IO exceptions propagate (caller wraps in try/catch via `RunBusyAsync`).\n\n### Phase 3: File-Picker Service (3 new files)\n\n**`src/VisualRelay.App/Services/IFilePicker.cs`** (new, ~8 lines):\n```csharp\npublic interface IFilePicker\n{\n    Task<IReadOnlyList<string>?> PickFilesAsync(string title, CancellationToken cancellationToken = default);\n}\n```\n\n**`src/VisualRelay.App/Services/AvaloniaFilePicker.cs`** (new, ~25 lines): Wraps `Window.StorageProvider.OpenFilePickerAsync`, returns local paths.\n\n**`src/VisualRelay.App/Services/NullFilePicker.cs`** (new, ~10 lines): Returns `null`.\n\n### Phase 4: ViewModel Properties & Commands (3 files changed, 1 new)\n\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.cs`** (lines 23, 40, 163; add properties ~115\u2013160):\n- Add `private IFilePicker _filePicker = new NullFilePicker();` field\n- Add `public void UseFilePicker(IFilePicker filePicker)` method\n- New `[ObservableProperty]`s: `bool IsEditing`, `string EditBuffer`, `string NewTaskTitle`, `string NewTaskBody`, `string? NewTaskError`, `bool IsShowingNewTaskForm`\n- Computed property: `string? EditBlockedReason` \u2014 returns reason when `_runningTaskId == SelectedTask?.Id` (\"Task is currently running\") or `SelectedTask?.IsArchived == true` (\"Archived tasks are read-only\"), else null\n- Computed property: `bool CanEditSelectedTask` \u2014 `SelectedTask is not null && EditBlockedReason is null`\n- Wire `[NotifyCanExecuteChangedFor]` on `IsEditing`, `SelectedTask`, and `IsBusy` as needed\n\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs`** (add ~80 lines before closing `}`):\n```\n[RelayCommand(CanExecute = nameof(CanEditSelectedTask))]\nprivate void StartEdit()            // copy SelectedTaskMarkdown \u2192 EditBuffer, IsEditing = true\n\n[RelayCommand(CanExecute = nameof(CanSaveEdit))]\nprivate async Task SaveEditAsync()  // RelayTaskWriter.SaveAsync(task.MarkdownPath, EditBuffer), IsEditing = false, RefreshAsync\n\n[RelayCommand]\nprivate void CancelEdit()           // IsEditing = false, EditBuffer = \"\"\n\n[RelayCommand(CanExecute = nameof(CanCreateTask))]\nprivate async Task CreateTaskAsync() // slug = RelayTaskWriter.Slugify(NewTaskTitle), validate, CreateAsync, clear form, RefreshAsync\n\n[RelayCommand]\nprivate void ShowNewTaskForm()       // IsShowingNewTaskForm = true\n\n[RelayCommand]\nprivate void HideNewTaskForm()       // IsShowingNewTaskForm = false, clear inputs\n\n[RelayCommand]\nprivate void RevealAttachment(string path)  // FileReveal.Reveal(path)\n\n[RelayCommand(CanExecute = nameof(CanManageAttachments))]\nprivate async Task RemoveAttachmentAsync(string path) // confirmation check, RelayTaskWriter.RemoveAttachment, RefreshAsync\n\n[RelayCommand(CanExecute = nameof(CanManageAttachments))]\nprivate async Task AddAttachmentAsync()  // _filePicker.PickFilesAsync, RelayTaskWriter.AddAttachmentsAsync, RefreshAsync\n```\nCanExecute methods: `CanEditSelectedTask` (not running, not archived, has selection), `CanSaveEdit` (`IsEditing && !string.IsNullOrWhiteSpace(EditBuffer)`), `CanCreateTask` (`!IsBusy && !string.IsNullOrWhiteSpace(NewTaskTitle)`), `CanManageAttachments` (`SelectedTask is not null && !IsBusy && !ShowArchive`).\n\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs`** (add near line 120):\n- In `ReloadTaskListAsync`, after `SelectedTask = \u2026`, add `IsEditing = false;` to reset edit state on reload.\n- In `OnSelectedTaskChanged` (Commands.cs line 134), add `IsEditing = false;`.\n\n**`src/VisualRelay.App/App.axaml.cs`** (line 26\u201327): Add `viewModel.UseFilePicker(new AvaloniaFilePicker(window));`.\n\n### Phase 5: UI Changes (2 XAML files + code-behind)\n\n**`src/VisualRelay.App/Views/Controls/QueuePanel.axaml`** (lines 13, 25\u201329, 31\u201345):\n- Line 13: Change `ColumnDefinitions=\"*,Auto,Auto\"` \u2192 `\"*,Auto,Auto,Auto\"`; add New Task button before Archive toggle in column 2 (Archive shifts to column 3).\n- After line 45 (end of reorder buttons StackPanel), add an inline form `IsVisible=\"{Binding IsShowingNewTaskForm}\"` with:\n  - `TextBox Text=\"{Binding NewTaskTitle}\" Watermark=\"Task title\u2026\"`\n  - `TextBox Text=\"{Binding NewTaskBody}\" Watermark=\"Markdown body (optional)\u2026\" AcceptsReturn=\"True\" Height=\"80\"`\n  - `TextBlock Text=\"{Binding NewTaskError}\" Foreground=\"#F36F63\" IsVisible=\"{Binding NewTaskError, Converter={x:Static ObjectConverters.IsNotNull}}\"` (or use a string\u2192bool converter pattern)\n  - Row of `Button Command=\"{Binding CreateTaskCommand}\" Content=\"Create\"` + `Button Command=\"{Binding HideNewTaskFormCommand}\" Content=\"Cancel\"`\n\n**`src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml`** (lines 98\u2013122):\n- **Markdown tab** (lines 100\u2013110): Wrap content in a Grid that toggles between:\n  - Read-only `TextBlock` (existing, `IsVisible=\"{Binding !IsEditing}\"`)\n  - Edit `TextBox Text=\"{Binding EditBuffer}\" AcceptsReturn=\"True\"` + Save/Cancel buttons (`IsVisible=\"{Binding IsEditing}\"`)\n  - `TextBlock Text=\"{Binding EditBlockedReason}\" Foreground=\"#F2C66D\"` shown when `EditBlockedReason` is non-null and `!IsEditing`\n  - Edit button `IsVisible=\"{Binding !IsEditing}\"` with `Command=\"{Binding StartEditCommand}\"`\n- **New Attachments tab** (after line 121, third `TabItem`):\n  - Header button row: `Button Command=\"{Binding AddAttachmentCommand}\" Content=\"+ Add Attachment\u2026\"`\n  - `ListBox ItemsSource=\"{Binding SelectedTask.Task.SiblingPaths}\"` with item template showing filename + size + Reveal/Remove buttons using `CommandParameter=\"{Binding .}\"`\n\n### Phase 6: Tests (2 new files, 2 changed files)\n\n**`tests/VisualRelay.Tests/RelayTaskWriterTests.cs`** (new, ~200 lines):\n- `Slugify_ProducesKebabCase` \u2014 \"My Feature!\" \u2192 \"my-feature\"\n- `Slugify_CollapsesRunsAndTrims` \u2014 \"a--b\" \u2192 \"a-b\"\n- `ValidateSlug_RejectsEmpty` \u2014 \"\" \u2192 error\n- `ValidateSlug_RejectsUnsafeChars` \u2014 \"a/b\", \"..hidden\" \u2192 error\n- `ValidateSlug_RejectsReservedPrefix` \u2014 \"DONE-test\", \"IGNORE-test\" \u2192 error\n- `ValidateSlug_RejectsCollision_Flat` \u2014 existing `slug.md` \u2192 error\n- `ValidateSlug_RejectsCollision_Folder` \u2014 existing `slug/` directory \u2192 error\n- `ValidateSlug_AcceptsValidSlug` \u2014 \"my-feature\" \u2192 null\n- `CreateAsync_WritesFlatTask` \u2014 file exists, content matches\n- `CreateAsync_ThrowsOnInvalidSlug` \u2014 `InvalidOperationException`\n- `SaveAsync_OverwritesMarkdown` \u2014 content updated\n- `PromoteToNestedAsync_MovesFileIntoFolder` \u2014 old file gone, new path correct\n- `AddAttachmentsAsync_CopiesFiles` \u2014 files in task directory\n- `AddAttachmentsAsync_PromotesFlatToNested` \u2014 flat task \u2192 nested after attach\n- `RemoveAttachment_DeletesFile` \u2014 file gone\n\n**`tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs`** (add ~60 lines):\n- `Walk_TreatsExtraMarkdownAsAttachmentNotSeparateTask` \u2014 `llm-tasks/feat/feat.md` + `llm-tasks/feat/notes.md` \u2192 1 task, `notes.md` in `SiblingPaths`\n- `Walk_MultipleMdInFolder_OnlyFolderNamedIsTask` \u2014 with `other.md` and `more.md`, only folder-named is the task, both others in SiblingPaths\n- `Walk_LegacyFolderWithoutFolderNamedMd_UsesSoleMd` \u2014 `feat/readme.md` only \u2192 task id=\"readme\" with `IsNested=true`\n- `Walk_ExistingCanonicalNestedUnchanged` \u2014 `feat/feat.md` + `form.html` \u2192 1 task, `form.html` in siblings (existing test already covers this, but we double-check)\n\n**`tests/VisualRelay.Tests/MainWindowViewModelTaskEditingTests.cs`** (new, ~200 lines):\n- `StartEdit_PopulatesEditBufferFromSelectedTaskMarkdown`\n- `SaveEdit_PersistsViaWriterAndRefreshes`\n- `CancelEdit_DiscardsBufferAndExitsEditMode`\n- `EditBlocked_WhenTaskIsRunning` \u2014 `_runningTaskId == task.Id` \u2192 `EditBlockedReason` non-null, `CanEditSelectedTask` false\n- `EditBlocked_WhenTaskIsArchived` \u2014 `IsArchived == true` \u2192 `EditBlockedReason` non-null, `CanEditSelectedTask` false\n- `CreateTask_WithValidSlug_CreatesAndRefreshes`\n- `CreateTask_WithInvalidSlug_SetsError`\n- `AddAttachment_PromotesFlatTask`\n- `RemoveAttachment_DeletesFileAfterConfirmation` (note: confirmation is UI concern, test the command logic)\n\n**`tests/VisualRelay.Tests/TestDoubles.cs`** (add ~15 lines): Add `WriteTaskFile(string path, string content)` helper for use in writer tests, or add methods directly in test files.\n\n### Execution order\n\n1. Write `RelayTaskWriter.cs` (the pure Core unit)\n2. Write `RelayTaskWriterTests.cs` \u2014 fail first\n3. Fix `RelayTaskRepository.cs` Walk + ArchivedTaskFromPath\n4. Add discovery tests to `RelayTaskRepositoryTests.cs`\n5. Add `IFilePicker` / `AvaloniaFilePicker` / `NullFilePicker`\n6. Add ViewModel properties and commands\n7. Update XAML views\n8. Wire `App.axaml.cs`\n9. Write ViewModel editing tests\n10. Run `./visual-relay check`, iterate\n\n### Manifest\n\n```json\n[\n  \"src/VisualRelay.Core/Tasks/RelayTaskWriter.cs\",\n  \"src/VisualRelay.Core/Tasks/RelayTaskRepository.cs\",\n  \"src/VisualRelay.App/Services/IFilePicker.cs\",\n  \"src/VisualRelay.App/Services/AvaloniaFilePicker.cs\",\n  \"src/VisualRelay.App/Services/NullFilePicker.cs\",\n  \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n  \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs\",\n  \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n  \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n  \"src/VisualRelay.App/Views/Controls/QueuePanel.axaml\",\n  \"src/VisualRelay.App/App.axaml.cs\",\n  \"tests/VisualRelay.Tests/RelayTaskWriterTests.cs\",\n  \"tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs\",\n  \"tests/VisualRelay.Tests/MainWindowViewModelTaskEditingTests.cs\",\n  \"tests/VisualRelay.Tests/TestDoubles.cs\"\n]\n```\n\n---\n\n```json\n{\n  \"plan\": \"## Phase 1: Fix Discovery \u2014 `RelayTaskRepository.cs`\\n\\n**Walk() rewrite (lines 83\u2013118):** Replace per-file-in-subdir iteration with per-folder handling. When Walk encounters a subdirectory of tasksRoot: find the folder-named `.md` (e.g. `feat/feat.md`), collect ALL other entries as SiblingPaths (remove `.md` exclusion on line 112), emit exactly one RelayTaskItem. Legacy folders without folder-named `.md` use the sole `.md` present. Top-level `.md` files stay flat tasks. Remove recursion into task subdirectories (line 97).\\n\\n**ArchivedTaskFromPath() fix (line 151):** Remove `.Where(file => !file.EndsWith(\\\".md\\\", \u2026))` \u2014 all siblings including `.md` are collected.\\n\\n## Phase 2: Core Writer \u2014 `RelayTaskWriter.cs` (new)\\n\\nPure static class (`Slugify`, `ValidateSlug`, `CreateAsync`, `SaveAsync`, `PromoteToNestedAsync`, `AddAttachmentsAsync`, `RemoveAttachment`). CreateAsync throws `InvalidOperationException` for invalid slugs (empty, unsafe chars, DONE-/IGNORE- prefix, collision). PromoteToNestedAsync moves `<slug>.md` \u2192 `<slug>/<slug>.md`. AddAttachmentsAsync promotes flat\u2192nested on first attachment then copies files.\\n\\n## Phase 3: File Picker Service (3 new files)\\n\\n`IFilePicker` interface, `AvaloniaFilePicker` (StorageProvider wrapper), `NullFilePicker` \u2014 mirror IFolderPicker pattern.\\n\\n## Phase 4: ViewModel \u2014 `MainWindowViewModel*.cs`\\n\\n**MainWindowViewModel.cs:** Add `_filePicker` field, `UseFilePicker()` method, `[ObservableProperty]` for `IsEditing`, `EditBuffer`, `NewTaskTitle`, `NewTaskBody`, `NewTaskError`, `IsShowingNewTaskForm`. Computed `EditBlockedReason` (null when allowed; \\\"Task is currently running\\\" / \\\"Archived tasks are read-only\\\" when blocked). `CanEditSelectedTask` computed gate.\\n\\n**MainWindowViewModel.Commands.cs:** Add `StartEdit`, `SaveEditAsync`, `CancelEdit`, `CreateTaskAsync`, `ShowNewTaskForm`, `HideNewTaskForm`, `RevealAttachment(string)`, `RemoveAttachmentAsync(string)`, `AddAttachmentAsync`. CanExecute gates: CanSaveEdit (IsEditing + non-empty buffer), CanCreateTask (!IsBusy + non-empty title), CanManageAttachments (has selection + !IsBusy + !ShowArchive).\\n\\n**MainWindowViewModel.Helpers.cs:** Reset `IsEditing = false` in `ReloadTaskListAsync`.\\n\\n**App.axaml.cs:** Wire `viewModel.UseFilePicker(new AvaloniaFilePicker(window))`.\\n\\n## Phase 5: UI \u2014 XAML\\n\\n**QueuePanel.axaml:** Columns `*,Auto,Auto,Auto` \u2014 New Task button before Archive toggle. Inline form (IsShowingNewTaskForm) with title TextBox, body TextBox, error TextBlock, Create/Cancel buttons.\\n\\n**TaskDetailPanel.axaml:** Markdown tab toggles TextBlock (read-only) / TextBox+Save/Cancel (editing) via IsEditing. EditBlockedReason banner when blocked. Third \\\"Attachments\\\" TabItem: Add button + ListBox bound to `SelectedTask.Task.SiblingPaths` with Reveal/Remove buttons per row (CommandParameter=\\\"{Binding .}\\\").\\n\\n## Phase 6: Tests\\n\\n**RelayTaskWriterTests.cs (new):** 14 tests covering Slugify, ValidateSlug (reject empty/unsafe/reserved/collision, accept valid), CreateAsync, SaveAsync, PromoteToNestedAsync, AddAttachmentsAsync (copy + promote), RemoveAttachment.\\n\\n**RelayTaskRepositoryTests.cs (add):** 4 tests: extra .md as sibling not task, multiple .md in folder only folder-named is task, legacy folder without folder-named .md, canonical nested unchanged.\\n\\n**MainWindowViewModelTaskEditingTests.cs (new):** Tests for edit save/cancel cycle, edit blocked for running task, edit blocked for archived task, create task valid/invalid slug, add attachment promotes flat task, remove attachment.\\n\\n**TestDoubles.cs:** Add convenience helpers for writer tests.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Tasks/RelayTaskWriter.cs\",\n    \"src/VisualRelay.Core/Tasks/RelayTaskRepository.cs\",\n    \"src/VisualRelay.App/Services/IFilePicker.cs\",\n    \"src/VisualRelay.App/Services/AvaloniaFilePicker.cs\",\n    \"src/VisualRelay.App/Services/NullFilePicker.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n    \"src/VisualRelay.App/Views/Controls/QueuePanel.axaml\",\n    \"src/VisualRelay.App/App.axaml.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskWriterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskRepositoryTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTaskEditingTests.cs\",\n    \"tests/VisualRelay.Tests/TestDoubles.cs\"\n  ]\n}\n```"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 7.334,
+      "prompt_tokens_est": 43942,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "All requirements are covered. The plan is concrete, executable, and respects all constraints. Ready to output the final JSON.",
+        "next_thought_needed": false,
+        "thought_number": 3,
+        "total_thoughts": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 17.077,
+      "prompt_tokens_est": 44038,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
