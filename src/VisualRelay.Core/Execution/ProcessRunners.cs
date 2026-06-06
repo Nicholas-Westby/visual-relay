@@ -69,7 +69,7 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
         }
 
-        var json = ExtractLastFencedJson(result.Output);
+        var json = FencedJsonExtractor.Extract(result.Output);
         var error = json is null ? ErrorHintClassifier.WithHint("no valid fenced json block") : null;
         return new SubagentResult(result.Output, json, json is not null, error);
     }
@@ -136,62 +136,6 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
 
         parts.AddRange(["", "## Prior stages", invocation.LedgerSoFar, "", invocation.Stage.OutputContract]);
         return string.Join('\n', parts);
-    }
-
-    private static string? ExtractLastFencedJson(string text)
-    {
-        const string marker = "```json";
-        var index = text.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
-        {
-            return null;
-        }
-
-        var start = text.IndexOf('\n', index);
-        if (start < 0)
-        {
-            return null;
-        }
-
-        var end = FindClosingFence(text, start + 1);
-        if (end < 0)
-        {
-            return null;
-        }
-
-        var json = text[(start + 1)..end].Trim();
-        try
-        {
-            using var parsed = JsonDocument.Parse(json);
-            return json;
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static int FindClosingFence(string text, int start)
-    {
-        var cursor = start;
-        while (cursor < text.Length)
-        {
-            var lineEnd = text.IndexOf('\n', cursor);
-            if (lineEnd < 0)
-            {
-                lineEnd = text.Length;
-            }
-
-            var line = text[cursor..lineEnd].Trim();
-            if (line == "```")
-            {
-                return cursor;
-            }
-
-            cursor = lineEnd + 1;
-        }
-
-        return -1;
     }
 
     private static string TrimForError(string value)

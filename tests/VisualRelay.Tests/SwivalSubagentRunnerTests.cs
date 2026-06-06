@@ -113,6 +113,33 @@ public sealed class SwivalSubagentRunnerTests
         Assert.DoesNotContain("\\n", captured, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunAsync_ExtractsJsonWhenClosingFenceSharesTheJsonLine()
+    {
+        // Regression: stage 6 of author-edit-and-manage-task-attachments returned
+        // a valid single-line JSON object with the closing ``` appended directly
+        // to the same line (no newline before it). The old line-based fence
+        // scanner required ``` on its own line and rejected the whole stage as
+        // "no valid fenced json block", halting the drain. The captured raw
+        // output lives in Fixtures/closing-fence-on-content-line.txt.
+        using var repo = TestRepository.Create();
+        var fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "closing-fence-on-content-line.txt");
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-inline-fence",
+            $"""
+            #!/usr/bin/env bash
+            cat '{fixture}'
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+
+        var result = await runner.RunAsync(Invocation(repo.Root) with { Stage = RelayStages.All[5] });
+
+        Assert.True(result.IsValid);
+        Assert.Null(result.Error);
+        Assert.Contains("Implemented", result.Json, StringComparison.Ordinal);
+    }
+
     private static StageInvocation Invocation(string rootPath) =>
         new(
             RelayStages.All[0],
