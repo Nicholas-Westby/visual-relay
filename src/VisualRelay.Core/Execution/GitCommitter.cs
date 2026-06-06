@@ -55,6 +55,17 @@ internal static class GitCommitter
             }
         }
 
+        // Also stage every tracked file the run modified or deleted, even if the
+        // stage-4 manifest never listed it (agents edit shared files — a test
+        // double, a csproj — without declaring them). Stage 9 verifies the working
+        // tree, so the commit must match it or committed code could reference an
+        // uncommitted change and fail to build from a clean checkout.
+        var addTracked = await GitAsync(rootPath, ["add", "-u"], cancellationToken);
+        if (addTracked.ExitCode != 0)
+        {
+            return GitCommitResult.Failed($"git add -u failed: {addTracked.Output.Trim()}");
+        }
+
         // Proof files (ledger/seals/manifest) live under .relay/, which the
         // self-hosting repo gitignores along with bulky run scratch. Force them in
         // so the Relay-Seal stays verifiable; the manifest add above stays strict so
