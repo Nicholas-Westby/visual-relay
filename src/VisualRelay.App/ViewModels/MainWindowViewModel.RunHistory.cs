@@ -9,11 +9,14 @@ public partial class MainWindowViewModel
         ClearLogState();
         var metric = RelayRunHistory.ReadTaskMetric(RootPath, taskId);
         SelectedTaskMetricLabel = metric.SummaryLabel;
-        SelectedTaskError = metric.Stages
-            .Where(stage => !stage.Succeeded)
-            .OrderByDescending(stage => stage.StageNumber)
-            .Select(stage => stage.ErrorMessage)
-            .FirstOrDefault();
+        if (_runningTaskId != taskId)
+        {
+            SelectedTaskError = metric.Stages
+                .Where(stage => !stage.Succeeded)
+                .OrderByDescending(stage => stage.StageNumber)
+                .Select(stage => stage.ErrorMessage)
+                .FirstOrDefault();
+        }
         foreach (var stage in Stages)
         {
             stage.ClearMetric();

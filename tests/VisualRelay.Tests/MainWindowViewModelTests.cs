@@ -162,6 +162,47 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task StartingRunOnPreviouslyFailedTask_ClearsStaleErrorAndRestoresAfterRunSettles()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("broken", "# Broken\n");
+        WriteErroredReport(repo.Root, "broken", 1, "the runner exploded");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        await viewModel.LoadInitialAsync();
+
+        // Select the failed task — error banner should appear.
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
+        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        Assert.True(viewModel.HasSelectedTaskError);
+        Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
+
+        // Simulate starting a run on this task.
+        viewModel.RestoreRunningTaskState("broken", 1, "Research");
+
+        // Navigate away and back. Wait for LoadRunHistoryAsync to settle
+        // (metric label changes) before asserting the guard suppressed the error.
+        viewModel.SelectedTask = null;
+        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
+        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel != "No run history");
+        Assert.False(viewModel.HasSelectedTaskError);
+        Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
+
+        // Simulate run completion (clear running state).
+        viewModel.RestoreRunningTaskState("_cleared_", null, null);
+
+        // Navigate away and back — error must return after the run settles.
+        viewModel.SelectedTask = null;
+        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
+        viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
+        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        Assert.True(viewModel.HasSelectedTaskError);
+        Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
+    }
+
+    [Fact]
     public async Task RevealStageArtifactsCommand_DisabledUntilStageWithArtifactsIsSelected()
     {
         using var repo = TestRepository.Create();

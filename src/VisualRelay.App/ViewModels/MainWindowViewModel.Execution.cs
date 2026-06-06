@@ -148,6 +148,7 @@ public partial class MainWindowViewModel
     {
         ResetStages();
         ClearLogState();
+        SelectedTaskError = null;
         StatusText = $"Running {task.Id}";
         BeginRunningTask(task);
         NotifyPauseStateChanged();
