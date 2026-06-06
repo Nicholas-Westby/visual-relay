@@ -71,6 +71,29 @@ public sealed class RelayDriverTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_PresentationOnlyChange_SkipsRedGateAndCommits()
+    {
+        // A markup-only change (e.g. de-virtualizing a ListBox in XAML) has no
+        // behavior to unit-test, so stage 5 returns no testFiles. The red gate must
+        // treat that as not-applicable rather than flagging "author-tests did not
+        // go red" — otherwise the pipeline can never complete presentation tasks.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("tweak-markup", "# Tweak markup\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "<Panel/>");
+        var runner = new ScriptedSubagentRunner();
+        runner.SeedPresentationOnly("src/Panel.axaml");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "tweak-markup");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+    }
+
+    [Fact]
     public async Task RunTaskAsync_FlagsUnexpectedRunnerCrashAndSkipsFuturePendingLists()
     {
         using var repo = TestRepository.Create();

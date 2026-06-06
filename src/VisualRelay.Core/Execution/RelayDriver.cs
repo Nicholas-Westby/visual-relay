@@ -89,34 +89,44 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     if (stage.Number == 5)
                     {
                         var testFiles = ReadStringArray(json, "testFiles");
-                        var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-                        var gateResult = await AuthorTestGate.RunAsync(
-                            rootPath,
-                            taskId,
-                            runId,
-                            manifest,
-                            testFiles,
-                            command,
-                            _dependencies.TestRunner,
-                            cancellationToken);
-                        if (gateResult.Error is not null)
-                        {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, cancellationToken);
-                        }
+                        var touchesCode = manifest.Any(file => file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
 
-                        if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
+                        // A presentation-only change (markup with no .cs in the
+                        // manifest and no authored tests) has no behavior to
+                        // unit-test, so the TDD red gate does not apply — stage 9
+                        // still verifies the full suite stays green. A change that
+                        // touches code must still bring a failing test first.
+                        if (testFiles.Count > 0 || touchesCode)
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, cancellationToken);
-                        }
+                            var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
+                            var gateResult = await AuthorTestGate.RunAsync(
+                                rootPath,
+                                taskId,
+                                runId,
+                                manifest,
+                                testFiles,
+                                command,
+                                _dependencies.TestRunner,
+                                cancellationToken);
+                            if (gateResult.Error is not null)
+                            {
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, cancellationToken);
+                            }
 
-                        var testResult = gateResult.TestResult;
-                        check = testResult.ExitCode == 0 ? "green" : "red";
-                        if (check != "red")
-                        {
-                            var reason = gateResult.StashedImplementation
-                                ? "author-tests passed after implementation files were stripped"
-                                : "author-tests did not go red";
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, null, cancellationToken);
+                            if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
+                            {
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, cancellationToken);
+                            }
+
+                            var testResult = gateResult.TestResult;
+                            check = testResult.ExitCode == 0 ? "green" : "red";
+                            if (check != "red")
+                            {
+                                var reason = gateResult.StashedImplementation
+                                    ? "author-tests passed after implementation files were stripped"
+                                    : "author-tests did not go red";
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, null, cancellationToken);
+                            }
                         }
                     }
 

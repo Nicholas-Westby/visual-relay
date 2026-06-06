@@ -74,11 +74,21 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
 {
     private string _codeFile = "src/app.cs";
     private string _testFile = "tests/app.tests.cs";
+    private bool _presentationOnly;
+    private string _presentationFile = "src/View.axaml";
 
     public void SeedHappyPath(string codeFile, string testFile)
     {
         _codeFile = codeFile;
         _testFile = testFile;
+    }
+
+    // A presentation-only change: the manifest is a single markup file with no
+    // .cs code, and stage 5 returns no testFiles (nothing to unit-test first).
+    public void SeedPresentationOnly(string presentationFile)
+    {
+        _presentationOnly = true;
+        _presentationFile = presentationFile;
     }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
@@ -88,7 +98,9 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
+            4 when _presentationOnly => $$"""{"plan":"edit markup","manifest":["{{_presentationFile}}"]}""",
             4 => $$"""{"plan":"edit files","manifest":["{{_codeFile}}","{{_testFile}}"]}""",
+            5 when _presentationOnly => """{"testFiles":[],"rationale":"presentation-only; nothing to unit-test"}""",
             5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
