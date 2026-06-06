@@ -2,7 +2,7 @@ using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
 
-public sealed class MainWindowViewModelTests
+public sealed partial class MainWindowViewModelTests
 {
     [Fact]
     public async Task SelectStageCommand_TogglesBetweenStageLogAndFullTaskLog()

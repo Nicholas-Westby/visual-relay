@@ -1,0 +1,218 @@
+using CommunityToolkit.Mvvm.Input;
+using VisualRelay.Core.Execution;
+using VisualRelay.Core.Tasks;
+
+namespace VisualRelay.App.ViewModels;
+
+public partial class MainWindowViewModel
+{
+    // ── Edit markdown ─────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanEditSelectedTask))]
+    private void EditSelectedTask()
+    {
+        if (SelectedTask is null)
+        {
+            return;
+        }
+
+        EditBuffer = SelectedTaskMarkdown;
+        IsEditingMarkdown = true;
+    }
+
+    private bool CanEditSelectedTask()
+    {
+        if (SelectedTask is null)
+        {
+            EditBlockedReason = null;
+            return false;
+        }
+
+        if (_runningTaskId is not null && string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal))
+        {
+            EditBlockedReason = "Cannot edit a running task.";
+            return false;
+        }
+
+        if (SelectedTask.IsArchived)
+        {
+            EditBlockedReason = "Cannot edit an archived task.";
+            return false;
+        }
+
+        if (IsEditingMarkdown)
+        {
+            EditBlockedReason = null;
+            return false;
+        }
+
+        EditBlockedReason = null;
+        return true;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanSaveEdit))]
+    private async Task SaveEditAsync()
+    {
+        if (SelectedTask is null || !IsEditingMarkdown)
+        {
+            return;
+        }
+
+        await RelayTaskWriter.SaveAsync(SelectedTask.Task, EditBuffer);
+        IsEditingMarkdown = false;
+
+        // Reload the selected task to refresh markdown and context.
+        await LoadSelectedTaskAsync(SelectedTask);
+    }
+
+    private bool CanSaveEdit() => IsEditingMarkdown && SelectedTask is not null;
+
+    [RelayCommand]
+    private void CancelEdit()
+    {
+        IsEditingMarkdown = false;
+        EditBuffer = string.Empty;
+    }
+
+    // ── Attachments ───────────────────────────────────────────────────────
+
+    [RelayCommand(CanExecute = nameof(CanAddAttachments))]
+    private async Task AddAttachmentsAsync()
+    {
+        if (SelectedTask is null)
+        {
+            return;
+        }
+
+        var files = await _filePicker.PickFilesAsync();
+        if (files.Count == 0)
+        {
+            return;
+        }
+
+        var currentTask = SelectedTask.Task;
+
+        // If the task is flat, promote it once before the loop so every
+        // subsequent file lands in the newly created nested directory.
+        // Promoting inside the loop would crash on the second file because
+        // currentTask is a record — it doesn't mutate — and the flat .md
+        // was already deleted by the first promotion.
+        if (!currentTask.IsNested)
+        {
+            var tasksDir = Path.GetDirectoryName(currentTask.MarkdownPath)!;
+            var rootPath = Path.GetDirectoryName(tasksDir)!;
+            var newMarkdownPath = await RelayTaskWriter.PromoteToNestedAsync(rootPath, currentTask);
+            var newTaskDir = Path.GetDirectoryName(newMarkdownPath)!;
+            currentTask = currentTask with { IsNested = true, MarkdownPath = newMarkdownPath, TaskDirectory = newTaskDir };
+        }
+
+        foreach (var file in files)
+        {
+            await RelayTaskWriter.AddAttachmentAsync(currentTask, file);
+        }
+
+        await RefreshAsync();
+    }
+
+    private bool CanAddAttachments() =>
+        SelectedTask is not null && !ShowArchive && !IsBusy;
+
+    [RelayCommand]
+    private async Task RemoveAttachmentAsync(string? filePath)
+    {
+        if (string.IsNullOrEmpty(filePath))
+        {
+            return;
+        }
+
+        var confirmed = await ConfirmRemoveAttachmentAsync(filePath);
+        if (!confirmed)
+        {
+            return;
+        }
+
+        RelayTaskWriter.RemoveAttachment(filePath);
+        await RefreshAsync();
+    }
+
+    /// <summary>
+    /// Asks the user for confirmation before deleting an attachment.
+    /// Override in tests via <see cref="ShowConfirmationAsync"/>; the default
+    /// (when null) skips the prompt so headless/NullFilePicker scenarios work.
+    /// </summary>
+    private async Task<bool> ConfirmRemoveAttachmentAsync(string filePath)
+    {
+        if (ShowConfirmationAsync is null)
+        {
+            return true;
+        }
+
+        var fileName = Path.GetFileName(filePath);
+        return await ShowConfirmationAsync("Remove Attachment", $"Delete \"{fileName}\"? This cannot be undone.");
+    }
+
+    [RelayCommand]
+    private void RevealAttachment(string? filePath)
+    {
+        if (!string.IsNullOrEmpty(filePath))
+        {
+            FileReveal.Reveal(filePath);
+        }
+    }
+
+    // ── New task ──────────────────────────────────────────────────────────
+
+    [RelayCommand]
+    private void OpenNewTaskDialog()
+    {
+        if (IsNewTaskDialogOpen)
+        {
+            IsNewTaskDialogOpen = false;
+            return;
+        }
+
+        NewTaskTitle = string.Empty;
+        NewTaskBody = string.Empty;
+        NewTaskError = null;
+        IsNewTaskDialogOpen = true;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCreateNewTask))]
+    private async Task CreateNewTaskAsync()
+    {
+        var slug = RelayTaskWriter.Slugify(NewTaskTitle);
+        NewTaskError = null;
+
+        // Validate the derived slug.
+        var validationError = RelayTaskWriter.ValidateSlug(slug, RootPath);
+        if (validationError is not null)
+        {
+            NewTaskError = validationError;
+            return;
+        }
+
+        try
+        {
+            var markdown = string.IsNullOrWhiteSpace(NewTaskBody)
+                ? $"# {NewTaskTitle.Trim()}\n"
+                : NewTaskBody;
+
+            await RelayTaskWriter.CreateAsync(RootPath, slug, markdown);
+        }
+        catch (Exception ex)
+        {
+            NewTaskError = ex.Message;
+            return;
+        }
+
+        IsNewTaskDialogOpen = false;
+        await RefreshAsync();
+
+        // Select the newly created task.
+        SelectedTask = Tasks.FirstOrDefault(t =>
+            string.Equals(t.Id, slug, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private bool CanCreateNewTask() =>
+        !string.IsNullOrWhiteSpace(NewTaskTitle) && !IsBusy;
+}

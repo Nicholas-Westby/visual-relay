@@ -37,6 +37,7 @@ public sealed class TaskRowViewModel : ViewModelBase
     public string ReviewReason => Task.ReviewReason ?? string.Empty;
     public bool NeedsReview => Task.NeedsReview;
     public bool IsArchived => Task.IsArchived;
+    public IReadOnlyList<string> SiblingPaths => Task.SiblingPaths;
     public string StateLabel => IsRunning ? "Running" : Task.StateLabel;
     public string MetricsLine => IsRunning
         ? string.IsNullOrEmpty(_runningElapsedLabel)

@@ -66,11 +66,43 @@ public sealed class RelayTaskRepository
             return [];
         }
 
-        return Directory.EnumerateFiles(completedRoot, "DONE-*.md", SearchOption.AllDirectories)
-            .Select(path => ArchivedTaskFromPath(completedRoot, path))
+        // Group DONE-*.md files by directory so each folder yields exactly
+        // one task with the remaining DONE-*.md files as siblings.
+        var allFiles = Directory.EnumerateFiles(completedRoot, "DONE-*.md", SearchOption.AllDirectories);
+        var byDirectory = allFiles
+            .GroupBy(Path.GetDirectoryName)
+            .ToDictionary(g => g.Key!, g => g.ToArray());
+
+        var tasks = new List<RelayTaskItem>();
+        foreach (var (directory, files) in byDirectory)
+        {
+            var canonical = FindCanonicalArchivedPath(directory!, files);
+            if (canonical is not null)
+            {
+                tasks.Add(ArchivedTaskFromPath(completedRoot, canonical, files));
+            }
+        }
+
+        return tasks
             .Select(AttachRunMetrics)
             .OrderByDescending(task => File.GetLastWriteTimeUtc(task.MarkdownPath))
             .ToArray();
+    }
+
+    /// <summary>Picks the canonical DONE-*.md for a directory: the file whose
+    /// id matches the directory name, or the shortest filename as fallback.</summary>
+    private static string? FindCanonicalArchivedPath(string directory, string[] doneFiles)
+    {
+        var dirName = Path.GetFileName(directory);
+        foreach (var file in doneFiles)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(file);
+            var id = fileName.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase)
+                ? fileName[5..] : fileName;
+            if (string.Equals(id, dirName, StringComparison.OrdinalIgnoreCase))
+                return file;
+        }
+        return doneFiles.OrderBy(f => f.Length).FirstOrDefault();
     }
 
     public async Task<RelayTaskInput> ReadTaskInputAsync(RelayTaskItem task, CancellationToken cancellationToken = default)
@@ -94,27 +126,60 @@ public sealed class RelayTaskRepository
             {
                 if (!SkippedDirectories.Contains(name))
                 {
-                    Walk(tasksRoot, path, tasks);
+                    EmitSingleTaskFromFolder(tasksRoot, path, tasks);
                 }
 
                 continue;
             }
 
-            if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            // Top-level .md files are flat tasks.
+            if (name.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
             {
-                continue;
+                var id = Path.GetFileNameWithoutExtension(name);
+                tasks.Add(new RelayTaskItem(id, path, directory, false, []));
             }
-
-            var id = Path.GetFileNameWithoutExtension(name);
-            var nested = !string.Equals(directory, tasksRoot, StringComparison.Ordinal);
-            var siblings = nested
-                ? Directory.EnumerateFiles(directory)
-                    .Where(file => !file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
-                    .Order(StringComparer.Ordinal)
-                    .ToArray()
-                : [];
-            tasks.Add(new RelayTaskItem(id, path, directory, nested, siblings));
         }
+    }
+
+    /// <summary>
+    /// Emits exactly one task for a subfolder. The canonical markdown is the
+    /// folder-named .md; fallback is the first .md in the folder. All other
+    /// entries (including other .md files) become siblings.
+    /// </summary>
+    private static void EmitSingleTaskFromFolder(string tasksRoot, string folderPath, List<RelayTaskItem> tasks)
+    {
+        var folderName = Path.GetFileName(folderPath);
+        var entries = Directory.EnumerateFiles(folderPath).ToArray();
+
+        // Find the canonical folder-named .md file.
+        var canonicalPath = Path.Combine(folderPath, $"{folderName}.md");
+        string? markdownPath;
+        if (File.Exists(canonicalPath))
+        {
+            markdownPath = canonicalPath;
+        }
+        else
+        {
+            // Legacy: pick the first .md file in the folder.
+            markdownPath = entries.FirstOrDefault(
+                f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (markdownPath is null)
+        {
+            // No markdown in this folder — skip it.
+            return;
+        }
+
+        var taskId = Path.GetFileNameWithoutExtension(markdownPath);
+
+        // Everything except the task markdown itself is a sibling (attachment).
+        var siblings = entries
+            .Where(f => !string.Equals(f, markdownPath, StringComparison.Ordinal))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        tasks.Add(new RelayTaskItem(taskId, markdownPath, folderPath, true, siblings));
     }
 
     private RelayTaskItem AttachReviewState(RelayTaskItem task)
@@ -140,15 +205,16 @@ public sealed class RelayTaskRepository
         };
     }
 
-    private static RelayTaskItem ArchivedTaskFromPath(string completedRoot, string markdownPath)
+    private static RelayTaskItem ArchivedTaskFromPath(string completedRoot, string markdownPath, string[] allDoneFilesInDir)
     {
         var directory = Path.GetDirectoryName(markdownPath)!;
         var fileName = Path.GetFileNameWithoutExtension(markdownPath);
         var id = fileName.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ? fileName[5..] : fileName;
         var batchName = FindBatchName(completedRoot, markdownPath);
         var batchDirectory = batchName is null ? completedRoot : Path.Combine(completedRoot, batchName);
+        // All files except the task markdown are siblings — including .md attachments.
         var siblings = Directory.EnumerateFiles(directory)
-            .Where(file => !file.EndsWith(".md", StringComparison.OrdinalIgnoreCase))
+            .Where(file => !string.Equals(file, markdownPath, StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
             .ToArray();
         return new RelayTaskItem(

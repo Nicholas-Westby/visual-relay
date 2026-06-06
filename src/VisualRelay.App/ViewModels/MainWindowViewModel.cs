@@ -21,6 +21,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private static readonly IBrush BackendDownBrush = Brush.Parse("#F36F63");
 
     private IFolderPicker _folderPicker;
+    private IFilePicker _filePicker;
     private readonly List<RelayEvent> _allTaskEvents = [];
     private readonly List<TraceEntry> _allTraceEntries = [];
     private readonly Dictionary<string, List<RelayEvent>> _liveEventsByTask = new(StringComparer.Ordinal);
@@ -35,13 +36,19 @@ public partial class MainWindowViewModel : ViewModelBase
     private DateTimeOffset? _runStartedAt;
 
     public MainWindowViewModel()
-        : this(new NullFolderPicker())
+        : this(new NullFolderPicker(), new NullFilePicker())
     {
     }
 
     public MainWindowViewModel(IFolderPicker folderPicker)
+        : this(folderPicker, new NullFilePicker())
+    {
+    }
+
+    public MainWindowViewModel(IFolderPicker folderPicker, IFilePicker filePicker)
     {
         _folderPicker = folderPicker;
+        _filePicker = filePicker;
         _rootPath = RootFolderDisplay.DefaultPath();
         foreach (var stage in RelayStages.All)
         {
@@ -134,6 +141,35 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public bool HasSelectedTaskError => !string.IsNullOrEmpty(SelectedTaskError);
 
+    // ── Authoring ────────────────────────────────────────────────────────
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(EditSelectedTaskCommand))]
+    private bool _isEditingMarkdown;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SaveEditCommand))]
+    private string _editBuffer = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasEditBlockedReason))]
+    [NotifyCanExecuteChangedFor(nameof(EditSelectedTaskCommand))]
+    private string? _editBlockedReason;
+
+    public bool HasEditBlockedReason => !string.IsNullOrEmpty(EditBlockedReason);
+
+    [ObservableProperty]
+    private string _newTaskTitle = string.Empty;
+
+    [ObservableProperty]
+    private string _newTaskBody = string.Empty;
+
+    [ObservableProperty]
+    private string? _newTaskError;
+
+    [ObservableProperty]
+    private bool _isNewTaskDialogOpen;
+
     [ObservableProperty]
     private string _logScopeLabel = "full";
 
@@ -144,6 +180,9 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
+
+    /// <summary>Shows a confirmation dialog. Null (headless tests) skips the prompt.</summary>
+    public Func<string, string, Task<bool>>? ShowConfirmationAsync { get; set; }
 
     // Backend reachability surfaced to the UI. Defaults to reachable so the
     // startup banner stays hidden until a probe says otherwise. The later
@@ -165,6 +204,11 @@ public partial class MainWindowViewModel : ViewModelBase
     public void UseFolderPicker(IFolderPicker folderPicker)
     {
         _folderPicker = folderPicker;
+    }
+
+    public void UseFilePicker(IFilePicker filePicker)
+    {
+        _filePicker = filePicker;
     }
 
     public async Task LoadInitialAsync()

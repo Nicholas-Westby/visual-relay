@@ -140,7 +140,15 @@ public partial class MainWindowViewModel
             task.IsSelected = ReferenceEquals(task, value);
         }
 
+        // Exit edit mode when switching tasks.
+        if (IsEditingMarkdown)
+        {
+            IsEditingMarkdown = false;
+            EditBuffer = string.Empty;
+        }
+
         NotifyRunningTaskContextChanged();
+        EditSelectedTaskCommand.NotifyCanExecuteChanged();
         _ = LoadSelectedTaskAsync(value);
     }
 

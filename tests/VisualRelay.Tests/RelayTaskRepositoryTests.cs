@@ -128,6 +128,113 @@ public sealed class RelayTaskRepositoryTests
         Assert.Empty(tasks);
     }
 
+    [Fact]
+    public async Task ListPendingAsync_TreatsExtraMarkdownInTaskFolderAsSiblingNotSeparateTask()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        // Create a nested task folder with the canonical folder-named markdown
+        // plus an extra .md file that must NOT appear as a separate queue entry.
+        repo.WriteNestedTask("nested-with-notes", "# Main task\n",
+            ("notes.md", "# Notes\nThese are supplementary notes."),
+            ("data.json", "{\"field\":42}"));
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListPendingAsync();
+
+        // Only one task: the folder-named markdown.
+        Assert.Single(tasks);
+        var task = tasks[0];
+        Assert.Equal("nested-with-notes", task.Id);
+        Assert.True(task.IsNested);
+        // Both notes.md and data.json must be siblings.
+        Assert.Equal(2, task.SiblingPaths.Count);
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("notes.md", StringComparison.Ordinal));
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("data.json", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ListPendingAsync_OnlyMdFilesDirectlyInTasksRootAreFlatTasks()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        // A nested task folder with extra .md sibling.
+        repo.WriteNestedTask("beta", "# Beta\n", ("notes.md", "# Notes"));
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListPendingAsync();
+
+        Assert.Equal(["alpha", "beta"], tasks.Select(t => t.Id).Order());
+        var beta = tasks.Single(t => t.Id == "beta");
+        Assert.True(beta.IsNested);
+        Assert.Single(beta.SiblingPaths);
+        Assert.EndsWith("notes.md", beta.SiblingPaths[0], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListPendingAsync_FolderNamedMdIsOnlyQueueEntryForItsFolder()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        // Create a task folder with two markdown files and one text file.
+        var dir = Path.Combine(repo.Root, "llm-tasks", "multi-md");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "multi-md.md"), "# Main");
+        await File.WriteAllTextAsync(Path.Combine(dir, "supplement.md"), "# Supplement");
+        await File.WriteAllTextAsync(Path.Combine(dir, "readme.txt"), "readme");
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListPendingAsync();
+
+        Assert.Single(tasks);
+        var task = tasks[0];
+        Assert.Equal("multi-md", task.Id);
+        Assert.Equal(2, task.SiblingPaths.Count);
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("supplement.md", StringComparison.Ordinal));
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("readme.txt", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ReadTaskContextAsync_InlinesMdSiblingsAfterDiscoveryFix()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteNestedTask("with-md-context", "# Main\n",
+            ("supplement.md", "## Supplement\n\nExtra markdown context."),
+            ("form.html", "<div>UI</div>"));
+
+        var task = Assert.Single(await new RelayTaskRepository(repo.Root).ListPendingAsync());
+        var input = await new RelayTaskRepository(repo.Root).ReadTaskInputAsync(task);
+
+        // The .md sibling must be inlined into Context (TextExtensions includes "md").
+        Assert.Contains("### supplement.md", input.Context, StringComparison.Ordinal);
+        Assert.Contains("Extra markdown context.", input.Context, StringComparison.Ordinal);
+        // The existing non-.md sibling still works.
+        Assert.Contains("### form.html", input.Context, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ListCompletedAsync_TreatsExtraMarkdownInArchivedFolderAsSibling()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        var completed = Path.Combine(repo.Root, "llm-tasks", "completed");
+        var batchDir = Path.Combine(completed, "batch-1");
+        Directory.CreateDirectory(batchDir);
+        await File.WriteAllTextAsync(Path.Combine(batchDir, "DONE-archived.md"), "# Archived\n");
+        await File.WriteAllTextAsync(Path.Combine(batchDir, "DONE-archived-notes.md"), "# Notes\n");
+        await File.WriteAllTextAsync(Path.Combine(batchDir, "schema.json"), "{}");
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListCompletedAsync();
+
+        // Only one archived task: "archived". The other .md is a sibling.
+        Assert.Single(tasks);
+        var task = tasks[0];
+        Assert.Equal("archived", task.Id);
+        Assert.True(task.IsArchived);
+        Assert.Equal(2, task.SiblingPaths.Count);
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("DONE-archived-notes.md", StringComparison.Ordinal));
+        Assert.Contains(task.SiblingPaths, s => s.EndsWith("schema.json", StringComparison.Ordinal));
+    }
+
     private static void WriteReport(string root, string taskId, int stage, string model, double duration, int tokens)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
