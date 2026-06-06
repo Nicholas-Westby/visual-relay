@@ -14,11 +14,11 @@ public sealed class RelayDriverManifestScopeTests
         // edit uncommitted, and committed code referencing it would fail to build
         // from a clean checkout. The commit must include every tracked change.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.txt"), "shared-old");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.cs"), "shared-old");
         TestGit.Run(repo.Root, "init");
         TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
         TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
@@ -36,8 +36,8 @@ public sealed class RelayDriverManifestScopeTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
-        Assert.Contains("src/status.txt", names);
-        Assert.Contains("src/shared.txt", names);
+        Assert.Contains("src/status.cs", names);
+        Assert.Contains("src/shared.cs", names);
     }
 }
 
@@ -52,9 +52,9 @@ internal sealed class OutsideManifestEditingRunner : ISubagentRunner
         }
         else if (invocation.Stage.Number == 6)
         {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.txt"), "new");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
             // A tracked file the manifest never declared.
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "shared.txt"), "shared-new");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "shared.cs"), "shared-new");
         }
 
         var json = invocation.Stage.Number switch
@@ -62,7 +62,7 @@ internal sealed class OutsideManifestEditingRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test"]}""",
+            4 => """{"plan":"edit files","manifest":["src/status.cs","tests/status.test"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",

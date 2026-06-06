@@ -50,7 +50,7 @@ public sealed class RelayDriverTests
         repo.WriteConfig("full-suite", []);
         repo.WriteTask("repair-status", "# Repair status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old\n");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old\n");
         TestGit.Run(repo.Root, "init");
         TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
         TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
@@ -66,29 +66,28 @@ public sealed class RelayDriverTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.Equal(["old", "new"], testRunner.StatusSnapshots);
-        Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.txt")));
+        Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.cs")));
         Assert.DoesNotContain("relay-redgate:repair-status:", TestGit.Run(repo.Root, "stash", "list"));
     }
 
     [Fact]
-    public async Task RunTaskAsync_PresentationOnlyChange_SkipsRedGateAndCommits()
+    public async Task RunTaskAsync_NonCodeOnlyChange_SkipsRedGateAndCommits()
     {
-        // A markup-only change (e.g. de-virtualizing a ListBox in XAML) has no
-        // behavior to unit-test, so stage 5 returns no testFiles. The red gate must
-        // treat that as not-applicable rather than flagging "author-tests did not
-        // go red" — otherwise the pipeline can never complete presentation tasks.
+        // A documentation-only change (e.g. updating a README) has no behavior to
+        // unit-test, so stage 5 returns no testFiles. The red gate must treat that
+        // as not-applicable rather than flagging "author-tests did not go red".
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
-        repo.WriteTask("tweak-markup", "# Tweak markup\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "<Panel/>");
+        repo.WriteTask("update-readme", "# Update README\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "docs"));
+        File.WriteAllText(Path.Combine(repo.Root, "docs", "README.md"), "# Title\n");
         var runner = new ScriptedSubagentRunner();
-        runner.SeedPresentationOnly("src/Panel.axaml");
+        runner.SeedNonCodeOnly("docs/README.md");
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "tweak-markup");
+        var outcome = await driver.RunTaskAsync(repo.Root, "update-readme");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
     }
@@ -197,7 +196,7 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
     {
         if (invocation.Stage.Number == 4)
         {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.txt"), "new\n");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new\n");
         }
 
         if (invocation.Stage.Number == 5)
@@ -211,7 +210,7 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit status","manifest":["src/status.txt","tests/status.test","src/ghost.txt"]}""",
+            4 => """{"plan":"edit status","manifest":["src/status.cs","tests/status.test","src/ghost.cs"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implementation already present"}""",
             7 => """{"verdict":"pass","issues":[]}""",
@@ -270,7 +269,7 @@ internal sealed class RedGateObservingTestRunner : ITestRunner
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
         Assert.Equal(_rootPath, rootPath);
-        var status = File.ReadAllText(Path.Combine(rootPath, "src", "status.txt")).Trim();
+        var status = File.ReadAllText(Path.Combine(rootPath, "src", "status.cs")).Trim();
         StatusSnapshots.Add(status);
         return Task.FromResult(command == "full-suite"
             ? new TestRunResult(status == "new" ? 0 : 1, status)

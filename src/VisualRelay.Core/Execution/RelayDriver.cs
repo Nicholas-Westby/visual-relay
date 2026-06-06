@@ -101,14 +101,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     if (stage.Number == 5)
                     {
                         var testFiles = ReadStringArray(json, "testFiles");
-                        var touchesCode = manifest.Any(file => file.EndsWith(".cs", StringComparison.OrdinalIgnoreCase));
+                        // The red gate applies when the manifest contains at least one
+                        // implementation file (a code file not declared as a test file).
+                        // Non-code files (.md, .txt, .json, .yaml, .yml, .toml, .csv, and
+                        // files with no extension) never trigger the gate on their own.
+                        // Unknown extensions default to code (fail-safe toward requiring a test).
+                        var hasImpl = manifest.Any(f => !testFiles.Contains(f, StringComparer.Ordinal) && IsImpl(f));
 
-                        // A presentation-only change (markup with no .cs in the
-                        // manifest and no authored tests) has no behavior to
-                        // unit-test, so the TDD red gate does not apply — stage 9
-                        // still verifies the full suite stays green. A change that
-                        // touches code must still bring a failing test first.
-                        if (testFiles.Count > 0 || touchesCode)
+                        if (hasImpl)
                         {
                             var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
                             var gateResult = await AuthorTestGate.RunAsync(

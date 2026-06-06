@@ -50,6 +50,23 @@ public sealed partial class RelayDriver
             .ToArray();
     }
 
+    private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv"
+    };
+
+    /// <summary>
+    /// Returns true when <paramref name="path"/> is implementation code —
+    /// anything with an extension not in the non-code allowlist.
+    /// Files with no extension are treated as non-code (docs/config/data).
+    /// Unknown extensions default to code (fail-safe toward requiring a test).
+    /// </summary>
+    private static bool IsImpl(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return ext.Length > 0 && !NonCodeExtensions.Contains(ext);
+    }
+
     private static string? ReadOptionalString(JsonElement json, string propertyName) =>
         json.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString()

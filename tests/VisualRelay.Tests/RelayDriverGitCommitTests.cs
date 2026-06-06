@@ -10,10 +10,10 @@ public sealed class RelayDriverGitCommitTests
     public async Task RunTaskAsync_WhenGitCommitEnabled_CreatesARealRelayCommit()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
         RunGit(repo.Root, "init");
         RunGit(repo.Root, "config user.email visual-relay@example.test");
         RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
@@ -35,8 +35,8 @@ public sealed class RelayDriverGitCommitTests
         Assert.Contains("Relay-Seal:", message);
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains(".relay/ship-status/manifest.txt", names);
-        Assert.Contains("src/status.txt", names);
-        Assert.DoesNotContain("src/ghost.txt", names);
+        Assert.Contains("src/status.cs", names);
+        Assert.DoesNotContain("src/ghost.cs", names);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
     }
@@ -51,10 +51,10 @@ public sealed class RelayDriverGitCommitTests
         // could ever commit. The committer must force the small proof files in so
         // the Relay-Seal stays verifiable while bulky scratch stays ignored.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
         File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), ".relay/*\n!.relay/config.json\n");
         RunGit(repo.Root, "init");
         RunGit(repo.Root, "config user.email visual-relay@example.test");
@@ -72,7 +72,7 @@ public sealed class RelayDriverGitCommitTests
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains(".relay/ship-status/manifest.txt", names);
-        Assert.Contains("src/status.txt", names);
+        Assert.Contains("src/status.cs", names);
     }
 
     [Fact]
@@ -83,10 +83,10 @@ public sealed class RelayDriverGitCommitTests
         // such commits into ITS single sealed commit, otherwise the source lands in
         // a rogue agent commit and the sealed Relay-Seal commit carries only proof.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
         RunGit(repo.Root, "init");
         RunGit(repo.Root, "config user.email visual-relay@example.test");
         RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
@@ -104,7 +104,7 @@ public sealed class RelayDriverGitCommitTests
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         Assert.Equal("1", RunGit(repo.Root, $"rev-list --count {seed}..HEAD").Trim());
         var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
-        Assert.Contains("src/status.txt", names);
+        Assert.Contains("src/status.cs", names);
         Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("Relay-Seal:", RunGit(repo.Root, "log -1 --pretty=%B"));
     }
@@ -115,6 +115,8 @@ public sealed class RelayDriverGitCommitTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("test ! -e data/company.json && test ! -e data/http_log.json", []);
         repo.WriteTask("delete-data", "batch: 1\n\n# Delete stale data\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "delete.cs"), "// remove stale data");
         Directory.CreateDirectory(Path.Combine(repo.Root, "data"));
         File.WriteAllText(Path.Combine(repo.Root, "data", "company.json"), "{}");
         File.WriteAllText(Path.Combine(repo.Root, "data", "http_log.json"), "{}");
@@ -164,7 +166,7 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
         }
         else if (invocation.Stage.Number == 6)
         {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.txt"), "new");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
         }
 
         var json = invocation.Stage.Number switch
@@ -172,7 +174,7 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test","src/ghost.txt"]}""",
+            4 => """{"plan":"edit files","manifest":["src/status.cs","tests/status.test","src/ghost.cs"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
@@ -199,7 +201,7 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
         }
         else if (invocation.Stage.Number == 6)
         {
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.txt"), "new");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
         }
         else if (invocation.Stage.Number == 8)
         {
@@ -213,7 +215,7 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test"]}""",
+            4 => """{"plan":"edit files","manifest":["src/status.cs","tests/status.test"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
@@ -256,7 +258,7 @@ internal sealed class DeletingDirectorySubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["delete"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"stale fixtures","excerpts":[],"repro":"none"}""",
-            4 => """{"plan":"delete stale data","manifest":["data","tests/data.test"]}""",
+            4 => """{"plan":"delete stale data","manifest":["src/delete.cs","data","tests/data.test"]}""",
             5 => """{"testFiles":["tests/data.test"],"rationale":"red first"}""",
             6 => """{"summary":"deleted stale data"}""",
             7 => """{"verdict":"pass","issues":[]}""",
