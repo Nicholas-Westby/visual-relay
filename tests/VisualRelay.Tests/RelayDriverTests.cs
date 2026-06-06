@@ -170,6 +170,25 @@ public sealed class RelayDriverTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "retry-me", "NEEDS-REVIEW")));
     }
+
+    [Fact]
+    public async Task RunTaskAsync_ManifestContainingTasksDirPath_FlagsTheRun()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("bad-manifest", "# Bad manifest\n");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                new BadManifestSubagentRunner(),
+                new ScriptedTestRunner(),
+                new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "bad-manifest");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        Assert.Contains("manifest may not include task files", outcome.Reason, StringComparison.Ordinal);
+    }
 }
 
 internal sealed class PrematureImplementationRunner : ISubagentRunner
@@ -256,5 +275,21 @@ internal sealed class RedGateObservingTestRunner : ITestRunner
         return Task.FromResult(command == "full-suite"
             ? new TestRunResult(status == "new" ? 0 : 1, status)
             : new TestRunResult(status == "old" ? 1 : 0, status));
+    }
+}
+
+internal sealed class BadManifestSubagentRunner : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
+            4 => """{"plan":"edit files","manifest":["llm-tasks/extra.md","src/real.cs"]}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
     }
 }

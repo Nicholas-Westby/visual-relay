@@ -68,6 +68,14 @@ public sealed partial class RelayDriver
         return Hashing.Sha256Hex(parts.ToArray());
     }
 
+    private static bool IsPathUnderDirectory(string rootPath, string relativePath, string directoryName)
+    {
+        var fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
+        var dirFullPath = Path.GetFullPath(Path.Combine(rootPath, directoryName));
+        return fullPath.StartsWith(dirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullPath, dirFullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string SerializeSeal(int stageNumber, string artifactHash, string treeHash, string seal, string? check)
     {
         var payload = new Dictionary<string, object?>

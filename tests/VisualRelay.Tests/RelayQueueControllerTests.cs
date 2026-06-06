@@ -83,6 +83,69 @@ public sealed class RelayQueueControllerTests
         Assert.Equal(RelayQueueState.Completed, controller.State);
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
     }
+
+    [Fact]
+    public async Task DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        repo.WriteTask("gamma", "# Gamma\n");
+        var runner = new RecordingTaskRunner();
+        var controller = new RelayQueueController(repo.Root, runner);
+        runner.AfterRun = () =>
+        {
+            if (runner.TasksRun.Count == 1)
+            {
+                var deltaPath = Path.Combine(repo.Root, "llm-tasks", "delta.md");
+                controller.Tasks.Add(new RelayTaskItem("delta", deltaPath,
+                    Path.GetDirectoryName(deltaPath)!, false, []));
+            }
+        };
+
+        await controller.RefreshAsync();
+        var results = await controller.DrainAsync();
+
+        // Delta was added mid-drain and must NOT have been entered.
+        Assert.Equal(["alpha", "beta", "gamma"], runner.TasksRun);
+        Assert.Equal(RelayQueueState.Completed, controller.State);
+        // Delta remains available for the next drain.
+        Assert.Contains(controller.Tasks, t => t.Id == "delta");
+    }
+
+    [Fact]
+    public async Task DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        repo.WriteTask("gamma", "# Gamma\n");
+        var runner = new RecordingTaskRunner();
+        var controller = new RelayQueueController(repo.Root, runner);
+        runner.AfterRunAsync = async () =>
+        {
+            if (runner.TasksRun.Count == 1)
+            {
+                // Simulate a new task file landing on disk mid-run, then refresh.
+                // The refresh re-sorts Tasks so aardvark shifts to index 0,
+                // displacing beta from the head position.
+                repo.WriteTask("aardvark", "# Aardvark\n");
+                await controller.RefreshAsync();
+            }
+        };
+
+        await controller.RefreshAsync();
+        var results = await controller.DrainAsync();
+
+        // Snapshot preserves original order; aardvark must NOT displace the
+        // in-flight drain and the original three tasks must all complete.
+        Assert.Equal(["alpha", "beta", "gamma"], runner.TasksRun);
+        Assert.Equal(RelayQueueState.Completed, controller.State);
+        // Aardvark remains for the next drain.
+        Assert.Contains(controller.Tasks, t => t.Id == "aardvark");
+    }
 }
 
 internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner

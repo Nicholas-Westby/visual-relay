@@ -69,12 +69,14 @@ public sealed class RelayQueueController
         DrainCircuitBreaker.ClearHaltMarker(RootPath);
         State = RelayQueueState.Running;
 
-        while (Tasks.Count > 0)
+        var queue = Tasks.Where(task => !task.NeedsReview).ToList();
+        while (queue.Count > 0)
         {
-            var task = Tasks[0];
+            var task = queue[0];
+            queue.RemoveAt(0);
             var outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
             results.Add(outcome);
-            Tasks.RemoveAt(0);
+            Tasks.Remove(task);
 
             if (circuitBreaker.ShouldHalt(RootPath, outcome))
             {
