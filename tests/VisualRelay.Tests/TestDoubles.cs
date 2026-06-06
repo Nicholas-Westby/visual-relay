@@ -137,12 +137,18 @@ internal sealed class RecordingTaskRunner : IRelayTaskRunner
 {
     public List<string> TasksRun { get; } = [];
     public Action? AfterRun { get; set; }
+    public Func<Task>? AfterRunAsync { get; set; }
 
-    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
+    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
         TasksRun.Add(taskId);
         AfterRun?.Invoke();
-        return Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "commit", null));
+        if (AfterRunAsync is not null)
+        {
+            await AfterRunAsync();
+        }
+
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "commit", null);
     }
 }
 
