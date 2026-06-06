@@ -22,6 +22,8 @@ public sealed class RelayRunHistoryTests
         Assert.False(stage.Succeeded);
         // total_llm_time_s is the attempt index in WriteAttemptReport: 1 + 2 = 3.
         Assert.Equal(3, stage.DurationSeconds, precision: 2);
+        // Each attempt has 1 llm_call → 2 turns summed.
+        Assert.Equal(2, stage.Turns);
     }
 
     [Fact]
@@ -154,7 +156,29 @@ public sealed class RelayRunHistoryTests
         Assert.Equal("Complete", row.StatusLabel);
     }
 
-    private static StageRunMetric MetricFor(bool succeeded) => new(
+    [Fact]
+    public void ApplyMetric_ShowsTurnsWhenPresent()
+    {
+        var row = new StageRowViewModel(RelayStages.All[0]);
+
+        row.ApplyMetric(MetricFor(succeeded: true, turns: 17));
+
+        Assert.Equal("17t", row.TurnsLabel);
+        Assert.Contains("17t", row.MetricLabel, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ApplyMetric_OmitsTurnsWhenZero()
+    {
+        var row = new StageRowViewModel(RelayStages.All[0]);
+
+        row.ApplyMetric(MetricFor(succeeded: true)); // turns defaults to 0
+
+        Assert.Equal(string.Empty, row.TurnsLabel);
+        Assert.DoesNotContain("t", row.MetricLabel, StringComparison.Ordinal);
+    }
+
+    private static StageRunMetric MetricFor(bool succeeded, int turns = 0) => new(
         StageNumber: 1,
         StageName: "Ideate",
         Tier: "cheap",
@@ -167,6 +191,7 @@ public sealed class RelayRunHistoryTests
         CachedTokens: 0,
         OutputTokens: 0,
         CacheWriteTokens: 0,
+        Turns: turns,
         ReportPath: "report.json",
         TraceDirectory: null,
         Succeeded: succeeded);

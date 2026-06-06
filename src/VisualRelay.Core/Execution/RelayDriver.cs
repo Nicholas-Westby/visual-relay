@@ -287,10 +287,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         {
             data["model"] = cost.Model;
         }
+        if (cost?.Turns > 0)
+        {
+            data["turns"] = cost.Turns.ToString();
+        }
 
         return _dependencies.EventSink.PublishAsync(
             new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_done", runId, rootPath, taskId, stage.Number, stage.Tier, Data: data),
             cancellationToken);
     }
-
 }

@@ -10,7 +10,8 @@ public sealed record RelayCostEstimate(
     int CachedTokens,
     int OutputTokens,
     double DurationSeconds,
-    int CacheWriteTokens = 0);
+    int CacheWriteTokens = 0,
+    int Turns = 0);
 
 public static class RelayCostEstimator
 {
@@ -81,7 +82,7 @@ public static class RelayCostEstimator
 
         if (!RelayPricing.Default.TryGetValue(model, out var pricing))
         {
-            return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens);
+            return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
         }
 
         var cachedRate = pricing.CachedInput ?? pricing.Input;
@@ -92,7 +93,7 @@ public static class RelayCostEstimator
             cacheWriteTokens * cacheWriteRate +
             outputTokens * pricing.Output
         ) / 1_000_000d;
-        return new RelayCostEstimate(model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens);
+        return new RelayCostEstimate(model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
     }
 
     private static bool IsLlmCall(JsonElement item) =>

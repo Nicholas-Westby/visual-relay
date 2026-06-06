@@ -41,14 +41,24 @@ public static partial class RelayRunHistory
                 taskId,
                 stage.StageNumber,
                 stage.Tier,
-                Data: new Dictionary<string, string>
-                {
-                    ["name"] = stage.StageName,
-                    ["model"] = stage.Model,
-                    ["time"] = stage.DurationLabel,
-                    ["cost"] = stage.CostLabel
-                }))
+                Data: BuildStageReportData(stage)))
             .ToArray();
+    }
+
+    private static Dictionary<string, string> BuildStageReportData(StageRunMetric stage)
+    {
+        var data = new Dictionary<string, string>
+        {
+            ["name"] = stage.StageName,
+            ["model"] = stage.Model,
+            ["time"] = stage.DurationLabel,
+            ["cost"] = stage.CostLabel
+        };
+        if (stage.Turns > 0)
+        {
+            data["turns"] = stage.Turns.ToString();
+        }
+        return data;
     }
 
     public static async Task<IReadOnlyList<TraceEntry>> ReadTraceEntriesAsync(
@@ -99,6 +109,7 @@ public static partial class RelayRunHistory
             estimate.CacheWriteTokens,
             reportPath,
             Directory.Exists(traceDirectory) ? traceDirectory : null,
+            estimate.Turns,
             succeeded,
             errorMessage);
     }
@@ -157,6 +168,7 @@ public static partial class RelayRunHistory
             CachedTokens = ordered.Sum(metric => metric.CachedTokens),
             OutputTokens = ordered.Sum(metric => metric.OutputTokens),
             CacheWriteTokens = ordered.Sum(metric => metric.CacheWriteTokens),
+            Turns = ordered.Sum(metric => metric.Turns),
             Priced = ordered.All(metric => metric.Priced)
         };
     }

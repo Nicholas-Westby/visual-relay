@@ -15,6 +15,7 @@ public sealed record StageRunMetric(
     int CacheWriteTokens,
     string ReportPath,
     string? TraceDirectory,
+    int Turns = 0,
     bool Succeeded = true,
     string? ErrorMessage = null)
 {

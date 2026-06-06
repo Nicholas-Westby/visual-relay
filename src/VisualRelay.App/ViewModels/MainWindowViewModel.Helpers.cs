@@ -273,5 +273,9 @@ public partial class MainWindowViewModel
         {
             stage.ModelLabel = model;
         }
+        if (relayEvent.Data.TryGetValue("turns", out var turns))
+        {
+            stage.TurnsLabel = turns + "t";
+        }
     }
 }
