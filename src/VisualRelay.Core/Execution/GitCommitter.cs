@@ -32,10 +32,26 @@ internal static class GitCommitter
             return GitCommitResult.Failed(ex.Message);
         }
 
-        var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage, .. proofFiles], cancellationToken);
-        if (add.ExitCode != 0)
+        if (manifestFilesToStage.Count > 0)
         {
-            return GitCommitResult.Failed($"git add failed: {add.Output.Trim()}");
+            var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
+            if (add.ExitCode != 0)
+            {
+                return GitCommitResult.Failed($"git add failed: {add.Output.Trim()}");
+            }
+        }
+
+        // Proof files (ledger/seals/manifest) live under .relay/, which the
+        // self-hosting repo gitignores along with bulky run scratch. Force them in
+        // so the Relay-Seal stays verifiable; the manifest add above stays strict so
+        // a genuinely ignored source path still surfaces as an error.
+        if (proofFiles.Count > 0)
+        {
+            var addProof = await GitAsync(rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
+            if (addProof.ExitCode != 0)
+            {
+                return GitCommitResult.Failed($"git add proof failed: {addProof.Output.Trim()}");
+            }
         }
 
         var message = $"{commitMessage}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";

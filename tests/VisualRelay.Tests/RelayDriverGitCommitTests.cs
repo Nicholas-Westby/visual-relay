@@ -42,6 +42,40 @@ public sealed class RelayDriverGitCommitTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_WhenRelayDirIsGitignored_StillCommitsTheProofFiles()
+    {
+        // The self-hosting repo gitignores .relay/* (run scratch — report.json,
+        // run.log — is bulky), keeping only config.json. The commit's proof files
+        // (ledger/seals/manifest) live under .relay/<task>/ and so are ignored too,
+        // which made stage 11 die with "paths are ignored by .gitignore" — no task
+        // could ever commit. The committer must force the small proof files in so
+        // the Relay-Seal stays verifiable while bulky scratch stays ignored.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
+        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), ".relay/*\n!.relay/config.json\n");
+        RunGit(repo.Root, "init");
+        RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RunGit(repo.Root, "add .");
+        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+
+        var runner = new EditingSubagentRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
+        Assert.Contains(".relay/ship-status/manifest.txt", names);
+        Assert.Contains("src/status.txt", names);
+    }
+
+    [Fact]
     public async Task CommitAsync_WhenManifestDirectoryContainsDeletedFiles_StagesTheDeletions()
     {
         using var repo = TestRepository.Create();
