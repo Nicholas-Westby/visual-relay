@@ -9,12 +9,26 @@ internal static class GitCommitter
         string commitMessage,
         IReadOnlyList<string> manifest,
         IReadOnlyList<string> proofFiles,
+        string? runStartCommit,
         CancellationToken cancellationToken)
     {
         var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (inside.ExitCode != 0)
         {
             return GitCommitResult.Failed("target root is not a git repository");
+        }
+
+        // Stage agents can run `git commit` themselves mid-run. Fold any commits
+        // made since the run started back into the working tree so the driver
+        // produces exactly one sealed commit (source + proof) on top of the
+        // run-start parent. A no-op when no agent committed (HEAD == runStartCommit).
+        if (!string.IsNullOrWhiteSpace(runStartCommit))
+        {
+            var fold = await GitAsync(rootPath, ["reset", "--soft", runStartCommit], cancellationToken);
+            if (fold.ExitCode != 0)
+            {
+                return GitCommitResult.Failed($"git reset --soft failed: {fold.Output.Trim()}");
+            }
         }
 
         var reset = await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
@@ -65,6 +79,16 @@ internal static class GitCommitter
         return sha.ExitCode == 0
             ? GitCommitResult.Committed(sha.Output.Trim())
             : GitCommitResult.Failed($"git rev-parse failed after commit: {sha.Output.Trim()}");
+    }
+
+    // HEAD at run start, captured before any stage agent can commit, so the commit
+    // stage knows where to fold back to. Null when there is no commit yet.
+    public static async Task<string?> TryGetHeadAsync(string rootPath, CancellationToken cancellationToken)
+    {
+        var head = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
+        return head.ExitCode == 0 && !string.IsNullOrWhiteSpace(head.Output)
+            ? head.Output.Trim()
+            : null;
     }
 
     private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(

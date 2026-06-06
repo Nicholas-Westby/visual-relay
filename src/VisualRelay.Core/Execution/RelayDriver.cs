@@ -31,6 +31,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
 
+            var runStartCommit = _options.CreateGitCommit
+                ? await GitCommitter.TryGetHeadAsync(rootPath, cancellationToken)
+                : null;
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
             var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);
@@ -145,7 +148,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             {
                 var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt") };
                 var subject = CommitMessageSanitizer.FromRawOrFallback(commitMessage, taskId);
-                var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, subject, manifest, proofFiles, cancellationToken);
+                var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, subject, manifest, proofFiles, runStartCommit, cancellationToken);
                 if (!commit.Success)
                 {
                     return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, cancellationToken);

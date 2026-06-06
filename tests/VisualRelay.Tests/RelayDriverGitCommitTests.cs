@@ -76,6 +76,40 @@ public sealed class RelayDriverGitCommitTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_WhenAnAgentCommitsMidRun_FoldsItIntoOneSealedCommit()
+    {
+        // Stage agents have git shell access (Review reads the diff) and sometimes
+        // run `git commit` themselves. The driver's stage-11 commit must fold any
+        // such commits into ITS single sealed commit, otherwise the source lands in
+        // a rogue agent commit and the sealed Relay-Seal commit carries only proof.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.txt", []);
+        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.txt"), "old");
+        RunGit(repo.Root, "init");
+        RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RunGit(repo.Root, "add .");
+        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        var seed = RunGit(repo.Root, "rev-parse HEAD").Trim();
+
+        var runner = new MidRunCommittingSubagentRunner(repo.Root);
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        Assert.Equal("1", RunGit(repo.Root, $"rev-list --count {seed}..HEAD").Trim());
+        var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
+        Assert.Contains("src/status.txt", names);
+        Assert.Contains(".relay/ship-status/manifest.txt", names);
+        Assert.Contains("Relay-Seal:", RunGit(repo.Root, "log -1 --pretty=%B"));
+    }
+
+    [Fact]
     public async Task CommitAsync_WhenManifestDirectoryContainsDeletedFiles_StagesTheDeletions()
     {
         using var repo = TestRepository.Create();
@@ -147,6 +181,58 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
+internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
+{
+    private readonly string _root;
+
+    public MidRunCommittingSubagentRunner(string root) => _root = root;
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == 5)
+        {
+            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "status.test"), "red first");
+        }
+        else if (invocation.Stage.Number == 6)
+        {
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.txt"), "new");
+        }
+        else if (invocation.Stage.Number == 8)
+        {
+            // The rogue agent commits its own work before the driver's commit stage.
+            Git("add -A");
+            Git("commit -m \"agent: premature commit of work in progress\"");
+        }
+
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
+            4 => """{"plan":"edit files","manifest":["src/status.txt","tests/status.test"]}""",
+            5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
+            6 => """{"summary":"implemented"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"fixed"}""",
+            9 => """{"summary":"verified","commitMessage":"fix(sample): ship status"}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+
+    private void Git(string arguments)
+    {
+        using var process = Process.Start(new ProcessStartInfo("/bin/sh", $"-lc \"git -C '{_root}' {arguments}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        })!;
+        process.WaitForExit();
     }
 }
 
