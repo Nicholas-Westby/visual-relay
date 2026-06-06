@@ -6,29 +6,41 @@ namespace VisualRelay.Tests;
 
 public sealed class BackendReadinessProbeTests
 {
-    // FreePort() must release the port before the test can use it, leaving a race
-    // window in which another process claims it. On a busy machine — e.g. the live
-    // model backend plus swival subprocesses running during a pipeline's stage-9
-    // verify — that window gets hit and the listener bind throws
-    // "Address already in use", flaking the whole suite. The retries below close
-    // the race by re-rolling onto a fresh port instead of failing.
+    // The fake backend is a raw TcpListener rather than HttpListener: the listener
+    // holds its own port for its whole lifetime (no release-then-rebind race), and
+    // it sidesteps HttpListener's process-wide static HttpEndPointManager, which
+    // throws "Address already in use" during Dispose on macOS when several
+    // listeners churn in one test process (as the full suite does during a
+    // pipeline's stage-9 verify). A handful of header bytes plus a fixed 200 line
+    // is all the probe's HttpClient needs to see a reachable backend.
     private const int PortRollAttempts = 25;
 
     [Fact]
     public async Task CheckAsync_BackendListeningAndReturns200_IsReady()
     {
-        using var listener = StartListenerOnFreePort(out var port);
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var serve = Task.Run(async () =>
         {
             try
             {
-                var context = await listener.GetContextAsync();
-                context.Response.StatusCode = 200;
-                context.Response.Close();
+                using var client = await listener.AcceptTcpClientAsync();
+                await using var stream = client.GetStream();
+                // Drain a chunk of the request (count used to satisfy CA2022) so the
+                // response is not RST'd; one read covers a small GET's headers.
+                var read = await stream.ReadAsync(new byte[1024]);
+                if (read == 0)
+                {
+                    return;
+                }
+
+                await stream.WriteAsync("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray());
+                await stream.FlushAsync();
             }
-            catch (HttpListenerException)
+            catch (Exception)
             {
-                // Listener stopped before a request arrived; nothing to serve.
+                // Listener stopped before/while serving; nothing to do.
             }
         });
 
@@ -70,31 +82,8 @@ public sealed class BackendReadinessProbeTests
         }
     }
 
-    // Starting an HttpListener needs a concrete port, but FreePort() releases the
-    // port before we bind it here. Retry the bind on a fresh port so the
-    // release-then-rebind race never fails the test.
-    private static HttpListener StartListenerOnFreePort(out int port)
-    {
-        for (var attempt = 0; ; attempt++)
-        {
-            port = FreePort();
-            var listener = new HttpListener();
-            listener.Prefixes.Add($"http://127.0.0.1:{port}/");
-            try
-            {
-                listener.Start();
-                return listener;
-            }
-            catch (HttpListenerException) when (attempt < PortRollAttempts)
-            {
-                ((IDisposable)listener).Dispose();
-            }
-        }
-    }
-
-    // Bind to port 0 to let the OS assign a free port, read it, then release it
-    // so the caller can decide whether to listen (reachable) or leave it closed
-    // (refused).
+    // Bind to port 0 to let the OS assign a free port, read it, then release it so
+    // the caller can probe a port with nothing listening (connection refused).
     private static int FreePort()
     {
         var listener = new TcpListener(IPAddress.Loopback, 0);
