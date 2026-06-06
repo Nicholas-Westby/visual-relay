@@ -27,10 +27,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, List<TraceEntry>> _liveTraceEntriesByTask = new(StringComparer.Ordinal);
     private int? _selectedStageFilter;
     private DispatcherTimer? _backendMonitor;
+    private DispatcherTimer? _elapsedTimer;
     private TaskRowViewModel? _runningTask;
     private string? _runningTaskId;
     private int? _runningStageNumber;
     private string? _runningStageName;
+    private DateTimeOffset? _runStartedAt;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker())
@@ -203,6 +205,27 @@ public partial class MainWindowViewModel : ViewModelBase
         };
         _backendMonitor.Tick += (_, _) => _ = RefreshBackendStatusAsync();
         _backendMonitor.Start();
+    }
+
+    // Starts a 1-second timer that updates the running task's elapsed label
+    // while a task is running. Called ONLY from App startup (never the ctor or
+    // LoadInitialAsync) so unit tests spin no timer.
+    public void StartElapsedTimer()
+    {
+        _elapsedTimer?.Stop();
+        _elapsedTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+        _elapsedTimer.Tick += (_, _) =>
+        {
+            if (_runningTask is not null && _runStartedAt is { } startedAt)
+            {
+                _runningTask.RunningElapsedLabel =
+                    ElapsedFormatter.Label(DateTimeOffset.UtcNow - startedAt);
+            }
+        };
+        _elapsedTimer.Start();
     }
 
     public string RootName => RootFolderDisplay.Name(RootPath);

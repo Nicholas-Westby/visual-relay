@@ -28,6 +28,7 @@ public partial class App : Application
             desktop.MainWindow = window;
             _ = viewModel.LoadInitialAsync();
             viewModel.StartBackendMonitoring();
+            viewModel.StartElapsedTimer();
         }
 
         base.OnFrameworkInitializationCompleted();

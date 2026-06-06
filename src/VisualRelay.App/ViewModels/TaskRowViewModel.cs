@@ -24,6 +24,7 @@ public sealed class TaskRowViewModel : ViewModelBase
     private bool _isRunning;
     private int? _runningStageNumber;
     private string? _runningStageName;
+    private string _runningElapsedLabel = string.Empty;
 
     public TaskRowViewModel(RelayTaskItem task)
     {
@@ -37,10 +38,25 @@ public sealed class TaskRowViewModel : ViewModelBase
     public bool NeedsReview => Task.NeedsReview;
     public bool IsArchived => Task.IsArchived;
     public string StateLabel => IsRunning ? "Running" : Task.StateLabel;
-    public string MetricsLine => IsRunning ? RunningStepLabel : Task.MetricsLine;
+    public string MetricsLine => IsRunning
+        ? string.IsNullOrEmpty(_runningElapsedLabel)
+            ? RunningStepLabel
+            : $"{RunningStepLabel} · {_runningElapsedLabel}"
+        : Task.MetricsLine;
     public string RunningStepLabel => _runningStageNumber is { } number
         ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
         : "Starting task";
+    public string RunningElapsedLabel
+    {
+        get => _runningElapsedLabel;
+        set
+        {
+            if (SetProperty(ref _runningElapsedLabel, value))
+            {
+                OnPropertyChanged(nameof(MetricsLine));
+            }
+        }
+    }
     public IBrush AccentBrush => IsRunning ? RunningBrush : NeedsReview ? ReviewBrush : SelectedBrush;
     public IBrush RailBrush => IsRunning ? RunningBrush : IsSelected ? SelectedBrush : Brushes.Transparent;
     public IBrush CardBackgroundBrush => IsRunning ? RunningCardBrush : IsSelected ? SelectedCardBrush : WaitingCardBrush;
@@ -89,8 +105,10 @@ public sealed class TaskRowViewModel : ViewModelBase
     {
         _runningStageNumber = null;
         _runningStageName = null;
+        _runningElapsedLabel = string.Empty;
         IsRunning = false;
         OnPropertyChanged(nameof(RunningStepLabel));
+        OnPropertyChanged(nameof(RunningElapsedLabel));
         OnPropertyChanged(nameof(MetricsLine));
     }
 

@@ -18,6 +18,7 @@ public partial class MainWindowViewModel
         _runningTaskId = task.Id;
         _runningStageNumber = null;
         _runningStageName = null;
+        _runStartedAt = DateTimeOffset.UtcNow;
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
     }
@@ -53,6 +54,7 @@ public partial class MainWindowViewModel
             _runningTaskId = null;
             _runningStageNumber = null;
             _runningStageName = null;
+            _runStartedAt = null;
         }
 
         NotifyRunningTaskContextChanged();

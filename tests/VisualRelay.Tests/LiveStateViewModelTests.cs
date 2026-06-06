@@ -75,6 +75,49 @@ public sealed class LiveStateViewModelTests
         Assert.Equal("#ff5ad47d", ColorOf(stage.BorderBrush));
     }
 
+    [Fact]
+    public void TaskRow_RunningElapsedLabel_IsEmptyAfterMarkRunning()
+    {
+        var task = new RelayTaskItem("task-x", "/tmp/llm-tasks/task-x.md", "/tmp/llm-tasks", false, []);
+        var row = new TaskRowViewModel(task);
+
+        row.MarkRunning(5, "Author-tests");
+
+        Assert.True(row.IsRunning);
+        Assert.Equal("", row.RunningElapsedLabel);
+        Assert.Equal("Stage 05 · Author-tests", row.MetricsLine);
+    }
+
+    [Fact]
+    public void TaskRow_MetricsLine_IncludesElapsedWhenLabelIsSet()
+    {
+        var task = new RelayTaskItem("task-x", "/tmp/llm-tasks/task-x.md", "/tmp/llm-tasks", false, []);
+        var row = new TaskRowViewModel(task);
+
+        row.MarkRunning(5, "Author-tests");
+        row.RunningElapsedLabel = "1m 04s";
+
+        Assert.Equal("Stage 05 · Author-tests · 1m 04s", row.MetricsLine);
+    }
+
+    [Fact]
+    public void TaskRow_MarkIdle_ClearsRunningElapsedLabelAndRestoresMetricsLine()
+    {
+        var task = new RelayTaskItem("task-x", "/tmp/llm-tasks/task-x.md", "/tmp/llm-tasks", false,
+            [], CompletedStageCount: 3, DurationSeconds: 120, CostUsd: 0.003);
+        var row = new TaskRowViewModel(task);
+
+        row.MarkRunning(5, "Author-tests");
+        row.RunningElapsedLabel = "2m 36s";
+        Assert.Equal("Stage 05 · Author-tests · 2m 36s", row.MetricsLine);
+
+        row.MarkIdle();
+
+        Assert.False(row.IsRunning);
+        Assert.Equal("", row.RunningElapsedLabel);
+        Assert.Equal(task.MetricsLine, row.MetricsLine);
+    }
+
     private static string ColorOf(IBrush brush)
     {
         var solid = Assert.IsAssignableFrom<ISolidColorBrush>(brush);
