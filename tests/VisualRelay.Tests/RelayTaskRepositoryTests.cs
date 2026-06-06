@@ -235,6 +235,48 @@ public sealed class RelayTaskRepositoryTests
         Assert.Contains(task.SiblingPaths, s => s.EndsWith("schema.json", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task ListCompletedAsync_ListsTopLevelDoneFileAsArchived()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("DONE-alpha", "# Alpha\n");
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListCompletedAsync();
+
+        var task = Assert.Single(tasks);
+        Assert.Equal("alpha", task.Id);
+        Assert.True(task.IsArchived);
+        Assert.False(task.IsNested);
+        Assert.Null(task.ArchiveBatch);
+        Assert.Equal("Completed", task.StateLabel);
+        Assert.Empty(task.SiblingPaths);
+    }
+
+    [Fact]
+    public async Task ListCompletedAsync_ReturnsBothTopLevelAndNestedCompletedTasks()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("DONE-top", "# Top\n");
+        var nestedDir = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2");
+        Directory.CreateDirectory(nestedDir);
+        await File.WriteAllTextAsync(Path.Combine(nestedDir, "DONE-nested.md"), "# Nested\n");
+
+        var tasks = await new RelayTaskRepository(repo.Root).ListCompletedAsync();
+
+        Assert.Equal(2, tasks.Count);
+        Assert.All(tasks, t => Assert.True(t.IsArchived));
+        var top = Assert.Single(tasks, t => t.Id == "top");
+        Assert.False(top.IsNested);
+        Assert.Null(top.ArchiveBatch);
+        var nested = Assert.Single(tasks, t => t.Id == "nested");
+        Assert.True(nested.IsArchived);
+        // Newest-first: nested was written after top.
+        Assert.Equal("nested", tasks[0].Id);
+        Assert.Equal("top", tasks[1].Id);
+    }
+
     private static void WriteReport(string root, string taskId, int stage, string model, double duration, int tokens)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

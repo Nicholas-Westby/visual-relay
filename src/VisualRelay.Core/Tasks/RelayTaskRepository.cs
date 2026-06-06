@@ -60,26 +60,32 @@ public sealed class RelayTaskRepository
         }
 
         var config = loaded.Config;
-        var completedRoot = Path.Combine(RootPath, config.TasksDir, "completed");
-        if (!Directory.Exists(completedRoot))
-        {
-            return [];
-        }
-
-        // Group DONE-*.md files by directory so each folder yields exactly
-        // one task with the remaining DONE-*.md files as siblings.
-        var allFiles = Directory.EnumerateFiles(completedRoot, "DONE-*.md", SearchOption.AllDirectories);
-        var byDirectory = allFiles
-            .GroupBy(Path.GetDirectoryName)
-            .ToDictionary(g => g.Key!, g => g.ToArray());
-
+        var tasksRoot = Path.Combine(RootPath, config.TasksDir);
         var tasks = new List<RelayTaskItem>();
-        foreach (var (directory, files) in byDirectory)
+        // Top-level DONE-*.md files (stranded when batch move was skipped).
+        if (Directory.Exists(tasksRoot))
         {
-            var canonical = FindCanonicalArchivedPath(directory!, files);
-            if (canonical is not null)
+            foreach (var file in Directory.EnumerateFiles(tasksRoot, "DONE-*.md", SearchOption.TopDirectoryOnly))
             {
-                tasks.Add(ArchivedTaskFromPath(completedRoot, canonical, files));
+                var name = Path.GetFileNameWithoutExtension(file);
+                var id = name.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ? name[5..] : name;
+                tasks.Add(new RelayTaskItem(id, file, tasksRoot, false, [],
+                    IsArchived: true, ArchiveBatch: null));
+            }
+        }
+        // DONE-*.md files under completed/batch-n/ (grouped by directory).
+        var completedRoot = Path.Combine(tasksRoot, "completed");
+        if (Directory.Exists(completedRoot))
+        {
+            var allFiles = Directory.EnumerateFiles(completedRoot, "DONE-*.md", SearchOption.AllDirectories);
+            var byDirectory = allFiles
+                .GroupBy(Path.GetDirectoryName)
+                .ToDictionary(g => g.Key!, g => g.ToArray());
+            foreach (var (directory, files) in byDirectory)
+            {
+                var canonical = FindCanonicalArchivedPath(directory!, files);
+                if (canonical is not null)
+                    tasks.Add(ArchivedTaskFromPath(completedRoot, canonical, files));
             }
         }
 
