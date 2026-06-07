@@ -16,6 +16,7 @@ public partial class MainWindowViewModel
             return;
         }
 
+        IsNewTaskDialogOpen = false;
         EditBuffer = SelectedTaskMarkdown;
         IsEditingMarkdown = true;
     }
@@ -168,9 +169,13 @@ public partial class MainWindowViewModel
         if (IsNewTaskDialogOpen)
         {
             IsNewTaskDialogOpen = false;
+            NewTaskTitle = string.Empty;
+            NewTaskBody = string.Empty;
+            NewTaskError = null;
             return;
         }
 
+        IsEditingMarkdown = false;
         NewTaskTitle = string.Empty;
         NewTaskBody = string.Empty;
         NewTaskError = null;
@@ -215,4 +220,10 @@ public partial class MainWindowViewModel
 
     private bool CanCreateNewTask() =>
         !string.IsNullOrWhiteSpace(NewTaskTitle) && !IsBusy;
+
+    /// <summary>
+    /// True when the Markdown tab should show the read-only view — neither
+    /// editing an existing task nor authoring a new one.
+    /// </summary>
+    public bool IsMarkdownReadOnly => !IsEditingMarkdown && !IsNewTaskDialogOpen;
 }

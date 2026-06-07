@@ -145,6 +145,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(EditSelectedTaskCommand))]
+    [NotifyPropertyChangedFor(nameof(IsMarkdownReadOnly))]
     private bool _isEditingMarkdown;
 
     [ObservableProperty]
@@ -159,6 +160,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public bool HasEditBlockedReason => !string.IsNullOrEmpty(EditBlockedReason);
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CreateNewTaskCommand))]
     private string _newTaskTitle = string.Empty;
 
     [ObservableProperty]
@@ -168,6 +170,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private string? _newTaskError;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsMarkdownReadOnly))]
     private bool _isNewTaskDialogOpen;
 
     [ObservableProperty]
@@ -178,6 +181,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateNewTaskCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 

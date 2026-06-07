@@ -147,6 +147,15 @@ public partial class MainWindowViewModel
             EditBuffer = string.Empty;
         }
 
+        // Exit new-task authoring when switching tasks.
+        if (IsNewTaskDialogOpen)
+        {
+            IsNewTaskDialogOpen = false;
+            NewTaskTitle = string.Empty;
+            NewTaskBody = string.Empty;
+            NewTaskError = null;
+        }
+
         NotifyRunningTaskContextChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
         _ = LoadSelectedTaskAsync(value);
