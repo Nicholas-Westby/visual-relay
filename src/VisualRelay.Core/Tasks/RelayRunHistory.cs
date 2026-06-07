@@ -93,7 +93,6 @@ public static partial class RelayRunHistory
         var traceDirectory = Path.Combine(
             Path.GetDirectoryName(reportPath)!,
             Path.GetFileName(reportPath).Replace(".report.json", "", StringComparison.Ordinal));
-        var (succeeded, errorMessage) = ReadResult(reportPath);
         return new StageRunMetric(
             stageNumber,
             stage?.Name ?? $"Stage {stageNumber}",
@@ -109,49 +108,17 @@ public static partial class RelayRunHistory
             estimate.CacheWriteTokens,
             reportPath,
             Directory.Exists(traceDirectory) ? traceDirectory : null,
-            estimate.Turns,
-            succeeded,
-            errorMessage);
+            estimate.Turns);
     }
 
-    private static (bool Succeeded, string? ErrorMessage) ReadResult(string reportPath)
+    /// <summary>
+    /// Reads the per-stage status record written by the driver.
+    /// This is the single source of truth for stage status (waiting/running/done/flagged).
+    /// </summary>
+    public static IReadOnlyList<StageStatusEntry> ReadStatusRecord(string rootPath, string taskId)
     {
-        try
-        {
-            using var stream = File.OpenRead(reportPath);
-            using var document = JsonDocument.Parse(stream);
-            if (!document.RootElement.TryGetProperty("result", out var result) ||
-                result.ValueKind != JsonValueKind.Object)
-            {
-                return (true, null);
-            }
-
-            var errorMessage = result.TryGetProperty("error_message", out var message) &&
-                message.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrEmpty(message.GetString())
-                    ? message.GetString()
-                    : null;
-
-            if (result.TryGetProperty("outcome", out var outcome) &&
-                outcome.ValueKind == JsonValueKind.String &&
-                !string.Equals(outcome.GetString(), "ok", StringComparison.Ordinal))
-            {
-                return (false, errorMessage);
-            }
-
-            if (result.TryGetProperty("exit_code", out var exitCode) &&
-                exitCode.ValueKind == JsonValueKind.Number &&
-                exitCode.TryGetInt32(out var code) &&
-                code != 0)
-            {
-                return (false, errorMessage);
-            }
-        }
-        catch (JsonException)
-        {
-        }
-
-        return (true, null);
+        var taskDirectory = Path.Combine(rootPath, ".relay", taskId);
+        return StageStatusRecord.Read(taskDirectory);
     }
 
     private static StageRunMetric SquashAttempts(IGrouping<int, StageRunMetric> attempts)

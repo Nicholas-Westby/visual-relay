@@ -140,10 +140,6 @@ public sealed class StageRowViewModel : ViewModelBase
         TurnsLabel = metric.Turns > 0 ? $"{metric.Turns}t" : string.Empty;
         ReportPath = metric.ReportPath;
         TraceDirectory = metric.TraceDirectory;
-        if (Status == "Waiting")
-        {
-            Status = metric.Succeeded ? "Done" : "Flagged";
-        }
     }
 
     public void ClearMetric()

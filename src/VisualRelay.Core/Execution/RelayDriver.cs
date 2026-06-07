@@ -24,6 +24,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
     {
         var runId = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmss}-{taskId}";
         var taskDirectory = Path.Combine(rootPath, ".relay", taskId);
+        var statusEntries = SeedStatusEntries();
         try
         {
             var config = await RelayConfigLoader.LoadAsync(rootPath, cancellationToken);
@@ -42,6 +43,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
             IReadOnlyList<string> commitMessages = [];
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow,
@@ -55,6 +57,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             foreach (var stage in RelayStages.All)
             {
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
+                MarkStatus(statusEntries, stage.Number, "Running");
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
                 var stopwatch = Stopwatch.StartNew();
                 string body;
                 string? check = null;
@@ -79,7 +83,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     }
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
-                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, cancellationToken);
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
                     }
 
                     body = result.Json;
@@ -91,18 +95,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         var bad = manifest.FirstOrDefault(e => IsPathUnderDirectory(rootPath, e, config.TasksDir));
                         if (bad is not null)
                             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 4,
-                                $"manifest may not include task files under \"{config.TasksDir}\" (found \"{bad}\")", null, cancellationToken);
+                                $"manifest may not include task files under \"{config.TasksDir}\" (found \"{bad}\")", null, statusEntries, cancellationToken);
                         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
                     }
 
                     if (stage.Number == 5)
                     {
                         var testFiles = ReadStringArray(json, "testFiles");
-                        // The red gate applies when the manifest contains at least one
-                        // implementation file (a code file not declared as a test file).
-                        // Non-code files (.md, .txt, .json, .yaml, .yml, .toml, .csv, and
-                        // files with no extension) never trigger the gate on their own.
-                        // Unknown extensions default to code (fail-safe toward requiring a test).
                         var hasImpl = manifest.Any(f => !testFiles.Contains(f, StringComparer.Ordinal) && IsImpl(f));
 
                         if (hasImpl)
@@ -119,19 +118,19 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 cancellationToken);
                             if (gateResult.Error is not null)
                             {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, cancellationToken);
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken);
                             }
 
                             if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
                             {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, cancellationToken);
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, statusEntries, cancellationToken);
                             }
 
                             var testResult = gateResult.TestResult;
                             if (testResult.TimedOut)
                             {
                                 return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                                    ErrorHintClassifier.WithHint(testResult.Output), null, cancellationToken);
+                                    ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
                             }
 
                             check = testResult.ExitCode == 0 ? "green" : "red";
@@ -140,7 +139,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 var reason = gateResult.StashedImplementation
                                     ? "author-tests passed after implementation files were stripped"
                                     : "author-tests did not go red";
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, null, cancellationToken);
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, null, statusEntries, cancellationToken);
                             }
                         }
                     }
@@ -151,7 +150,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         if (testResult.TimedOut)
                         {
                             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(testResult.Output), null, cancellationToken);
+                                ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
                         }
 
                         check = testResult.ExitCode == 0 ? "green" : "red";
@@ -167,7 +166,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, "verify failed", testResult.Output, cancellationToken);
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, "verify failed", testResult.Output, statusEntries, cancellationToken);
                         }
                     }
                 }
@@ -180,29 +179,36 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 taskHash = seal;
                 seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
                 await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
+                stopwatch.Stop();
+                MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check);
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
                 await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken);
             }
 
             var commitSha = "simulated";
             if (_options.CreateGitCommit)
             {
-                var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt") };
+                var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt"), Path.Combine(".relay", taskId, "status.json") };
                 var chain = BuildCommitChain(commitMessages, taskId);
                 var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLock.Nonce, cancellationToken);
                 if (!commit.Success)
                 {
-                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, cancellationToken);
+                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
                 }
 
                 commitSha = commit.CommitSha ?? "unknown";
                 await TaskCompletionArchive.CompleteAsync(rootPath, config, taskId, task, _dependencies.EventSink, runId, cancellationToken);
             }
 
+            // Post-commit: mark stage 11 done (belt-and-suspenders — it's already
+            // marked done in the loop, but this covers the simulated path too).
+            MarkStatus(statusEntries, 11, "Done");
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
         }
         catch (Exception ex)
         {
-            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0, $"exception: {ex.Message}", ex.ToString(), cancellationToken);
+            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0, $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
         }
     }
 
@@ -236,61 +242,36 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
     private async Task<RelayTaskOutcome> FlagAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
-        int stage, string reason, string? details, CancellationToken cancellationToken)
+        int stageNumber, string reason, string? details,
+        List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(taskDirectory);
-        var body = $"{reason}\nstage {stage}\n";
+        var body = $"{reason}\nstage {stageNumber}\n";
         if (!string.IsNullOrWhiteSpace(details))
             body += $"\n{details.Trim()}\n";
 
+        // Mark the flagged stage (or find the running stage if stageNumber is 0).
+        var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
+        if (flaggedStage > 0)
+        {
+            // Earlier stages that are running → done; later stages stay waiting.
+            foreach (var entry in statusEntries)
+            {
+                if (entry.Stage < flaggedStage && entry.Status == "Running")
+                {
+                    MarkStatus(statusEntries, entry.Stage, "Done");
+                }
+            }
+            MarkStatusFlagged(statusEntries, flaggedStage, reason);
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+        }
+
         await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, stage,
+            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
             Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
     }
 
-    private Task PublishAsync(string level, string eventName, string rootPath, string runId, string taskId, RelayStageDefinition stage, CancellationToken cancellationToken) =>
-        _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, level, eventName, runId, rootPath, taskId, stage.Number, stage.Tier, Data: new Dictionary<string, string> { ["name"] = stage.Name }), cancellationToken);
-
-    private Task PublishStageDoneAsync(
-        string rootPath,
-        string runId,
-        string taskId,
-        RelayStageDefinition stage,
-        TimeSpan elapsed,
-        RelayCostEstimate? cost,
-        double sessionCostUsd,
-        int unknownCostStageCount,
-        CancellationToken cancellationToken)
-    {
-        var costLabel = cost is not null
-            ? MoneyFormatter.Dollars(cost.CostUsd)
-            : stage.Kind == "driver"
-                ? MoneyFormatter.Dollars(0)
-                : "?";
-        var sessionLabel = unknownCostStageCount > 0
-            ? MoneyFormatter.Dollars(sessionCostUsd) + "?"
-            : MoneyFormatter.Dollars(sessionCostUsd);
-
-        var data = new Dictionary<string, string>
-        {
-            ["name"] = stage.Name,
-            ["time"] = FormatDuration(cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds),
-            ["cost"] = costLabel,
-            ["sessionCost"] = sessionLabel
-        };
-        if (!string.IsNullOrWhiteSpace(cost?.Model))
-        {
-            data["model"] = cost.Model;
-        }
-        if (cost?.Turns > 0)
-        {
-            data["turns"] = cost.Turns.ToString();
-        }
-
-        return _dependencies.EventSink.PublishAsync(
-            new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_done", runId, rootPath, taskId, stage.Number, stage.Tier, Data: data),
-            cancellationToken);
-    }
+    // -- Status record helpers moved to RelayDriver.Artifacts.cs --
 }

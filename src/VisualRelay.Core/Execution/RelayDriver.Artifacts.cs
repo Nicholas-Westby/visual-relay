@@ -161,4 +161,57 @@ public sealed partial class RelayDriver
         var remainder = seconds % 60;
         return $"{minutes:0}m {remainder:00}s";
     }
+
+    // -- Status record helpers --
+
+    private static List<StageStatusEntry> SeedStatusEntries()
+    {
+        var entries = new List<StageStatusEntry>(RelayStages.All.Count);
+        foreach (var stage in RelayStages.All)
+        {
+            entries.Add(new StageStatusEntry(stage.Number, stage.Name, "Waiting"));
+        }
+        return entries;
+    }
+
+    private static void MarkStatus(List<StageStatusEntry> entries, int stageNumber, string status)
+    {
+        var idx = stageNumber - 1;
+        if (idx >= 0 && idx < entries.Count)
+        {
+            entries[idx] = entries[idx] with { Status = status };
+        }
+    }
+
+    private static void MarkStatusDone(List<StageStatusEntry> entries, RelayStageDefinition stage, TimeSpan elapsed, RelayCostEstimate? cost, string? check)
+    {
+        var idx = stage.Number - 1;
+        if (idx < 0 || idx >= entries.Count) return;
+        entries[idx] = entries[idx] with
+        {
+            Status = "Done",
+            DurationSeconds = cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds,
+            CostUsd = stage.Kind == "driver" ? 0 : cost?.CostUsd,
+            Turns = cost?.Turns > 0 ? cost.Turns : null,
+            Model = stage.Kind == "driver" ? null : cost?.Model,
+            Check = check
+        };
+    }
+
+    private static void MarkStatusFlagged(List<StageStatusEntry> entries, int stageNumber, string error)
+    {
+        var idx = stageNumber - 1;
+        if (idx < 0 || idx >= entries.Count) return;
+        entries[idx] = entries[idx] with { Status = "Flagged", Error = error };
+    }
+
+    private static int FindRunningStage(IReadOnlyList<StageStatusEntry> entries)
+    {
+        return entries.FirstOrDefault(e => e.Status == "Running")?.Stage ?? 1;
+    }
+
+    private static async Task WriteStatusAsync(string taskDirectory, List<StageStatusEntry> entries, CancellationToken cancellationToken)
+    {
+        await StageStatusRecord.WriteAsync(taskDirectory, entries, cancellationToken);
+    }
 }

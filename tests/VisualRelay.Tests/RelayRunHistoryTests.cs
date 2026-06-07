@@ -9,17 +9,16 @@ namespace VisualRelay.Tests;
 public sealed class RelayRunHistoryTests
 {
     [Fact]
-    public void ReadTaskMetric_SumsCostAndTimeAcrossAttemptsAndKeepsLatestOutcome()
+    public void ReadTaskMetric_SumsCostAndTimeAcrossAttemptsAndPicksLatest()
     {
         using var repo = TestRepository.Create();
-        // attempt1 succeeded (cost from stage seconds = 1); attempt2 failed (latest outcome).
         WriteAttemptReport(repo.Root, "redo", 1, 1, """{ "answer": "ok" }""");
         WriteAttemptReport(repo.Root, "redo", 1, 2, """{ "outcome": "error", "exit_code": 1 }""");
 
         var stage = RelayRunHistory.ReadTaskMetric(repo.Root, "redo").Stages.Single(s => s.StageNumber == 1);
 
-        // Latest attempt (2) errored, so the stage outcome is the latest, not the first.
-        Assert.False(stage.Succeeded);
+        // Latest attempt (2) is kept.
+        Assert.Equal(repo.AttemptReportPath("redo", 1, 2), stage.ReportPath);
         // total_llm_time_s is the attempt index in WriteAttemptReport: 1 + 2 = 3.
         Assert.Equal(3, stage.DurationSeconds, precision: 2);
         // Each attempt has 1 llm_call → 2 turns summed.
@@ -30,14 +29,11 @@ public sealed class RelayRunHistoryTests
     public void ReadTaskMetric_OrdersAttemptsNumericallyBeyondNine()
     {
         using var repo = TestRepository.Create();
-        // attempt2 succeeds; attempt10 (the genuine latest) errors. Ordinal string sort
-        // would rank "attempt10" before "attempt2" and wrongly pick attempt2 as latest.
         WriteAttemptReport(repo.Root, "deep", 1, 2, """{ "answer": "ok" }""");
         WriteAttemptReport(repo.Root, "deep", 1, 10, """{ "outcome": "error", "exit_code": 1 }""");
 
         var stage = RelayRunHistory.ReadTaskMetric(repo.Root, "deep").Stages.Single(s => s.StageNumber == 1);
 
-        Assert.False(stage.Succeeded);
         Assert.Equal(repo.AttemptReportPath("deep", 1, 10), stage.ReportPath);
     }
 
@@ -51,7 +47,6 @@ public sealed class RelayRunHistoryTests
 
         var files = RelayTraceLocator.FindTraceFiles(repo.Root, "merge");
 
-        // Stage 1 -> latest attempt (2); stage 2 -> its only attempt (1). attempt1/a.jsonl excluded.
         Assert.Equal(2, files.Count);
         Assert.Contains(files, f => f.EndsWith("b.jsonl", StringComparison.Ordinal));
         Assert.Contains(files, f => f.EndsWith("c.jsonl", StringComparison.Ordinal));
@@ -72,96 +67,11 @@ public sealed class RelayRunHistoryTests
     }
 
     [Fact]
-    public void ReadTaskMetric_FlagsErroredStageAsNotSucceeded()
-    {
-        using var repo = TestRepository.Create();
-        WriteReport(repo.Root, "add-multiply", 1, """{ "outcome": "error", "exit_code": 1, "error_message": "boom" }""");
-
-        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
-
-        var stage = metric.Stages.Single(item => item.StageNumber == 1);
-        Assert.False(stage.Succeeded);
-    }
-
-    [Fact]
-    public void ReadTaskMetric_TreatsCleanReportAsSucceeded()
-    {
-        using var repo = TestRepository.Create();
-        WriteReport(repo.Root, "add-multiply", 1, """{ "answer": "framed" }""");
-
-        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
-
-        var stage = metric.Stages.Single(item => item.StageNumber == 1);
-        Assert.True(stage.Succeeded);
-    }
-
-    [Fact]
-    public void ReadTaskMetric_CapturesErrorMessageFromErroredReport()
-    {
-        using var repo = TestRepository.Create();
-        WriteReport(repo.Root, "add-multiply", 1, """{ "outcome": "error", "exit_code": 1, "error_message": "the runner exploded" }""");
-
-        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
-
-        var stage = metric.Stages.Single(item => item.StageNumber == 1);
-        Assert.False(stage.Succeeded);
-        Assert.Equal("the runner exploded", stage.ErrorMessage);
-    }
-
-    [Fact]
-    public void ReadTaskMetric_LeavesErrorMessageNullForCleanReport()
-    {
-        using var repo = TestRepository.Create();
-        WriteReport(repo.Root, "add-multiply", 1, """{ "answer": "framed" }""");
-
-        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
-
-        var stage = metric.Stages.Single(item => item.StageNumber == 1);
-        Assert.True(stage.Succeeded);
-        Assert.Null(stage.ErrorMessage);
-    }
-
-    [Fact]
-    public void ReadTaskMetric_LeavesErrorMessageNullWhenFailedResultOmitsMessage()
-    {
-        using var repo = TestRepository.Create();
-        WriteReport(repo.Root, "add-multiply", 1, """{ "outcome": "error" }""");
-
-        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "add-multiply");
-
-        var stage = metric.Stages.Single(item => item.StageNumber == 1);
-        Assert.False(stage.Succeeded);
-        Assert.Null(stage.ErrorMessage);
-    }
-
-    [Fact]
-    public void ApplyMetric_SetsFlaggedForFailedStage()
-    {
-        var row = new StageRowViewModel(RelayStages.All[0]);
-
-        row.ApplyMetric(MetricFor(succeeded: false));
-
-        Assert.Equal("Flagged", row.Status);
-        Assert.Equal("Flagged", row.StatusLabel);
-    }
-
-    [Fact]
-    public void ApplyMetric_SetsDoneForSucceededStage()
-    {
-        var row = new StageRowViewModel(RelayStages.All[0]);
-
-        row.ApplyMetric(MetricFor(succeeded: true));
-
-        Assert.Equal("Done", row.Status);
-        Assert.Equal("Complete", row.StatusLabel);
-    }
-
-    [Fact]
     public void ApplyMetric_ShowsTurnsWhenPresent()
     {
         var row = new StageRowViewModel(RelayStages.All[0]);
 
-        row.ApplyMetric(MetricFor(succeeded: true, turns: 17));
+        row.ApplyMetric(MetricFor(turns: 17));
 
         Assert.Equal("17t", row.TurnsLabel);
         Assert.Contains("17t", row.MetricLabel, StringComparison.Ordinal);
@@ -172,13 +82,111 @@ public sealed class RelayRunHistoryTests
     {
         var row = new StageRowViewModel(RelayStages.All[0]);
 
-        row.ApplyMetric(MetricFor(succeeded: true)); // turns defaults to 0
+        row.ApplyMetric(MetricFor()); // turns defaults to 0
 
         Assert.Equal(string.Empty, row.TurnsLabel);
         Assert.DoesNotContain("t", row.MetricLabel, StringComparison.Ordinal);
     }
 
-    private static StageRunMetric MetricFor(bool succeeded, int turns = 0) => new(
+    [Fact]
+    public void ApplyMetric_SetsMetricLabelsButDoesNotSetStatus()
+    {
+        var row = new StageRowViewModel(RelayStages.All[0]);
+        Assert.Equal("Waiting", row.Status);
+
+        row.ApplyMetric(MetricFor());
+
+        // Metric labels are set.
+        Assert.Equal("1s", row.DurationLabel);
+        Assert.Equal("$0.00", row.CostLabel);
+        Assert.Equal("cheap-kimi", row.ModelLabel);
+        Assert.Equal("report.json", row.ReportPath);
+        // Status is NOT changed by ApplyMetric — it comes from the status record.
+        Assert.Equal("Waiting", row.Status);
+    }
+
+    [Fact]
+    public async Task ReadStatusRecord_ReturnsAllElevenEntries()
+    {
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "full-task");
+        Directory.CreateDirectory(taskDir);
+        var entries = Enumerable.Range(1, 11)
+            .Select(i => new StageStatusEntry(i, $"Stage {i}", "Done"))
+            .ToList();
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var result = RelayRunHistory.ReadStatusRecord(repo.Root, "full-task");
+
+        Assert.Equal(11, result.Count);
+        Assert.All(result, e => Assert.Equal("Done", e.Status));
+    }
+
+    [Fact]
+    public void ReadStatusRecord_MissingFile_ReturnsEmpty()
+    {
+        using var repo = TestRepository.Create();
+
+        var result = RelayRunHistory.ReadStatusRecord(repo.Root, "nonexistent");
+
+        Assert.Empty(result);
+    }
+
+    [Fact]
+    public async Task ReadStatusRecord_StatusFromRecordNotFromReportOutcome()
+    {
+        // A report with "outcome": "success" (what swival actually emits) must not
+        // cause the stage to be misclassified. The status comes from the record, not
+        // from re-parsing report outcomes.
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "success-task");
+        Directory.CreateDirectory(taskDir);
+        // Write a report with "outcome": "success" (swival's actual output).
+        File.WriteAllText(
+            Path.Combine(taskDir, "stage1-attempt1.report.json"),
+            """{ "timestamp": "2026-06-07T16:00:00+00:00", "model": "cheap-kimi", "result": { "outcome": "success" }, "stats": { "total_llm_time_s": 1 }, "timeline": [] }""");
+        // Write a status record marking stage 1 as "done".
+        var entries = new[] { new StageStatusEntry(1, "Ideate", "Done") };
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        // The metric from the report still reads fine (no longer checking outcome).
+        var metric = RelayRunHistory.ReadTaskMetric(repo.Root, "success-task");
+        var stage = metric.Stages.Single(s => s.StageNumber == 1);
+        Assert.Equal("Ideate", stage.StageName);
+
+        // The status comes from the record — "done", not "flagged".
+        var statusRecord = RelayRunHistory.ReadStatusRecord(repo.Root, "success-task");
+        var entry = statusRecord.Single();
+        Assert.Equal("Done", entry.Status);
+    }
+
+    [Fact]
+    public async Task ReadStatusRecord_FlaggedEntryHasError()
+    {
+        using var repo = TestRepository.Create();
+        var taskDir = Path.Combine(repo.Root, ".relay", "flagged-task");
+        Directory.CreateDirectory(taskDir);
+        var entries = new[]
+        {
+            new StageStatusEntry(1, "Ideate", "Done"),
+            new StageStatusEntry(2, "Research", "Done"),
+            new StageStatusEntry(3, "Diagnose", "Flagged", Error: "something went wrong"),
+            new StageStatusEntry(4, "Plan", "Waiting"),
+            new StageStatusEntry(5, "Author-tests", "Waiting"),
+        };
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var result = RelayRunHistory.ReadStatusRecord(repo.Root, "flagged-task");
+
+        Assert.Equal(5, result.Count);
+        var flagged = result.Single(e => e.Status == "Flagged");
+        Assert.Equal(3, flagged.Stage);
+        Assert.Equal("something went wrong", flagged.Error);
+        Assert.Equal("Done", result.Single(e => e.Stage == 1).Status);
+        Assert.Equal("Waiting", result.Single(e => e.Stage == 4).Status);
+    }
+
+    private static StageRunMetric MetricFor(int turns = 0) => new(
         StageNumber: 1,
         StageName: "Ideate",
         Tier: "cheap",
@@ -193,11 +201,7 @@ public sealed class RelayRunHistoryTests
         CacheWriteTokens: 0,
         Turns: turns,
         ReportPath: "report.json",
-        TraceDirectory: null,
-        Succeeded: succeeded);
-
-    private static void WriteReport(string root, string taskId, int stage, string resultJson) =>
-        WriteAttemptReport(root, taskId, stage, 1, resultJson);
+        TraceDirectory: null);
 
     private static void WriteAttemptReport(string root, string taskId, int stage, int attempt, string resultJson)
     {

@@ -1,4 +1,5 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -242,6 +243,9 @@ public sealed partial class MainWindowViewModelTests
               "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
             }
             """);
+        // Write a status record so LoadRunHistoryAsync can surface the error.
+        var statusEntries = new[] { new StageStatusEntry(stage, $"Stage {stage}", "Flagged", Error: errorMessage) };
+        StageStatusRecord.WriteAsync(taskDirectory, statusEntries).GetAwaiter().GetResult();
     }
 
     private static void WriteReportAndTrace(string root, string taskId, int stage, string content)
@@ -264,6 +268,9 @@ public sealed partial class MainWindowViewModelTests
         File.WriteAllText(
             Path.Combine(traceDirectory, $"{Guid.NewGuid():N}.jsonl"),
             $"{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{content}\"}}]}}}}\n");
+        // Write a status record so the stage shows "done" and no error is surfaced.
+        var statusEntries = new[] { new StageStatusEntry(stage, $"Stage {stage}", "Done") };
+        StageStatusRecord.WriteAsync(taskDirectory, statusEntries).GetAwaiter().GetResult();
     }
 
     private static async Task WaitUntilAsync(Func<bool> condition)

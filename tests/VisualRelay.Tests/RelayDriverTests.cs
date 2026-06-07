@@ -238,7 +238,7 @@ internal sealed class ArtifactWritingSubagentRunner : ISubagentRunner
         await File.WriteAllTextAsync(Path.Combine(invocation.TraceDirectory, $"{Guid.NewGuid():N}.jsonl"),
             """{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}""", cancellationToken);
         await File.WriteAllTextAsync(invocation.ReportFile,
-            """{ "model": "cheap-kimi", "result": { "outcome": "ok" }, "stats": {}, "timeline": [] }""", cancellationToken);
+            """{ "model": "cheap-kimi", "result": { "outcome": "success" }, "stats": {}, "timeline": [] }""", cancellationToken);
         return await _scripted.RunAsync(invocation, cancellationToken);
     }
 }

@@ -9,17 +9,27 @@ public partial class MainWindowViewModel
         ClearLogState();
         var metric = RelayRunHistory.ReadTaskMetric(RootPath, taskId);
         SelectedTaskMetricLabel = metric.SummaryLabel;
+
+        // Status comes from the driver-written record, not from report-derived metrics.
+        var statusRecord = RelayRunHistory.ReadStatusRecord(RootPath, taskId);
         if (_runningTaskId != taskId)
         {
-            SelectedTaskError = metric.Stages
-                .Where(stage => !stage.Succeeded)
-                .OrderByDescending(stage => stage.StageNumber)
-                .Select(stage => stage.ErrorMessage)
+            SelectedTaskError = statusRecord
+                .Where(e => e.Status == "Flagged")
+                .OrderByDescending(e => e.Stage)
+                .Select(e => e.Error)
                 .FirstOrDefault();
         }
+
         foreach (var stage in Stages)
         {
             stage.ClearMetric();
+            var statusEntry = statusRecord.FirstOrDefault(e => e.Stage == stage.Number);
+            if (statusEntry is not null)
+            {
+                stage.Status = statusEntry.Status;
+            }
+
             var stageMetric = metric.Stages.FirstOrDefault(item => item.StageNumber == stage.Number);
             if (stageMetric is not null)
             {
