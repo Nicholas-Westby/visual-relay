@@ -33,6 +33,56 @@ if (( needs_dotnet )) && ! command -v dotnet >/dev/null 2>&1; then
   exit 127
 fi
 
+# ---------- watchdog ----------
+_timeout_watchdog() {
+  local timeout_secs="${VISUAL_RELAY_TEST_TIMEOUT:-60}"
+  local cmd_pid watchdog_pid cmd_rc
+  local flag_file
+  flag_file="$(mktemp 2>/dev/null || echo "/tmp/.visual-relay-watchdog-$$")"
+
+  # Launch the real command in its own process group so we can kill the whole
+  # tree (dotnet → testhost → tests) on timeout.
+  set -m
+  "$@" &
+  cmd_pid=$!
+
+  # Background timer: when it expires, check whether the command is still alive
+  # and kill the process group if so.  Writes a flag file so the main function
+  # always exits non-zero on timeout even when the killed process handles
+  # SIGTERM by exiting 0 (dotnet does this).
+  (
+    sleep "$timeout_secs"
+    if kill -0 "$cmd_pid" 2>/dev/null; then
+      echo "timed out" > "$flag_file"
+      echo "visual-relay: test timed out after ${timeout_secs}s" >&2
+      echo "  See TROUBLESHOOTING.md for diagnosing hangs." >&2
+      echo "  To find which test is stuck: ./visual-relay test --blame-hang --blame-hang-timeout 30s" >&2
+      echo "  Override timeout: VISUAL_RELAY_TEST_TIMEOUT=<seconds> ./visual-relay test" >&2
+      kill -TERM -- -"$cmd_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL -- -"$cmd_pid" 2>/dev/null || true
+    fi
+  ) &
+  watchdog_pid=$!
+
+  # Wait for the command (not the watchdog).
+  cmd_rc=0
+  wait "$cmd_pid" 2>/dev/null || cmd_rc=$?
+
+  # Tear down the watchdog (no-op if it already exited after firing).
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+
+  # If the watchdog fired, override the exit code.  Some programs (dotnet)
+  # catch SIGTERM and exit 0, which would hide the timeout.
+  if [[ -s "$flag_file" ]]; then
+    cmd_rc=124   # GNU timeout convention
+  fi
+  rm -f "$flag_file"
+
+  return "$cmd_rc"
+}
+
 case "$cmd" in
   launch|run)
     # Best-effort: bring the local model backend up before launching so a fresh
@@ -47,7 +97,7 @@ case "$cmd" in
     dotnet build VisualRelay.slnx -m:1 -p:UseSharedCompilation=false "$@"
     ;;
   test)
-    dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false "$@"
+    _timeout_watchdog dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false "$@"
     ;;
   format)
     dotnet format VisualRelay.slnx "$@"
