@@ -19,5 +19,9 @@ run).
   (file-size guard, format verification, build, tests, screenshot render).
 - Keep C# and Avalonia XAML source files under 300 lines
   (`tools/guards/check-file-size.sh`).
+- If `./visual-relay test` hangs (sits at `Testing (NNNs)` with nothing completing), it's a
+  deadlock, not a slow test. Find the culprit with
+  `./visual-relay test --blame-hang --blame-hang-timeout 30s`. See `TROUBLESHOOTING.md`.
 
-See `README.md` for the full project overview.
+See `README.md` for the full project overview and `TROUBLESHOOTING.md` for diagnosing the
+dev loop.
