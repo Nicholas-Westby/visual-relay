@@ -128,6 +128,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             }
 
                             var testResult = gateResult.TestResult;
+                            if (testResult.TimedOut)
+                            {
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
+                                    ErrorHintClassifier.WithHint(testResult.Output), null, cancellationToken);
+                            }
+
                             check = testResult.ExitCode == 0 ? "green" : "red";
                             if (check != "red")
                             {
@@ -142,6 +148,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     if (stage.Number == 9)
                     {
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
+                        if (testResult.TimedOut)
+                        {
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                ErrorHintClassifier.WithHint(testResult.Output), null, cancellationToken);
+                        }
+
                         check = testResult.ExitCode == 0 ? "green" : "red";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)

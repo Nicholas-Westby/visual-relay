@@ -17,6 +17,14 @@ public static class ErrorHintClassifier
         "Hint: The stage timed out. Try raising maxTurns/the timeout, " +
         "or check the model backend's latency.";
 
+    private const string TestTimeoutHint =
+        "Hint: The test command exceeded the configured time cap and was halted. " +
+        "This likely means the test suite is hanging or running pathologically long — " +
+        "fix the hang, or in the interim re-run only the specific tests you need " +
+        "rather than the whole suite. Use a targeted subset invocation for this " +
+        "project (e.g. a filter expression, specific file paths, or the " +
+        "TestFileCommand \"{files}\" pattern) to narrow the scope.";
+
     private const string AuthHint =
         "Hint: Provider key missing or invalid — check the backend's provider config.";
 
@@ -33,8 +41,16 @@ public static class ErrorHintClassifier
             return null;
         }
 
-        // Timeout first: timeouts can read as connection issues but have a
-        // distinct, more specific remedy.
+        // Test-command timeout first: a hung test suite needs a targeted subset,
+        // not LLM-tuning advice. Must precede the generic timeout check because
+        // both match "timed out".
+        if (Contains(rawError, "test command timed out"))
+        {
+            return TestTimeoutHint;
+        }
+
+        // Timeout: timeouts can read as connection issues but have a distinct,
+        // more specific remedy.
         if (Contains(rawError, "timed out") || Contains(rawError, "timeout"))
         {
             return TimeoutHint;

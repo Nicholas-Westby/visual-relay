@@ -167,7 +167,8 @@ public sealed class SwivalSubagentRunnerTests
             1,
             false,
             true,
-            5_000);
+            5_000,
+            300_000);
 
     private static async Task<string> WriteExecutableAsync(string rootPath, string name, string text)
     {

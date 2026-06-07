@@ -52,5 +52,6 @@ public sealed class SwivalSubagentRunnerGuardTests
             1,
             false,
             true,
-            5_000);
+            5_000,
+            300_000);
 }

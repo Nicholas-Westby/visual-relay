@@ -6,7 +6,7 @@ public sealed class RelayConfigResultTests
 {
     private static RelayConfig AnyConfig() =>
         new("llm-tasks", "dotnet test", "bun test {files}", [],
-            new Dictionary<string, string>(), 5, 3, 200, true, true, 1_200_000);
+            new Dictionary<string, string>(), 5, 3, 200, true, true, 1_200_000, 300_000);
 
     [Theory]
     [InlineData(RelayConfigStatus.Loaded, true, false)]

@@ -101,4 +101,34 @@ public sealed class RelayConfigLoaderTests
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Malformed, result.Status);
     }
+
+    [Fact]
+    public async Task LoadAsync_TestTimeoutMs_DefaultsTo300000()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "logSources": [] }""");
+
+        var config = await RelayConfigLoader.LoadAsync(repo.Root);
+
+        // When the JSON omits testTimeoutMs, the default 5-minute cap is used.
+        Assert.Equal(300_000, config.TestTimeoutMilliseconds);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_TestTimeoutMs_Override()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "testTimeoutMs": 600000 }""");
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(600_000, result.Config.TestTimeoutMilliseconds);
+    }
 }

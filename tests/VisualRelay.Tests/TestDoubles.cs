@@ -157,6 +157,22 @@ internal sealed class ScriptedTestRunner : ITestRunner
     }
 }
 
+/// <summary>
+/// Returns a synthetic timeout result — simulating what ShellTestRunner produces
+/// when the test command exceeds its cap and the process tree is killed.
+/// </summary>
+internal sealed class TimeoutSimulatingTestRunner : ITestRunner
+{
+    public const string Output =
+        "test command timed out after 300000ms\n" +
+        "The configured time limit was exceeded and the process was halted.\n";
+
+    public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new TestRunResult(-1, Output, TimedOut: true));
+    }
+}
+
 internal sealed class RecordingTaskRunner : IRelayTaskRunner
 {
     public List<string> TasksRun { get; } = [];

@@ -9,10 +9,20 @@ namespace VisualRelay.Core.Execution;
 
 public sealed class ShellTestRunner : ITestRunner
 {
+    private readonly TimeSpan _timeout;
+
+    public ShellTestRunner(TimeSpan? timeout = null)
+    {
+        _timeout = timeout ?? Timeout.InfiniteTimeSpan;
+    }
+
     public async Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        var result = await ProcessCapture.RunAsync("/bin/sh", $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"", rootPath, Timeout.InfiniteTimeSpan, cancellationToken);
-        return new TestRunResult(result.ExitCode, result.Output);
+        var result = await ProcessCapture.RunAsync("/bin/sh", $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"", rootPath, _timeout, cancellationToken);
+        var output = result.TimedOut
+            ? $"test command timed out after {_timeout.TotalMilliseconds:F0}ms\n\n{result.Output}"
+            : result.Output;
+        return new TestRunResult(result.ExitCode, output, result.TimedOut);
     }
 }
 
@@ -59,7 +69,10 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         var result = await ProcessCapture.RunAsync(_swivalBinary, arguments, invocation.TargetRoot, timeout, cancellationToken);
         if (result.TimedOut)
         {
-            var reason = $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms";
+            var reason = $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
+                "If swival was running a test command that hung, fix the hang and in the interim " +
+                "re-run only the specific tests you need rather than the whole suite (use a targeted " +
+                "subset for this project, e.g. the TestFileCommand \"{files}\" pattern).";
             return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
         }
 

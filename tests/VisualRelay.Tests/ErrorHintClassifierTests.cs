@@ -123,6 +123,35 @@ public sealed class ErrorHintClassifierTests
     }
 
     [Fact]
+    public void HintFor_TestCommandTimedOut_ReturnsSubsetGuidance()
+    {
+        const string raw = "test command timed out after 300000ms";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        // Must be the distinct TestTimeoutHint with subset-guidance, not the
+        // generic TimeoutHint that mentions maxTurns / model latency.
+        Assert.Contains("targeted subset", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("{files}", hint, StringComparison.Ordinal);
+        Assert.DoesNotContain("maxTurns", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("model backend", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HintFor_GenericTimedOut_StillReturnsTimeoutHint()
+    {
+        // The generic "swival timed out" pattern must still match the
+        // existing TimeoutHint (LLM-tuning advice), not the test-subset hint.
+        const string raw = "swival timed out after 600000ms";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("maxTurns", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void WithHint_UnrecognizedError_ReturnsRawUnchanged()
     {
         const string raw = "swival exit 7: some entirely novel failure mode nobody has seen";

@@ -162,7 +162,7 @@ public partial class MainWindowViewModel
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
-        var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(), sink);
+        var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), sink);
         var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
         try
         {

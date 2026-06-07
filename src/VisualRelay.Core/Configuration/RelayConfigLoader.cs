@@ -23,7 +23,8 @@ public static class RelayConfigLoader
             MaxTurns: 200,
             BaselineVerify: true,
             ArchiveOnDone: true,
-            SubagentTimeoutMilliseconds: 1_200_000);
+            SubagentTimeoutMilliseconds: 1_200_000,
+            TestTimeoutMilliseconds: 300_000);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -93,7 +94,8 @@ public static class RelayConfigLoader
                 MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
                 BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
                 ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
-                SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds)
+                SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds),
+                TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

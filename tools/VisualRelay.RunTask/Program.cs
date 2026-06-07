@@ -15,7 +15,7 @@ var config = await RelayConfigLoader.LoadAsync(rootPath);
 var sink = new ConsoleRelayEventSink();
 var dependencies = new RelayDriverDependencies(
     new SwivalSubagentRunner(config, eventSink: sink),
-    new ShellTestRunner(),
+    new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)),
     sink);
 var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
 var outcome = await driver.RunTaskAsync(rootPath, taskId);
