@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Headless;
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
@@ -18,35 +17,29 @@ public sealed class ActivityColumnItemsPanelTests
     /// The RUN LOG list (bound to Events) is intentionally left virtualized and
     /// is not asserted.
     /// </summary>
-    [Fact]
-    public async Task TraceListBox_UsesNonVirtualizingStackPanel()
+    [AvaloniaFact]
+    public void TraceListBox_UsesNonVirtualizingStackPanel()
     {
-        using var session = HeadlessUnitTestSession.StartNew(typeof(HeadlessTestApp));
-        await session.Dispatch(async () =>
+        // ── Arrange: show the window with a default ViewModel ──
+        var viewModel = new MainWindowViewModel();
+        var window = new MainWindow
         {
-            // ── Arrange: show the window with a default ViewModel ──
-            var viewModel = new MainWindowViewModel();
-            var window = new MainWindow
-            {
-                DataContext = viewModel,
-                Width = 1440,
-                Height = 900
-            };
-            window.Show();
-            Dispatcher.UIThread.RunJobs();
+            DataContext = viewModel,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
 
-            // ── Act: locate the trace ListBox ──
-            // Traverse: window → ActivityColumn (UserControl) → ListBox x:Name="TraceList"
-            var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-            Assert.NotNull(activityColumn);
-            var traceList = activityColumn.FindControl<ListBox>("TraceList");
-            Assert.NotNull(traceList);
-            Assert.NotNull(traceList.ItemsPanelRoot);
+        // ── Act: locate the trace ListBox ──
+        // Traverse: window → ActivityColumn (UserControl) → ListBox x:Name="TraceList"
+        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
+        Assert.NotNull(activityColumn);
+        var traceList = activityColumn.FindControl<ListBox>("TraceList");
+        Assert.NotNull(traceList);
+        Assert.NotNull(traceList.ItemsPanelRoot);
 
-            // ── Assert: the realized items panel is a plain (non-virtualizing) StackPanel ──
-            Assert.IsType<StackPanel>(traceList.ItemsPanelRoot);
-
-            return 0; // Force Func<Task<int>> overload so exceptions propagate
-        }, CancellationToken.None);
+        // ── Assert: the realized items panel is a plain (non-virtualizing) StackPanel ──
+        Assert.IsType<StackPanel>(traceList.ItemsPanelRoot);
     }
 }

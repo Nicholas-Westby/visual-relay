@@ -25,3 +25,15 @@ Cleanup: the hang dump is multi-GB. `TestResults/` is gitignored — delete it w
 ```bash
 rm -rf tests/VisualRelay.Tests/TestResults
 ```
+
+## Headless UI tests must use `[AvaloniaFact]`
+
+Avalonia headless uses **one process-global app/dispatcher per process**. Hand-rolling a
+session — `HeadlessUnitTestSession.StartNew(...)` inside a plain `[Fact]` — lets xUnit's
+parallel test collections start two sessions at once, which either deadlocks the suite (the
+hang above) or throws `the calling thread cannot access this object because a different thread
+owns it`. All headless UI tests therefore use `[AvaloniaFact]`/`[AvaloniaTheory]`
+(`Avalonia.Headless.XUnit`), which run every UI test on a single shared, serialized session.
+
+`HeadlessUnitTestSession` is **banned** via `Microsoft.CodeAnalysis.BannedApiAnalyzers`
+(`tests/VisualRelay.Tests/BannedSymbols.txt`); reintroducing it fails the build (RS0030).

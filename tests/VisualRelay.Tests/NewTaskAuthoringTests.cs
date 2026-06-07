@@ -1,4 +1,3 @@
-using Avalonia.Headless;
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
 
@@ -13,13 +12,11 @@ public sealed class NewTaskAuthoringTests
     /// The bug was that [NotifyCanExecuteChangedFor] was missing on NewTaskTitle
     /// and IsBusy, so the Create button never enabled when the user typed.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public async Task OpenNewTaskDialog_SetTitle_EnablesCreateCommand_AndCreatesTask()
     {
-        using var session = HeadlessUnitTestSession.StartNew(typeof(HeadlessTestApp));
-
-        // ViewModel setup can happen outside Dispatch since it doesn't
-        // require a live visual tree.
+        // ViewModel setup does not require a live visual tree; [AvaloniaFact]
+        // runs the whole test on the shared, serialized headless dispatcher thread.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("existing", "# Existing\n");
@@ -29,13 +26,8 @@ public sealed class NewTaskAuthoringTests
         Assert.False(viewModel.NeedsInitialization);
 
         // ── Open the new-task authoring view ──
-        // Use the non-async Dispatch overload so exceptions propagate
-        // (the async overload silently swallows XunitExceptions).
-        await session.Dispatch(() =>
-        {
-            viewModel.OpenNewTaskDialogCommand.Execute(null);
-            Dispatcher.UIThread.RunJobs();
-        }, CancellationToken.None);
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
 
         Assert.True(viewModel.IsNewTaskDialogOpen);
 
