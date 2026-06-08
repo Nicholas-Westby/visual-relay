@@ -179,6 +179,7 @@ public partial class MainWindowViewModel
         NewTaskTitle = string.Empty;
         NewTaskBody = string.Empty;
         NewTaskError = null;
+        SelectedTabIndex = 0;
         IsNewTaskDialogOpen = true;
     }
 

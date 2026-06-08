@@ -208,4 +208,53 @@ public sealed class NewTaskAuthoringTests
         Assert.Equal(string.Empty, viewModel.NewTaskBody);
         Assert.Null(viewModel.NewTaskError);
     }
+
+    /// <summary>
+    /// When the "New" button is clicked and the user is on a non-Markdown tab
+    /// (e.g. Attachments, index 2), the ViewModel must reset the selected tab
+    /// to Markdown (index 0) so the new-task authoring form becomes visible.
+    /// This was the root cause of the "New button works once then breaks" bug:
+    /// <see cref="MainWindowViewModel.OpenNewTaskDialog"/> set
+    /// <see cref="MainWindowViewModel.IsNewTaskDialogOpen"/> = true but the
+    /// TabControl stayed on a different tab, hiding the form.
+    /// </summary>
+    [Fact]
+    public void OpenNewTaskDialog_ResetsSelectedTabIndexToMarkdown()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+
+        // ── Default tab should be Markdown (index 0) ──
+        Assert.Equal(0, viewModel.SelectedTabIndex);
+
+        // ── Simulate the user switching to the Attachments tab (index 2) ──
+        viewModel.SelectedTabIndex = 2;
+        Assert.Equal(2, viewModel.SelectedTabIndex);
+
+        // ── Act: click "New" ──
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+
+        // ── Assert: tab resets to Markdown so the form is visible ──
+        Assert.True(viewModel.IsNewTaskDialogOpen,
+            "New-task dialog should be open.");
+        Assert.True(viewModel.SelectedTabIndex == 0,
+            "SelectedTabIndex must reset to 0 (Markdown) when " +
+            "OpenNewTaskDialog opens the authoring form, otherwise " +
+            "the form is hidden behind another tab.");
+
+        // ── Closing the dialog should NOT reset the tab again — the user
+        //     might want to stay on Markdown after canceling. ──
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Assert.False(viewModel.IsNewTaskDialogOpen);
+        Assert.Equal(0, viewModel.SelectedTabIndex);
+
+        // ── Opening again from a non-Markdown tab resets again ──
+        viewModel.SelectedTabIndex = 1; // Context tab
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Assert.True(viewModel.IsNewTaskDialogOpen);
+        Assert.True(viewModel.SelectedTabIndex == 0,
+            "SelectedTabIndex must reset to 0 even from the Context tab (index 1).");
+    }
 }

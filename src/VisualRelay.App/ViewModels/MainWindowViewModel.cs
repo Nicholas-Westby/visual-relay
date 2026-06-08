@@ -176,6 +176,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool _isNewTaskDialogOpen;
 
     [ObservableProperty]
+    private int _selectedTabIndex;
+
+    [ObservableProperty]
     private string _logScopeLabel = "full";
 
     [ObservableProperty]
