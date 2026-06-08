@@ -2,7 +2,11 @@ namespace VisualRelay.Core.Execution;
 
 internal static class GitCommitter
 {
-    private static readonly string[] SourceRoots = ["src/", "tests/", "tools/"];
+    // Visual Relay's own run artifacts. These are never auto-committed (the
+    // deliberate proof subset is force-added via proofFiles); everything else the
+    // run authors is fair game. Auto-include must stay repo-agnostic — it must NOT
+    // assume a src/tests/tools layout, since Visual Relay runs on any repo.
+    private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
 
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
@@ -69,19 +73,22 @@ internal static class GitCommitter
             }
         }
 
-        // Auto-include new untracked files authored during the run under source
-        // roots (src/, tests/, tools/) that the stage-4 manifest never listed.
-        // git add -u only stages tracked modifications; a brand-new file has no
-        // tracked ancestor and is skipped.  We snapshot untracked files at run
-        // start and stage any delta under a source root — this catches a stage-5
-        // test file the manifest missed without sweeping in pre-existing scratch.
+        // Auto-include every new untracked file the run authored that the stage-4
+        // manifest never listed. git add -u only stages tracked modifications; a
+        // brand-new file has no tracked ancestor and is skipped. We diff the
+        // run-start snapshot against the current untracked set (so pre-existing
+        // scratch is left alone) and stage the delta. git's --exclude-standard
+        // already drops .gitignored paths, and we additionally skip Visual Relay's
+        // own artifact dirs. No source-root allowlist: Visual Relay targets any
+        // repo layout (Python, JS, Go, root-level code, …), so a run-authored file
+        // outside src/tests/tools must not be silently dropped either.
         if (preRunUntracked is not null)
         {
             var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
             var newAuthored = new List<string>();
             foreach (var path in currentUntracked)
             {
-                if (!preRunUntracked.Contains(path) && IsUnderSourceRoot(path))
+                if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path))
                 {
                     newAuthored.Add(path);
                 }
@@ -192,12 +199,12 @@ internal static class GitCommitter
         return set;
     }
 
-    private static bool IsUnderSourceRoot(string relativePath)
+    private static bool IsInternalArtifact(string relativePath)
     {
-        foreach (var root in SourceRoots)
+        foreach (var prefix in InternalArtifactPrefixes)
         {
-            if (relativePath.StartsWith(root, StringComparison.Ordinal)
-                || string.Equals(relativePath, root.TrimEnd('/'), StringComparison.Ordinal))
+            if (relativePath.StartsWith(prefix, StringComparison.Ordinal)
+                || string.Equals(relativePath, prefix.TrimEnd('/'), StringComparison.Ordinal))
             {
                 return true;
             }

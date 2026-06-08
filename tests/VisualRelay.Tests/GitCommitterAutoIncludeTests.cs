@@ -2,14 +2,14 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-public sealed class GitCommitterAutoIncludeTests
+public sealed partial class GitCommitterAutoIncludeTests
 {
     [Fact]
     public async Task CommitAsync_AutoIncludesNewUntrackedFileUnderTests()
     {
         // A new test file authored during stage 5 that the stage-4 manifest never
         // listed must not be silently dropped. The auto-include pass stages any
-        // untracked file under a source root that appeared after the run started.
+        // non-ignored untracked file that appeared after the run started.
         using var repo = TestRepository.Create();
         await InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -51,7 +51,7 @@ public sealed class GitCommitterAutoIncludeTests
     {
         // Pre-existing untracked files (present before the run started and captured
         // in the snapshot) must NOT be auto-included. Only files authored during the
-        // run (delta: current \ snapshot) under source roots are staged.
+        // run (delta: current \ snapshot) are staged.
         using var repo = TestRepository.Create();
         await InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -93,28 +93,30 @@ public sealed class GitCommitterAutoIncludeTests
     }
 
     [Fact]
-    public async Task CommitAsync_ExcludesNewFileOutsideSourceRoots()
+    public async Task CommitAsync_AutoIncludesNewFileInAnyDirectory_NotJustSourceRoots()
     {
-        // Only files under src/, tests/, or tools/ are auto-included. A new file
-        // under docs/ or any other non-source directory must NOT be staged.
+        // Visual Relay runs on arbitrary repo layouts (Python, JS, Go, root-level
+        // code), so auto-include must NOT assume a src/tests/tools shape. A new,
+        // non-ignored file the run authored anywhere — docs/, lib/, the repo root —
+        // must be committed, not silently dropped.
         using var repo = TestRepository.Create();
         await InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "docs"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "lib"));
+        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
         await StageAndCommitSeed(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
             repo.Root, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
-        // Agent creates a doc (outside source roots) and a test (inside source root).
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+        // Author files outside any conventional .NET source root.
+        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "updated");
         File.WriteAllText(Path.Combine(repo.Root, "docs", "guide.md"), "# Guide");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        File.WriteAllText(Path.Combine(repo.Root, "lib", "helper.js"), "// helper");
+        File.WriteAllText(Path.Combine(repo.Root, "test_app.py"), "# root-level test");
 
-        var manifest = new[] { "src/app.cs" };
+        var manifest = new[] { "app.py" };
 
         var result = await GitCommitter.CommitAsync(
             repo.Root,
@@ -129,8 +131,54 @@ public sealed class GitCommitterAutoIncludeTests
 
         Assert.True(result.Success, result.Error);
         var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
-        Assert.Contains("tests/new-test.cs", committed);
-        Assert.DoesNotContain("docs/guide.md", committed);
+        Assert.Contains("docs/guide.md", committed);
+        Assert.Contains("lib/helper.js", committed);
+        Assert.Contains("test_app.py", committed);
+    }
+
+    [Fact]
+    public async Task CommitAsync_ExcludesVisualRelayInternalArtifacts_EvenWhenNotGitignored()
+    {
+        // On a consumer repo that does not gitignore .relay/ or .swival/, the run's
+        // own artifacts (reports, traces, scratch) surface as untracked. They must
+        // never be auto-committed into the user's task commit — only the deliberate
+        // proof subset is force-added (via proofFiles), handled separately.
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
+        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+
+        var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
+            repo.Root, CancellationToken.None);
+        Assert.Empty(preRunUntracked);
+
+        // The run authors a real test file AND leaves internal artifacts behind.
+        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "updated");
+        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.py"), "# new test");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "my-task"));
+        File.WriteAllText(Path.Combine(repo.Root, ".relay", "my-task", "stage1-attempt1.report.json"), "{}");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".swival"));
+        File.WriteAllText(Path.Combine(repo.Root, ".swival", "cmd_output.txt"), "trace");
+
+        var manifest = new[] { "app.py" };
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root,
+            "my-task",
+            "abc123",
+            ["feat: add widget"],
+            manifest,
+            [],
+            commitToken: null,
+            preRunUntracked,
+            CancellationToken.None);
+
+        Assert.True(result.Success, result.Error);
+        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        Assert.Contains("tests/new-test.py", committed);
+        Assert.DoesNotContain(".relay/", committed);
+        Assert.DoesNotContain(".swival/", committed);
     }
 
     [Fact]
@@ -208,62 +256,6 @@ public sealed class GitCommitterAutoIncludeTests
         Assert.Contains("src/app.cs", committed);
         // The new test file is NOT staged — backward-compatible, no auto-include.
         Assert.DoesNotContain("tests/new-test.cs", committed);
-    }
-
-    [Fact]
-    public async Task CaptureUntrackedSnapshotAsync_ReturnsEmptySetWhenClean()
-    {
-        using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
-
-        var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
-
-        Assert.NotNull(snapshot);
-        Assert.Empty(snapshot);
-    }
-
-    [Fact]
-    public async Task CaptureUntrackedSnapshotAsync_ExcludesGitignoredFiles()
-    {
-        using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "*.log\n");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
-
-        // Create an untracked file that matches .gitignore.
-        File.WriteAllText(Path.Combine(repo.Root, "debug.log"), "ignored");
-
-        var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
-
-        Assert.NotNull(snapshot);
-        Assert.DoesNotContain("debug.log", snapshot);
-    }
-
-    [Fact]
-    public async Task CaptureUntrackedSnapshotAsync_ReturnsUntrackedFilesOutsideGitignore()
-    {
-        using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "scratch"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
-
-        // Create an untracked scratch file.
-        File.WriteAllText(Path.Combine(repo.Root, "scratch", "notes.txt"), "notes");
-
-        var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
-
-        Assert.NotNull(snapshot);
-        Assert.Contains("scratch/notes.txt", snapshot);
     }
 
     // ── helpers ──────────────────────────────────────────────────────
