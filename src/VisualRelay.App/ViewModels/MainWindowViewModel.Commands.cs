@@ -158,6 +158,7 @@ public partial class MainWindowViewModel
 
         NotifyRunningTaskContextChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
+        AddAttachmentsCommand.NotifyCanExecuteChanged();
         _ = LoadSelectedTaskAsync(value);
     }
 

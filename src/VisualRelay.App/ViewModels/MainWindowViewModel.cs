@@ -94,6 +94,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(FollowRunningTaskCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(IsViewingDifferentTaskDuringRun))]
     [NotifyPropertyChangedFor(nameof(ViewingRunContextText))]
     private TaskRowViewModel? _selectedTask;
@@ -128,6 +129,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(TaskListTitle))]
     [NotifyPropertyChangedFor(nameof(TaskListToggleText))]
     private bool _showArchive;
@@ -182,6 +184,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateNewTaskCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
