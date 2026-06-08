@@ -219,6 +219,40 @@ internal static class TestGit
     }
 }
 
+/// <summary>
+/// Wraps an inner <see cref="ISubagentRunner"/> (defaults to <see cref="ScriptedSubagentRunner"/>)
+/// and returns an invalid result for stages at or after <paramref name="flagAtStage"/>,
+/// simulating a flagged run that stops partway through the stage loop.
+/// </summary>
+internal sealed class FlagAtStageSubagentRunner : ISubagentRunner
+{
+    private readonly int _flagAtStage;
+    private readonly ISubagentRunner _inner;
+
+    public FlagAtStageSubagentRunner(int flagAtStage, ISubagentRunner? inner = null)
+    {
+        _flagAtStage = flagAtStage;
+        _inner = inner ?? new ScriptedSubagentRunner();
+    }
+
+    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number < _flagAtStage)
+        {
+            return await _inner.RunAsync(invocation, cancellationToken);
+        }
+
+        // Create the trace directory so RelayAttempt.Next sees this attempt
+        // (matching real Swival behavior where trace dirs exist even for failures).
+        Directory.CreateDirectory(invocation.TraceDirectory);
+        return new SubagentResult(
+            RawText: string.Empty,
+            Json: null,
+            IsValid: false,
+            Error: $"synthetic flag at stage {_flagAtStage}");
+    }
+}
+
 internal static class RepoSetup
 {
     /// <summary>

@@ -33,6 +33,27 @@ public partial class MainWindowViewModel
         });
     }
 
+    [RelayCommand(CanExecute = nameof(CanRunSelected))]
+    private async Task ResumeSelectedAsync()
+    {
+        if (SelectedTask is null)
+        {
+            return;
+        }
+
+        if (!await EnsureRunnableAsync(SelectedTask.Id))
+        {
+            return;
+        }
+
+        var task = SelectedTask;
+        await RunBusyAsync(async () =>
+        {
+            await RunOneAsync(task, resume: true);
+            await ReloadTaskListAsync(task.Id);
+        });
+    }
+
     [RelayCommand(CanExecute = nameof(CanDrain))]
     private async Task DrainQueueAsync()
     {
@@ -150,7 +171,7 @@ public partial class MainWindowViewModel
         return false;
     }
 
-    private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task)
+    private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task, bool resume = false)
     {
         ResetStages();
         ClearLogState();
@@ -163,7 +184,7 @@ public partial class MainWindowViewModel
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
         var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), sink);
-        var driver = new RelayDriver(dependencies, RelayDriverOptions.Default);
+        var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
         {
             var outcome = await driver.RunTaskAsync(RootPath, task.Id);

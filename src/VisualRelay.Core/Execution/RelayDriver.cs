@@ -42,6 +42,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var taskHash = string.Empty;
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
+            var firstStageToRun = 1;
+            if (_options.Resume)
+                LoadResumeState(taskDirectory, taskId, ledger, manifest, seals,
+                    ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount,
+                    statusEntries, ref firstStageToRun);
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 
@@ -56,6 +61,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
             foreach (var stage in RelayStages.All)
             {
+                if (stage.Number < firstStageToRun)
+                    continue;
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
