@@ -230,6 +230,36 @@ public sealed class RelayDriverGitCommitTests
         Assert.Equal("chore(relay): ship-status", subject.Trim());
     }
 
+    [Fact]
+    public async Task RunTaskAsync_CommitsNewTestFileNotListedInManifest()
+    {
+        // A new test file authored during stage 5 that the stage-4 manifest never
+        // listed must land in the commit — never silently dropped. Stage 9 verifies
+        // the working tree (which has the file), so the commit must match.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/app.cs", []);
+        repo.WriteTask("regression-cover", "batch: 3\n\n# Add regression coverage\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+
+        var runner = new NewTestFileNotInManifestRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "regression-cover");
+
+        Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
+        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        Assert.Contains("src/app.cs", names);
+        Assert.Contains("tests/regression-tests.cs", names);
+    }
+
     private static void InstallRejectingCommitMsgHook(string repoRoot, string rejectPattern)
     {
         var hooksDir = Path.Combine(repoRoot, ".git", "hooks");

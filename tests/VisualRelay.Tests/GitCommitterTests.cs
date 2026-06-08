@@ -25,6 +25,7 @@ public sealed class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
+            preRunUntracked: null,
             CancellationToken.None);
 
         Assert.True(result.Success);
@@ -60,6 +61,7 @@ public sealed class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
+            preRunUntracked: null,
             CancellationToken.None);
 
         Assert.True(result.Success);
@@ -89,6 +91,7 @@ public sealed class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
+            preRunUntracked: null,
             CancellationToken.None);
 
         Assert.False(result.Success);
@@ -124,6 +127,7 @@ public sealed class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: nonce,
+            preRunUntracked: null,
             CancellationToken.None);
 
         Assert.True(result.Success,

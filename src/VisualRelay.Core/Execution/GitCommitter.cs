@@ -2,6 +2,8 @@ namespace VisualRelay.Core.Execution;
 
 internal static class GitCommitter
 {
+    private static readonly string[] SourceRoots = ["src/", "tests/", "tools/"];
+
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
         string taskId,
@@ -10,6 +12,7 @@ internal static class GitCommitter
         IReadOnlyList<string> manifest,
         IReadOnlyList<string> proofFiles,
         string? commitToken,
+        IReadOnlySet<string>? preRunUntracked,
         CancellationToken cancellationToken)
     {
         var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
@@ -63,6 +66,34 @@ internal static class GitCommitter
             if (addProof.ExitCode != 0)
             {
                 return GitCommitResult.Failed($"git add proof failed: {addProof.Output.Trim()}");
+            }
+        }
+
+        // Auto-include new untracked files authored during the run under source
+        // roots (src/, tests/, tools/) that the stage-4 manifest never listed.
+        // git add -u only stages tracked modifications; a brand-new file has no
+        // tracked ancestor and is skipped.  We snapshot untracked files at run
+        // start and stage any delta under a source root — this catches a stage-5
+        // test file the manifest missed without sweeping in pre-existing scratch.
+        if (preRunUntracked is not null)
+        {
+            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
+            var newAuthored = new List<string>();
+            foreach (var path in currentUntracked)
+            {
+                if (!preRunUntracked.Contains(path) && IsUnderSourceRoot(path))
+                {
+                    newAuthored.Add(path);
+                }
+            }
+
+            if (newAuthored.Count > 0)
+            {
+                var addNew = await GitAsync(rootPath, ["add", "--", .. newAuthored], cancellationToken);
+                if (addNew.ExitCode != 0)
+                {
+                    return GitCommitResult.Failed($"git add auto-include failed: {addNew.Output.Trim()}");
+                }
             }
         }
 
@@ -125,6 +156,54 @@ internal static class GitCommitter
         }
 
         return files;
+    }
+
+    /// <summary>
+    /// Captures the set of untracked, non-ignored files at the start of a run.
+    /// Uses <c>git ls-files --others --exclude-standard</c>, which respects
+    /// <c>.gitignore</c>, <c>.git/info/exclude</c>, and the global gitignore.
+    /// </summary>
+    public static async Task<IReadOnlySet<string>> CaptureUntrackedSnapshotAsync(
+        string rootPath,
+        CancellationToken cancellationToken)
+    {
+        var result = await GitAsync(rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
+        if (result.ExitCode != 0)
+        {
+            throw new InvalidOperationException($"git ls-files failed: {result.Output.Trim()}");
+        }
+
+        if (string.IsNullOrWhiteSpace(result.Output))
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var lines = result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0)
+            {
+                set.Add(trimmed);
+            }
+        }
+
+        return set;
+    }
+
+    private static bool IsUnderSourceRoot(string relativePath)
+    {
+        foreach (var root in SourceRoots)
+        {
+            if (relativePath.StartsWith(root, StringComparison.Ordinal)
+                || string.Equals(relativePath, root.TrimEnd('/'), StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

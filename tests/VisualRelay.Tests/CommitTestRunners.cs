@@ -221,6 +221,43 @@ internal sealed class LegacyCommitMessageRunner : ISubagentRunner
 }
 
 /// <summary>
+/// Stage 5 authors a new test file (<c>tests/regression-tests.cs</c>) that the
+/// stage-4 manifest does NOT list. The manifest only declares the implementation
+/// file <c>src/app.cs</c>. The commit must auto-include the untracked test file
+/// so it is not silently dropped.
+/// </summary>
+internal sealed class NewTestFileNotInManifestRunner : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == 5)
+        {
+            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "regression-tests.cs"), "// regression test");
+        }
+        else if (invocation.Stage.Number == 6)
+        {
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "app.cs"), "updated implementation");
+        }
+
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
+            4 => """{"plan":"add regression tests","manifest":["src/app.cs"]}""",
+            5 => """{"testFiles":["tests/regression-tests.cs"],"rationale":"regression test for new behavior"}""",
+            6 => """{"summary":"implemented"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"fixed"}""",
+            9 => """{"summary":"verified","commitMessages":["test: add regression coverage for new behavior","test: cover edge case in regression suite","chore: update test infrastructure"]}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
+/// <summary>
 /// Stage 9 returns neither <c>commitMessages</c> nor <c>commitMessage</c>.
 /// The driver must fall back to <c>chore(relay): &lt;slug&gt;</c>.
 /// </summary>
