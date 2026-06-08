@@ -140,6 +140,62 @@ public sealed class SwivalSubagentRunnerTests
         Assert.Contains("Implemented", result.Json, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunAsync_FailingVerifyOutput_AppearsInPrompt()
+    {
+        using var repo = TestRepository.Create();
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-verify-output",
+            """
+            #!/usr/bin/env bash
+            last="${@: -1}"
+            printf '%s' "$last" > prompt-capture.txt
+            printf '```json\n{"summary":"fixed verify"}\n```\n'
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+        var invocation = Invocation(repo.Root) with
+        {
+            Stage = RelayStages.All[9], // Stage 10 — Fix-verify
+            LastTestOutput = "biome parse error: unexpected token at line 42",
+            TestCommand = "bunx biome format && bun test"
+        };
+
+        var result = await runner.RunAsync(invocation);
+
+        Assert.True(result.IsValid);
+        var captured = await File.ReadAllTextAsync(Path.Combine(repo.Root, "prompt-capture.txt"));
+        Assert.Contains("## Failing verify output", captured, StringComparison.Ordinal);
+        Assert.Contains("biome parse error: unexpected token at line 42", captured, StringComparison.Ordinal);
+        Assert.Contains("## Verify command", captured, StringComparison.Ordinal);
+        Assert.Contains("Run this exact command to reproduce and confirm the fix:", captured, StringComparison.Ordinal);
+        Assert.Contains("bunx biome format && bun test", captured, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_NoFailingOutput_NoVerifySection()
+    {
+        using var repo = TestRepository.Create();
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-no-verify",
+            """
+            #!/usr/bin/env bash
+            last="${@: -1}"
+            printf '%s' "$last" > prompt-capture.txt
+            printf '```json\n{"summary":"framed","options":["small"]}\n```\n'
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+        var invocation = Invocation(repo.Root) with { Stage = RelayStages.All[0] }; // Stage 1 — Ideate
+
+        var result = await runner.RunAsync(invocation);
+
+        Assert.True(result.IsValid);
+        var captured = await File.ReadAllTextAsync(Path.Combine(repo.Root, "prompt-capture.txt"));
+        Assert.DoesNotContain("## Failing verify output", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Verify command", captured, StringComparison.Ordinal);
+    }
+
     private static StageInvocation Invocation(string rootPath) =>
         new(
             RelayStages.All[0],

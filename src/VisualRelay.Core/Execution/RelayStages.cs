@@ -47,7 +47,7 @@ public static class RelayStages
         "Review" => "Review the actual diff and classify issues.",
         "Fix" => "Resolve every blocker and warning from review.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
-        "Fix-verify" => "Fix failures from the pinned suite.",
+        "Fix-verify" => "Fix failures from the pinned suite. Run the exact verify command shown in the prompt and confirm it passes (exit 0) before returning success — do not run a self-selected subset of tests.",
         _ => string.Empty
     };
 }

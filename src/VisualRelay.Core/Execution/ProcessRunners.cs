@@ -148,6 +148,17 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         }
 
         parts.AddRange(["", "## Prior stages", invocation.LedgerSoFar, "", invocation.Stage.OutputContract]);
+
+        if (!string.IsNullOrWhiteSpace(invocation.LastTestOutput))
+        {
+            parts.AddRange(["", "## Failing verify output", TrimForTrace(invocation.LastTestOutput)]);
+        }
+
+        if (!string.IsNullOrWhiteSpace(invocation.TestCommand))
+        {
+            parts.AddRange(["", "## Verify command", "Run this exact command to reproduce and confirm the fix:", invocation.TestCommand]);
+        }
+
         return string.Join('\n', parts);
     }
 

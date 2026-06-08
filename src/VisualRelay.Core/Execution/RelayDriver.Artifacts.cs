@@ -337,7 +337,7 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput);
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null)
@@ -414,7 +414,8 @@ public sealed partial class RelayDriver
         RelayTaskInput input,
         StringBuilder ledger,
         IReadOnlyList<string> manifest,
-        string? lastTestOutput = null)
+        string? lastTestOutput = null,
+        string? testCommand = null)
     {
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
@@ -431,7 +432,8 @@ public sealed partial class RelayDriver
             Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}.report.json"),
             config.MaxTurns,
             LastTestOutput: lastTestOutput,
-            TaskContext: input.Context);
+            TaskContext: input.Context,
+            TestCommand: testCommand);
     }
 
     /// <summary>

@@ -175,6 +175,29 @@ internal sealed class TimeoutSimulatingTestRunner : ITestRunner
     }
 }
 
+/// <summary>
+/// Wraps a <see cref="ScriptedSubagentRunner"/> and records every
+/// <see cref="StageInvocation"/> passed to <see cref="RunAsync"/> so tests
+/// can assert on prompt data (e.g. <see cref="StageInvocation.LastTestOutput"/>,
+/// <see cref="StageInvocation.TestCommand"/>) that the canned runner ignores.
+/// </summary>
+internal sealed class CapturingSubagentRunner : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _inner = new();
+    private readonly List<StageInvocation> _invocations = [];
+
+    public IReadOnlyList<StageInvocation> Invocations => _invocations;
+
+    public void SeedHappyPath(string codeFile, string testFile) =>
+        _inner.SeedHappyPath(codeFile, testFile);
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        _invocations.Add(invocation);
+        return _inner.RunAsync(invocation, cancellationToken);
+    }
+}
+
 internal sealed class RecordingTaskRunner : IRelayTaskRunner
 {
     public List<string> TasksRun { get; } = [];

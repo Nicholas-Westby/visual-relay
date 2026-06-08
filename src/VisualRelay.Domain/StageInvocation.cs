@@ -14,4 +14,5 @@ public sealed record StageInvocation(
     string ReportFile,
     int MaxTurns,
     string? LastTestOutput = null,
-    string? TaskContext = null);
+    string? TaskContext = null,
+    string? TestCommand = null);

@@ -361,6 +361,37 @@ public sealed class RelayDriverTests
         Assert.Contains("attempt 2/3", ledger, StringComparison.Ordinal);
         Assert.DoesNotContain("attempt 3/3", ledger, StringComparison.Ordinal); // never reached
     }
+
+    [Fact]
+    public async Task RunTaskAsync_FixVerifyLoop_AgentReceivesFailingOutput()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteTask("fail-visible", "# Fail visible in full command\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),                    // stage 5 author gate
+            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — red
+            new TestRunResult(0, "green"));                  // fix-verify attempt 1 re-verify — green
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "fail-visible");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        // The stage-10 invocation must contain the captured failure from stage 9.
+        var stage10Invocation = runner.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
+        Assert.NotNull(stage10Invocation);
+        Assert.NotNull(stage10Invocation!.LastTestOutput);
+        Assert.Contains("Failed DeepCheck", stage10Invocation.LastTestOutput, StringComparison.Ordinal);
+        // Verify no other stage received LastTestOutput (regression guard).
+        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number != 10))
+        {
+            Assert.Null(inv.LastTestOutput);
+        }
+    }
 }
 
 internal sealed class PrematureImplementationRunner : ISubagentRunner
