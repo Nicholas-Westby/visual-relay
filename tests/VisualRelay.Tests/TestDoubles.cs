@@ -19,7 +19,7 @@ internal sealed class TestRepository : IDisposable
     public string AttemptReportPath(string taskId, int stage, int attempt) =>
         Path.Combine(Root, ".relay", taskId, $"stage{stage}-attempt{attempt}.report.json");
 
-    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true)
+    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true, int maxVerifyLoops = 0)
     {
         Directory.CreateDirectory(Path.Combine(Root, ".relay"));
         File.WriteAllText(
@@ -28,7 +28,8 @@ internal sealed class TestRepository : IDisposable
             {
               "testCmd": "{{testCommand}}",
               "logSources": [{{string.Join(",", logSources.Select(s => $"\"{s}\""))}}],
-              "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}}
+              "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}},
+              "maxVerifyLoops": {{maxVerifyLoops}}
             }
             """);
     }

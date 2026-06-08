@@ -66,9 +66,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 ? await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken)
                 : null;
 
+            var stage10Handled = false;
+
             foreach (var stage in RelayStages.All)
             {
                 if (stage.Number < firstStageToRun)
+                    continue;
+                if (stage.Number == 10 && stage10Handled)
                     continue;
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
@@ -87,14 +91,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
-                    if (cost is not null)
-                    {
-                        sessionCostUsd += cost.CostUsd;
-                    }
-                    else
-                    {
-                        unknownCostStageCount++;
-                    }
+                    if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number, result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
@@ -185,27 +182,37 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 : null;
                             if (!config.BaselineVerify || newFailures is not null)
                             {
-                                var reason = newFailures is null || newFailures == "verify failed"
-                                    ? "verify failed" : $"new test failures: {newFailures}";
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, testResult.Output, statusEntries, cancellationToken);
+                                if (config.MaxVerifyLoops <= 0)
+                                {
+                                    var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, testResult.Output, statusEntries, cancellationToken);
+                                }
+
+                                // Genuinely red — record stage 9, then enter fix-verify loop.
+                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
+                                    stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(
+                                    rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
+                                    previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, testResult.Output, cancellationToken);
+                                if (loopOutcome is not null)
+                                    return loopOutcome;
+                                previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;
+                                stage10Handled = true;
                             }
-                            check = "green";
+                            else
+                            {
+                                check = "green"; // baseline-excluded: all failures pre-existing
+                            }
                         }
                     }
                 }
 
-                AppendLedgerSection(ledger, stage, body);
-                var treeHash = stage.Number >= 4 ? WorkingTreeHash(rootPath, manifest) : string.Empty;
-                var artifactHash = Hashing.Sha256Hex(stage.Number.ToString(), stage.Name, body);
-                var seal = Hashing.Sha256Hex(previousSeal, stage.Number.ToString(), DateTimeOffset.UtcNow.ToString("O"), artifactHash, treeHash, check ?? string.Empty);
-                previousSeal = seal;
-                taskHash = seal;
-                seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
-                await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
-                stopwatch.Stop();
-                MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check);
-                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-                await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                if (stage.Number != 9 || !stage10Handled)
+                {
+                    (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
+                        stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                }
             }
 
             var commitSha = "simulated";
@@ -235,34 +242,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         }
     }
 
-    private StageInvocation BuildInvocation(
-        string rootPath,
-        string runId,
-        string taskId,
-        string taskDirectory,
-        RelayConfig config,
-        RelayStageDefinition stage,
-        RelayTaskInput input,
-        StringBuilder ledger,
-        IReadOnlyList<string> manifest)
-    {
-        var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
-        return new StageInvocation(
-            stage,
-            stage.Tier,
-            runId,
-            rootPath,
-            taskId,
-            input.Markdown,
-            ledger.ToString(),
-            manifest,
-            config.LogSources,
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}"),
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}.report.json"),
-            config.MaxTurns,
-            TaskContext: input.Context);
-    }
-
     private async Task<RelayTaskOutcome> FlagAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         int stageNumber, string reason, string? details,
@@ -278,12 +257,18 @@ public sealed partial class RelayDriver : IRelayTaskRunner
         if (flaggedStage > 0)
         {
             // Earlier stages that are running → done; later stages stay waiting.
+            // Collect stages to mark first to avoid modifying the list while enumerating.
+            var toMarkDone = new List<int>();
             foreach (var entry in statusEntries)
             {
                 if (entry.Stage < flaggedStage && entry.Status == "Running")
                 {
-                    MarkStatus(statusEntries, entry.Stage, "Done");
+                    toMarkDone.Add(entry.Stage);
                 }
+            }
+            foreach (var stage in toMarkDone)
+            {
+                MarkStatus(statusEntries, stage, "Done");
             }
             MarkStatusFlagged(statusEntries, flaggedStage, reason);
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
