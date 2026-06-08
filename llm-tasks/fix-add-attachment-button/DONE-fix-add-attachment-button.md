@@ -1,0 +1,1 @@
+The "Add Attachments" button is never clickable, so I can't add attachments. Fix.
