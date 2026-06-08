@@ -93,6 +93,13 @@ public static class RedGate
             return RedGateRestoreResult.Absent;
         }
 
+        // Revert tracked worktree files to HEAD before applying. A caller may have
+        // run a test command between stash and restore that wrote to tracked files
+        // (in-place formatters, ratchet/timing artifacts); those incidental edits
+        // would otherwise make `git stash apply` conflict instead of cleanly
+        // restoring the stashed run changes. Untracked paths are deliberately left
+        // alone so this never deletes run artifacts (e.g. .relay/).
+        await GitAsync(rootPath, ["checkout", "--", "."], cancellationToken);
         var apply = await GitAsync(rootPath, ["stash", "apply", reference], cancellationToken);
         if (apply.ExitCode != 0)
         {
