@@ -180,7 +180,16 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, "verify failed", testResult.Output, statusEntries, cancellationToken);
+                            var newFailures = config.BaselineVerify
+                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, cancellationToken)
+                                : null;
+                            if (!config.BaselineVerify || newFailures is not null)
+                            {
+                                var reason = newFailures is null || newFailures == "verify failed"
+                                    ? "verify failed" : $"new test failures: {newFailures}";
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, testResult.Output, statusEntries, cancellationToken);
+                            }
+                            check = "green";
                         }
                     }
                 }
@@ -286,6 +295,4 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
     }
-
-    // -- Status record helpers moved to RelayDriver.Artifacts.cs --
 }

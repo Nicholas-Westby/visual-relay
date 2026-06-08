@@ -72,9 +72,7 @@ public sealed partial class RelayDriver
     }
 
     private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv"
-    };
+    { ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv" };
 
     /// <summary>
     /// Returns true when <paramref name="path"/> is implementation code —
@@ -147,15 +145,8 @@ public sealed partial class RelayDriver
         }
     }
 
-    private static string FormatDuration(double seconds)
-    {
-        if (seconds < 60)
-            return $"{Math.Max(0, seconds):0}s";
-        var minutes = Math.Floor(seconds / 60);
-        return $"{minutes:0}m {seconds % 60:00}s";
-    }
-
-    // -- Status record helpers --
+    private static string FormatDuration(double seconds) =>
+        seconds < 60 ? $"{Math.Max(0, seconds):0}s" : $"{Math.Floor(seconds / 60):0}m {seconds % 60:00}s";
 
     private static List<StageStatusEntry> SeedStatusEntries()
     {
@@ -265,6 +256,44 @@ public sealed partial class RelayDriver
         {
             var n = statusEntries.Count + 1;
             statusEntries.Add(new StageStatusEntry(n, RelayStages.All[n - 1].Name, "Waiting"));
+        }
+    }
+    private static HashSet<string> ExtractFailureIds(string? output)
+    {
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(output)) return ids;
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+            if (line.Trim().StartsWith("Failed ", StringComparison.Ordinal))
+                ids.Add(line.Trim()["Failed ".Length..].Trim());
+        return ids;
+    }
+    private static async Task<string?> GetNewFailuresAsync(
+        string rootPath, string taskId, string runId,
+        ITestRunner testRunner, string testCommand,
+        TestRunResult workingResult, CancellationToken ct)
+    {
+        var tag = RedGate.StashTag(taskId, runId);
+        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct);
+        try
+        {
+            if (!stashed) return "verify failed";
+            var baseline = await testRunner.RunAsync(rootPath, testCommand, ct);
+            if (baseline.TimedOut) return "verify failed";
+            var current = ExtractFailureIds(workingResult.Output);
+            if (current.Count == 0 && workingResult.ExitCode != 0)
+                return "verify failed";
+            current.ExceptWith(ExtractFailureIds(baseline.Output));
+            return current.Count == 0 ? null
+                : string.Join(", ", current.Order(StringComparer.Ordinal));
+        }
+        finally
+        {
+            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct)
+                == RedGateRestoreResult.Conflict)
+            {
+                throw new InvalidOperationException(
+                    $"Red gate restore conflict after baseline verify for tag '{tag}'.");
+            }
         }
     }
 }

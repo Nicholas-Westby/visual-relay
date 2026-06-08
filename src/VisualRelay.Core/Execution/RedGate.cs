@@ -103,6 +103,16 @@ public static class RedGate
         return RedGateRestoreResult.Restored;
     }
 
+    public static async Task<bool> StashAllAsync(
+        string rootPath, string tag, CancellationToken ct)
+    {
+        if (!await IsGitRepositoryAsync(rootPath, ct)) return false;
+        var dirty = await GitAsync(rootPath, ["status", "--porcelain"], ct);
+        if (string.IsNullOrWhiteSpace(dirty.Output)) return false;
+        await GitAsync(rootPath, ["stash", "push", "-u", "-m", tag], ct);
+        return await FindStashRefAsync(rootPath, tag, ct) is not null;
+    }
+
     private static async Task<bool> IsGitRepositoryAsync(string rootPath, CancellationToken cancellationToken)
     {
         var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
