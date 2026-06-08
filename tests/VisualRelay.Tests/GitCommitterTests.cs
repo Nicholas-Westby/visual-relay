@@ -136,6 +136,40 @@ public sealed class GitCommitterTests
         Assert.Equal("fix: correct update logic", subject.Trim());
     }
 
+    [Fact]
+    public async Task CommitAsync_SetsRelayNonce_SoOriginalRelayGuardAccepts()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+
+        // Mimic the original Relay's commit-authority guard (e.g. JobFinder's
+        // .relay/hooks/pre-commit.ts): it rejects the commit unless the env var
+        // RELAY_NONCE equals the active-lock nonce. Visual Relay must set RELAY_NONCE
+        // (not only its own RELAY_COMMIT_TOKEN) or it can never land a sealed commit
+        // in such a repo.
+        var nonce = Guid.NewGuid().ToString("N");
+        WriteActiveInfo(repo.Root, nonce);
+        InstallRelayNonceGuardHook(repo.Root);
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root,
+            "my-task",
+            "abc123",
+            ["feat: add widget"],
+            ["src/app.cs"],
+            [],
+            commitToken: nonce,
+            preRunUntracked: null,
+            CancellationToken.None);
+
+        Assert.True(result.Success,
+            "commit must pass a RELAY_NONCE-checking guard; if it didn't, GitCommitter isn't setting RELAY_NONCE");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────
 
     private static async Task InitGitRepo(string root)
@@ -184,6 +218,35 @@ public sealed class GitCommitterTests
             $"#!/usr/bin/env bash{Environment.NewLine}" +
             $"echo \"hook: all commits rejected\" >&2{Environment.NewLine}" +
             $"exit 1{Environment.NewLine}");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(hookPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    /// <summary>
+    /// Installs a pre-commit hook mimicking the original Relay's commit-authority
+    /// guard: it rejects the commit unless the RELAY_NONCE env var matches the nonce
+    /// in .relay/ACTIVE/info.json.
+    /// </summary>
+    private static void InstallRelayNonceGuardHook(string repoRoot)
+    {
+        var hooksDir = Path.Combine(repoRoot, ".git", "hooks");
+        Directory.CreateDirectory(hooksDir);
+        var hookPath = Path.Combine(hooksDir, "pre-commit");
+        File.WriteAllText(hookPath,
+            """
+            #!/usr/bin/env bash
+            set -euo pipefail
+            active=".relay/ACTIVE/info.json"
+            [ -f "$active" ] || exit 0
+            nonce="$(grep -o '"nonce"[[:space:]]*:[[:space:]]*"[^"]*"' "$active" | sed 's/.*"nonce"[[:space:]]*:[[:space:]]*"//; s/".*//' | head -1)"
+            [ -z "$nonce" ] && exit 0
+            if [ "${RELAY_NONCE:-}" = "$nonce" ]; then exit 0; fi
+            echo "guard: RELAY_NONCE does not match active lock nonce" >&2
+            exit 1
+            """);
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(hookPath,

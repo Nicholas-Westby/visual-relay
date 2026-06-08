@@ -108,8 +108,18 @@ internal static class GitCommitter
         foreach (var candidate in commitMessages)
         {
             var attemptMessage = $"{candidate}\n\nTask: {taskId}\nRelay-Seal: {taskHash}\n";
+            // Authorize this commit past the active-run pre-commit guard. Visual
+            // Relay's own hook reads RELAY_COMMIT_TOKEN; the original Relay's hook
+            // (e.g. JobFinder's .relay/hooks/pre-commit.ts) reads RELAY_NONCE. Both
+            // are the active-lock nonce, so set both for cross-relay compatibility —
+            // otherwise Visual Relay can never land a sealed commit in a repo whose
+            // guard expects RELAY_NONCE.
             var attemptEnv = commitToken is not null
-                ? new Dictionary<string, string> { ["RELAY_COMMIT_TOKEN"] = commitToken }
+                ? new Dictionary<string, string>
+                {
+                    ["RELAY_COMMIT_TOKEN"] = commitToken,
+                    ["RELAY_NONCE"] = commitToken,
+                }
                 : null;
             var attempt = await GitAsync(rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv);
             if (attempt.ExitCode == 0)
