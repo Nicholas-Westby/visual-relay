@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using VisualRelay.Core.Logging;
 using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
@@ -10,12 +9,7 @@ namespace VisualRelay.Core.Execution;
 public sealed class ShellTestRunner : ITestRunner
 {
     private readonly TimeSpan _timeout;
-
-    public ShellTestRunner(TimeSpan? timeout = null)
-    {
-        _timeout = timeout ?? Timeout.InfiniteTimeSpan;
-    }
-
+    public ShellTestRunner(TimeSpan? timeout = null) => _timeout = timeout ?? Timeout.InfiniteTimeSpan;
     public async Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var result = await ProcessCapture.RunAsync("/bin/sh", $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"", rootPath, _timeout, cancellationToken);
@@ -29,12 +23,10 @@ public sealed class ShellTestRunner : ITestRunner
 public sealed class SwivalSubagentRunner : ISubagentRunner
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
-
     private readonly RelayConfig _config;
     private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
-
     public SwivalSubagentRunner(
         RelayConfig config,
         string swivalBinary = "swival",
@@ -44,51 +36,95 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         _config = config;
         _swivalBinary = swivalBinary;
         _eventSink = eventSink;
-        _probe = backendProbe
-            ?? (token => BackendReadinessProbe.CheckAsync(ModelBackend.BaseUrl, ProbeTimeout, token));
+        _probe = backendProbe ?? (token => BackendReadinessProbe.CheckAsync(ModelBackend.BaseUrl, ProbeTimeout, token));
     }
-
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        // Pre-flight guard: fail fast (~1-2s) when the backend is down instead
-        // of burning ~36s of LLM-call retries before flagging the task.
+        // Pre-flight guard: fail fast (~1-2s) when the backend is down.
         var readiness = await _probe(cancellationToken);
         if (!readiness.IsReady)
-        {
             return new SubagentResult(string.Empty, null, false, readiness.Message);
-        }
 
-        Directory.CreateDirectory(invocation.TraceDirectory);
-        await using var profileSession = await SwivalProfileSession.PrepareAsync(invocation.TargetRoot, cancellationToken);
-        await using var traceTailer = _eventSink is null
-            ? null
-            : RelayTraceTailer.Start(invocation.TraceDirectory, (entry, token) => PublishTraceAsync(invocation, entry, token));
-        var arguments = BuildArguments(invocation);
-        arguments.Add(BuildPrompt(invocation));
-        var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
-        var result = await ProcessCapture.RunAsync(_swivalBinary, arguments, invocation.TargetRoot, timeout, cancellationToken);
-        if (result.TimedOut)
+        // Resolve the first-output threshold for this tier.
+        var firstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(invocation.Tier, out var tierMs)
+            ? tierMs : _config.FirstOutputTimeoutMs;
+
+        // Parse trace-dir name so retries follow stage{n}-attempt{k}.
+        var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
+        RelayAttempt.TryParse(Path.GetFileName(invocation.TraceDirectory), out var stageNum, out var startAttempt);
+        var maxAttempts = _config.MaxStallRetries + 1;
+
+        for (var attempt = startAttempt; attempt < startAttempt + maxAttempts; attempt++)
         {
-            var noTrace = !Directory.EnumerateFileSystemEntries(invocation.TraceDirectory).Any();
-            var noOutput = string.IsNullOrWhiteSpace(result.Output);
-            var reason = noOutput && noTrace
-                ? $"swival produced no output before the {_config.SubagentTimeoutMilliseconds}ms timeout — likely a stalled model-backend call (check backend latency / the /v1/chat/completions path or backend logs), not a hung test command."
-                : $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
-                  "If swival was running a test command that hung, fix the hang and in the interim " +
-                  "re-run only the specific tests you need rather than the whole suite (use a targeted " +
-                  "subset for this project, e.g. the TestFileCommand \"{files}\" pattern).";
-            return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
+            var traceDir = attempt == startAttempt
+                ? invocation.TraceDirectory
+                : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
+            var reportFile = attempt == startAttempt
+                ? invocation.ReportFile
+                : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.report.json");
+            var attemptInvocation = invocation with { TraceDirectory = traceDir, ReportFile = reportFile };
+
+            Directory.CreateDirectory(traceDir);
+            await using var profileSession = await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
+            await using var traceTailer = _eventSink is null ? null
+                : RelayTraceTailer.Start(traceDir, (entry, token) => PublishTraceAsync(attemptInvocation, entry, token));
+            var arguments = BuildArguments(attemptInvocation);
+            arguments.Add(BuildPrompt(attemptInvocation));
+            var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
+
+            using var watchdogCts = new CancellationTokenSource();
+            using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
+            var processTask = ProcessCapture.RunAsync(_swivalBinary, arguments, attemptInvocation.TargetRoot, timeout, cancellationToken, killToken: watchdogCts.Token);
+            var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, firstOutputMs, watchdogCts, watchdogLinkedCts.Token);
+            SubagentResult? stallResult = null;
+            if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask)
+            {
+                var watchdogFired = await watchdogTask;
+                if (watchdogFired)
+                {
+                    // Watchdog fired — no output; killToken already triggered process.Kill().
+                    await processTask;
+                    if (attempt < startAttempt + maxAttempts - 1)
+                        continue;
+                    stallResult = new SubagentResult(string.Empty, null, false,
+                        ErrorHintClassifier.WithHint(
+                            $"persistent model-backend stall: swival produced no output within the {firstOutputMs}ms " +
+                            $"per-tier first-output threshold across {maxAttempts} attempts — " +
+                            "the upstream model-backend call is likely hanging at byte 0 (pre-stream stall)."));
+                }
+            }
+
+            if (stallResult is not null)
+                return stallResult;
+
+            var result = await processTask;
+            watchdogCts.Cancel();
+            try { await watchdogTask; } catch (OperationCanceledException) { }
+
+            if (result.TimedOut)
+            {
+                var noTrace = !Directory.EnumerateFileSystemEntries(traceDir).Any();
+                var noOutput = string.IsNullOrWhiteSpace(result.Output);
+                var reason = noOutput && noTrace
+                    ? $"swival produced no output before the {_config.SubagentTimeoutMilliseconds}ms timeout — likely a stalled model-backend call."
+                    : $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
+                      "If swival was running a test command that hung, fix the hang and re-run only the specific " +
+                      "tests you need (use a targeted subset, e.g. the TestFileCommand \"{files}\" pattern).";
+                return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
+            }
+
+            if (result.ExitCode != 0)
+            {
+                var reason = $"swival exit {result.ExitCode}: {TrimForError(result.Output)}";
+                return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
+            }
+
+            var json = FencedJsonExtractor.Extract(result.Output);
+            var error = json is null ? ErrorHintClassifier.WithHint("no valid fenced json block") : null;
+            return new SubagentResult(result.Output, json, json is not null, error);
         }
 
-        if (result.ExitCode != 0)
-        {
-            var reason = $"swival exit {result.ExitCode}: {TrimForError(result.Output)}";
-            return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
-        }
-
-        var json = FencedJsonExtractor.Extract(result.Output);
-        var error = json is null ? ErrorHintClassifier.WithHint("no valid fenced json block") : null;
-        return new SubagentResult(result.Output, json, json is not null, error);
+        return new SubagentResult(string.Empty, null, false, "unexpected: retry loop exhausted");
     }
 
     private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
@@ -194,10 +230,11 @@ internal static class ProcessCapture
         string workingDirectory,
         TimeSpan timeout,
         CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        CancellationToken killToken = default)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -206,7 +243,8 @@ internal static class ProcessCapture
         string workingDirectory,
         TimeSpan timeout,
         CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        CancellationToken killToken = default)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -214,7 +252,7 @@ internal static class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -222,7 +260,8 @@ internal static class ProcessCapture
         string workingDirectory,
         TimeSpan timeout,
         CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        CancellationToken killToken = default)
     {
         using var process = new Process();
         process.StartInfo = startInfo;
@@ -243,6 +282,10 @@ internal static class ProcessCapture
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
+
+        using var killRegistration = killToken.CanBeCanceled
+            ? killToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch { /* already exited */ } })
+            : default;
 
         var waitTask = process.WaitForExitAsync(cancellationToken);
         if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(waitTask, Task.Delay(timeout, cancellationToken)) != waitTask)

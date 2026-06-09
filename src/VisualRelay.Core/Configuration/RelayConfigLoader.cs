@@ -26,6 +26,14 @@ public static class RelayConfigLoader
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 1_200_000,
             TestTimeoutMilliseconds: 300_000,
+            FirstOutputTimeoutMsByTier: new Dictionary<string, int>
+            {
+                ["cheap"] = 90_000,
+                ["balanced"] = 120_000,
+                ["frontier"] = 660_000
+            },
+            FirstOutputTimeoutMs: 660_000,
+            MaxStallRetries: 2,
             // See RelayConfig.BypassSandbox: nono wrapping is broken (exits 1), so
             // bypass by default until the nono integration is fixed.
             BypassSandbox: true);
@@ -88,6 +96,16 @@ public static class RelayConfigLoader
                 }
             }
 
+            var firstOutputTiers = new Dictionary<string, int>(defaults.FirstOutputTimeoutMsByTier);
+            if (root.TryGetProperty("firstOutputTimeoutMsByTier", out var firstOutputJson) && firstOutputJson.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in firstOutputJson.EnumerateObject())
+                {
+                    if (property.Value.TryGetInt32(out var ms))
+                        firstOutputTiers[property.Name] = ms;
+                }
+            }
+
             var config = defaults with
             {
                 TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
@@ -100,6 +118,9 @@ public static class RelayConfigLoader
                 ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
                 SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds),
                 TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds),
+                FirstOutputTimeoutMsByTier = firstOutputTiers,
+                FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
+                MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
                 BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);

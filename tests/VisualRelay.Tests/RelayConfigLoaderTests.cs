@@ -216,4 +216,67 @@ public sealed class RelayConfigLoaderTests
         // Verify the override didn't clobber other defaults.
         Assert.Equal("frontier", result.Config.TierProfiles["frontier"]);
     }
+
+    // ── First-output timeout watchdog config ──────────────────────────
+
+    [Fact]
+    public void Defaults_FirstOutputTimeoutMsByTier_HasPerTierDefaults()
+    {
+        var defaults = RelayConfigLoader.Defaults();
+
+        Assert.Equal(90_000, defaults.FirstOutputTimeoutMsByTier["cheap"]);
+        Assert.Equal(120_000, defaults.FirstOutputTimeoutMsByTier["balanced"]);
+        Assert.Equal(660_000, defaults.FirstOutputTimeoutMsByTier["frontier"]);
+        Assert.Equal(660_000, defaults.FirstOutputTimeoutMs);
+        Assert.Equal(2, defaults.MaxStallRetries);
+    }
+
+    [Fact]
+    public async Task LoadAsync_FirstOutputTimeoutMsByTier_Override()
+    {
+        // JSON override merges with defaults: cheap is overridden, vision is
+        // added, balanced and frontier retain their defaults.
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "firstOutputTimeoutMsByTier": { "cheap": 45000, "vision": 120000 }
+            }
+            """);
+
+        var config = await RelayConfigLoader.LoadAsync(repo.Root);
+
+        Assert.Equal(45_000, config.FirstOutputTimeoutMsByTier["cheap"]);
+        Assert.Equal(120_000, config.FirstOutputTimeoutMsByTier["vision"]);
+        // Unmentioned tiers keep their defaults.
+        Assert.Equal(120_000, config.FirstOutputTimeoutMsByTier["balanced"]);
+        Assert.Equal(660_000, config.FirstOutputTimeoutMsByTier["frontier"]);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_FirstOutputTimeoutMs_ScalarOverride()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "firstOutputTimeoutMs": 300000,
+              "maxStallRetries": 3
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(300_000, result.Config.FirstOutputTimeoutMs);
+        Assert.Equal(3, result.Config.MaxStallRetries);
+        // Absent per-tier map retains defaults.
+        Assert.Equal(90_000, result.Config.FirstOutputTimeoutMsByTier["cheap"]);
+    }
 }
