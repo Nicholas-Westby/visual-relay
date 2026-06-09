@@ -18,6 +18,16 @@ public sealed class RedGateApplicabilityTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("tweak-markup", "# Tweak markup\n");
+        // Create a git repo with a committed impl file, then dirty it so the
+        // red gate can stash it. The test still passes green → vacuous flag.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "old\n");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "new\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedCodeOnly("src/Panel.axaml");
         var driver = new RelayDriver(
@@ -30,7 +40,7 @@ public sealed class RedGateApplicabilityTests
         var outcome = await driver.RunTaskAsync(repo.Root, "tweak-markup");
 
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("author-tests did not go red", outcome.Reason, StringComparison.Ordinal);
+        Assert.Contains("author-tests passed after implementation files were stripped", outcome.Reason, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -82,5 +92,71 @@ public sealed class RedGateApplicabilityTests
         var outcome = await driver.RunTaskAsync(repo.Root, "add-regression-test");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+    }
+
+    /// <summary>
+    /// When the manifest includes an impl file that has no working-tree change
+    /// (the fix is already committed), and the authored test passes green, the
+    /// gate must accept the green regression coverage instead of flagging.
+    /// StashedImplementation is false because there was nothing to strip.
+    /// </summary>
+    [Fact]
+    public async Task AlreadyResolved_NoImplDelta_AcceptsGreenRegressionCoverage()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("already-resolved", "# Add regression test\n");
+        // Impl file is already committed (fix already present) — no working-tree delta.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "fix.ts"), "correct code\n");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var runner = new AlreadyResolvedSubagentRunner("src/fix.ts", "tests/regression.test.ts");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                runner,
+                new ScriptedTestRunner(new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "already-resolved");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var ledger = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "already-resolved", "ledger.md"));
+        Assert.Contains("Already-resolved", ledger, StringComparison.Ordinal);
+    }
+}
+
+internal sealed class AlreadyResolvedSubagentRunner : ISubagentRunner
+{
+    private readonly string _implFile;
+    private readonly string _testFile;
+
+    public AlreadyResolvedSubagentRunner(string implFile, string testFile)
+    {
+        _implFile = implFile;
+        _testFile = testFile;
+    }
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
+            4 => $$"""{"plan":"add regression test","manifest":["{{_implFile}}","{{_testFile}}"]}""",
+            5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"green regression coverage for pre-existing fix"}""",
+            6 => """{"summary":"no implementation changes needed"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"no changes"}""",
+            9 => """{"summary":"verified","commitMessages":["test: add regression coverage"]}""",
+            10 => """{"summary":"no changes"}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
     }
 }

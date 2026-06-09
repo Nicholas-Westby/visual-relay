@@ -147,10 +147,17 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             check = testResult.ExitCode == 0 ? "green" : "red";
                             if (check != "red")
                             {
-                                var reason = gateResult.StashedImplementation
-                                    ? "author-tests passed after implementation files were stripped"
-                                    : "author-tests did not go red";
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, reason, null, statusEntries, cancellationToken);
+                                if (gateResult.StashedImplementation)
+                                {
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
+                                        "author-tests passed after implementation files were stripped", null, statusEntries, cancellationToken);
+                                }
+
+                                // Already-resolved: no implementation delta to strip;
+                                // accept green regression coverage.
+                                check = "green";
+                                ledger.AppendLine("> **Already-resolved**: no implementation delta to strip; accepted green regression coverage.");
+                                ledger.AppendLine();
                             }
                         }
                     }
