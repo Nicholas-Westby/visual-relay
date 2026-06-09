@@ -5,8 +5,10 @@ namespace VisualRelay.Core.Queue;
 public sealed class DrainCircuitBreaker
 {
     private const int CommitRejectThreshold = 2;
+    private const int ConsecutiveFlagThreshold = 3;
     public const string HaltMarker = "DRAIN-HALTED";
     private int _consecutiveCommitRejects;
+    private int _consecutiveFlags;
 
     public string? HaltMessage { get; private set; }
 
@@ -22,27 +24,45 @@ public sealed class DrainCircuitBreaker
             outcome.Reason?.StartsWith("commit rejected:", StringComparison.OrdinalIgnoreCase) == true)
         {
             _consecutiveCommitRejects++;
-        }
-        else if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
-        {
-            _consecutiveCommitRejects = 0;
-            HaltMessage = $"task {outcome.TaskId} needs review";
-            WriteMarker(rootPath, outcome, HaltMessage);
-            return true;
-        }
-        else
-        {
-            _consecutiveCommitRejects = 0;
-        }
+            _consecutiveFlags++;
 
-        if (_consecutiveCommitRejects < CommitRejectThreshold)
-        {
+            if (_consecutiveCommitRejects >= CommitRejectThreshold)
+            {
+                HaltMessage = "commit gate rejected consecutive tasks";
+                WriteMarker(rootPath, outcome, HaltMessage);
+                return true;
+            }
+
+            if (_consecutiveFlags >= ConsecutiveFlagThreshold)
+            {
+                HaltMessage = $"drain halted after {_consecutiveFlags} consecutive flagged tasks";
+                WriteMarker(rootPath, outcome, HaltMessage);
+                return true;
+            }
+
             return false;
         }
 
-        HaltMessage = "commit gate rejected consecutive tasks";
-        WriteMarker(rootPath, outcome, HaltMessage);
-        return true;
+        if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
+        {
+            _consecutiveCommitRejects = 0;
+            _consecutiveFlags++;
+
+            if (_consecutiveFlags >= ConsecutiveFlagThreshold)
+            {
+                HaltMessage = $"drain halted after {_consecutiveFlags} consecutive flagged tasks";
+                WriteMarker(rootPath, outcome, HaltMessage);
+                return true;
+            }
+
+            HaltMessage = $"task {outcome.TaskId} needs review";
+            return false;
+        }
+
+        // Committed (or Failed) — reset both counters.
+        _consecutiveCommitRejects = 0;
+        _consecutiveFlags = 0;
+        return false;
     }
 
     private static void WriteMarker(string rootPath, RelayTaskOutcome outcome, string message)

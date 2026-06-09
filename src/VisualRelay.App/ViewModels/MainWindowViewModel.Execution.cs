@@ -73,15 +73,12 @@ public partial class MainWindowViewModel
             var circuitBreaker = new DrainCircuitBreaker();
             DrainCircuitBreaker.ClearHaltMarker(RootPath);
             var queue = Tasks.Where(task => !task.NeedsReview).ToList();
+            var flaggedCount = 0;
             while (queue.FirstOrDefault() is { } task && !PauseRequested)
             {
                 SelectedTask = task;
                 var outcome = await RunOneAsync(task);
                 queue.Remove(task);
-                if (!ShowArchive)
-                {
-                    Tasks.Remove(task);
-                }
 
                 if (circuitBreaker.ShouldHalt(RootPath, outcome))
                 {
@@ -89,9 +86,26 @@ public partial class MainWindowViewModel
                     await RefreshTasksAfterDrainAsync(outcome.TaskId);
                     return;
                 }
+
+                if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
+                {
+                    flaggedCount++;
+                    // Keep the flagged task visible in the list as NeedsReview.
+                    if (!ShowArchive)
+                    {
+                        Tasks.Remove(task);
+                        Tasks.Add(new TaskRowViewModel(task.Task with { ReviewReason = outcome.Reason ?? "Needs review" }));
+                    }
+                }
+                else if (!ShowArchive)
+                {
+                    Tasks.Remove(task);
+                }
             }
 
-            StatusText = PauseRequested ? "Paused at task boundary" : "Queue drained";
+            StatusText = flaggedCount > 0
+                ? $"Queue drained · {flaggedCount} flagged for review"
+                : PauseRequested ? "Paused at task boundary" : "Queue drained";
             await RefreshTasksAfterDrainAsync();
         });
     }

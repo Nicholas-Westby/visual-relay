@@ -78,6 +78,12 @@ public sealed class RelayQueueController
             results.Add(outcome);
             Tasks.Remove(task);
 
+            if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
+            {
+                WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review");
+                Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
+            }
+
             if (circuitBreaker.ShouldHalt(RootPath, outcome))
             {
                 State = outcome.Reason?.StartsWith("commit rejected:", StringComparison.OrdinalIgnoreCase) == true
@@ -93,8 +99,17 @@ public sealed class RelayQueueController
             }
         }
 
-        State = RelayQueueState.Completed;
+        State = results.Any(r => r.Status == RelayTaskOutcomeStatus.Flagged)
+            ? RelayQueueState.ReviewNeeded
+            : RelayQueueState.Completed;
         return results;
+    }
+
+    private void WriteNeedsReviewMarker(string taskId, string reason)
+    {
+        var relayDirectory = Path.Combine(RootPath, ".relay", taskId);
+        Directory.CreateDirectory(relayDirectory);
+        File.WriteAllText(Path.Combine(relayDirectory, "NEEDS-REVIEW"), reason + Environment.NewLine);
     }
 
     private int IndexOf(string taskId)

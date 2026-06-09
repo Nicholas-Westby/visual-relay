@@ -43,27 +43,173 @@ public sealed class RelayQueueControllerTests
 
         Assert.Equal(["alpha", "beta"], results.Select(r => r.TaskId));
         Assert.Equal(RelayQueueState.Failed, controller.State);
-        Assert.Equal(["gamma"], controller.Tasks.Select(t => t.Id));
+        // Alpha and beta were both flagged and set aside for review; gamma is un-run.
+        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "beta" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && !t.NeedsReview);
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
     }
 
     [Fact]
-    public async Task DrainAsync_HaltsAtFirstTaskThatNeedsReview()
+    public async Task DrainAsync_ContinuesPastIsolatedFlag()
     {
+        // 3 tasks, the middle one Flagged — all 3 must run; the flagged one is
+        // set aside as NeedsReview; the drain does NOT stop after the flag.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
-        var controller = new RelayQueueController(repo.Root, new FlaggingTaskRunner("author-tests did not go red"));
+        repo.WriteTask("gamma", "# Gamma\n");
+        var runner = new ScriptedOutcomeTaskRunner(
+            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "author-tests did not go red"),
+            new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash", "sha", null),
+            new RelayTaskOutcome("gamma", RelayTaskOutcomeStatus.Committed, "hash", "sha", null));
+        var controller = new RelayQueueController(repo.Root, runner);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
 
-        Assert.Equal(["alpha"], results.Select(r => r.TaskId));
+        // All 3 tasks ran.
+        Assert.Equal(["alpha", "beta", "gamma"], runner.TasksRun);
+        Assert.Equal(["alpha", "beta", "gamma"], results.Select(r => r.TaskId));
+
+        // The flagged task is set aside for review.
+        var flaggedTask = controller.Tasks.SingleOrDefault(t => t.Id == "alpha");
+        Assert.NotNull(flaggedTask);
+        Assert.True(flaggedTask!.NeedsReview);
+        Assert.Contains("author-tests did not go red", flaggedTask.ReviewReason, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW")));
+
+        // Completed tasks are removed; the flagged task was re-added.
+        Assert.DoesNotContain(controller.Tasks, t => t.Id == "beta");
+        Assert.DoesNotContain(controller.Tasks, t => t.Id == "gamma");
+
+        // State reflects that at least one task needs review.
         Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
-        Assert.Equal(["beta"], controller.Tasks.Select(t => t.Id));
-        var marker = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED"));
-        Assert.Contains("task alpha needs review", marker, StringComparison.Ordinal);
+
+        // No halt marker — the drain finished (with flags), it didn't halt early.
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
+    }
+
+    [Fact]
+    public async Task DrainAsync_ContinuesPastStalledTaskWithTimeoutReason()
+    {
+        // A stalled task (Flagged with a timeout reason) is treated like any
+        // other flag — skip + continue, not an immediate halt.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        var runner = new ScriptedOutcomeTaskRunner(
+            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "swival timed out after 300s"),
+            new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash", "sha", null));
+        var controller = new RelayQueueController(repo.Root, runner);
+
+        await controller.RefreshAsync();
+        var results = await controller.DrainAsync();
+
+        // Both tasks ran — the timeout flag did not halt the drain.
+        Assert.Equal(["alpha", "beta"], runner.TasksRun);
+        Assert.Equal(["alpha", "beta"], results.Select(r => r.TaskId));
+
+        // The stalled task is set aside for review.
+        var stalledTask = controller.Tasks.SingleOrDefault(t => t.Id == "alpha");
+        Assert.NotNull(stalledTask);
+        Assert.True(stalledTask!.NeedsReview);
+        Assert.Contains("swival timed out", stalledTask.ReviewReason, StringComparison.Ordinal);
+
+        // No halt marker.
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
+    }
+
+    [Fact]
+    public async Task DrainAsync_HaltsAtConsecutiveFlagThreshold()
+    {
+        // ConsecutiveFlagThreshold (3) consecutive flags → drain halts, writes
+        // DRAIN-HALTED, leaves the rest un-run.
+        // Tasks sort alphabetically: alpha, beta, delta, gamma.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        repo.WriteTask("gamma", "# Gamma\n");
+        repo.WriteTask("delta", "# Delta\n");
+        var runner = new ScriptedOutcomeTaskRunner(
+            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "flag one"),
+            new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Flagged, null, null, "flag two"),
+            new RelayTaskOutcome("gamma", RelayTaskOutcomeStatus.Flagged, null, null, "flag three"),
+            new RelayTaskOutcome("delta", RelayTaskOutcomeStatus.Flagged, null, null, "flag four"));
+        var controller = new RelayQueueController(repo.Root, runner);
+
+        await controller.RefreshAsync();
+        var results = await controller.DrainAsync();
+
+        // Alphabetical order: alpha, beta, delta run; gamma is the 4th and
+        // never started because the threshold was reached on delta (3rd flag).
+        Assert.Equal(["alpha", "beta", "delta"], runner.TasksRun);
+        Assert.Equal(["alpha", "beta", "delta"], results.Select(r => r.TaskId));
+
+        // Gamma remains un-run.
+        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && !t.NeedsReview);
+
+        // The three flagged tasks are set aside for review.
+        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "beta" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "delta" && t.NeedsReview);
+
+        // DRAIN-HALTED marker was written.
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
+
+        // State reflects the halt.
+        Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
+    }
+
+    [Fact]
+    public async Task DrainAsync_CommittedBetweenFlagsResetsCounter()
+    {
+        // flag, commit, flag, commit, flag — the Committed outcomes reset the
+        // consecutive-flag counter, so the threshold is never reached and the
+        // drain finishes all tasks.
+        // Tasks sort alphabetically: alpha, beta, delta, epsilon, gamma.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        repo.WriteTask("gamma", "# Gamma\n");
+        repo.WriteTask("delta", "# Delta\n");
+        repo.WriteTask("epsilon", "# Epsilon\n");
+        var runner = new ScriptedOutcomeTaskRunner(
+            new RelayTaskOutcome("alpha", RelayTaskOutcomeStatus.Flagged, null, null, "flag one"),
+            new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Committed, "hash", "sha", null),
+            new RelayTaskOutcome("gamma", RelayTaskOutcomeStatus.Flagged, null, null, "flag two"),
+            new RelayTaskOutcome("delta", RelayTaskOutcomeStatus.Committed, "hash", "sha", null),
+            new RelayTaskOutcome("epsilon", RelayTaskOutcomeStatus.Flagged, null, null, "flag three"));
+        var controller = new RelayQueueController(repo.Root, runner);
+
+        await controller.RefreshAsync();
+        var results = await controller.DrainAsync();
+
+        // All 5 tasks ran — Committed outcomes reset the counter so the
+        // consecutive-flag threshold was never reached.
+        // Alphabetical order: alpha, beta, delta, epsilon, gamma.
+        Assert.Equal(["alpha", "beta", "delta", "epsilon", "gamma"], runner.TasksRun);
+        Assert.Equal(["alpha", "beta", "delta", "epsilon", "gamma"], results.Select(r => r.TaskId));
+
+        // No halt marker.
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
+
+        // State reflects that flagged tasks need review.
+        Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
+
+        // The flagged tasks are set aside for review (alpha, delta, gamma in
+        // alphabetical run order received the three Flagged outcomes).
+        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "delta" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && t.NeedsReview);
+
+        // Committed tasks are removed.
+        Assert.DoesNotContain(controller.Tasks, t => t.Id == "beta");
+        Assert.DoesNotContain(controller.Tasks, t => t.Id == "epsilon");
     }
 
     [Fact]
@@ -165,4 +311,29 @@ internal sealed class FlaggingTaskRunner : IRelayTaskRunner
 
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
         Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, _reason));
+}
+
+/// <summary>
+/// Returns scripted outcomes in FIFO order. When the queue is exhausted, falls
+/// back to Committed so tests don't need to script every task explicitly.
+/// </summary>
+internal sealed class ScriptedOutcomeTaskRunner : IRelayTaskRunner
+{
+    private readonly Queue<RelayTaskOutcome> _outcomes;
+    public List<string> TasksRun { get; } = [];
+
+    public ScriptedOutcomeTaskRunner(params RelayTaskOutcome[] outcomes)
+    {
+        _outcomes = new Queue<RelayTaskOutcome>(outcomes);
+    }
+
+    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
+    {
+        TasksRun.Add(taskId);
+        var outcome = _outcomes.Count > 0
+            ? _outcomes.Dequeue()
+            : new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "sha", null);
+        // Preserve the caller's task id while keeping the scripted status + reason.
+        return Task.FromResult(outcome with { TaskId = taskId });
+    }
 }
