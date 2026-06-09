@@ -72,78 +72,6 @@ internal sealed class InMemoryRelayEventSink : IRelayEventSink
     }
 }
 
-internal sealed class ScriptedSubagentRunner : ISubagentRunner
-{
-    private string _codeFile = "src/app.cs";
-    private string _testFile = "tests/app.tests.cs";
-    private bool _nonCodeOnly;
-    private string _nonCodeFile = "docs/README.md";
-    private bool _codeOnly;
-    private string _codeOnlyFile = "src/View.axaml";
-    private bool _testOnly;
-    private string _testOnlyFile = "tests/regression.cs";
-
-    public void SeedHappyPath(string codeFile, string testFile)
-    {
-        _codeFile = codeFile;
-        _testFile = testFile;
-    }
-
-    // A non-code change: the manifest contains only documentation/config files
-    // (e.g. .md, .txt, .json). Stage 5 returns no testFiles.
-    public void SeedNonCodeOnly(string nonCodeFile)
-    {
-        _nonCodeOnly = true;
-        _nonCodeFile = nonCodeFile;
-    }
-
-    // A code-only change: the manifest contains only implementation code files
-    // (e.g. .axaml, .ts, .py) with no authored tests. Stage 5 returns no testFiles.
-    public void SeedCodeOnly(string codeFile)
-    {
-        _codeOnly = true;
-        _codeOnlyFile = codeFile;
-    }
-
-    // A test-only change: the manifest contains only test files (already covered
-    // by existing tests). Stage 5 returns the test file as a testFile.
-    public void SeedTestOnly(string testFile)
-    {
-        _testOnly = true;
-        _testOnlyFile = testFile;
-    }
-
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        var json = invocation.Stage.Number switch
-        {
-            1 => """{"summary":"framed","options":["small"]}""",
-            2 => """{"findings":"found","constraints":[]}""",
-            3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
-            4 when _nonCodeOnly => $$"""{"plan":"edit docs","manifest":["{{_nonCodeFile}}"]}""",
-            4 when _codeOnly => $$"""{"plan":"edit code","manifest":["{{_codeOnlyFile}}"]}""",
-            4 when _testOnly => $$"""{"plan":"add tests","manifest":["{{_testOnlyFile}}"]}""",
-            4 => $$"""{"plan":"edit files","manifest":["{{_codeFile}}","{{_testFile}}"]}""",
-            5 when _nonCodeOnly => """{"testFiles":[],"rationale":"documentation-only; nothing to unit-test"}""",
-            5 when _codeOnly => """{"testFiles":[],"rationale":"code change without authored tests"}""",
-            5 when _testOnly => $$"""{"testFiles":["{{_testOnlyFile}}"],"rationale":"test-only change"}""",
-            5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"red first"}""",
-            6 => """{"summary":"implemented"}""",
-            7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed review notes"}""",
-            9 => """{"summary":"verified","commitMessages":["feat: implement feature","fix: address edge case","chore: update project files"]}""",
-            10 => """{"summary":"fixed verify"}""",
-            _ => """{"summary":"ok"}"""
-        };
-
-        return Task.FromResult(new SubagentResult(
-            RawText: $"```json{Environment.NewLine}{json}{Environment.NewLine}```",
-            Json: json,
-            IsValid: true,
-            Error: null));
-    }
-}
-
 internal sealed class ScriptedTestRunner : ITestRunner
 {
     private readonly Queue<TestRunResult> _results;
@@ -175,29 +103,6 @@ internal sealed class TimeoutSimulatingTestRunner : ITestRunner
     }
 }
 
-/// <summary>
-/// Wraps a <see cref="ScriptedSubagentRunner"/> and records every
-/// <see cref="StageInvocation"/> passed to <see cref="RunAsync"/> so tests
-/// can assert on prompt data (e.g. <see cref="StageInvocation.LastTestOutput"/>,
-/// <see cref="StageInvocation.TestCommand"/>) that the canned runner ignores.
-/// </summary>
-internal sealed class CapturingSubagentRunner : ISubagentRunner
-{
-    private readonly ScriptedSubagentRunner _inner = new();
-    private readonly List<StageInvocation> _invocations = [];
-
-    public IReadOnlyList<StageInvocation> Invocations => _invocations;
-
-    public void SeedHappyPath(string codeFile, string testFile) =>
-        _inner.SeedHappyPath(codeFile, testFile);
-
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        _invocations.Add(invocation);
-        return _inner.RunAsync(invocation, cancellationToken);
-    }
-}
-
 internal sealed class RecordingTaskRunner : IRelayTaskRunner
 {
     public List<string> TasksRun { get; } = [];
@@ -214,6 +119,50 @@ internal sealed class RecordingTaskRunner : IRelayTaskRunner
         }
 
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "commit", null);
+    }
+}
+
+internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner
+{
+    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, "commit rejected: empty commit"));
+}
+
+internal sealed class FlaggingTaskRunner : IRelayTaskRunner
+{
+    private readonly string _reason;
+
+    public FlaggingTaskRunner(string reason)
+    {
+        _reason = reason;
+    }
+
+    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, _reason));
+}
+
+/// <summary>
+/// Returns scripted outcomes in FIFO order. When the queue is exhausted, falls
+/// back to Committed so tests don't need to script every task explicitly.
+/// </summary>
+internal sealed class ScriptedOutcomeTaskRunner : IRelayTaskRunner
+{
+    private readonly Queue<RelayTaskOutcome> _outcomes;
+    public List<string> TasksRun { get; } = [];
+
+    public ScriptedOutcomeTaskRunner(params RelayTaskOutcome[] outcomes)
+    {
+        _outcomes = new Queue<RelayTaskOutcome>(outcomes);
+    }
+
+    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
+    {
+        TasksRun.Add(taskId);
+        var outcome = _outcomes.Count > 0
+            ? _outcomes.Dequeue()
+            : new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "sha", null);
+        // Preserve the caller's task id while keeping the scripted status + reason.
+        return Task.FromResult(outcome with { TaskId = taskId });
     }
 }
 
@@ -241,79 +190,5 @@ internal static class TestGit
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, stderr);
         return stdout;
-    }
-}
-
-/// <summary>
-/// Wraps an inner <see cref="ISubagentRunner"/> (defaults to <see cref="ScriptedSubagentRunner"/>)
-/// and returns an invalid result for stages at or after <paramref name="flagAtStage"/>,
-/// simulating a flagged run that stops partway through the stage loop.
-/// </summary>
-internal sealed class FlagAtStageSubagentRunner : ISubagentRunner
-{
-    private readonly int _flagAtStage;
-    private readonly ISubagentRunner _inner;
-
-    public FlagAtStageSubagentRunner(int flagAtStage, ISubagentRunner? inner = null)
-    {
-        _flagAtStage = flagAtStage;
-        _inner = inner ?? new ScriptedSubagentRunner();
-    }
-
-    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number < _flagAtStage)
-        {
-            return await _inner.RunAsync(invocation, cancellationToken);
-        }
-
-        // Create the trace directory so RelayAttempt.Next sees this attempt
-        // (matching real Swival behavior where trace dirs exist even for failures).
-        Directory.CreateDirectory(invocation.TraceDirectory);
-        return new SubagentResult(
-            RawText: string.Empty,
-            Json: null,
-            IsValid: false,
-            Error: $"synthetic flag at stage {_flagAtStage}");
-    }
-}
-
-internal static class RepoSetup
-{
-    /// <summary>
-    /// The repository root (where the visual-relay script lives), resolved by
-    /// walking up from the test assembly directory.
-    /// </summary>
-    public static string Root
-    {
-        get
-        {
-            var dir = new DirectoryInfo(AppContext.BaseDirectory);
-            while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "visual-relay")))
-            {
-                dir = dir.Parent;
-            }
-
-            return dir?.FullName
-                ?? throw new InvalidOperationException("Could not find repo root from " + AppContext.BaseDirectory);
-        }
-    }
-
-    /// <summary>
-    /// Copies the project's .githooks/pre-commit into the given repo's .git/hooks/
-    /// and makes it executable. The hook file must exist; otherwise this throws.
-    /// </summary>
-    public static void InstallPreCommitHook(string repoRoot)
-    {
-        var srcPath = Path.Combine(Root, ".githooks", "pre-commit");
-        var hooksDir = Path.Combine(repoRoot, ".git", "hooks");
-        Directory.CreateDirectory(hooksDir);
-        var destPath = Path.Combine(hooksDir, "pre-commit");
-        File.Copy(srcPath, destPath, overwrite: true);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(destPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
     }
 }

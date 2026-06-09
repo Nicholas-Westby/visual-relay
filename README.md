@@ -50,15 +50,27 @@ tools/backend/backend.sh stop     # SIGTERM then SIGKILL, and removes the PID fi
 
 `start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under the git-ignored `.relay-scratch/` (`litellm.pid`, `litellm.log`).
 
-### Provider keys (`.env`)
+### Provider keys
 
-The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap-kimi`, `balanced-kimi`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`. Provide the keys you need in a git-ignored `.env`:
+The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap-kimi`, `balanced-kimi`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.
+
+**Primary location** (always writable, even for brew-installed copies):
 
 ```bash
-cp .env.example .env   # then fill in the provider keys you use
+mkdir -p ~/.config/visual-relay
+# then create ~/.config/visual-relay/.env with KEY=VALUE lines
+# (see .env.example for the full key set)
 ```
 
-`backend.sh start` sources `.env` automatically, and the proxy boots even with no keys set (readiness does not require any provider key). A request only fails if its specific provider key is missing, so you can set just the providers you actually call — `MOONSHOT_API_KEY` (frontier/kimi), `DEEPSEEK_API_KEY` (balanced/cheap), and `HF_TOKEN` (vision/qwen-coder) cover the default pipeline tiers; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` add the `claude` and `gpt-5` aliases.
+**Dev-only fallback** (source checkout):
+
+```bash
+cp .env.example .env   # repo-root .env, git-ignored
+```
+
+**Precedence**: an exported environment variable overrides both files; the user-level file overrides the repo file. The in-app key panel reads and writes the user-level path.
+
+`backend.sh start` loads keys from both locations automatically, and the proxy boots even with no keys set (readiness does not require any provider key). A request only fails if its specific provider key is missing, so you can set just the providers you actually call — `MOONSHOT_API_KEY` (frontier/kimi), `DEEPSEEK_API_KEY` (balanced/cheap), and `HF_TOKEN` (vision/qwen-coder) cover the default pipeline tiers; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` add the `claude` and `gpt-5` aliases.
 
 ## What It Does
 

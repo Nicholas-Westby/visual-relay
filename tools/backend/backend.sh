@@ -92,12 +92,46 @@ backend: could not start the model backend (litellm) on ${BASE_URL}.
   Launch normally provisions litellm into ${VENV_DIR} using uv. To enable it:
     1. Install uv (one-time):  curl -LsSf https://astral.sh/uv/install.sh | sh
        (uv fetches a pinned Python ${PYTHON_VERSION} and litellm[proxy] for you.)
-    2. Provide provider keys:  cp .env.example .env   (then fill in the keys)
+    2. Provide provider keys:  see .env.example and place them in
+       ~/.config/visual-relay/.env (user-level, always writable).
     3. Start it again:         tools/backend/backend.sh start
 
 Visual Relay still launches without the backend; tasks that call the model will
 surface a "backend down" message from the in-app pre-flight probe.
 EOF
+}
+
+# Source a dotenv file, exporting each KEY=VALUE only when that variable is not
+# already set in the environment (process env always wins). Blank lines and
+# #-comments are skipped; surrounding single/double quotes are stripped from
+# values so both KEY=val and KEY="val" round-trip correctly.
+load_env_file_if_unset() {
+  local file="$1"
+  [[ -f "${file}" ]] || return 0
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    # Trim leading/trailing whitespace.
+    local trimmed
+    trimmed="${line#"${line%%[![:space:]]*}"}"
+    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    # Skip blanks (including whitespace-only) and comments.
+    [[ -z "${trimmed}" || "${trimmed}" == "#"* ]] && continue
+    # Split on first '='; skip lines without '='.
+    [[ "${trimmed}" == *"="* ]] || continue
+    local key="${trimmed%%=*}"
+    local value="${trimmed#*=}"
+    # Trim whitespace from the key; skip empty keys (e.g. " =value").
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    [[ -n "${key}" ]] || continue
+    # Strip surrounding quotes (single or double) from the value.
+    if [[ "${value}" =~ ^\"(.*)\"$ || "${value}" =~ ^\'(.*)\'$ ]]; then
+      value="${BASH_REMATCH[1]}"
+    fi
+    # Only export when the variable is not already set in the process env.
+    if [[ -z "${!key:-}" ]]; then
+      export "${key}=${value}"
+    fi
+  done < "${file}"
 }
 
 # --- Subcommands -------------------------------------------------------------
@@ -127,13 +161,18 @@ cmd_start() {
       return 1
     fi
 
-    # Load provider keys from .env if present (keys are read via os.environ).
+    # Load provider keys with 3-tier precedence:
+    #   1. process env (already set)         ← always wins
+    #   2. user-level ~/.config/visual-relay/.env
+    #   3. repo .env (dev-only fallback)
+    local user_env="${XDG_CONFIG_HOME:-$HOME/.config}/visual-relay/.env"
+    if [[ -f "${user_env}" ]]; then
+      log "loading provider keys from ${user_env}"
+      load_env_file_if_unset "${user_env}"
+    fi
     if [[ -f "${REPO_ROOT}/.env" ]]; then
-      log "loading provider keys from .env"
-      set -a
-      # shellcheck disable=SC1091
-      . "${REPO_ROOT}/.env"
-      set +a
+      log "loading provider keys from ${REPO_ROOT}/.env (dev fallback)"
+      load_env_file_if_unset "${REPO_ROOT}/.env"
     fi
 
     # Use httpx instead of litellm's default aiohttp transport. The aiohttp
