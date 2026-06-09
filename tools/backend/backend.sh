@@ -136,6 +136,15 @@ cmd_start() {
       set +a
     fi
 
+    # Use httpx instead of litellm's default aiohttp transport. The aiohttp
+    # transport does not enforce the read timeout while waiting for the FIRST
+    # response byte, so a request that gets no response at all (a pre-stream hang)
+    # is unbounded and only the relay's 20-min subagent kill ends it (observed:
+    # careers-page-net + fix-timing-estimates stage-10 stalls). Under httpx the
+    # stream_timeout/request_timeout read bound applies to the first byte too, so
+    # such a hang fails fast (~stream_timeout) and cascades to the fallbacks.
+    export DISABLE_AIOHTTP_TRANSPORT="${DISABLE_AIOHTTP_TRANSPORT:-True}"
+
     # Transport-independent total wall-clock cap per streaming attempt. The
     # default aiohttp transport sets no total timeout, so this is the guaranteed
     # backstop behind router_settings.stream_timeout: on exceed, litellm raises a
