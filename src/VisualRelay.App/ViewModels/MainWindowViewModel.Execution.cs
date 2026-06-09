@@ -169,20 +169,28 @@ public partial class MainWindowViewModel
     private async Task<bool> EnsureRunnableAsync(string? pendingTaskId)
     {
         var result = await RelayConfigLoader.TryLoadAsync(RootPath);
-        if (result.IsRunnable)
+        if (!result.IsRunnable)
         {
-            NeedsInitialization = false;
-            ConfigDiagnostic = null;
-            return true;
+            _pendingRunTaskId = pendingTaskId;
+            NeedsInitialization = result.NeedsInitialization;
+            ConfigDiagnostic = result.Status == RelayConfigStatus.Malformed ? result.Diagnostic : null;
+            StatusText = result.Status == RelayConfigStatus.Malformed
+                ? result.Diagnostic!
+                : "No usable .relay/config.json — initialize this project to run.";
+            return false;
         }
 
-        _pendingRunTaskId = pendingTaskId;
-        NeedsInitialization = result.NeedsInitialization;
-        ConfigDiagnostic = result.Status == RelayConfigStatus.Malformed ? result.Diagnostic : null;
-        StatusText = result.Status == RelayConfigStatus.Malformed
-            ? result.Diagnostic!
-            : "No usable .relay/config.json — initialize this project to run.";
-        return false;
+        // Config is present — now gate on HF_TOKEN, the floor under every tier.
+        if (!IsHuggingFaceConfigured)
+        {
+            _pendingHfRunTaskId = pendingTaskId;
+            StatusText = HfGateMessage;
+            return false;
+        }
+
+        NeedsInitialization = false;
+        ConfigDiagnostic = null;
+        return true;
     }
 
     private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task, bool resume = false)

@@ -235,6 +235,10 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             await RefreshBackendStatusAsync();
         }
+
+        // Populate key states so the key panel and HF gate are accurate from
+        // the first moment the window is shown.
+        await RefreshKeyStatesAsync();
     }
 
     // Reusable seam: probes the model backend once and updates the VM state.
