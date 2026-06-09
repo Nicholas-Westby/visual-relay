@@ -4,19 +4,36 @@ Visual Relay is an Avalonia desktop control room for Relay-style LLM task proces
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
 
-## Run
+## Install
 
-Use the single entry point from the repository root:
+```bash
+brew install nicholas-westby/tap/visual-relay
+```
+
+This installs a self-contained Visual Relay — **no .NET SDK or runtime required**. The
+only prerequisite is `uv` (pulled automatically by Homebrew), which the model backend
+uses to provision LiteLLM on first launch.
+
+> **Important**: install via `brew` or `curl`, never download a `.tar.gz` through a
+> browser. A browser download re-applies the `com.apple.quarantine` attribute, which
+> triggers Gatekeeper. Installing via a Homebrew **formula** (not a cask) uses
+> `curl` + `tar` internally — neither sets the quarantine flag — so `visual-relay
+> launch` runs with **no Gatekeeper prompt and no notarization**. This is a terminal
+> app for developers; there is no `.app` bundle to double-click.
+
+After installing, run `visual-relay init` in your own repository (it auto-detects
+your test command and writes `.relay/config.json`), then `visual-relay launch`.
+
+## Run (source checkout)
+
+If you are working from a source clone instead, use the launcher from the repo root:
 
 ```bash
 ./visual-relay launch
 ```
 
-The app opens with a native folder picker button. For a quick end-to-end trial, choose:
-
-```text
-/Users/admin/Dev/sample-tasks
-```
+The app opens with a native folder picker button. Point it at a repo containing
+`llm-tasks/` directories.
 
 Common commands:
 
@@ -24,15 +41,16 @@ Common commands:
 ./visual-relay build
 ./visual-relay test
 ./visual-relay check
-./visual-relay screenshot
-./visual-relay sample-reset /Users/admin/Dev/sample-tasks
-./visual-relay run-task /Users/admin/Dev/sample-tasks add-multiply
 ./visual-relay install-hooks
 ```
 
-The launcher uses an existing `dotnet` installation when available. If `dotnet` is missing and `nix` is installed, it automatically re-enters the command through `nix develop`, so a separate shell step is not required.
+The launcher uses an existing `dotnet` installation when available. If `dotnet` is
+missing and `nix` is installed, it automatically re-enters the command through
+`nix develop`, so a separate shell step is not required.
 
-The generated sample repository also includes `./scripts/reset-sample.sh`, which returns it to three pending tasks and commits that reset state after a real run.
+See [AGENTS.md](AGENTS.md) for contributor dev tooling (the `sample` tooling,
+`run-task`, `screenshot`) — those are source-checkout-only and not shipped in the
+Homebrew formula.
 
 ## Model Backend
 
@@ -92,7 +110,7 @@ cp .env.example .env   # repo-root .env, git-ignored
 - `.githooks/commit-msg` enforces Conventional Commits after `./visual-relay install-hooks`.
 - `tools/guards/check-file-size.sh` keeps C# and Avalonia XAML source files under 300 lines by default.
 - `tools/VisualRelay.Screenshots` renders the README screenshots through Avalonia Headless at desktop and compact widths.
-- `tools/VisualRelay.SampleTasks` regenerates `/Users/admin/Dev/sample-tasks` with a local reset script for repeatable demos.
+- `tools/VisualRelay.SampleTasks` (dev-only, not shipped in brew) regenerates a sample tasks repo for repeatable demos — see [AGENTS.md](AGENTS.md).
 
 ## Tests
 
@@ -102,4 +120,4 @@ cp .env.example .env   # repo-root .env, git-ignored
 
 The current automated coverage includes config loading, task discovery, archive listing, cost estimation, review-marker surfacing, nested task context, queue reordering, pause-at-boundary, stage log filtering, trace parsing, Swival profile/trace handling, crash flagging, and mocked staged driver artifacts.
 
-Real smoke last run: `./visual-relay run-task /Users/admin/Dev/sample-tasks nested-todo-summary` completed stages 1-11, streamed trace events, ran the Python tests red/green, committed `81013f0`, and archived the nested task folder under `llm-tasks/completed/batch-1`.
+Real smoke last run (source-checkout dev tooling, see [AGENTS.md](AGENTS.md)): `./visual-relay run-task` completed stages 1-11, streamed trace events, ran the Python tests red/green, committed `81013f0`, and archived the nested task folder under `llm-tasks/completed/batch-1`.

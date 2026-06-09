@@ -27,3 +27,18 @@ run).
 
 See `README.md` for the full project overview and `TROUBLESHOOTING.md` for diagnosing the
 dev loop.
+
+## Sample Tasks (dev-only)
+
+The following tools are available in source checkouts but are **not shipped** in the
+Homebrew formula:
+
+- `./visual-relay sample-reset <path>` — regenerates a sample tasks repository with
+  repeatable demo state (runs `tools/VisualRelay.SampleTasks`).
+- `./visual-relay run-task <path> <task>` — runs a single task headlessly through the
+  full Relay pipeline (runs `tools/VisualRelay.RunTask`).
+- `./visual-relay screenshot` — renders README screenshots via Avalonia Headless
+  (runs `tools/VisualRelay.Screenshots`).
+
+These require a .NET SDK and a full source checkout. Brew-installed users only have
+`launch` and `init`.

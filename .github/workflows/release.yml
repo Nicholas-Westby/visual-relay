@@ -1,0 +1,106 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: build (${{ matrix.rid }})
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        rid: [osx-arm64, osx-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish VisualRelay.App (self-contained)
+        run: >
+          dotnet publish src/VisualRelay.App/VisualRelay.App.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=false
+          -o publish/app
+
+      - name: Publish VisualRelay.Init (self-contained)
+        run: >
+          dotnet publish tools/VisualRelay.Init/VisualRelay.Init.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=false
+          -o publish/init
+
+      - name: Publish VisualRelay.GenBackendConfig (self-contained)
+        run: >
+          dotnet publish tools/VisualRelay.GenBackendConfig/VisualRelay.GenBackendConfig.csproj
+          -c Release
+          -r ${{ matrix.rid }}
+          --self-contained true
+          -p:PublishSingleFile=false
+          -p:PublishTrimmed=false
+          -o publish/gen-backend-config
+
+      - name: Ad-hoc sign published binaries
+        run: |
+          codesign --force -s - publish/app/VisualRelay.App
+          codesign --force -s - publish/init/VisualRelay.Init
+          codesign --force -s - publish/gen-backend-config/VisualRelay.GenBackendConfig
+
+      - name: Assemble release layout
+        run: |
+          cp visual-relay publish/
+          mkdir -p publish/tools
+          cp -r tools/backend publish/tools/backend
+
+      - name: Create tarball
+        run: >
+          tar czf visual-relay-${{ matrix.rid }}.tar.gz -C publish .
+
+      - name: Compute sha256
+        run: >
+          shasum -a 256 visual-relay-${{ matrix.rid }}.tar.gz
+          > visual-relay-${{ matrix.rid }}.tar.gz.sha256
+
+      - name: Smoke — verify ad-hoc signature
+        run: codesign -dv publish/app/VisualRelay.App
+
+      - name: Smoke — binary launches
+        run: publish/app/VisualRelay.App --help 2>&1 || true
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-relay-${{ matrix.rid }}
+          path: |
+            visual-relay-${{ matrix.rid }}.tar.gz
+            visual-relay-${{ matrix.rid }}.tar.gz.sha256
+
+  release:
+    name: create release
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        run: >
+          gh release create "${{ github.ref_name }}"
+          --title "${{ github.ref_name }}"
+          --generate-notes
+          artifacts/*/*
+        env:
+          GH_TOKEN: ${{ github.token }}

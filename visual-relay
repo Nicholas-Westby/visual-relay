@@ -1,21 +1,36 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve this script's real directory (follow symlinks for brew installs).
+SCRIPT_DIR="$(
+  target="${BASH_SOURCE[0]}"
+  while [[ -L "$target" ]]; do
+    target="$(readlink "$target")"
+    [[ "$target" != /* ]] && target="$(dirname "${BASH_SOURCE[0]}")/$target"
+  done
+  cd "$(dirname "$target")" && pwd
+)"
+
 cmd="${1:-launch}"
 shift || true
 export AVALONIA_TELEMETRY_OPTOUT=1
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export MSBUILDDISABLENODEREUSE=1
 
-needs_dotnet=0
-case "$cmd" in
-  launch|run|build|test|format|screenshot|sample-reset|run-task|init|check|gen-backend-config)
-    needs_dotnet=1
-    ;;
-esac
+# Published (self-contained) binary paths — present only in brew installs.
+PUBLISHED_APP="$SCRIPT_DIR/app/VisualRelay.App"
+PUBLISHED_INIT="$SCRIPT_DIR/init/VisualRelay.Init"
+PUBLISHED_GC="$SCRIPT_DIR/gen-backend-config/VisualRelay.GenBackendConfig"
+HAS_PUBLISHED=0
+[[ -x "$PUBLISHED_APP" ]] && HAS_PUBLISHED=1
 
-if (( needs_dotnet )) && ! command -v dotnet >/dev/null 2>&1; then
-  nix_bin=""
+# ---------- dotnet bootstrap (used by dotnet-only dispatch cases) ----------
+_require_dotnet() {
+  if command -v dotnet >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local nix_bin=""
   if command -v nix >/dev/null 2>&1; then
     nix_bin="$(command -v nix)"
   elif [[ -x /nix/var/nix/profiles/default/bin/nix ]]; then
@@ -31,7 +46,7 @@ if (( needs_dotnet )) && ! command -v dotnet >/dev/null 2>&1; then
 
   echo "visual-relay: dotnet not found. Install .NET 10 or run: nix develop" >&2
   exit 127
-fi
+}
 
 # ---------- watchdog ----------
 _timeout_watchdog() {
@@ -94,37 +109,48 @@ _timeout_watchdog() {
   return "$cmd_rc"
 }
 
+# ---------- dispatch ----------
 case "$cmd" in
   launch|run)
     # Best-effort: bring the local model backend up before launching so a fresh
     # launch can run a task without a manual proxy step. Idempotent and fast
     # when already healthy; if it fails (e.g. litellm not installed) the launch
     # still proceeds and the in-app pre-flight probe surfaces the down backend.
-    tools/backend/backend.sh start || \
+    "$SCRIPT_DIR/tools/backend/backend.sh" start || \
       echo "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)" >&2
+    if (( HAS_PUBLISHED )); then
+      exec "$PUBLISHED_APP" "$@"
+    fi
+    _require_dotnet
     dotnet run --project src/VisualRelay.App/VisualRelay.App.csproj -- "$@"
     ;;
   build)
+    _require_dotnet
     tools/guards/guard-source-enumeration.sh
     dotnet build VisualRelay.slnx -m:1 -p:UseSharedCompilation=false "$@"
     ;;
   test)
+    _require_dotnet
     _timeout_watchdog dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false "$@"
     ;;
   format)
+    _require_dotnet
     dotnet format VisualRelay.slnx "$@"
     ;;
   screenshot)
+    _require_dotnet
     dotnet run --project tools/VisualRelay.Screenshots/VisualRelay.Screenshots.csproj -- docs/images/visual-relay-main.png
     dotnet run --project tools/VisualRelay.Screenshots/VisualRelay.Screenshots.csproj -- docs/images/visual-relay-compact.png 1060 720
     ;;
-  sample-reset)
-    dotnet run --project tools/VisualRelay.SampleTasks/VisualRelay.SampleTasks.csproj -- "${1:-../sample-tasks}"
-    ;;
   run-task)
+    _require_dotnet
     dotnet run --project tools/VisualRelay.RunTask/VisualRelay.RunTask.csproj -- "$@"
     ;;
   init)
+    if [[ -x "$PUBLISHED_INIT" ]]; then
+      exec "$PUBLISHED_INIT" "$@"
+    fi
+    _require_dotnet
     dotnet run --project tools/VisualRelay.Init/VisualRelay.Init.csproj -- "$@"
     ;;
   install-hooks)
@@ -132,6 +158,7 @@ case "$cmd" in
     chmod +x .githooks/commit-msg .githooks/pre-commit tools/guards/check-file-size.sh visual-relay
     ;;
   check)
+    _require_dotnet
     tools/guards/guard-source-enumeration.sh
     tools/guards/check-file-size.sh
     dotnet format VisualRelay.slnx --verify-no-changes
@@ -142,10 +169,32 @@ case "$cmd" in
     dotnet run --no-build --project tools/VisualRelay.Screenshots/VisualRelay.Screenshots.csproj -- docs/images/visual-relay-compact.png 1060 720
     ;;
   gen-backend-config)
+    if [[ -x "$PUBLISHED_GC" ]]; then
+      exec "$PUBLISHED_GC" "$@"
+    fi
+    _require_dotnet
     dotnet run --project tools/VisualRelay.GenBackendConfig/VisualRelay.GenBackendConfig.csproj -- "$@"
     ;;
   *)
-    echo "usage: ./visual-relay [launch|build|test|format|screenshot|sample-reset|run-task|init|install-hooks|check|gen-backend-config]" >&2
+    echo "usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|install-hooks|check|gen-backend-config]" >&2
     exit 2
+    ;;
+esac
+
+# ── needs_dotnet summary (for test assertions) ─────────────────────────────
+needs_dotnet=0
+case "$cmd" in
+  build|test|format|screenshot|run-task|check)
+    needs_dotnet=1
+    # build, test, check, format, screenshot, run-task (always require dotnet)
+    ;;
+  launch|run)
+    (( HAS_PUBLISHED )) || needs_dotnet=1
+    ;;
+  init)
+    [[ -x "$PUBLISHED_INIT" ]] || needs_dotnet=1
+    ;;
+  gen-backend-config)
+    [[ -x "$PUBLISHED_GC" ]] || needs_dotnet=1
     ;;
 esac

@@ -15,6 +15,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
+# When REPO_ROOT is not writable (brew install at root-owned libexec/),
+# redirect writable paths to the user's XDG data directory so the scratch
+# dir and the litellm venv are always user-owned.
+if [[ -w "${REPO_ROOT}" ]]; then
+  VENV_DIR="${SCRIPT_DIR}/.venv"                 # git-ignored; provisioned via uv
+  SCRATCH="${REPO_ROOT}/.relay-scratch"          # git-ignored
+else
+  DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/visual-relay"
+  VENV_DIR="${DATA_HOME}/backend-venv"
+  SCRATCH="${DATA_HOME}/scratch"
+fi
+
 HOST="127.0.0.1"
 PORT="4000"
 BASE_URL="http://${HOST}:${PORT}"          # == ModelBackend.BaseUrl
@@ -22,11 +34,9 @@ READINESS_URL="${BASE_URL}/health/readiness" # == ModelBackend.ReadinessUrl
 CONFIG="${SCRIPT_DIR}/litellm-config.yaml"  # static template; may be replaced by generated config
 
 PYTHON_VERSION="3.13"                          # litellm's uvloop crashes on 3.14+
-VENV_DIR="${SCRIPT_DIR}/.venv"                 # git-ignored; provisioned via uv
 VENV_PY="${VENV_DIR}/bin/python"
 LITELLM_BIN="${VENV_DIR}/bin/litellm"
 
-SCRATCH="${REPO_ROOT}/.relay-scratch"        # git-ignored
 PID_FILE="${SCRATCH}/litellm.pid"
 LOG_FILE="${SCRATCH}/litellm.log"
 
