@@ -136,6 +136,12 @@ cmd_start() {
       set +a
     fi
 
+    # Transport-independent total wall-clock cap per streaming attempt. The
+    # default aiohttp transport sets no total timeout, so this is the guaranteed
+    # backstop behind router_settings.stream_timeout: on exceed, litellm raises a
+    # fallback-eligible timeout and cascades to the next provider. Override-able.
+    export LITELLM_MAX_STREAMING_DURATION_SECONDS="${LITELLM_MAX_STREAMING_DURATION_SECONDS:-240}"
+
     log "starting litellm proxy on ${BASE_URL} (logs: ${LOG_FILE})"
     # Disown so the proxy outlives this script; capture stdout+stderr to the log.
     nohup "${LITELLM_BIN}" --config "${CONFIG}" --host "${HOST}" --port "${PORT}" \
