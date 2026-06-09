@@ -69,10 +69,14 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         var result = await ProcessCapture.RunAsync(_swivalBinary, arguments, invocation.TargetRoot, timeout, cancellationToken);
         if (result.TimedOut)
         {
-            var reason = $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
-                "If swival was running a test command that hung, fix the hang and in the interim " +
-                "re-run only the specific tests you need rather than the whole suite (use a targeted " +
-                "subset for this project, e.g. the TestFileCommand \"{files}\" pattern).";
+            var noTrace = !Directory.EnumerateFileSystemEntries(invocation.TraceDirectory).Any();
+            var noOutput = string.IsNullOrWhiteSpace(result.Output);
+            var reason = noOutput && noTrace
+                ? $"swival produced no output before the {_config.SubagentTimeoutMilliseconds}ms timeout — likely a stalled model-backend call (check backend latency / the /v1/chat/completions path or backend logs), not a hung test command."
+                : $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
+                  "If swival was running a test command that hung, fix the hang and in the interim " +
+                  "re-run only the specific tests you need rather than the whole suite (use a targeted " +
+                  "subset for this project, e.g. the TestFileCommand \"{files}\" pattern).";
             return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
         }
 

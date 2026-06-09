@@ -196,6 +196,54 @@ public sealed class SwivalSubagentRunnerTests
         Assert.DoesNotContain("## Verify command", captured, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task RunAsync_TimeoutWithNoOutput_ReportsStalledBackend()
+    {
+        using var repo = TestRepository.Create();
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-stalled-backend",
+            """
+            #!/usr/bin/env bash
+            sleep 60
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+
+        var result = await runner.RunAsync(Invocation(repo.Root));
+
+        Assert.False(result.IsValid);
+        Assert.Contains("stalled model-backend call", result.Error, StringComparison.Ordinal);
+        Assert.DoesNotContain("re-run only the specific tests", result.Error, StringComparison.Ordinal);
+        Assert.Contains("5000ms", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_TimeoutWithPartialOutput_ReportsHungTestCommand()
+    {
+        using var repo = TestRepository.Create();
+        var script = await WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-hung-test",
+            """
+            #!/usr/bin/env bash
+            while [[ $# -gt 0 ]]; do
+              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
+            done
+            echo "partial test output" >&2
+            mkdir -p "$trace_dir"
+            printf '%s\n' '{"type":"test","message":"running suite"}' > "$trace_dir/trace.jsonl"
+            sleep 60
+            """);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+
+        var result = await runner.RunAsync(Invocation(repo.Root));
+
+        Assert.False(result.IsValid);
+        Assert.Contains("test command that hung", result.Error, StringComparison.Ordinal);
+        Assert.Contains("re-run only the specific tests", result.Error, StringComparison.Ordinal);
+        Assert.Contains("5000ms", result.Error, StringComparison.Ordinal);
+    }
+
     private static StageInvocation Invocation(string rootPath) =>
         new(
             RelayStages.All[0],
