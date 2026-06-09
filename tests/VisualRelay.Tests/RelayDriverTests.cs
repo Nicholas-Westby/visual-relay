@@ -181,19 +181,52 @@ public sealed class RelayDriverTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_ManifestContainingTasksDirPath_FlagsTheRun()
+    public async Task RunTaskAsync_ManifestContainingTasksDirPath_DropsEntriesAndProceeds()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("bad-manifest", "# Bad manifest\n");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),
+            new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new BadManifestSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(new BadManifestSubagentRunner(), tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bad-manifest");
 
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("manifest may not include task files", outcome.Reason, StringComparison.Ordinal);
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.DoesNotContain("manifest may not include task files", outcome.Reason ?? "", StringComparison.Ordinal);
+
+        var manifestContent = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "bad-manifest", "manifest.txt"));
+        Assert.Contains("src/real.cs", manifestContent, StringComparison.Ordinal);
+        Assert.DoesNotContain("llm-tasks/", manifestContent, StringComparison.Ordinal);
+
+        var ledgerContent = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "bad-manifest", "ledger.md"));
+        Assert.Contains("> **Note**: dropped 1 task-dir entry from manifest: `llm-tasks/extra.md`", ledgerContent, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_ManifestWithOnlyTaskDirEntries_DropsAllAndProceeds()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("only-task-dir", "# Only task dir\n");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(new OnlyTaskDirManifestSubagentRunner(), new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "only-task-dir");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.DoesNotContain("manifest may not include task files", outcome.Reason ?? "", StringComparison.Ordinal);
+
+        var manifestContent = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "only-task-dir", "manifest.txt"));
+        // Empty manifest: only the trailing newline written by WriteManifestAsync
+        Assert.Equal(Environment.NewLine, manifestContent);
+
+        var ledgerContent = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "only-task-dir", "ledger.md"));
+        Assert.Contains("> **Note**: dropped 2 task-dir entries from manifest: `llm-tasks/a.md`, `llm-tasks/b.md`", ledgerContent, StringComparison.Ordinal);
     }
 
     [Fact]

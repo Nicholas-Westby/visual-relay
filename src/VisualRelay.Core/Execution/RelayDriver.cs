@@ -102,11 +102,25 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     if (stage.Number == 4)
                     {
                         manifest.Clear();
-                        manifest.AddRange(ReadStringArray(json, "manifest").Distinct(StringComparer.Ordinal));
-                        var bad = manifest.FirstOrDefault(e => IsPathUnderDirectory(rootPath, e, config.TasksDir));
-                        if (bad is not null)
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 4,
-                                $"manifest may not include task files under \"{config.TasksDir}\" (found \"{bad}\")", null, statusEntries, cancellationToken);
+                        var raw = ReadStringArray(json, "manifest").Distinct(StringComparer.Ordinal).ToList();
+                        var dropped = new List<string>();
+                        var clean = new List<string>();
+                        foreach (var e in raw)
+                        {
+                            if (IsPathUnderDirectory(rootPath, e, config.TasksDir))
+                                dropped.Add(e);
+                            else
+                                clean.Add(e);
+                        }
+                        manifest.AddRange(clean);
+                        if (dropped.Count > 0)
+                        {
+                            var note = dropped.Count == 1
+                                ? $"> **Note**: dropped 1 task-dir entry from manifest: `{dropped[0]}`"
+                                : $"> **Note**: dropped {dropped.Count} task-dir entries from manifest: {string.Join(", ", dropped.Select(d => $"`{d}`"))}";
+                            ledger.AppendLine(note);
+                            ledger.AppendLine();
+                        }
                         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
                     }
 

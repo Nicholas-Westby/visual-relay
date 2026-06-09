@@ -103,9 +103,9 @@ public sealed class RelayDriverStatusTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("mid-flag", "# Mid flag\n");
-        // Stage 1-3 pass, stage 4 returns a bad manifest → flags
+        // Stage 1-3 pass, stage 4 returns invalid → flags
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new BadManifestSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(new FlagAtStageSubagentRunner(4), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mid-flag");

@@ -82,6 +82,32 @@ internal sealed class BadManifestSubagentRunner : ISubagentRunner
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
             4 => """{"plan":"edit files","manifest":["llm-tasks/extra.md","src/real.cs"]}""",
+            5 => """{"testFiles":["tests/real.tests.cs"],"rationale":"red first"}""",
+            6 => """{"summary":"implemented"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"no changes"}""",
+            9 => """{"summary":"verified","commitMessages":["feat: add real feature"]}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
+internal sealed class OnlyTaskDirManifestSubagentRunner : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
+            4 => """{"plan":"bookkeeping","manifest":["llm-tasks/a.md","llm-tasks/b.md"]}""",
+            5 => """{"testFiles":[],"rationale":"no code changes"}""",
+            6 => """{"summary":"nothing to implement"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"no changes needed"}""",
+            9 => """{"summary":"verified","commitMessages":["chore: bookkeeping"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
