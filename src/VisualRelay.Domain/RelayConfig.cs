@@ -13,4 +13,9 @@ public sealed record RelayConfig(
     bool ArchiveOnDone,
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
-    bool BypassSandbox = false);
+    // Default true: the nono sandbox wrapping added by the sandbox-1 task invokes
+    // swival with `--sandbox nono --nono-profile vr-guard --nono-rollback`, an
+    // interface nono v0.62.0 does not accept (it prints its version and exits 1),
+    // which breaks EVERY swival call. Bypassed by default until the nono integration
+    // is implemented against nono's real CLI; set bypassSandbox:false to re-enable.
+    bool BypassSandbox = true);

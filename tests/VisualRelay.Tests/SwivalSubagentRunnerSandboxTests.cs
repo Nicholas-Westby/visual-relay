@@ -10,9 +10,9 @@ public sealed class SwivalSubagentRunnerSandboxTests
         Task.FromResult(new BackendReadiness(true, null));
 
     [Fact]
-    public void BuildArguments_DefaultConfig_IncludesSandboxFlags()
+    public void BuildArguments_SandboxEnabled_IncludesSandboxFlags()
     {
-        var config = TestConfig(); // BypassSandbox defaults to false
+        var config = TestConfig() with { BypassSandbox = false }; // sandbox explicitly enabled (default is now bypass)
         var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
         var invocation = Invocation(Path.GetTempPath());
 
@@ -50,7 +50,7 @@ public sealed class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildArguments_BypassSandboxFalse_DoesNotBlockNetwork()
     {
-        var config = TestConfig(); // BypassSandbox == false, sandbox on
+        var config = TestConfig() with { BypassSandbox = false }; // sandbox on
         var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
         var invocation = Invocation(Path.GetTempPath());
 

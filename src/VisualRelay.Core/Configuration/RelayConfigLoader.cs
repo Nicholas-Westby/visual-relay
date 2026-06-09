@@ -26,7 +26,9 @@ public static class RelayConfigLoader
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 1_200_000,
             TestTimeoutMilliseconds: 300_000,
-            BypassSandbox: false);
+            // See RelayConfig.BypassSandbox: nono wrapping is broken (exits 1), so
+            // bypass by default until the nono integration is fixed.
+            BypassSandbox: true);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
