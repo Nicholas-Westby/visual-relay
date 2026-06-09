@@ -21,6 +21,11 @@ model_list:
     litellm_params:
       model: moonshot/kimi-k2.6
       api_key: os.environ/MOONSHOT_API_KEY
+      # frontier override: kimi-k2 runs the Review stage, whose reasoning
+      # legitimately takes up to ~410s before the first token (p99 331s, max 412s).
+      # A high per-stream timeout keeps the router's global stream_timeout: 60 from
+      # aborting a healthy slow Review; the frontier 660s watchdog is the backstop.
+      stream_timeout: 600
 
   # --- DeepSeek (first-party) ---------------------------------------------
   # Per-model timeout (s): DeepSeek intermittently hangs at byte 0 under sustained
@@ -85,15 +90,16 @@ model_list:
 # Re-target the right-hand side when a new winner shows up; clients keep asking
 # for the tier name. These are the tier names Visual Relay's swival profiles use.
 router_settings:
-  # Per-stream inter-chunk timeout (seconds) for stream=True calls. LiteLLM's
-  # default aiohttp transport sets no total timeout, so a streaming response that
-  # stalls mid-stream (zero tokens) is otherwise unbounded and only the relay's
-  # 20-minute subagent kill ends it (observed: careers-page-net stage 10 hung the
-  # full 20 min). This bounds the gap between chunks; it is rearmed on every token
-  # so it never cuts a legit steady stream, but a true stall trips it and cascades
-  # to the fallbacks below. (request_timeout in litellm_settings does not cover
-  # streaming under the aiohttp transport.)
-  stream_timeout: 120
+  # Per-stream first-byte/read timeout (s) for stream=True calls — the ONLY timeout
+  # litellm honours for streaming (request_timeout and per-model litellm_params.timeout
+  # are ignored for stream=True; see router.py _get_stream_timeout). On a byte-0 hang
+  # litellm fails over to the `fallbacks` below after ~stream_timeout. This MUST be
+  # below the relay's per-tier first-output watchdog (cheap 90s / balanced 120s), or
+  # the watchdog kills swival before the fallback can fire — which is exactly why
+  # failover never happened at 120s. 60s lets the fallback win for the fast tiers.
+  # frontier (kimi-k2) overrides this via its own per-model stream_timeout, since its
+  # Review reasoning legitimately takes up to ~410s before the first token.
+  stream_timeout: 60
   model_group_alias:
     frontier: kimi-k2
     # The "-kimi" suffix on the balanced/cheap tiers is a Swival quirk (it only
