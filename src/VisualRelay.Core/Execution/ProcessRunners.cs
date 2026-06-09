@@ -23,6 +23,18 @@ public sealed class ShellTestRunner : ITestRunner
 public sealed class SwivalSubagentRunner : ISubagentRunner
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
+
+    // The nono capability-sandbox binary used to wrap swival when the sandbox is
+    // enabled (BypassSandbox == false). nono is the WRAPPER command that runs
+    // swival — `nono run <flags> -- swival <args>` — not flags passed to swival.
+    private const string NonoBinary = "nono";
+
+    // The vr-guard profile (~/.config/nono/profiles/vr-guard.json, extends the
+    // registry-managed `swival` pack profile) grants broad read + network and
+    // confines writes/deletes to the granted workspace. workdir.access=readwrite
+    // in the swival profile means --allow-cwd grants read+write to the cwd.
+    private const string NonoProfile = "vr-guard";
+
     private readonly RelayConfig _config;
     private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
@@ -70,11 +82,12 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
                 : RelayTraceTailer.Start(traceDir, (entry, token) => PublishTraceAsync(attemptInvocation, entry, token));
             var arguments = BuildArguments(attemptInvocation);
             arguments.Add(BuildPrompt(attemptInvocation));
+            var (fileName, launchArguments) = BuildLaunchTarget(arguments);
             var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
 
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
-            var processTask = ProcessCapture.RunAsync(_swivalBinary, arguments, attemptInvocation.TargetRoot, timeout, cancellationToken, killToken: watchdogCts.Token);
+            var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, killToken: watchdogCts.Token);
             var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, firstOutputMs, watchdogCts, watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask)
@@ -144,18 +157,16 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
                 ["content"] = TrimForTrace(entry.Content)
             }), cancellationToken);
 
+    // Pure swival arguments. The sandbox is applied by WRAPPING this whole
+    // invocation in `nono run` (see BuildLaunchTarget) — never by passing
+    // sandbox flags to swival (swival has no --sandbox/--nono-* flags; doing so
+    // made nono print its version and exit 1, breaking every call).
     internal List<string> BuildArguments(StageInvocation invocation)
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
-        var args = new List<string>
-        {
-            "-q"
-        };
-        if (!_config.BypassSandbox)
-        {
-            args.AddRange(["--sandbox", "nono", "--nono-profile", "vr-guard", "--nono-rollback"]);
-        }
-        args.AddRange([
+        return
+        [
+            "-q",
             "--profile", profile,
             "--api-key", "not-needed",
             "--base-dir", invocation.TargetRoot,
@@ -167,8 +178,47 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             "--trace-dir", invocation.TraceDirectory,
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
-        ]);
-        return args;
+        ];
+    }
+
+    // Resolve the process to actually launch. When the sandbox is bypassed we run
+    // swival directly. When it is enabled we run `nono` as the wrapper:
+    //
+    //   nono run -p vr-guard --allow-cwd --rollback --no-rollback-prompt \
+    //       -- <swivalBinary> <swivalArgs...>
+    //
+    // Flag rationale (TESTED with nono v0.62.0 against swival 1.0.28):
+    //   run                   sandbox-and-execute a command; `--` separates nono's
+    //                         flags from the wrapped program + its args.
+    //   -p vr-guard           the capability profile (broad read + net; writes
+    //                         confined to the workspace).
+    //   --allow-cwd           grant the target repo (process cwd == TargetRoot)
+    //                         without an interactive prompt. The level is set by
+    //                         the profile's workdir.access (readwrite for swival),
+    //                         so swival can read/write the repo and spawn the test
+    //                         commands `--commands all` requires.
+    //   --rollback            atomic snapshot of in-scope writes for the session.
+    //   --no-rollback-prompt  skip the post-exit interactive rollback review so the
+    //                         relay stays fully non-interactive (no hang on stdin).
+    internal (string FileName, IReadOnlyList<string> Arguments) BuildLaunchTarget(List<string> swivalArguments)
+    {
+        if (_config.BypassSandbox)
+        {
+            return (_swivalBinary, swivalArguments);
+        }
+
+        var nonoArguments = new List<string>
+        {
+            "run",
+            "-p", NonoProfile,
+            "--allow-cwd",
+            "--rollback",
+            "--no-rollback-prompt",
+            "--",
+            _swivalBinary
+        };
+        nonoArguments.AddRange(swivalArguments);
+        return (NonoBinary, nonoArguments);
     }
 
     private static string BuildPrompt(StageInvocation invocation)

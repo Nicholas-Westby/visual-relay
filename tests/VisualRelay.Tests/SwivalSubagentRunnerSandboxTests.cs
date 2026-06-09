@@ -10,53 +10,63 @@ public sealed class SwivalSubagentRunnerSandboxTests
         Task.FromResult(new BackendReadiness(true, null));
 
     [Fact]
-    public void BuildArguments_SandboxEnabled_IncludesSandboxFlags()
+    public void BuildArguments_NeverInjectsSandboxFlagsIntoSwival()
     {
-        var config = TestConfig() with { BypassSandbox = false }; // sandbox explicitly enabled (default is now bypass)
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
-        var invocation = Invocation(Path.GetTempPath());
+        // swival has no --sandbox/--nono-* flags; the sandbox is applied by
+        // WRAPPING swival in `nono run`, never by passing flags to swival.
+        foreach (var bypass in new[] { true, false })
+        {
+            var config = TestConfig() with { BypassSandbox = bypass };
+            var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
 
-        var args = runner.BuildArguments(invocation);
+            var args = runner.BuildArguments(Invocation(Path.GetTempPath()));
 
-        Assert.Contains("--sandbox", args);
-        Assert.Contains("nono", args);
-        Assert.Contains("--nono-profile", args);
-        Assert.Contains("vr-guard", args);
-        Assert.Contains("--nono-rollback", args);
-
-        // Verify exact flag order: --sandbox nono --nono-profile vr-guard --nono-rollback
-        var sandboxIdx = args.IndexOf("--sandbox");
-        Assert.True(sandboxIdx >= 0);
-        Assert.Equal("nono", args[sandboxIdx + 1]);
-        Assert.Equal("--nono-profile", args[sandboxIdx + 2]);
-        Assert.Equal("vr-guard", args[sandboxIdx + 3]);
-        Assert.Equal("--nono-rollback", args[sandboxIdx + 4]);
+            Assert.DoesNotContain("--sandbox", args);
+            Assert.DoesNotContain("--nono-profile", args);
+            Assert.DoesNotContain("--nono-rollback", args);
+            Assert.DoesNotContain("nono", args);
+        }
     }
 
     [Fact]
-    public void BuildArguments_BypassSandboxTrue_OmitsSandboxFlags()
+    public void BuildLaunchTarget_SandboxEnabled_WrapsSwivalInNono()
+    {
+        var config = TestConfig() with { BypassSandbox = false }; // sandbox explicitly enabled (default is bypass)
+        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
+        var swivalArgs = runner.BuildArguments(Invocation(Path.GetTempPath()));
+
+        var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
+
+        // Launched process is nono, not swival.
+        Assert.Equal("nono", fileName);
+
+        // Exact nono prefix: run -p vr-guard --allow-cwd --rollback --no-rollback-prompt -- swival ...
+        Assert.Equal(
+            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
+            args.Take(8));
+
+        // Everything after `-- swival` is the swival arg list, unchanged.
+        var separatorIdx = ((IList<string>)args).IndexOf("--");
+        Assert.Equal("swival", args[separatorIdx + 1]);
+        Assert.Equal(swivalArgs, args.Skip(separatorIdx + 2));
+
+        // nono never blocks the network (the relay must reach the model backend).
+        Assert.DoesNotContain("--block-net", args);
+    }
+
+    [Fact]
+    public void BuildLaunchTarget_BypassSandbox_LaunchesSwivalDirectly()
     {
         var config = TestConfig() with { BypassSandbox = true };
         var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
-        var invocation = Invocation(Path.GetTempPath());
+        var swivalArgs = runner.BuildArguments(Invocation(Path.GetTempPath()));
 
-        var args = runner.BuildArguments(invocation);
+        var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
 
-        Assert.DoesNotContain("--sandbox", args);
-        Assert.DoesNotContain("--nono-profile", args);
-        Assert.DoesNotContain("--nono-rollback", args);
-    }
-
-    [Fact]
-    public void BuildArguments_BypassSandboxFalse_DoesNotBlockNetwork()
-    {
-        var config = TestConfig() with { BypassSandbox = false }; // sandbox on
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
-        var invocation = Invocation(Path.GetTempPath());
-
-        var args = runner.BuildArguments(invocation);
-
-        Assert.DoesNotContain("--nono-block-net", args);
+        Assert.Equal("swival", fileName);
+        Assert.Same(swivalArgs, args);
+        Assert.DoesNotContain("nono", args);
+        Assert.DoesNotContain("run", args);
     }
 
     private static RelayConfig TestConfig() =>
