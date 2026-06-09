@@ -101,7 +101,7 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"
         model = "fallback"
-        max_context_tokens = 128000
+        max_context_tokens = 256000
 
         [profiles.kimi]
         provider = "generic"

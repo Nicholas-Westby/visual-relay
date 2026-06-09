@@ -133,7 +133,7 @@ public sealed class RelayConfigLoaderTests
     }
 
     [Fact]
-    public async Task LoadAsync_BypassSandboxDefaultsToFalse()
+    public async Task LoadAsync_BypassSandboxDefaultsToTrue()
     {
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -143,7 +143,8 @@ public sealed class RelayConfigLoaderTests
 
         var config = await RelayConfigLoader.LoadAsync(repo.Root);
 
-        Assert.False(config.BypassSandbox);
+        // Default is true: nono sandbox wrapping is broken (exits 1), so bypass by default.
+        Assert.True(config.BypassSandbox);
     }
 
     [Fact]
@@ -159,5 +160,60 @@ public sealed class RelayConfigLoaderTests
 
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.True(result.Config.BypassSandbox);
+    }
+
+    [Fact]
+    public void Defaults_TierProfiles_ContainsFallbackMappedToFallback()
+    {
+        var defaults = RelayConfigLoader.Defaults();
+        Assert.True(defaults.TierProfiles.ContainsKey("fallback"));
+        Assert.Equal("fallback", defaults.TierProfiles["fallback"]);
+    }
+
+    [Fact]
+    public async Task LoadAsync_TierProfilesFallbackOverride_ReplacesDefault()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "tierProfiles": { "fallback": "custom-hf-model" }
+            }
+            """);
+
+        var config = await RelayConfigLoader.LoadAsync(repo.Root);
+
+        // The fallback tier should be overridden by the config file.
+        Assert.Equal("custom-hf-model", config.TierProfiles["fallback"]);
+
+        // Other tiers should retain their defaults.
+        Assert.Equal("balanced", config.TierProfiles["balanced"]);
+        Assert.Equal("cheap", config.TierProfiles["cheap"]);
+        Assert.Equal("frontier", config.TierProfiles["frontier"]);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_TierProfilesFallbackOverride_ReturnsLoaded()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "tierProfiles": { "fallback": "my-fallback-model" }
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal("my-fallback-model", result.Config.TierProfiles["fallback"]);
+        // Verify the override didn't clobber other defaults.
+        Assert.Equal("frontier", result.Config.TierProfiles["frontier"]);
     }
 }
