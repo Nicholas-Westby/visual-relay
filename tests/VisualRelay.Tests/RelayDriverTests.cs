@@ -24,7 +24,6 @@ public sealed class RelayDriverTests
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "add-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay", "ACTIVE")));
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "add-status", "ledger.md")));
@@ -48,21 +47,13 @@ public sealed class RelayDriverTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", []);
         repo.WriteTask("repair-status", "# Repair status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        InitGitRepo(repo.Root);
         var testRunner = new RedGateObservingTestRunner(repo.Root);
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "repair-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.Equal(["old", "new"], testRunner.StatusSnapshots);
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.cs")));
@@ -235,13 +226,7 @@ public sealed class RelayDriverTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", [], baselineVerify: true);
         repo.WriteTask("pre-existing-fail", "# Pre-existing failure\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        InitGitRepo(repo.Root);
 
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "Failed OldTest"),   // stage 5 author gate — red (passes)
@@ -262,13 +247,7 @@ public sealed class RelayDriverTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", [], baselineVerify: true, maxVerifyLoops: 0);
         repo.WriteTask("new-failure", "# New failure\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        InitGitRepo(repo.Root);
 
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                                    // stage 5 author gate — red (passes)
@@ -307,6 +286,15 @@ public sealed class RelayDriverTests
         Assert.NotNull(outcome.Reason);
         Assert.Equal("verify failed", outcome.Reason);
     }
+
+    private static void InitGitRepo(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "src"));
+        File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
+        TestGit.Run(root, "init");
+        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
+        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
+        TestGit.Run(root, "add", ".");
+        TestGit.Run(root, "commit", "-m", "chore: seed repo");
+    }
 }
-
-

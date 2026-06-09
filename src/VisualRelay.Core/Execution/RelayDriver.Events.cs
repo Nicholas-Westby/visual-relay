@@ -48,4 +48,30 @@ public sealed partial class RelayDriver
             new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_done", runId, rootPath, taskId, stage.Number, stage.Tier, Data: data),
             cancellationToken);
     }
+
+    private async Task<RelayTaskOutcome> FlagAsync(
+        string rootPath, string runId, string taskId, string taskDirectory,
+        int stageNumber, string reason, string? details,
+        List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(taskDirectory);
+        var body = $"{reason}\nstage {stageNumber}\n";
+        if (!string.IsNullOrWhiteSpace(details))
+            body += $"\n{details.Trim()}\n";
+
+        var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
+        if (flaggedStage > 0)
+        {
+            foreach (var e in statusEntries.Where(e => e.Stage < flaggedStage && e.Status == "Running").ToList())
+                MarkStatus(statusEntries, e.Stage, "Done");
+            MarkStatusFlagged(statusEntries, flaggedStage, reason);
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+        }
+
+        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
+            Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
+        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
+    }
 }

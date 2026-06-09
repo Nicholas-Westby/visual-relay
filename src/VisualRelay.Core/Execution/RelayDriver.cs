@@ -262,43 +262,4 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0, $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
         }
     }
-
-    private async Task<RelayTaskOutcome> FlagAsync(
-        string rootPath, string runId, string taskId, string taskDirectory,
-        int stageNumber, string reason, string? details,
-        List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(taskDirectory);
-        var body = $"{reason}\nstage {stageNumber}\n";
-        if (!string.IsNullOrWhiteSpace(details))
-            body += $"\n{details.Trim()}\n";
-
-        // Mark the flagged stage (or find the running stage if stageNumber is 0).
-        var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
-        if (flaggedStage > 0)
-        {
-            // Earlier stages that are running → done; later stages stay waiting.
-            // Collect stages to mark first to avoid modifying the list while enumerating.
-            var toMarkDone = new List<int>();
-            foreach (var entry in statusEntries)
-            {
-                if (entry.Stage < flaggedStage && entry.Status == "Running")
-                {
-                    toMarkDone.Add(entry.Stage);
-                }
-            }
-            foreach (var stage in toMarkDone)
-            {
-                MarkStatus(statusEntries, stage, "Done");
-            }
-            MarkStatusFlagged(statusEntries, flaggedStage, reason);
-            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-        }
-
-        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
-        await _dependencies.EventSink.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
-            Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
-        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
-    }
 }

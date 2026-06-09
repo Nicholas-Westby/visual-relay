@@ -131,4 +131,33 @@ public sealed class RelayConfigLoaderTests
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.Equal(600_000, result.Config.TestTimeoutMilliseconds);
     }
+
+    [Fact]
+    public async Task LoadAsync_BypassSandboxDefaultsToFalse()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "logSources": [] }""");
+
+        var config = await RelayConfigLoader.LoadAsync(repo.Root);
+
+        Assert.False(config.BypassSandbox);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_BypassSandboxTrue_FlipsFlag()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "bypassSandbox": true }""");
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.True(result.Config.BypassSandbox);
+    }
 }

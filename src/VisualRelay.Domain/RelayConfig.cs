@@ -12,4 +12,5 @@ public sealed record RelayConfig(
     bool BaselineVerify,
     bool ArchiveOnDone,
     int SubagentTimeoutMilliseconds,
-    int TestTimeoutMilliseconds);
+    int TestTimeoutMilliseconds,
+    bool BypassSandbox = false);

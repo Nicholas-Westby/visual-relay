@@ -108,12 +108,18 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
                 ["content"] = TrimForTrace(entry.Content)
             }), cancellationToken);
 
-    private List<string> BuildArguments(StageInvocation invocation)
+    internal List<string> BuildArguments(StageInvocation invocation)
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
-        return new List<string>
+        var args = new List<string>
         {
-            "-q",
+            "-q"
+        };
+        if (!_config.BypassSandbox)
+        {
+            args.AddRange(["--sandbox", "nono", "--nono-profile", "vr-guard", "--nono-rollback"]);
+        }
+        args.AddRange([
             "--profile", profile,
             "--api-key", "not-needed",
             "--base-dir", invocation.TargetRoot,
@@ -125,7 +131,8 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             "--trace-dir", invocation.TraceDirectory,
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
-        };
+        ]);
+        return args;
     }
 
     private static string BuildPrompt(StageInvocation invocation)

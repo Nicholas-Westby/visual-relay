@@ -90,6 +90,29 @@ cp .env.example .env   # repo-root .env, git-ignored
 
 `backend.sh start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `.relay-scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. When the generator is unavailable (no `dotnet`), the script falls back to the static template. A one-line resolution summary is logged to stderr (e.g. `backend: config generated — cheap-kimi→deepseek-v4-flash, balanced-kimi→deepseek-v4-pro, frontier→kimi-k2, …; keys: HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY`), so "why did frontier run on HF?" is always answerable.
 
+## Sandbox
+
+Every Swival subagent runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
+Landlock on Linux). The sandbox confines writes and deletes to the target workspace while
+leaving reads, network, and all tools — including Playwright/Chromium — unrestricted. This is
+**accident containment**, not defense against a malicious agent: a stray `rm -rf` or `mv`
+outside the workspace is blocked by the OS.
+
+The sandbox is controlled by the `bypassSandbox` key in `.relay/config.json`:
+
+```json
+{
+  "testCmd": "dotnet test",
+  "bypassSandbox": true
+}
+```
+
+- **`false`** (default): Swival runs under nono with the `vr-guard` profile.
+- **`true`**: Sandbox is disabled; Swival runs with full filesystem access.
+
+The `vr-guard` profile ships with Visual Relay and is installed automatically to
+`${XDG_CONFIG_HOME:-$HOME/.config}/nono/profiles/`. A missing nono binary is a hard error.
+
 ## What It Does
 
 - Discovers `llm-tasks` while skipping `DONE-*`, `IGNORE-*`, `_ideation`, and `completed`; tasks marked `NEEDS-REVIEW` stay visible in the GUI with their review reason.

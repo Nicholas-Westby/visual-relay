@@ -25,7 +25,8 @@ public static class RelayConfigLoader
             BaselineVerify: true,
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 1_200_000,
-            TestTimeoutMilliseconds: 300_000);
+            TestTimeoutMilliseconds: 300_000,
+            BypassSandbox: false);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -96,7 +97,8 @@ public static class RelayConfigLoader
                 BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
                 ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
                 SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds),
-                TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds)
+                TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds),
+                BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
