@@ -97,6 +97,12 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         model = "hf-qwen3-coder-next"
         max_context_tokens = 256000
 
+        [profiles.fallback]
+        provider = "generic"
+        base_url = "{ModelBackend.BaseUrl}"
+        model = "fallback"
+        max_context_tokens = 128000
+
         [profiles.kimi]
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"

@@ -19,7 +19,7 @@ HOST="127.0.0.1"
 PORT="4000"
 BASE_URL="http://${HOST}:${PORT}"          # == ModelBackend.BaseUrl
 READINESS_URL="${BASE_URL}/health/readiness" # == ModelBackend.ReadinessUrl
-CONFIG="${SCRIPT_DIR}/litellm-config.yaml"
+CONFIG="${SCRIPT_DIR}/litellm-config.yaml"  # static template; may be replaced by generated config
 
 PYTHON_VERSION="3.13"                          # litellm's uvloop crashes on 3.14+
 VENV_DIR="${SCRIPT_DIR}/.venv"                 # git-ignored; provisioned via uv
@@ -175,19 +175,20 @@ cmd_start() {
       load_env_file_if_unset "${REPO_ROOT}/.env"
     fi
 
-    # Use httpx instead of litellm's default aiohttp transport. The aiohttp
-    # transport does not enforce the read timeout while waiting for the FIRST
-    # response byte, so a request that gets no response at all (a pre-stream hang)
-    # is unbounded and only the relay's 20-min subagent kill ends it (observed:
-    # careers-page-net + fix-timing-estimates stage-10 stalls). Under httpx the
-    # stream_timeout/request_timeout read bound applies to the first byte too, so
-    # such a hang fails fast (~stream_timeout) and cascades to the fallbacks.
-    export DISABLE_AIOHTTP_TRANSPORT="${DISABLE_AIOHTTP_TRANSPORT:-True}"
+    # Generate key-aware config from present provider keys; static fallback if unavailable.
+    local generated="${SCRATCH}/litellm-config.generated.yaml"
+    if "${REPO_ROOT}/visual-relay" gen-backend-config "${CONFIG}" >"${generated}" 2>/tmp/.vr-gen-stderr; then
+      CONFIG="${generated}"
+      [[ -s /tmp/.vr-gen-stderr ]] && log "$(head -n1 /tmp/.vr-gen-stderr)"
+    else
+      log "gen-backend-config unavailable; using static config"
+    fi
+    rm -f /tmp/.vr-gen-stderr
 
-    # Transport-independent total wall-clock cap per streaming attempt. The
-    # default aiohttp transport sets no total timeout, so this is the guaranteed
-    # backstop behind router_settings.stream_timeout: on exceed, litellm raises a
-    # fallback-eligible timeout and cascades to the next provider. Override-able.
+    # aiohttp doesn't enforce read timeout on the first response byte (a pre-stream
+    # hang is unbounded). httpx applies stream_timeout from byte 0, so hangs fail fast.
+    export DISABLE_AIOHTTP_TRANSPORT="${DISABLE_AIOHTTP_TRANSPORT:-True}"
+    # Wall-clock cap per stream; on exceed litellm raises fallback-eligible timeout.
     export LITELLM_MAX_STREAMING_DURATION_SECONDS="${LITELLM_MAX_STREAMING_DURATION_SECONDS:-240}"
 
     log "starting litellm proxy on ${BASE_URL} (logs: ${LOG_FILE})"

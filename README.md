@@ -70,7 +70,7 @@ cp .env.example .env   # repo-root .env, git-ignored
 
 **Precedence**: an exported environment variable overrides both files; the user-level file overrides the repo file. The in-app key panel reads and writes the user-level path.
 
-`backend.sh start` loads keys from both locations automatically, and the proxy boots even with no keys set (readiness does not require any provider key). A request only fails if its specific provider key is missing, so you can set just the providers you actually call — `MOONSHOT_API_KEY` (frontier/kimi), `DEEPSEEK_API_KEY` (balanced/cheap), and `HF_TOKEN` (vision/qwen-coder) cover the default pipeline tiers; `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` add the `claude` and `gpt-5` aliases.
+`backend.sh start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `.relay-scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. When the generator is unavailable (no `dotnet`), the script falls back to the static template. A one-line resolution summary is logged to stderr (e.g. `backend: config generated — cheap-kimi→deepseek-v4-flash, balanced-kimi→deepseek-v4-pro, frontier→kimi-k2, …; keys: HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY`), so "why did frontier run on HF?" is always answerable.
 
 ## What It Does
 

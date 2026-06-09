@@ -16,7 +16,8 @@ public static class RelayConfigLoader
                 ["cheap"] = "cheap",
                 ["balanced"] = "balanced",
                 ["frontier"] = "frontier",
-                ["vision"] = "vision"
+                ["vision"] = "vision",
+                ["fallback"] = "fallback"
             },
             MaxVerifyLoops: 5,
             MaxStageFailures: 3,
