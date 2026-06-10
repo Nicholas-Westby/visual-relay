@@ -56,6 +56,19 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         if (!readiness.IsReady)
             return new SubagentResult(string.Empty, null, false, readiness.Message);
 
+        // Resolve whitelist against PATH so missing optional tools degrade
+        // instead of crashing swival's startup preflight. Emit a
+        // command_dropped event per unresolvable name.
+        var resolvedCommands = ResolveCommandsOnPath(invocation.Stage.Commands, _eventSink, invocation);
+        if (string.IsNullOrWhiteSpace(resolvedCommands))
+        {
+            return new SubagentResult(string.Empty, null, false,
+                $"All whitelisted commands are missing from PATH. " +
+                $"Commands: [{invocation.Stage.Commands}]. " +
+                $"After dropping unresolvable names, no commands remain — refusing to run " +
+                $"because swival treats an empty whitelist as unrestricted.");
+        }
+
         // Resolve the first-output threshold for this tier.
         var firstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(invocation.Tier, out var tierMs)
             ? tierMs : _config.FirstOutputTimeoutMs;
@@ -79,7 +92,7 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             await using var profileSession = await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
             await using var traceTailer = _eventSink is null ? null
                 : RelayTraceTailer.Start(traceDir, (entry, token) => PublishTraceAsync(attemptInvocation, entry, token));
-            var arguments = BuildArguments(attemptInvocation);
+            var arguments = BuildArguments(attemptInvocation, resolvedCommands);
             arguments.Add(BuildPrompt(attemptInvocation));
             var (fileName, launchArguments) = BuildLaunchTarget(arguments);
             var sandboxEnv = BuildSandboxEnvironment(_config);
@@ -165,9 +178,10 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
     // invocation in `nono run` (see BuildLaunchTarget) — never by passing
     // sandbox flags to swival (swival has no --sandbox/--nono-* flags; doing so
     // made nono print its version and exit 1, breaking every call).
-    internal List<string> BuildArguments(StageInvocation invocation)
+    internal List<string> BuildArguments(StageInvocation invocation, string? resolvedCommands = null)
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
+        var commands = resolvedCommands ?? invocation.Stage.Commands;
         return
         [
             "-q",
@@ -178,11 +192,62 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             "--no-lifecycle",
             "--no-history",
             "--files", invocation.Stage.Files,
-            "--commands", invocation.Stage.Commands,
+            "--commands", commands,
             "--trace-dir", invocation.TraceDirectory,
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
         ];
+    }
+
+    // Intersect a --commands whitelist with PATH so missing optional tools
+    // degrade gracefully instead of crashing swival's startup preflight. Emits
+    // a "command_dropped" event per unresolvable name. The special values "all"
+    // and "none" pass through unchanged (swival-special, not comma-separated).
+    internal static string ResolveCommandsOnPath(
+        string commands,
+        IRelayEventSink? eventSink,
+        StageInvocation invocation)
+    {
+        if (commands is "all" or "none")
+            return commands;
+
+        var names = commands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length == 0)
+            return string.Empty;
+
+        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+
+        var resolved = new List<string>(names.Length);
+        foreach (var name in names)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+                continue;
+
+            if (pathDirs.Any(dir => File.Exists(Path.Combine(dir, name))))
+            {
+                resolved.Add(name);
+            }
+            else
+            {
+                eventSink?.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow,
+                    "warn",
+                    "command_dropped",
+                    invocation.RunId,
+                    invocation.TargetRoot,
+                    invocation.TaskName,
+                    invocation.Stage.Number,
+                    invocation.Tier,
+                    Data: new Dictionary<string, string>
+                    {
+                        ["name"] = name,
+                        ["reason"] = "not found on PATH"
+                    }));
+            }
+        }
+
+        return string.Join(',', resolved);
     }
 
     // Build environment overrides that redirect transitive-dependency caches
