@@ -64,3 +64,22 @@ work.
   contains the prior output and only-the-block instruction; (c) exhaustion still flags
   with `no valid fenced json block`; (d) `maxContractRetries: 0` preserves today's
   fail-fast behavior; plus the extractor cases from the amendment.
+
+## Second amendment (2026-06-10, after the watchdog-task flag)
+
+The extractor half landed by hand in `1f87e9d` (marker walk last-to-first; this spec's
+re-drive should treat extractor work as DONE and focus on recovery). That fix widened
+what reaches the driver and exposed a third gap: **the driver assumes the contract's
+JSON root is an object**. watchdog-real-liveness-signal flagged at 02:45 with
+`exception: The requested operation requires an element of type 'Object', but the
+target element has type 'Array'` at stage 0 — an unhandled `JsonElement` access in the
+driver's contract reading (`ReadStringArray`/`ReadOptionalString` over `RelayDriver`'s
+parsed `json`), not even a clean contract flag.
+
+Scope addition: **(3) contract-shape validation** — after extraction, validate root is
+an object and (per stage) that required keys exist; a mismatch is a *contract failure*
+routed into the same corrective-retry path as a missing block (the corrective prompt
+states what was wrong: "root must be a JSON object with keys …"). The driver must never
+throw on any JSON the extractor hands it. Test: a stage emitting a top-level array gets
+a corrective retry, then flags cleanly with a shape message if exhausted — no
+`exception:` flags.
