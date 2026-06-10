@@ -133,7 +133,7 @@ public sealed class RelayConfigLoaderTests
     }
 
     [Fact]
-    public async Task LoadAsync_BypassSandboxDefaultsToTrue()
+    public async Task LoadAsync_BypassSandboxDefaultsToFalse()
     {
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -143,8 +143,8 @@ public sealed class RelayConfigLoaderTests
 
         var config = await RelayConfigLoader.LoadAsync(repo.Root);
 
-        // Default is true: nono sandbox wrapping is broken (exits 1), so bypass by default.
-        Assert.True(config.BypassSandbox);
+        // Default is false: nono sandbox is required. Sandbox-2 made nono a hard prerequisite.
+        Assert.False(config.BypassSandbox);
     }
 
     [Fact]

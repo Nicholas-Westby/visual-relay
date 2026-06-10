@@ -34,9 +34,8 @@ public static class RelayConfigLoader
             },
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
-            // See RelayConfig.BypassSandbox: nono wrapping is broken (exits 1), so
-            // bypass by default until the nono integration is fixed.
-            BypassSandbox: true);
+            // Default false: nono sandbox is required. Set bypassSandbox:true to opt out.
+            BypassSandbox: false);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {

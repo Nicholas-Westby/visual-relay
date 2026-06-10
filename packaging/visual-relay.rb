@@ -5,6 +5,7 @@ class VisualRelay < Formula
   version "0.1.0"
 
   depends_on "uv"
+  depends_on "jedisct1/nono/nono"
 
   on_macos do
     if Hardware::CPU.arm?

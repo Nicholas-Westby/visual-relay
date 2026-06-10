@@ -49,6 +49,76 @@ _require_dotnet() {
   exit 127
 }
 
+# ---------- nono sandbox prerequisite ----------
+
+# Returns 0 (bypassed) if sandbox is not required, 1 (enabled) if nono is
+# required.  Reads bypassSandbox from .relay/config.json.  When the file exists
+# and bypassSandbox is absent or false, the default is enabled (matching
+# RelayConfig.BypassSandbox = false).  When the file is missing entirely we
+# also default to enabled — a fresh checkout should run sandboxed.
+_read_bypass_sandbox() {
+  if [[ -f ".relay/config.json" ]]; then
+    # Explicit bypassSandbox:true → sandbox bypassed.
+    if grep -q '"bypassSandbox"\s*:\s*true' .relay/config.json 2>/dev/null; then
+      return 0  # bypass
+    fi
+    # Absent or false → sandbox enabled → nono required.
+    return 1
+  fi
+  return 1  # no config file → sandbox enabled (matches C# BypassSandbox=false)
+}
+
+_require_nono() {
+  if command -v nono >/dev/null 2>&1; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+visual-relay: nono sandbox is enabled but nono was not found on PATH.
+
+  nono is a required dependency for the OS-level sandbox (Seatbelt on macOS,
+  Landlock on Linux) that confines Swival writes and deletes to the workspace.
+  Install nono:
+
+    brew install nono
+    (or see https://github.com/jedisct1/nono for other platforms)
+
+  To run without the sandbox, set bypassSandbox:true in .relay/config.json.
+  This is the only supported opt-out — there is no silent fallback to a
+  weaker sandbox.
+EOF
+  exit 127
+}
+
+_provision_nono() {
+  local xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+  local profile_dir="${xdg_config}/nono/profiles"
+  local profile_file="${profile_dir}/vr-guard.json"
+  local source_profile="$SCRIPT_DIR/packaging/nono/vr-guard.json"
+
+  # Pull the swival base profile pack (idempotent; no-op if already installed).
+  # Network + one-time Sigstore trust verification (backend install already does
+  # network work, so this fits the existing model).
+  if command -v nono >/dev/null 2>&1; then
+    if ! nono pull jedisct1/swival >/dev/null 2>&1; then
+      echo "visual-relay: nono pull jedisct1/swival failed (network/Sigstore)" >&2
+      echo "  The vr-guard profile extends swival; nono may error if swival is absent." >&2
+      echo "  Retry with: nono pull jedisct1/swival" >&2
+    fi
+  fi
+
+  mkdir -p "$profile_dir"
+
+  # Install vr-guard.json only if missing — never clobber user edits.
+  if [[ -f "$profile_file" ]]; then
+    return 0
+  fi
+
+  if [[ -f "$source_profile" ]]; then
+    cp "$source_profile" "$profile_file"
+  fi
+}
+
 # ---------- watchdog ----------
 _timeout_watchdog() {
   local timeout_secs="${VISUAL_RELAY_TEST_TIMEOUT:-60}"
@@ -119,6 +189,12 @@ case "$cmd" in
     # still proceeds and the in-app pre-flight probe surfaces the down backend.
     "$SCRIPT_DIR/tools/backend/backend.sh" start || \
       echo "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)" >&2
+    # Nono sandbox guard: when the sandbox is enabled (bypassSandbox:false),
+    # require nono on PATH and provision the vr-guard profile + swival pack.
+    if ! _read_bypass_sandbox; then
+      _require_nono
+      _provision_nono
+    fi
     if (( HAS_PUBLISHED )); then
       exec "$PUBLISHED_APP" "$@"
     fi
@@ -144,6 +220,9 @@ case "$cmd" in
     dotnet run --project tools/VisualRelay.Screenshots/VisualRelay.Screenshots.csproj -- docs/images/visual-relay-compact.png 1060 720
     ;;
   run-task)
+    if ! _read_bypass_sandbox; then
+      _require_nono
+    fi
     _require_dotnet
     dotnet run --project tools/VisualRelay.RunTask/VisualRelay.RunTask.csproj -- "$@"
     ;;

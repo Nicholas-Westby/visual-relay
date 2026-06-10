@@ -11,8 +11,9 @@ brew install nicholas-westby/tap/visual-relay
 ```
 
 This installs a self-contained Visual Relay — **no .NET SDK or runtime required**. The
-only prerequisite is `uv` (pulled automatically by Homebrew), which the model backend
-uses to provision LiteLLM on first launch.
+only prerequisites are `uv` and `nono` (both pulled automatically by Homebrew):
+`uv` provisions LiteLLM for the model backend on first launch; `nono` provides
+OS-level sandboxing (Seatbelt on macOS, Landlock on Linux) for Swival subagents.
 
 > **Important**: install via `brew` or `curl`, never download a `.tar.gz` through a
 > browser. A browser download re-applies the `com.apple.quarantine` attribute, which
@@ -31,6 +32,10 @@ If you are working from a source clone instead, use the launcher from the repo r
 ```bash
 ./visual-relay launch
 ```
+
+The launcher requires `nono` for sandboxed Swival execution (install via `brew install nono`
+or from https://github.com/jedisct1/nono). To run without the sandbox, set
+`bypassSandbox:true` in `.relay/config.json`.
 
 The app opens with a native folder picker button. Point it at a repo containing
 `llm-tasks/` directories.

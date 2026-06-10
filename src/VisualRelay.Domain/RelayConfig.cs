@@ -25,9 +25,8 @@ public sealed record RelayConfig(
     int FirstOutputTimeoutMs,
     // Maximum retries after a first-output stall kill before giving up.
     int MaxStallRetries,
-    // Default true: the nono sandbox wrapping added by the sandbox-1 task invokes
-    // swival with `--sandbox nono --nono-profile vr-guard --nono-rollback`, an
-    // interface nono v0.62.0 does not accept (it prints its version and exits 1),
-    // which breaks EVERY swival call. Bypassed by default until the nono integration
-    // is implemented against nono's real CLI; set bypassSandbox:false to re-enable.
-    bool BypassSandbox = true);
+    // Default false: nono OS-level sandboxing (Seatbelt on macOS, Landlock on
+    // Linux) is a REQUIRED dependency. Swival runs under `nono run -p vr-guard`
+    // by default. Set bypassSandbox:true in .relay/config.json to opt out —
+    // this is the only supported no-nono path, never a silent fallback.
+    bool BypassSandbox = false);

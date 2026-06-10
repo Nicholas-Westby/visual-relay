@@ -89,7 +89,11 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, killToken: watchdogCts.Token);
             var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, firstOutputMs, watchdogCts, watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
-            if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask)
+            // Task.WhenAny may return processTask when the watchdog kill triggers
+            // a near-simultaneous process exit (race).  Check watchdogTask.IsCompleted
+            // to catch that case so a stall is never misreported as "exit 137".
+            if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask
+                || watchdogTask.IsCompleted)
             {
                 var watchdogFired = await watchdogTask;
                 if (watchdogFired)
