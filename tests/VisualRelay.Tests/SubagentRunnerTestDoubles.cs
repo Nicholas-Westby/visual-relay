@@ -100,6 +100,20 @@ internal sealed class CapturingSubagentRunner : ISubagentRunner
 }
 
 /// <summary>
+/// Returns <see cref="SubagentResult"/> with <see cref="SubagentResult.IsValid"/> = true
+/// and <see cref="SubagentResult.Json"/> set to a JSON array (<c>[1,2,3]</c>) for every
+/// stage — simulating a bug where non-object JSON reaches the driver. Used to verify the
+/// driver's defensive shape validation flags cleanly instead of throwing.
+/// </summary>
+internal sealed class ArrayRootSubagentRunner : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        return Task.FromResult(new SubagentResult("[1,2,3]", "[1,2,3]", true, null));
+    }
+}
+
+/// <summary>
 /// Wraps an inner <see cref="ISubagentRunner"/> (defaults to <see cref="ScriptedSubagentRunner"/>)
 /// and returns an invalid result for stages at or after <paramref name="flagAtStage"/>,
 /// simulating a flagged run that stops partway through the stage loop.

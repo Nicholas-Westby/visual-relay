@@ -23,7 +23,7 @@ public sealed class SwivalSubagentRunnerWatchdogTests
             if [[ "$trace_dir" == *attempt2* ]]; then
               mkdir -p "$trace_dir"
               printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"recovered on retry"}]}}' > "$trace_dir/trace.jsonl"
-              printf '```json\n{"summary":"recovered"}\n```\n'
+              printf '```json\n{"summary":"recovered","options":["small"]}\n```\n'
               exit 0
             else
               sleep 60
@@ -65,7 +65,7 @@ public sealed class SwivalSubagentRunnerWatchdogTests
             sleep 3
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"frontier thinking done"}]}}' > "$trace_dir/trace.jsonl"
-            printf '```json\n{"summary":"frontier review passed"}\n```\n'
+            printf '```json\n{"summary":"frontier review passed","options":["small"]}\n```\n'
             exit 0
             """);
         var config = TestConfig() with
@@ -139,7 +139,7 @@ public sealed class SwivalSubagentRunnerWatchdogTests
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"first token emitted"}]}}' > "$trace_dir/trace.jsonl"
             sleep 15
-            printf '```json\n{"summary":"long but alive"}\n```\n'
+            printf '```json\n{"summary":"long but alive","options":["small"]}\n```\n'
             exit 0
             """);
         var config = TestConfig() with

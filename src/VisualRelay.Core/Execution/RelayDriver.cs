@@ -219,7 +219,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     }
 
                     body = result.Json;
-                    var json = JsonDocument.Parse(result.Json).RootElement.Clone();
+                    if (!TryParseContractJson(result.Json, out var json, out var contractError))
+                    {
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+                            contractError ?? "invalid contract JSON", result.RawText, statusEntries, cancellationToken);
+                    }
                     if (stage.Number == 4)
                     {
                         manifest.Clear();

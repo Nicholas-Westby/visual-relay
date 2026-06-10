@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using VisualRelay.Core.Logging;
 using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
@@ -19,7 +21,7 @@ public sealed class ShellTestRunner : ITestRunner
     }
 }
 
-public sealed class SwivalSubagentRunner : ISubagentRunner
+public sealed partial class SwivalSubagentRunner : ISubagentRunner
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
 
@@ -76,24 +78,36 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         // Parse trace-dir name so retries follow stage{n}-attempt{k}.
         var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
         RelayAttempt.TryParse(Path.GetFileName(invocation.TraceDirectory), out var stageNum, out var startAttempt);
-        var maxAttempts = _config.MaxStallRetries + 1;
+        var maxStallAttempts = _config.MaxStallRetries + 1;
+        var stallRetriesLeft = _config.MaxStallRetries;
+        var contractRetriesLeft = _config.MaxContractRetries;
+        var escalationUsed = false;
+        var attempt = startAttempt;
+        var currentInvocation = invocation;
+        string? correctivePriorOutput = null;
+        string? correctiveShapeError = null;
 
-        for (var attempt = startAttempt; attempt < startAttempt + maxAttempts; attempt++)
+        while (true)
         {
+            // Recompute first-output threshold for the current tier (may have escalated).
+            var currentFirstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(currentInvocation.Tier, out var ctMs)
+                ? ctMs : _config.FirstOutputTimeoutMs;
             var traceDir = attempt == startAttempt
                 ? invocation.TraceDirectory
                 : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
             var reportFile = attempt == startAttempt
                 ? invocation.ReportFile
                 : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.report.json");
-            var attemptInvocation = invocation with { TraceDirectory = traceDir, ReportFile = reportFile };
+            var attemptInvocation = currentInvocation with { TraceDirectory = traceDir, ReportFile = reportFile };
 
             Directory.CreateDirectory(traceDir);
             await using var profileSession = await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
             await using var traceTailer = _eventSink is null ? null
                 : RelayTraceTailer.Start(traceDir, (entry, token) => PublishTraceAsync(attemptInvocation, entry, token));
             var arguments = BuildArguments(attemptInvocation, resolvedCommands);
-            arguments.Add(BuildPrompt(attemptInvocation));
+            arguments.Add(correctivePriorOutput is not null
+                ? BuildCorrectivePrompt(attemptInvocation, correctivePriorOutput, correctiveShapeError)
+                : BuildPrompt(attemptInvocation));
             var (fileName, launchArguments) = BuildLaunchTarget(arguments);
             var sandboxEnv = BuildSandboxEnvironment(_config);
             var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
@@ -101,7 +115,7 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
             var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token);
-            var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, firstOutputMs, watchdogCts, watchdogLinkedCts.Token);
+            var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, currentFirstOutputMs, watchdogCts, watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // Task.WhenAny may return processTask when the watchdog kill triggers
             // a near-simultaneous process exit (race).  Check watchdogTask.IsCompleted
@@ -114,12 +128,16 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
                 {
                     // Watchdog fired — no output; killToken already triggered process.Kill().
                     await processTask;
-                    if (attempt < startAttempt + maxAttempts - 1)
+                    if (stallRetriesLeft > 0)
+                    {
+                        stallRetriesLeft--;
+                        attempt++;
                         continue;
+                    }
                     stallResult = new SubagentResult(string.Empty, null, false,
                         ErrorHintClassifier.WithHint(
-                            $"persistent model-backend stall: swival produced no output within the {firstOutputMs}ms " +
-                            $"per-tier first-output threshold across {maxAttempts} attempts — " +
+                            $"persistent model-backend stall: swival produced no output within the {currentFirstOutputMs}ms " +
+                            $"per-tier first-output threshold across {maxStallAttempts} attempts — " +
                             "the upstream model-backend call is likely hanging at byte 0 (pre-stream stall)."));
                 }
             }
@@ -150,11 +168,57 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             }
 
             var json = FencedJsonExtractor.Extract(result.Output);
-            var error = json is null ? ErrorHintClassifier.WithHint("no valid fenced json block") : null;
-            return new SubagentResult(result.Output, json, json is not null, error);
-        }
+            correctiveShapeError = null;
+            if (json is not null)
+            {
+                // Validate required keys from the stage contract.
+                correctiveShapeError = ValidateContractShape(json, attemptInvocation.Stage.OutputContract);
+                if (correctiveShapeError is not null)
+                    json = null;
+            }
 
-        return new SubagentResult(string.Empty, null, false, "unexpected: retry loop exhausted");
+            if (json is null)
+            {
+                if (contractRetriesLeft > 0)
+                {
+                    contractRetriesLeft--;
+                    correctivePriorOutput = result.Output;
+                    await PublishContractRetryAsync(attemptInvocation, attempt, cancellationToken);
+                    attempt++;
+                    continue;
+                }
+
+                // Try one tier escalation before giving up.
+                // Only escalate when corrective retries were configured but exhausted —
+                // MaxContractRetries:0 means fail-fast across the board.
+                if (_config.MaxContractRetries > 0 && !escalationUsed)
+                {
+                    var nextTier = NextTier(currentInvocation.Tier);
+                    if (nextTier is not null)
+                    {
+                        escalationUsed = true;
+                        correctivePriorOutput = result.Output;
+                        currentInvocation = currentInvocation with { Tier = nextTier };
+                        // Re-resolve commands against PATH for the escalated tier's stage.
+                        resolvedCommands = ResolveCommandsOnPath(currentInvocation.Stage.Commands, _eventSink, currentInvocation);
+                        if (string.IsNullOrWhiteSpace(resolvedCommands))
+                        {
+                            return new SubagentResult(string.Empty, null, false,
+                                $"All whitelisted commands are missing from PATH after tier escalation. " +
+                                $"Commands: [{currentInvocation.Stage.Commands}].");
+                        }
+                        await PublishContractRetryAsync(attemptInvocation, attempt, cancellationToken);
+                        attempt++;
+                        continue;
+                    }
+                }
+
+                return new SubagentResult(result.Output, null, false,
+                    ErrorHintClassifier.WithHint("no valid fenced json block"));
+            }
+
+            return new SubagentResult(result.Output, json, true, null);
+        }
     }
 
     private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
@@ -350,6 +414,95 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
         }
 
         return string.Join('\n', parts);
+    }
+
+    private static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
+    {
+        var problem = shapeError is not null
+            ? $"The previous completion had a valid fenced JSON block but its shape was wrong: {shapeError}. " +
+              "Reply with ONLY a corrected fenced JSON block — fix the shape issue, derive the values from the prior answer below. " +
+              "Do NOT redo the work or add any other text."
+            : "The previous completion was missing the required fenced JSON block. " +
+              "Reply with ONLY that block — derive it from the prior answer below. " +
+              "Do NOT redo the work or add any other text.";
+
+        var parts = new List<string>
+        {
+            $"# Relay stage {invocation.Stage.Number}: {invocation.Stage.Name} — CORRECTIVE RETRY",
+            $"Task: {invocation.TaskName}",
+            string.Empty,
+            problem,
+            string.Empty,
+            "## Expected contract",
+            invocation.Stage.OutputContract,
+            string.Empty,
+            "## Prior output",
+            priorOutput
+        };
+        return string.Join('\n', parts);
+    }
+
+    private static string? NextTier(string tier) => tier switch
+    {
+        "cheap" => "balanced",
+        "balanced" => "frontier",
+        _ => null
+    };
+
+    /// <summary>
+    /// Validates that <paramref name="json"/> is a JSON object whose root contains
+    /// every required key declared in <paramref name="contract"/>. Returns null on
+    /// success or an error message describing the mismatch.
+    /// </summary>
+    internal static string? ValidateContractShape(string json, string contract)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return $"contract root must be a JSON object, but got {doc.RootElement.ValueKind}";
+
+            // Extract required keys from the contract template: quoted names that
+            // are NOT suffixed with "?" (optional).  Example:
+            //   { "summary": string, "amendManifest"?: string[] }
+            // yields ["summary"].
+            var matches = ContractKeyRegex().Matches(contract);
+            foreach (Match m in matches)
+            {
+                var key = m.Groups[1].Value;
+                if (!doc.RootElement.TryGetProperty(key, out _))
+                    return $"contract is missing required key \"{key}\" — root must be a JSON object with keys: [{string.Join(", ", matches.Select(x => x.Groups[1].Value))}]";
+            }
+        }
+        catch (JsonException ex)
+        {
+            return $"contract is not valid JSON: {ex.Message}";
+        }
+
+        return null;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex("\"(\\w+)\"(?!\\s*\\?)\\s*:")]
+    private static partial Regex ContractKeyRegex();
+
+    private async Task PublishContractRetryAsync(StageInvocation invocation, int attempt, CancellationToken cancellationToken)
+    {
+        if (_eventSink is null)
+            return;
+        await _eventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow,
+            "info",
+            "contract_retry",
+            invocation.RunId,
+            invocation.TargetRoot,
+            invocation.TaskName,
+            invocation.Stage.Number,
+            invocation.Tier,
+            attempt,
+            Data: new Dictionary<string, string>
+            {
+                ["message"] = "corrective retry for missing/malformed JSON contract block"
+            }), cancellationToken);
     }
 
     private static string TrimForError(string value)

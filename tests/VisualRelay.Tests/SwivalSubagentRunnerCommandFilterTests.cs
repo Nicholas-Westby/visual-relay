@@ -201,7 +201,7 @@ public sealed class SwivalSubagentRunnerCommandFilterTests
                 shift
               fi
             done
-            printf '```json\n{"summary":"ran with filtered commands"}\n```\n'
+            printf '```json\n{"findings":"ran with filtered commands","constraints":[]}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
         var runner = new SwivalSubagentRunner(TestConfig(), script, sink, AlwaysReady);

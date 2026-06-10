@@ -53,6 +53,41 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// Parses contract JSON defensively: validates the root is a JSON object and
+    /// returns a descriptive error on any failure. Callers never throw on malformed
+    /// or wrong-shaped contract output — they flag cleanly with the returned message.
+    /// </summary>
+    internal static bool TryParseContractJson(string? json, out JsonElement element, out string? error)
+    {
+        error = null;
+        element = default;
+
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            error = "contract JSON is null or empty";
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                error = $"contract root must be a JSON object, but got {doc.RootElement.ValueKind}";
+                return false;
+            }
+
+            element = doc.RootElement.Clone();
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            error = $"invalid contract JSON: {ex.Message}";
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Sanitizes each raw candidate via <see cref="CommitMessageSanitizer.TrySanitizeSubject"/>,
     /// drops non-Conventional entries, and appends the guaranteed <c>chore(relay): {taskId}</c>
     /// fallback so the list is never empty.

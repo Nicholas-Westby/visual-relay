@@ -25,6 +25,10 @@ public sealed record RelayConfig(
     int FirstOutputTimeoutMs,
     // Maximum retries after a first-output stall kill before giving up.
     int MaxStallRetries,
+    // Maximum corrective retries when a stage completes (exit 0) but the output
+    // lacks a parseable fenced JSON contract block (or the block has wrong shape).
+    // 0 preserves today's fail-fast; defaults to 1.
+    int MaxContractRetries = 1,
     // Default false: nono OS-level sandboxing (Seatbelt on macOS, Landlock on
     // Linux) is a REQUIRED dependency. Swival runs under `nono run -p vr-guard`
     // by default. Set bypassSandbox:true in .relay/config.json to opt out —

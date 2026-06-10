@@ -34,6 +34,7 @@ public static class RelayConfigLoader
             },
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
+            MaxContractRetries: 1,
             // Default false: nono sandbox is required. Set bypassSandbox:true to opt out.
             BypassSandbox: false,
             MaxPlanConcurrency: 10);
@@ -121,6 +122,7 @@ public static class RelayConfigLoader
                 FirstOutputTimeoutMsByTier = firstOutputTiers,
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
+                MaxContractRetries = OptionalInt(root, "maxContractRetries", defaults.MaxContractRetries),
                 BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),

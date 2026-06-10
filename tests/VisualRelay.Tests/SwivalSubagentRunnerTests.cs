@@ -50,7 +50,7 @@ public sealed class SwivalSubagentRunnerTests
             done
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"live insight"}]}}' > "$trace_dir/trace.jsonl"
-            printf '```json\n{"summary":"ok"}\n```\n'
+            printf '```json\n{"summary":"ok","options":["small"]}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
         var runner = new SwivalSubagentRunner(TestConfig(), script, sink, AlwaysReady);
@@ -95,7 +95,7 @@ public sealed class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             last="${@: -1}"
             printf '%s' "$last" > prompt-capture.txt
-            printf '```json\n{"ok":true}\n```\n'
+            printf '```json\n{"summary":"pass","options":["small"]}\n```\n'
             """);
         var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
         var invocation = Invocation(repo.Root) with

@@ -221,6 +221,34 @@ public sealed class RelayDriverTests
     }
 
     [Fact]
+    public async Task RunTaskAsync_ArrayRootJson_FlagsCleanlyWithoutException()
+    {
+        // When a buggy ISubagentRunner returns IsValid=true with array-root JSON
+        // (bypassing the extractor's object-root guard), the driver must detect
+        // the invalid shape and flag cleanly — never throw an unhandled exception
+        // that produces an "exception:" NEEDS-REVIEW.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("array-root", "# Array root\n");
+        var runner = new ArrayRootSubagentRunner();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "array-root");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+        var review = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "array-root", "NEEDS-REVIEW"));
+        Assert.DoesNotContain("exception:", review, StringComparison.Ordinal);
+        // The error must describe the shape problem, not a raw InvalidOperationException.
+        Assert.True(
+            review.Contains("object", StringComparison.OrdinalIgnoreCase) ||
+            review.Contains("shape", StringComparison.OrdinalIgnoreCase) ||
+            review.Contains("array", StringComparison.OrdinalIgnoreCase),
+            $"NEEDS-REVIEW must describe the shape problem; got: {review}");
+    }
+
+    [Fact]
     public async Task BaselineVerify_True_PreExistingFailure_DoesNotFlag()
     {
         using var repo = TestRepository.Create();
