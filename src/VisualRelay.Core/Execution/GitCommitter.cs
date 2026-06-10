@@ -256,6 +256,30 @@ internal static class GitCommitter
 
         return false;
     }
+
+    /// <summary>
+    /// Post-commit invariant check: returns any untracked, non-internal files
+    /// that are absent from <paramref name="preRunUntracked"/> — i.e. files the
+    /// run authored but the commit did not stage. An empty result means the
+    /// commit captured everything the run produced.
+    /// </summary>
+    public static async Task<IReadOnlyList<string>> FindUncommittedAuthoredFilesAsync(
+        string rootPath,
+        IReadOnlySet<string> preRunUntracked,
+        CancellationToken cancellationToken)
+    {
+        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
+        var missed = new List<string>();
+        foreach (var path in currentUntracked)
+        {
+            if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path))
+            {
+                missed.Add(path);
+            }
+        }
+
+        return missed;
+    }
 }
 
 internal sealed record GitCommitResult(bool Success, string? CommitSha, string? Error)

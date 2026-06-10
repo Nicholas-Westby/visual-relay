@@ -3,6 +3,7 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
+[Collection("GitCommitter")]
 public sealed class GitCommitterTests
 {
     // ── Resilience: transient git failure tests (a–d) ───────────────────

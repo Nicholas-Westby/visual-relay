@@ -262,4 +262,32 @@ public sealed partial class RelayDriver
     {
         await StageStatusRecord.WriteAsync(taskDirectory, entries, cancellationToken);
     }
+
+    // ── Pre-run untracked snapshot persistence ─────────────────────────
+
+    private static async Task WritePreRunUntrackedAsync(string path, IReadOnlySet<string> paths, CancellationToken ct)
+    {
+        var sorted = paths.Order(StringComparer.Ordinal);
+        await File.WriteAllTextAsync(
+            path,
+            string.Join(Environment.NewLine, sorted) + Environment.NewLine,
+            ct);
+    }
+
+    private static async Task<IReadOnlySet<string>> ReadPreRunUntrackedAsync(string path, CancellationToken ct)
+    {
+        if (!File.Exists(path))
+            return new HashSet<string>(StringComparer.Ordinal);
+
+        var lines = await File.ReadAllLinesAsync(path, ct);
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0)
+                set.Add(trimmed);
+        }
+
+        return set;
+    }
 }

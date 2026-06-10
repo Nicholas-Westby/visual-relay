@@ -156,9 +156,34 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
             // Snapshot untracked files before the first agent edit so the commit pass
             // can distinguish files authored during the run from pre-existing scratch.
-            var preRunUntracked = _options.CreateGitCommit
-                ? await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken)
-                : null;
+            // Persist the snapshot on the FIRST run instance so a resumed instance
+            // reuses it — otherwise files authored by the interrupted instance are
+            // already untracked at resume start and would be misclassified as
+            // pre-existing, silently dropped from the sealed commit.
+            IReadOnlySet<string>? preRunUntracked = null;
+            if (_options.CreateGitCommit)
+            {
+                var snapshotPath = Path.Combine(taskDirectory, "pre-run-untracked.txt");
+                if (_options.Resume && File.Exists(snapshotPath))
+                {
+                    preRunUntracked = await ReadPreRunUntrackedAsync(snapshotPath, cancellationToken);
+                }
+                else if (_options.Resume)
+                {
+                    // Legacy resume: no persisted first-instance snapshot exists.
+                    // (Task was interrupted before this fix was deployed.)  Use an
+                    // empty baseline so every current untracked file is treated as
+                    // new and auto-included — the risk of including operator scratch
+                    // is lower than the alternative of silently dropping prior-
+                    // instance files and breaking HEAD.
+                    preRunUntracked = new HashSet<string>(StringComparer.Ordinal);
+                }
+                else
+                {
+                    preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
+                    await WritePreRunUntrackedAsync(snapshotPath, preRunUntracked, cancellationToken);
+                }
+            }
 
             var stage10Handled = false;
 
@@ -400,6 +425,22 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
 
                 commitSha = commit.CommitSha ?? "unknown";
+
+                // Post-commit invariant: verify no authored file was left behind.
+                // Catches the whole class of missing-file bugs — resume
+                // misclassification, manifest gap, or any other mechanism.
+                if (preRunUntracked is not null)
+                {
+                    var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
+                        rootPath, preRunUntracked, cancellationToken);
+                    if (missed.Count > 0)
+                    {
+                        retirement?.Rollback?.Invoke();
+                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11,
+                            $"sealed commit is missing authored files: {string.Join(", ", missed.Order(StringComparer.Ordinal).Select(f => $"`{f}`"))}",
+                            null, statusEntries, cancellationToken);
+                    }
+                }
 
                 // Publish task_done / task_archived after successful commit.
                 if (retirement is not null)
