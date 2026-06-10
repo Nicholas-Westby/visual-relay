@@ -143,7 +143,8 @@ public static class RelayConfigLoader
                 InactivityTimeoutMsByTier = inactivityTiers,
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
-                BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd")
+                BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
+                GuardCommand = OptionalStringOrNull(root, "guardCmd")
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

@@ -50,6 +50,9 @@ public sealed record RelayConfig(
     // evaluation. Null (default) means auto-detect: nix repos (any .nix file
     // in the manifest) get "nix develop --command true"; other repos skip.
     string? BootstrapCheckCommand = null,
+    // Command that runs repo policy guards (file-size, format, etc.) alongside
+    // the test command in the stage-9 gate. Absent → skipped with zero overhead.
+    string? GuardCommand = null,
     // Per-tier inactivity timeout (ms). A stage with no liveness pulse
     // (stdout/stderr bytes, trace-dir entry, or trace-file growth) within
     // this window is killed and retried (up to MaxStallRetries).

@@ -108,3 +108,49 @@ public static class TestCommandDetector
         patterns.Any(pattern =>
             Directory.EnumerateFiles(rootPath, pattern, SearchOption.TopDirectoryOnly).Any());
 }
+
+/// <summary>
+/// Detects repo policy guard commands by enumerating <c>tools/guards/*.sh</c>
+/// and chaining them with <c> &amp;&amp; </c>. When a .NET solution file
+/// (<c>*.slnx</c> or <c>*.sln</c>) exists in the repo root, appends
+/// <c>dotnet format &lt;solution&gt; --verify-no-changes</c>.
+/// Returns <c>null</c> when no guards are found — guard detection never
+/// blocks init.
+/// </summary>
+public static class GuardCommandDetector
+{
+    /// <summary>
+    /// Detects the guard command or returns <c>null</c> when no guards exist.
+    /// </summary>
+    public static string? Detect(string rootPath)
+    {
+        var guardsDir = Path.Combine(rootPath, "tools", "guards");
+        if (!Directory.Exists(guardsDir))
+            return null;
+
+        var scripts = Directory.EnumerateFiles(guardsDir, "*.sh")
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .Select(Path.GetFileName)
+            .ToList();
+
+        if (scripts.Count == 0)
+            return null;
+
+        var parts = new List<string>();
+        foreach (var script in scripts)
+        {
+            parts.Add($"tools/guards/{script}");
+        }
+
+        // Append dotnet format when a .NET solution file exists.
+        var slnx = Directory.EnumerateFiles(rootPath, "*.slnx", SearchOption.TopDirectoryOnly).FirstOrDefault();
+        var sln = Directory.EnumerateFiles(rootPath, "*.sln", SearchOption.TopDirectoryOnly).FirstOrDefault();
+        var solution = slnx ?? sln;
+        if (solution is not null)
+        {
+            parts.Add($"dotnet format {Path.GetFileName(solution)} --verify-no-changes");
+        }
+
+        return string.Join(" && ", parts);
+    }
+}

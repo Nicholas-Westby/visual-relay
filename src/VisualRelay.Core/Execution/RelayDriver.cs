@@ -208,6 +208,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             }
                         }
 
+                        // ── Repo guard check ──
+                        var (guardFailed, guardOutput, guardTimedOut) = await IntegrateGuardAsync(
+                            rootPath, taskId, runId, config, ledger, cancellationToken);
+                        if (guardTimedOut)
+                        {
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"), null, statusEntries, cancellationToken);
+                        }
+
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                         if (testResult.TimedOut)
                         {
@@ -216,7 +225,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         }
 
                         check = testResult.ExitCode == 0 ? "green" : "red";
-                        if (bootstrapFailed)
+                        if (bootstrapFailed || guardFailed)
                             check = "red";
 
                         commitMessages = ReadStringArray(json, "commitMessages");
@@ -232,20 +241,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         if (check != "green")
                         {
                             // Build the failure output for fix-verify (or flagging).
-                            string failingTestOutput;
-                            if (bootstrapFailed && testResult.ExitCode != 0)
-                                failingTestOutput = testResult.Output + "\n\n--- Bootstrap check output ---\n" + bootstrapFailureOutput;
-                            else if (bootstrapFailed)
-                                failingTestOutput = "Bootstrap check failed:\n" + bootstrapFailureOutput;
-                            else
-                                failingTestOutput = testResult.Output;
+                            var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput);
 
-                            // Baseline verify is skipped when the bootstrap itself is broken —
-                            // the bootstrap failure is definitely new (caused by the manifest change).
-                            var newFailures = (config.BaselineVerify && !bootstrapFailed)
+                            // Baseline verify is skipped when the bootstrap or guard is broken —
+                            // those failures are definitely new (caused by the manifest change).
+                            var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed)
                                 ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, cancellationToken)
                                 : null;
-                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed)
+                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed || guardFailed)
                             {
                                 if (config.MaxVerifyLoops <= 0)
                                 {
@@ -260,7 +263,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(
                                     rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
                                     previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput,
-                                    shouldRunBootstrap ? bootstrapCmd : null, cancellationToken);
+                                    shouldRunBootstrap ? bootstrapCmd : null,
+                                    config.GuardCommand, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

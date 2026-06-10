@@ -23,6 +23,13 @@ public static class RelayConfigWriter
             ["logSources"] = new JsonArray()
         };
 
+        // Auto-detect guard command when guard scripts exist.
+        var guardCmd = GuardCommandDetector.Detect(rootPath);
+        if (guardCmd is not null)
+        {
+            json["guardCmd"] = JsonValue.Create(guardCmd);
+        }
+
         var path = Path.Combine(relayDir, "config.json");
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         return path;

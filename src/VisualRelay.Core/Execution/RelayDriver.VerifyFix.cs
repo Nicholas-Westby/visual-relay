@@ -70,6 +70,7 @@ public sealed partial class RelayDriver
         int unknownCostStageCount,
         string failingTestOutput,
         string? bootstrapCheckCmd,
+        string? guardCmd,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
@@ -112,7 +113,8 @@ public sealed partial class RelayDriver
             // stage is red and the agent gets the bootstrap failure for the next
             // fix-verify iteration. The test command still runs so combined
             // failures are visible.
-            TestRunResult? failingResult = null;
+            TestRunResult? bootstrapFailingResult = null;
+            string? guardFailureOutput = null;
             string? check = null;
             if (bootstrapCheckCmd is not null)
             {
@@ -127,7 +129,29 @@ public sealed partial class RelayDriver
                 if (bootstrapResult.ExitCode != 0)
                 {
                     check = "red";
-                    failingResult = bootstrapResult;
+                    bootstrapFailingResult = bootstrapResult;
+                }
+            }
+
+            // Guard re-check: runs after bootstrap, before test command.
+            // Uses baseline diff so pre-existing violations don't block.
+            if (guardCmd is not null)
+            {
+                var (newViolations, _, timedOut) = await RunGuardCheckAsync(
+                    rootPath, taskId, runId, _dependencies.TestRunner,
+                    guardCmd, config.BaselineVerify, cancellationToken);
+
+                if (timedOut)
+                {
+                    var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+                        ErrorHintClassifier.WithHint(newViolations ?? "guard timed out"), null, statusEntries, cancellationToken);
+                    return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+                }
+
+                if (newViolations is not null)
+                {
+                    check = "red";
+                    guardFailureOutput = newViolations;
                 }
             }
 
@@ -140,8 +164,6 @@ public sealed partial class RelayDriver
             }
 
             check ??= testResult.ExitCode == 0 ? "green" : "red";
-            if (failingResult is null && check != "green")
-                failingResult = testResult;
 
             // Record attempt in ledger with labeled section.
             var header = maxLoops > 1
@@ -170,8 +192,9 @@ public sealed partial class RelayDriver
             if (check == "green")
                 return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
 
-            // Update failing output for next attempt.
-            failingTestOutput = failingResult?.Output ?? string.Empty;
+            // Build combined failure output for next fix-verify iteration.
+            failingTestOutput = BuildFailureOutput(testResult, guardFailureOutput,
+                bootstrapFailingResult is not null, bootstrapFailingResult?.Output);
         }
 
         // All attempts exhausted — flag.
