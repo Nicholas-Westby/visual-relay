@@ -10,7 +10,7 @@
 # message + non-zero exit when the litellm toolchain is missing. stop SIGTERMs
 # then SIGKILLs and ALWAYS removes the pidfile so the next start is unblocked.
 set -euo pipefail
-
+main() {
 # --- Paths (resolve repo root from this script's location) -------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -306,3 +306,5 @@ case "${1:-}" in
     exit 2
     ;;
 esac
+}
+main "$@"; exit $?

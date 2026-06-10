@@ -11,7 +11,9 @@ public sealed class Installer5LauncherTests
 {
     private static string RepoRoot => RepoSetup.Root;
     private static string LauncherPath => Path.Combine(RepoRoot, "visual-relay");
+    private static string BackendShPath => Path.Combine(RepoRoot, "tools", "backend", "backend.sh");
     private static string ReadLauncher() => File.ReadAllText(LauncherPath);
+    private static string ReadBackendSh() => File.ReadAllText(BackendShPath);
 
     /// <summary>
     /// Runs an embedded bash script that sources the launcher's dispatch logic
@@ -197,6 +199,99 @@ public sealed class Installer5LauncherTests
         Assert.Contains("test", needsDotnetCase, StringComparison.Ordinal);
         Assert.Contains("check", needsDotnetCase, StringComparison.Ordinal);
         Assert.DoesNotContain("sample-reset", needsDotnetCase, StringComparison.Ordinal);
+    }
+
+    // ── 5. Self-edit parse safety ───────────────────────────────────────
+
+    /// <summary>
+    /// After the function-wrap fix the launcher's last non-blank line must be
+    /// <c>main "$@"; exit $?</c> so bash parses all control flow before any
+    /// subcommand executes. This structural guard catches accidental unwrapping.
+    /// </summary>
+    [Fact]
+    public void Launcher_EndsWithMainInvocation()
+    {
+        var lines = ReadLauncher().Split('\n');
+        var lastNonBlank = lines
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .LastOrDefault();
+        Assert.NotNull(lastNonBlank);
+        Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
+    }
+
+    /// <summary>
+    /// Same structural guard for <c>tools/backend/backend.sh</c>, which shares
+    /// the top-level dispatch hazard and receives the same function-wrap fix.
+    /// </summary>
+    [Fact]
+    public void BackendSh_EndsWithMainInvocation()
+    {
+        var lines = ReadBackendSh().Split('\n');
+        var lastNonBlank = lines
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .LastOrDefault();
+        Assert.NotNull(lastNonBlank);
+        Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
+    }
+
+    /// <summary>
+    /// Copies the launcher to a temp directory, stubs <c>dotnet</c> to append
+    /// garbage (<c>garbage )(</c>) to the running script file then exit 0, and
+    /// asserts the launcher still exits 0 with no syntax error on stderr.
+    /// Before the function-wrap fix bash resumes parsing the modified file at
+    /// the old byte offset and hits the syntax error; after the fix the entire
+    /// control flow is parsed before any subcommand executes.
+    /// </summary>
+    [Fact]
+    public async Task SelfEdit_StubDotnetAppendsGarbage_LauncherStillExitsZero()
+    {
+        var testBody = """
+            TEST_DIR=$(mktemp -d); STUB_DIR="$TEST_DIR/bin"
+            LAUNCHER_COPY="$TEST_DIR/visual-relay"
+            trap 'rm -rf "$TEST_DIR" /tmp/.vr-selfedit-*' EXIT
+
+            # Copy the real launcher to our temp dir
+            cp "$LAUNCHER" "$LAUNCHER_COPY"
+            chmod +x "$LAUNCHER_COPY"
+
+            # Stub dotnet: appends garbage to the running script, then exits 0
+            mkdir -p "$STUB_DIR"
+            cat > "$STUB_DIR/dotnet" << 'X' && chmod +x "$STUB_DIR/dotnet"
+            #!/bin/bash
+            echo 'garbage )(' >> "$SELFEDIT_TARGET"
+            exit 0
+            X
+
+            # Create .relay/config.json with bypassSandbox:true to skip nono
+            mkdir -p "$TEST_DIR/.relay"
+            echo '{"bypassSandbox":true}' > "$TEST_DIR/.relay/config.json"
+
+            cd "$TEST_DIR"
+            RC=0
+            SELFEDIT_TARGET="$LAUNCHER_COPY" PATH="$STUB_DIR:/usr/bin:/bin" \
+                bash "$LAUNCHER_COPY" run-task test-id \
+                >/tmp/.vr-selfedit-out 2>/tmp/.vr-selfedit-err || RC=$?
+
+            if (( RC != 0 )); then
+                echo "FAIL: launcher exited $RC, expected 0 (self-edit parse hazard?)" >&2
+                echo "=== stdout ===" >&2; cat /tmp/.vr-selfedit-out >&2
+                echo "=== stderr ===" >&2; cat /tmp/.vr-selfedit-err >&2
+                exit 1
+            fi
+
+            if grep -qi "syntax error" /tmp/.vr-selfedit-err; then
+                echo "FAIL: syntax error on stderr (self-edit parse hazard hit)" >&2
+                echo "=== stderr ===" >&2; cat /tmp/.vr-selfedit-err >&2
+                exit 1
+            fi
+            """;
+
+        var (exitCode, _, stderr) = await RunLauncherTestAsync("selfedit-garbage", testBody);
+        if (!string.IsNullOrEmpty(stderr))
+            Assert.Fail($"Test failed:\n{stderr}");
+        Assert.Equal(0, exitCode);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────

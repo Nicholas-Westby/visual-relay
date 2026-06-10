@@ -45,7 +45,7 @@ tracked_counts=()
 visible_counts=()
 
 for pat in "${patterns[@]}"; do
-  tracked=$(git ls-files "${pat}" 2>/dev/null | wc -l | tr -d ' ')
+  tracked=$(git ls-files "${pat}" 2>/dev/null | wc -l | tr -d ' ' || true)
   tracked_counts+=("$tracked")
   tracked_total=$((tracked_total + tracked))
 
@@ -56,7 +56,7 @@ for pat in "${patterns[@]}"; do
     if [[ -d "$dir" ]]; then
       visible=$((visible + $(find "$dir" -name "$pat" \
         -not -path '*/bin/*' -not -path '*/obj/*' \
-        2>/dev/null | wc -l | tr -d ' ')))
+        2>/dev/null | wc -l | tr -d ' ' || true)))
     fi
   done
   visible_counts+=("$visible")
