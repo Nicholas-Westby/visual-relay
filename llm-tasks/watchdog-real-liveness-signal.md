@@ -1,44 +1,62 @@
-# Give the first-output watchdog a real liveness signal (not just a trace file)
+# Give stall detection a real liveness signal — and make the stage cap inactivity-based
+
+> **Amended 2026-06-09 (W's directive):** don't just fix the first-output watchdog —
+> replace the *flat per-stage wall-clock cap* with a **sliding inactivity deadline** that
+> resets every time activity is detected. `maxTurns` (already 200) is the churn bound; a
+> healthy 29-min Implement (observed today on parallelize) should never die to a clock,
+> and a genuinely hung stage should die after ~minutes of *silence*, not after burning
+> the rest of a 40-min budget. One liveness stream, two consumers: (a) first-output
+> watchdog (arm until first signal), (b) ongoing inactivity deadline (reset per signal).
+
+## Problem (original)
 
 `FirstOutputWatchdog.WaitAsync` (`src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs`)
-treats "the first filesystem entry appears in the stage's `--trace-dir`" as the sole
-liveness signal: it polls `traceDir` every 200ms and disarms only when a file shows up
-(`ProcessRunners.cs:91` calls it; `:82` tails the same dir; `:178` passes `--trace-dir`).
-
-But swival writes its first trace **file only after its first turn completes**. For heavy
-stages (Implement, and any long first reasoning turn on DeepSeek V4) swival is demonstrably
-working — making successful proxy calls and writing repo files — for many minutes before
-that first trace entry. The watchdog therefore **false-kills healthy stages**:
-
-- Empirically (2026-06-09): during an installer-4 stage-2 "stall" the LiteLLM proxy returned
-  continuous 200s and TTFT was 1.4s; parallelize advanced several stages on the same backend;
-  yet the watchdog killed the stage 3× at the per-tier budget. Implement stayed false-killed
-  even at a 300s budget while swival made 40+ successful proxy calls and wrote KeySetupPanel files.
-- The original premise ("a healthy stage emits its first trace entry quickly", from
-  `DONE-swival-first-output-watchdog.md`) holds for light stages but is **false for heavy ones**.
-
-Current stopgap: the watchdog is disabled (`.relay/config.json` first-output budgets set above
-the 20-min `SubagentTimeoutMilliseconds`, commit 41f81e8), so the 20-min cap is the only stall
-backstop. That's coarse — a genuinely hung stage wastes up to 20 min, and heavy-but-healthy
-stages need the cap raised (no early self-heal).
+treats "first filesystem entry appears in `--trace-dir`" as the sole liveness signal
+(`ProcessRunners.cs:91` calls it; `:82` tails the dir; `:178` passes `--trace-dir`). But
+swival writes its first trace file **only after its first turn completes**, so heavy
+first turns get false-killed while making successful proxy calls and writing repo files
+(empirically 2026-06-09: stage killed 3× at per-tier budget with proxy TTFT 1.4s and 40+
+successful calls). Stopgap since `41f81e8`: budgets set above the per-stage cap, i.e.
+watchdog disabled; the flat cap (now 40 min via `subagentTimeoutMs`) is the only
+backstop — coarse in both directions (hung stages waste the full window; healthy heavy
+stages need ever-larger windows: parallelize's Implement ran 29 min healthy today).
 
 ## Goal
-Restore a *useful* first-output watchdog by disarming on a signal that reflects swival actually
-being alive — not just a trace file — so it catches genuine pre-stream stalls in ~minutes
-WITHOUT killing healthy slow-first-turn stages. Then re-enable sane per-tier budgets.
+
+- A stage that is producing **any** observable activity (subprocess stdout/stderr bytes,
+  new trace-dir entries, trace-file growth) is never killed by a timer.
+- A stage with **no** activity for the per-tier inactivity window is killed and retried
+  (existing stall-retry machinery), catching genuine stalls in minutes.
+- First-turn liveness disarms on a signal that exists *during* turn 1 (process output
+  byte), not after it (trace file).
+- `maxTurns` remains the churn bound; optionally keep an absolute ceiling
+  (`subagentTimeoutMs`, generous, possibly 0=off) as a last-resort backstop.
 
 ## Approach (suggested)
-- swival's stdout/stderr is already captured by `ProcessCapture.RunAsync` (`ProcessRunners.cs`).
-  Have `ProcessCapture` expose a "first output byte seen" signal (a `TaskCompletionSource`/token
-  it trips on the first stdout OR stderr byte). Disarm the watchdog on **(first trace file) OR
-  (first process output byte)** — whichever comes first. swival emits startup/skill-activation
-  output early, so this disarms within seconds for any live process.
-- Keep the kill+retry behaviour for the genuinely-dead case (no output of any kind within the
-  per-tier window), and restore tight per-tier budgets (e.g. cheap/balanced ~120s, frontier ~660s)
-  once the signal is reliable. Re-point `.relay/config.json` budgets back below the cap.
-- Regression test: a fake process that writes to stdout but creates NO trace-dir file within the
-  threshold MUST NOT be killed; a process that writes nothing at all MUST be killed+retried.
-  (See `tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.cs` for the existing harness.)
 
-Related: memory `vr-stall-often-watchdog-false-kill`. Supersedes the trace-file approach in
-`DONE-swival-first-output-watchdog.md`.
+- `ProcessCapture.RunAsync` (`ProcessRunners.cs`) already captures stdout/stderr: expose
+  an activity callback/`IProgress`-style pulse on every output chunk; pulse likewise from
+  the existing trace-dir tailer on each new entry AND on trace-file size growth (entries
+  may flush per-turn; size growth can be sub-turn).
+- Replace the fixed deadline around the subagent wait with a sliding one: deadline =
+  `last_pulse + inactivityTimeoutMsByTier[tier]`. Config: new
+  `inactivityTimeoutMsByTier` (suggested defaults: cheap/balanced ~600000, frontier
+  ~1200000 — must exceed the worst healthy single-turn silence observed for the tier),
+  loaded like `firstOutputTimeoutMsByTier` in `RelayConfigLoader`. Keep
+  `firstOutputTimeoutMsByTier` for the pre-first-signal window (it can return to sane
+  values, e.g. 120s cheap/balanced, 660s frontier, once the signal is process-output).
+- Semantics of existing `subagentTimeoutMs`: repurpose as optional absolute ceiling
+  (document; consider default 0 = disabled now that inactivity + maxTurns cover the
+  failure modes).
+- Emit the existing stall/kill events with which signal source last pulsed, so logs show
+  *why* a kill fired (`no activity for Xs; last signal: stdout@T`).
+- Regression tests (extend `SwivalSubagentRunnerWatchdogTests.cs` harness): (1) process
+  writing stdout but no trace file is NOT killed (original false-kill); (2) totally
+  silent process IS killed at the inactivity window and retried; (3) process silent for
+  > window then active is killed (no resurrection); (4) activity pulses extend a stage
+  past the old flat cap without a kill; (5) absolute ceiling (when set) kills despite
+  activity; (6) per-tier windows honored.
+
+Related: memory `vr-stall-often-watchdog-false-kill`. Supersedes the trace-file approach
+in `DONE-swival-first-output-watchdog.md`. Coordinates with `stage-contract-retry`
+(same ProcessRunners surface — land sequentially, contract-retry first).
