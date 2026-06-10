@@ -82,11 +82,12 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             var arguments = BuildArguments(attemptInvocation);
             arguments.Add(BuildPrompt(attemptInvocation));
             var (fileName, launchArguments) = BuildLaunchTarget(arguments);
+            var sandboxEnv = BuildSandboxEnvironment(_config);
             var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
 
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
-            var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, killToken: watchdogCts.Token);
+            var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token);
             var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, firstOutputMs, watchdogCts, watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // Task.WhenAny may return processTask when the watchdog kill triggers
@@ -182,6 +183,30 @@ public sealed class SwivalSubagentRunner : ISubagentRunner
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
         ];
+    }
+
+    // Build environment overrides that redirect transitive-dependency caches
+    // into ~/.config/swival (already in the swival profile write-allow list)
+    // so nono's vr-guard sandbox does not block them. See nono-grant-swival-
+    // workspace-writes (stage 6).
+    //   HF_HOME        → ~/.config/swival/huggingface  (huggingface_hub, pulled
+    //                    in by litellm, defaults to ~/.cache/huggingface/).
+    //   XDG_CACHE_HOME → ~/.config/swival/cache        (broad catch-all for
+    //                    programs that follow the XDG spec).
+    //   UV_CACHE_DIR   → ~/.config/swival/uv-cache     (uv's Python package
+    //                    cache; defaults to ~/.cache/uv/).
+    internal static IReadOnlyDictionary<string, string>? BuildSandboxEnvironment(RelayConfig config)
+    {
+        if (config.BypassSandbox)
+            return null;
+
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return new Dictionary<string, string>
+        {
+            ["HF_HOME"] = Path.Combine(home, ".config", "swival", "huggingface"),
+            ["XDG_CACHE_HOME"] = Path.Combine(home, ".config", "swival", "cache"),
+            ["UV_CACHE_DIR"] = Path.Combine(home, ".config", "swival", "uv-cache"),
+        };
     }
 
     // Resolve the process to actually launch. When the sandbox is bypassed we run

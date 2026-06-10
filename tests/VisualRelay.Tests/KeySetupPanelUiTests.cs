@@ -102,7 +102,7 @@ public sealed class KeySetupPanelUiTests
         Assert.Contains("pay-as-you-go", vm.HfPricingNote, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task WithoutHfToken_RunIsBlockedWithMessage_BrowsingStillWorks()
     {
         EnsureNoUserEnv();
@@ -239,7 +239,7 @@ public sealed class KeySetupPanelUiTests
         }
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task SaveKeyCommand_UpsertsUserEnv_PreservingOtherKeys()
     {
         EnsureNoUserEnv();
@@ -266,7 +266,7 @@ public sealed class KeySetupPanelUiTests
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "MOONSHOT_API_KEY").IsSet);
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task HfGateMessage_AppearsInStatusText_WhenRunIsBlocked()
     {
         EnsureNoUserEnv();

@@ -69,6 +69,38 @@ public sealed class SwivalSubagentRunnerSandboxTests
         Assert.DoesNotContain("run", args);
     }
 
+    [Fact]
+    public void BuildSandboxEnvironment_BypassEnabled_ReturnsNull()
+    {
+        // When BypassSandbox is true the sandbox is off, so no env redirect
+        // is needed — the process runs directly on the host.
+        var config = TestConfig() with { BypassSandbox = true };
+
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
+
+        Assert.Null(env);
+    }
+
+    [Fact]
+    public void BuildSandboxEnvironment_SandboxEnabled_ReturnsCacheRedirects()
+    {
+        // When the sandbox is enabled (BypassSandbox = false), swival runs
+        // under nono. Transitive deps (huggingface_hub via litellm, uv) try
+        // to write to ~/.cache/… which nono's vr-guard profile denies.
+        // We redirect those cache writes into ~/.config/swival (already in
+        // the swival profile write-allow list) via env vars.
+        var config = TestConfig() with { BypassSandbox = false };
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
+
+        Assert.NotNull(env);
+        Assert.Equal(3, env.Count);
+        Assert.Equal(Path.Combine(home, ".config", "swival", "huggingface"), env["HF_HOME"]);
+        Assert.Equal(Path.Combine(home, ".config", "swival", "cache"), env["XDG_CACHE_HOME"]);
+        Assert.Equal(Path.Combine(home, ".config", "swival", "uv-cache"), env["UV_CACHE_DIR"]);
+    }
+
     private static RelayConfig TestConfig() =>
         new(
             "llm-tasks",
