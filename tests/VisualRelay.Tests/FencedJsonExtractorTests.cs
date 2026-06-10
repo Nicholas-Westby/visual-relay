@@ -72,4 +72,28 @@ public sealed class FencedJsonExtractorTests
     {
         Assert.Null(FencedJsonExtractor.Extract("```json\nnothing here\n```"));
     }
+    [Fact]
+    public void EmbeddedMarkerFollowedByParseableArrayFragment_StillReturnsTheRealObjectBlock()
+    {
+        // The Plan-stage killer: the contract's string values embed "```json",
+        // and the model recaps the manifest as a bare ARRAY in prose after the
+        // closing fence. The walk anchors on the embedded marker, whose first
+        // JSON value is that trailing array — parseable, so a parse-only walk
+        // returns it and the driver throws (root must be Object). Object-root
+        // acceptance rejects the fragment and falls back to the real block.
+        var json = "{ \"plan\": \"emit a fenced ```json block listing files\", " +
+                   "\"manifest\": [\"src/A.cs\", \"tests/B.cs\"] }";
+        var text = "```json\n" + json + "\n```\nrecap of files:\n[\"src/A.cs\", \"tests/B.cs\"]\n";
+
+        Assert.Equal(json, FencedJsonExtractor.Extract(text));
+    }
+
+    [Fact]
+    public void OnlyBlockIsArrayRoot_ReturnsNull()
+    {
+        // An array-root contract is a contract violation; the extractor returns
+        // null so the driver flags it cleanly instead of throwing on shape.
+        Assert.Null(FencedJsonExtractor.Extract("```json\n[1, 2, 3]\n```"));
+    }
+
 }

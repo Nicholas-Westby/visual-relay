@@ -53,8 +53,13 @@ internal static class FencedJsonExtractor
 
         try
         {
+            // Every stage contract is a JSON OBJECT. Requiring an object root
+            // here (not just parseable JSON) rejects array fragments that an
+            // embedded marker can anchor — e.g. a quoted manifest list — so the
+            // marker walk continues to the real block instead of handing the
+            // driver a wrong-shaped root it would throw on.
             using var parsed = JsonDocument.Parse(json);
-            return json;
+            return parsed.RootElement.ValueKind == JsonValueKind.Object ? json : null;
         }
         catch (JsonException)
         {
