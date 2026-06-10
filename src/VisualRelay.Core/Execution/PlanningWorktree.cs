@@ -115,30 +115,57 @@ public static class PlanningWorktree
 
     private static async Task RunGitAsync(string repoRoot, string[] args, CancellationToken ct)
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo("git")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        // Clear Xcode SDK env vars that may point to missing nix store paths.
-        process.StartInfo.Environment.Remove("DEVELOPER_DIR");
-        process.StartInfo.Environment.Remove("SDKROOT");
-        process.StartInfo.ArgumentList.Add("-C");
-        process.StartInfo.ArgumentList.Add(repoRoot);
-        foreach (var arg in args)
-            process.StartInfo.ArgumentList.Add(arg);
+        const int maxAttempts = 3;
+        Exception? lastException = null;
 
-        process.Start();
-        await process.WaitForExitAsync(ct);
-
-        if (process.ExitCode != 0)
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var stderr = await process.StandardError.ReadToEndAsync(ct);
-            throw new InvalidOperationException(
-                $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stderr.Trim()}");
+            try
+            {
+                using var process = new Process();
+                process.StartInfo = new ProcessStartInfo("git")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                // Clear Xcode SDK env vars that may point to missing nix store paths.
+                process.StartInfo.Environment.Remove("DEVELOPER_DIR");
+                process.StartInfo.Environment.Remove("SDKROOT");
+                process.StartInfo.ArgumentList.Add("-C");
+                process.StartInfo.ArgumentList.Add(repoRoot);
+                foreach (var arg in args)
+                    process.StartInfo.ArgumentList.Add(arg);
+
+                process.Start();
+                await process.WaitForExitAsync(ct);
+
+                if (process.ExitCode == 0)
+                    return;
+
+                var stderr = await process.StandardError.ReadToEndAsync(ct);
+                var ex = new InvalidOperationException(
+                    $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stderr.Trim()}");
+
+                if (attempt == maxAttempts)
+                    throw ex;
+
+                lastException = ex;
+                var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
+                await Task.Delay(delay, ct);
+            }
+            catch (Exception ex) when (ex is not InvalidOperationException)
+            {
+                // Process start failure — also retry.
+                if (attempt == maxAttempts)
+                    throw;
+                lastException = ex;
+                var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
+                await Task.Delay(delay, ct);
+            }
         }
+
+        throw lastException!;
     }
 
     private static void CopyDirectoryRecursive(string sourceDir, string destDir)

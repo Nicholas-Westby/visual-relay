@@ -5,6 +5,130 @@ namespace VisualRelay.Tests;
 
 public sealed class GitCommitterTests
 {
+    // ── Resilience: transient git failure tests (a–d) ───────────────────
+
+    [Fact]
+    public async Task CommitAsync_ProbeFailsTwiceThenSucceeds_CommitsSuccessfully()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+
+        var shim = new TransientGitShim();
+        shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: not a git repository");
+        GitCommitter.RawGitRunner = shim.RunAsync;
+        try
+        {
+            var result = await GitCommitter.CommitAsync(
+                repo.Root, "my-task", "abc123",
+                ["feat: add widget"], ["src/app.cs"], [],
+                commitToken: null, preRunUntracked: null,
+                CancellationToken.None);
+
+            Assert.True(result.Success, $"Expected success, got: {result.Error}");
+            Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
+        }
+        finally
+        {
+            GitCommitter.RawGitRunner = null;
+        }
+    }
+
+    [Fact]
+    public async Task CommitAsync_ProbeFailsPersistently_ReturnsFailureWithDiagnostics()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+
+        var shim = new TransientGitShim();
+        // 99 failures: effectively persistent for the 3-attempt retry window.
+        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
+        GitCommitter.RawGitRunner = shim.RunAsync;
+        try
+        {
+            var result = await GitCommitter.CommitAsync(
+                repo.Root, "my-task", "abc123",
+                ["feat: add widget"], ["src/app.cs"], [],
+                commitToken: null, preRunUntracked: null,
+                CancellationToken.None);
+
+            Assert.False(result.Success);
+            Assert.NotNull(result.Error);
+            Assert.Contains("git exit 128", result.Error, StringComparison.Ordinal);
+            Assert.Contains("fatal: not a git repository", result.Error, StringComparison.Ordinal);
+        }
+        finally
+        {
+            GitCommitter.RawGitRunner = null;
+        }
+    }
+
+    [Fact]
+    public async Task CommitAsync_AddFailsTransientlyThenSucceeds_CommitsSuccessfully()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+
+        var shim = new TransientGitShim();
+        shim.FailNext("add", failureCount: 1, exitCode: 128, stderr: "fatal: index file open failed");
+        GitCommitter.RawGitRunner = shim.RunAsync;
+        try
+        {
+            var result = await GitCommitter.CommitAsync(
+                repo.Root, "my-task", "abc123",
+                ["feat: add widget"], ["src/app.cs"], [],
+                commitToken: null, preRunUntracked: null,
+                CancellationToken.None);
+
+            Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
+        }
+        finally
+        {
+            GitCommitter.RawGitRunner = null;
+        }
+    }
+
+    [Fact]
+    public async Task CommitAsync_PersistentFailure_CompletesWithinReasonableTime()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+
+        var shim = new TransientGitShim();
+        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
+        GitCommitter.RawGitRunner = shim.RunAsync;
+        try
+        {
+            var sw = Stopwatch.StartNew();
+            var result = await GitCommitter.CommitAsync(
+                repo.Root, "my-task", "abc123",
+                ["feat: test"], [], [],
+                commitToken: null, preRunUntracked: null,
+                CancellationToken.None);
+            sw.Stop();
+
+            Assert.False(result.Success);
+            // 3 attempts with 250ms + 1s backoff = 1.25s max added latency.
+            // Allow generous headroom for process spawn + OS scheduling.
+            Assert.True(sw.Elapsed.TotalSeconds < 10,
+                $"Persistent failure took {sw.Elapsed.TotalSeconds:F1}s, expected < 10s");
+        }
+        finally
+        {
+            GitCommitter.RawGitRunner = null;
+        }
+    }
+
     [Fact]
     public async Task CommitAsync_FirstCandidateAccepted_CommitsAndReturnsSha()
     {
@@ -275,5 +399,54 @@ public sealed class GitCommitterTests
         process.WaitForExit();
         Assert.True(process.ExitCode == 0, stderr);
         return stdout;
+    }
+
+    // ── test seam: transient git failure shim ─────────────────────────
+
+    /// <summary>
+    /// Implements the <see cref="GitCommitter.RawGitRunner"/> signature.
+    /// Intercepts git calls whose argument list contains a configured substring
+    /// and returns synthetic failures for a specified count before falling
+    /// through to the real git process.
+    /// </summary>
+    private sealed class TransientGitShim
+    {
+        private readonly Dictionary<string, int> _failureCounts = new();
+        private int _exitCode = 128;
+        private string _stderr = "fatal: transient error";
+
+        /// <summary>
+        /// Configure the next <paramref name="failureCount"/> git invocations whose
+        /// arguments contain <paramref name="argumentSubstring"/> to return a
+        /// synthetic failure instead of calling real git.
+        /// </summary>
+        public void FailNext(string argumentSubstring, int failureCount, int exitCode = 128, string stderr = "fatal: transient error")
+        {
+            _failureCounts[argumentSubstring] = failureCount;
+            _exitCode = exitCode;
+            _stderr = stderr;
+        }
+
+        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+            string rootPath, IEnumerable<string> arguments, CancellationToken ct,
+            TimeSpan? timeout, IReadOnlyDictionary<string, string>? environment)
+        {
+            var argsList = arguments.ToList();
+            var argsStr = string.Join(' ', argsList);
+            foreach (var kvp in _failureCounts)
+            {
+                if (argsStr.Contains(kvp.Key, StringComparison.Ordinal) && kvp.Value > 0)
+                {
+                    _failureCounts[kvp.Key] = kvp.Value - 1;
+                    return (_exitCode, _stderr, false);
+                }
+            }
+
+            // Fall through to real git.
+            var gitArgs = new List<string> { "-C", rootPath };
+            gitArgs.AddRange(argsList);
+            return await ProcessCapture.RunAsync("git", gitArgs, rootPath,
+                timeout ?? TimeSpan.FromSeconds(30), ct, environment);
+        }
     }
 }

@@ -47,6 +47,101 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 LoadResumeState(taskDirectory, taskId, ledger, manifest, seals,
                     ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount,
                     statusEntries, ref firstStageToRun);
+
+            // ── Commit-gate resume validation ──────────────────────────────────────
+            // When stages 1–10 are Done and only stage 11 (Commit) failed,
+            // re-validate the gate test suite and the recorded tree hash against
+            // the current worktree before re-entering the commit step.
+            if (_options.Resume && firstStageToRun == 11
+                && statusEntries.Count >= 10
+                && statusEntries.Take(10).All(e => e.Status == "Done"))
+            {
+                var manifestPath = Path.Combine(taskDirectory, "manifest.txt");
+                var currentManifest = File.Exists(manifestPath)
+                    ? (await File.ReadAllLinesAsync(manifestPath, cancellationToken))
+                        .Where(l => !string.IsNullOrWhiteSpace(l)).ToList()
+                    : new List<string>();
+
+                // Re-run the gate test suite.
+                bool gatePassed = false;
+                try
+                {
+                    var testResult = await _dependencies.TestRunner.RunAsync(
+                        rootPath, config.TestCommand, cancellationToken);
+                    gatePassed = !testResult.TimedOut && testResult.ExitCode == 0;
+                }
+                catch
+                {
+                    // Test runner failure → treat as gate failure.
+                }
+
+                // Re-validate the recorded stage-10 tree hash against the current
+                // worktree. The taskHash from LoadResumeState is the seal hash, not
+                // the tree hash — extract treeHash from the stage-10 seal entry.
+                var recordedTreeHash = string.Empty;
+                if (seals.Count >= 10)
+                {
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(seals[9]); // 0-based index 9 = stage 10
+                        if (doc.RootElement.TryGetProperty("treeHash", out var th))
+                            recordedTreeHash = th.GetString() ?? string.Empty;
+                    }
+                    catch { /* malformed seal — treat as mismatch */ }
+                }
+                var currentHash = WorkingTreeHash(rootPath, currentManifest);
+                var hashMatches = !string.IsNullOrEmpty(recordedTreeHash)
+                    && string.Equals(currentHash, recordedTreeHash, StringComparison.Ordinal);
+
+                if (!gatePassed || !hashMatches)
+                {
+                    // Fall back to conservative restart at stage 5 (Author-tests).
+                    firstStageToRun = 5;
+
+                    // Truncate seals to stages 1–4 only.
+                    var truncated = new List<string>();
+                    foreach (var seal in seals)
+                    {
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(seal);
+                            if (doc.RootElement.TryGetProperty("n", out var n) && n.GetInt32() <= 4)
+                                truncated.Add(seal);
+                        }
+                        catch { /* malformed seal — drop */ }
+                    }
+                    seals.Clear();
+                    seals.AddRange(truncated);
+
+                    // Reset previousSeal/taskHash from stage-4 seal.
+                    if (seals.Count > 0)
+                    {
+                        using var doc = JsonDocument.Parse(seals[^1]);
+                        if (doc.RootElement.TryGetProperty("seal", out var sp))
+                            taskHash = previousSeal = sp.GetString() ?? string.Empty;
+                    }
+                    else
+                    {
+                        previousSeal = string.Empty;
+                        taskHash = string.Empty;
+                    }
+
+                    // Reset status entries for stages 5–11 to Waiting (LoadResumeState
+                    // left them as Done since firstStageToRun was originally 11).
+                    for (int i = 0; i < statusEntries.Count; i++)
+                    {
+                        if (statusEntries[i].Stage >= 5)
+                            statusEntries[i] = statusEntries[i] with { Status = "Waiting", Error = null };
+                    }
+
+                    // Append fallback note to ledger.
+                    ledger.AppendLine("> **Resume fallback**: commit-gate re-validation failed");
+                    ledger.AppendLine($"> gatePassed={gatePassed} hashMatch={hashMatches}");
+                    ledger.AppendLine("> Restarting from stage 5 (Author-tests).");
+                    ledger.AppendLine();
+                }
+            }
+
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 

@@ -8,6 +8,13 @@ internal static class GitCommitter
     // assume a src/tests/tools layout, since Visual Relay runs on any repo.
     private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
 
+    /// <summary>
+    /// Test seam: when set, GitAsync calls this instead of the real git process.
+    /// Receives (rootPath, arguments, cancellationToken, timeout, environment).
+    /// When null (production), the retry-wrapped real git runner is used.
+    /// </summary>
+    internal static Func<string, IEnumerable<string>, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>>? RawGitRunner { get; set; }
+
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
         string taskId,
@@ -22,13 +29,13 @@ internal static class GitCommitter
         var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (inside.ExitCode != 0)
         {
-            return GitCommitResult.Failed("target root is not a git repository");
+            return GitCommitResult.Failed($"target root is not a git repository (git exit {inside.ExitCode}): {inside.Output.Trim()}");
         }
 
         var reset = await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
         if (reset.ExitCode != 0)
         {
-            return GitCommitResult.Failed($"git reset failed: {reset.Output.Trim()}");
+            return GitCommitResult.Failed($"git reset failed (git exit {reset.ExitCode}): {reset.Output.Trim()}");
         }
         IReadOnlyList<string> manifestFilesToStage;
         try
@@ -45,7 +52,7 @@ internal static class GitCommitter
             var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
             if (add.ExitCode != 0)
             {
-                return GitCommitResult.Failed($"git add failed: {add.Output.Trim()}");
+                return GitCommitResult.Failed($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
             }
         }
 
@@ -57,7 +64,7 @@ internal static class GitCommitter
         var addTracked = await GitAsync(rootPath, ["add", "-u"], cancellationToken);
         if (addTracked.ExitCode != 0)
         {
-            return GitCommitResult.Failed($"git add -u failed: {addTracked.Output.Trim()}");
+            return GitCommitResult.Failed($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
         }
 
         // Proof files (ledger/seals/manifest) live under .relay/, which the
@@ -69,7 +76,7 @@ internal static class GitCommitter
             var addProof = await GitAsync(rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
             if (addProof.ExitCode != 0)
             {
-                return GitCommitResult.Failed($"git add proof failed: {addProof.Output.Trim()}");
+                return GitCommitResult.Failed($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
             }
         }
 
@@ -99,7 +106,7 @@ internal static class GitCommitter
                 var addNew = await GitAsync(rootPath, ["add", "--", .. newAuthored], cancellationToken);
                 if (addNew.ExitCode != 0)
                 {
-                    return GitCommitResult.Failed($"git add auto-include failed: {addNew.Output.Trim()}");
+                    return GitCommitResult.Failed($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
                 }
             }
         }
@@ -127,21 +134,48 @@ internal static class GitCommitter
                 var sha = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
                 return sha.ExitCode == 0
                     ? GitCommitResult.Committed(sha.Output.Trim())
-                    : GitCommitResult.Failed($"git rev-parse failed after commit: {sha.Output.Trim()}");
+                    : GitCommitResult.Failed($"git rev-parse failed after commit (git exit {sha.ExitCode}): {sha.Output.Trim()}");
             }
 
-            lastError = attempt.Output.Trim();
+            lastError = $"(git exit {attempt.ExitCode}): {attempt.Output.Trim()}";
         }
 
         return GitCommitResult.Failed($"commit rejected: {lastError}");
     }
 
-    private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
+    private static async Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
         TimeSpan? timeout = null,
-        IReadOnlyDictionary<string, string>? environment = null) =>
+        IReadOnlyDictionary<string, string>? environment = null)
+    {
+        const int maxAttempts = 3;
+        (int ExitCode, string Output, bool TimedOut) lastResult = default;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            var result = RawGitRunner is not null
+                ? await RawGitRunner(rootPath, arguments, cancellationToken, timeout, environment)
+                : await RunGitCoreAsync(rootPath, arguments, cancellationToken, timeout, environment);
+
+            if (result.ExitCode == 0 || attempt == maxAttempts)
+                return result;
+
+            lastResult = result;
+            var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
+            await Task.Delay(delay, cancellationToken);
+        }
+
+        return lastResult;
+    }
+
+    private static Task<(int ExitCode, string Output, bool TimedOut)> RunGitCoreAsync(
+        string rootPath,
+        IEnumerable<string> arguments,
+        CancellationToken cancellationToken,
+        TimeSpan? timeout,
+        IReadOnlyDictionary<string, string>? environment) =>
         ProcessCapture.RunAsync(
             "git",
             ["-C", rootPath, .. arguments],
