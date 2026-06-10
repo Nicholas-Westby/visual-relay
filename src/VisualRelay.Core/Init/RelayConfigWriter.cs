@@ -23,4 +23,33 @@ public static class RelayConfigWriter
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         return path;
     }
+
+    /// <summary>
+    /// Read-modify-write upsert of the <c>bypassSandbox</c> key into
+    /// <c>.relay/config.json</c>. Preserves all existing keys (tierProfiles,
+    /// baselineVerify, etc.) so toggling the checkbox never clobbers other
+    /// settings.
+    /// </summary>
+    public static void UpsertBypassSandbox(string rootPath, bool bypassSandbox)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        json["bypassSandbox"] = bypassSandbox;
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
 }

@@ -98,6 +98,10 @@ public partial class MainWindowViewModel
         var configResult = await RelayConfigLoader.TryLoadAsync(RootPath);
         NeedsInitialization = !ShowArchive && configResult.NeedsInitialization;
         ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
+        if (configResult.Status == RelayConfigStatus.Loaded)
+        {
+            BypassSandbox = configResult.Config.BypassSandbox;
+        }
 
         // IsNullOrEmpty (not WhiteSpace) so detection runs only when the user hasn't
         // touched the box yet; never clobbers a value the user has typed.

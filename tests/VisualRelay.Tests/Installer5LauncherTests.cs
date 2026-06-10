@@ -15,10 +15,8 @@ public sealed class Installer5LauncherTests
     private static string ReadLauncher() => File.ReadAllText(LauncherPath);
     private static string ReadBackendSh() => File.ReadAllText(BackendShPath);
 
-    /// <summary>
-    /// Runs an embedded bash script that sources the launcher's dispatch logic
-    /// in a controlled environment and returns (exitCode, stdout, stderr).
-    /// </summary>
+    /// <summary>Runs an embedded bash script that sources the launcher's dispatch
+    /// logic in a controlled environment and returns (exitCode, stdout, stderr).</summary>
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunLauncherTestAsync(
         string testName, string testBody)
     {
@@ -203,11 +201,8 @@ public sealed class Installer5LauncherTests
 
     // ── 5. Self-edit parse safety ───────────────────────────────────────
 
-    /// <summary>
-    /// After the function-wrap fix the launcher's last non-blank line must be
-    /// <c>main "$@"; exit $?</c> so bash parses all control flow before any
-    /// subcommand executes. This structural guard catches accidental unwrapping.
-    /// </summary>
+    /// <summary>Launcher's last non-blank line must be <c>main "$@"; exit $?</c>
+    /// so bash parses all control flow before any subcommand executes.</summary>
     [Fact]
     public void Launcher_EndsWithMainInvocation()
     {
@@ -220,10 +215,7 @@ public sealed class Installer5LauncherTests
         Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
     }
 
-    /// <summary>
-    /// Same structural guard for <c>tools/backend/backend.sh</c>, which shares
-    /// the top-level dispatch hazard and receives the same function-wrap fix.
-    /// </summary>
+    /// <summary>Same structural guard for <c>tools/backend/backend.sh</c>.</summary>
     [Fact]
     public void BackendSh_EndsWithMainInvocation()
     {
@@ -236,14 +228,10 @@ public sealed class Installer5LauncherTests
         Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
     }
 
-    /// <summary>
-    /// Copies the launcher to a temp directory, stubs <c>dotnet</c> to append
-    /// garbage (<c>garbage )(</c>) to the running script file then exit 0, and
-    /// asserts the launcher still exits 0 with no syntax error on stderr.
-    /// Before the function-wrap fix bash resumes parsing the modified file at
-    /// the old byte offset and hits the syntax error; after the fix the entire
-    /// control flow is parsed before any subcommand executes.
-    /// </summary>
+    /// <summary>Stubs dotnet to append garbage to the running launcher, then
+    /// asserts clean exit. Before the function-wrap fix bash would resume parsing
+    /// after the edit and hit a syntax error; after the fix all control flow is
+    /// parsed before any subcommand executes.</summary>
     [Fact]
     public async Task SelfEdit_StubDotnetAppendsGarbage_LauncherStillExitsZero()
     {
