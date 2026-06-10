@@ -56,9 +56,9 @@ exit 1
     public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken)
     {
         // Resolve the active hooks directory.
-        var hooksDirResult = await ProcessCapture.RunAsync(
-            "git", ["-C", rootPath, "config", "--default", ".git/hooks", "core.hooksPath"],
-            rootPath, TimeSpan.FromSeconds(10), cancellationToken);
+        var hooksDirResult = await GitInvoker.RunAsync(
+            rootPath, ["config", "--default", ".git/hooks", "core.hooksPath"],
+            cancellationToken);
         var hooksDirRelative = hooksDirResult.ExitCode == 0
             ? hooksDirResult.Output.Trim()
             : ".git/hooks";

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -116,41 +115,22 @@ public static class PlanningWorktree
     private static async Task RunGitAsync(string repoRoot, string[] args, CancellationToken ct)
     {
         const int maxAttempts = 3;
-        Exception? lastException = null;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
             {
-                using var process = new Process();
-                process.StartInfo = new ProcessStartInfo("git")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false
-                };
-                // Clear Xcode SDK env vars that may point to missing nix store paths.
-                process.StartInfo.Environment.Remove("DEVELOPER_DIR");
-                process.StartInfo.Environment.Remove("SDKROOT");
-                process.StartInfo.ArgumentList.Add("-C");
-                process.StartInfo.ArgumentList.Add(repoRoot);
-                foreach (var arg in args)
-                    process.StartInfo.ArgumentList.Add(arg);
+                var result = await GitInvoker.RunAsync(repoRoot, args, ct);
 
-                process.Start();
-                await process.WaitForExitAsync(ct);
-
-                if (process.ExitCode == 0)
+                if (result.ExitCode == 0)
                     return;
 
-                var stderr = await process.StandardError.ReadToEndAsync(ct);
-                var ex = new InvalidOperationException(
-                    $"git {string.Join(' ', args)} failed (exit {process.ExitCode}): {stderr.Trim()}");
-
                 if (attempt == maxAttempts)
-                    throw ex;
+                {
+                    throw new InvalidOperationException(
+                        $"git {string.Join(' ', args)} failed (exit {result.ExitCode}): {result.Output.Trim()}");
+                }
 
-                lastException = ex;
                 var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
                 await Task.Delay(delay, ct);
             }
@@ -159,13 +139,13 @@ public static class PlanningWorktree
                 // Process start failure — also retry.
                 if (attempt == maxAttempts)
                     throw;
-                lastException = ex;
                 var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
                 await Task.Delay(delay, ct);
             }
         }
 
-        throw lastException!;
+        throw new InvalidOperationException(
+            $"git {string.Join(' ', args)} failed after {maxAttempts} attempts");
     }
 
     private static void CopyDirectoryRecursive(string sourceDir, string destDir)

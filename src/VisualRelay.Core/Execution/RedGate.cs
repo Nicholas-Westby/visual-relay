@@ -130,5 +130,5 @@ public static class RedGate
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken) =>
-        ProcessCapture.RunAsync("git", ["-C", rootPath, .. arguments], rootPath, TimeSpan.FromSeconds(30), cancellationToken);
+        GitInvoker.RunAsync(rootPath, arguments, cancellationToken);
 }

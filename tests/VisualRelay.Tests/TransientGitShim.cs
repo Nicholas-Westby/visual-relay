@@ -41,10 +41,10 @@ internal sealed class TransientGitShim
             }
         }
 
-        // Fall through to real git.
-        var gitArgs = new List<string> { "-C", rootPath };
-        gitArgs.AddRange(argsList);
-        return await ProcessCapture.RunAsync("git", gitArgs, rootPath,
-            timeout ?? TimeSpan.FromSeconds(30), ct, environment);
+        // Fall through to real git.  Using ProcessCapture directly avoids
+        // coupling to GitInvoker.Override, eliminating cross-collection
+        // races with GitInvokerTests that also manipulate the static Override.
+        return await ProcessCapture.RunAsync("git", argsList,
+            rootPath, timeout ?? TimeSpan.FromSeconds(30), ct, environment);
     }
 }

@@ -13,10 +13,11 @@ internal static class ProcessCapture
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken killToken = default,
-        Action<string>? onActivity = null)
+        Action<string>? onActivity = null,
+        IReadOnlySet<string>? envRemove = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -27,7 +28,8 @@ internal static class ProcessCapture
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken killToken = default,
-        Action<string>? onActivity = null)
+        Action<string>? onActivity = null,
+        IReadOnlySet<string>? envRemove = null)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -35,7 +37,7 @@ internal static class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -45,7 +47,8 @@ internal static class ProcessCapture
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
         CancellationToken killToken = default,
-        Action<string>? onActivity = null)
+        Action<string>? onActivity = null,
+        IReadOnlySet<string>? envRemove = null)
     {
         using var process = new Process();
         process.StartInfo = startInfo;
@@ -53,6 +56,13 @@ internal static class ProcessCapture
         process.StartInfo.RedirectStandardOutput = true;
         process.StartInfo.RedirectStandardError = true;
         process.StartInfo.UseShellExecute = false;
+        if (envRemove is not null)
+        {
+            foreach (var key in envRemove)
+            {
+                process.StartInfo.EnvironmentVariables.Remove(key);
+            }
+        }
         if (environment is not null)
         {
             foreach (var kvp in environment)

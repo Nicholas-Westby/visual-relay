@@ -132,4 +132,72 @@ public sealed partial class SplitGuardVerificationTests
             Assert.DoesNotContain("static async Task<string> WriteExecutableAsync", content, StringComparison.Ordinal);
         }
     }
+
+    // ── GitInvoker architecture guard ──────────────────────────────────
+
+    /// <summary>
+    /// GitInvokerTests must carry [Collection("GitInvoker")] so tests
+    /// that manipulate the static GitInvoker.Override seam are serialized
+    /// and cannot race with each other or with any other test that touches
+    /// GitInvoker static state.
+    /// </summary>
+    [Fact]
+    public void GitInvokerTests_HasCollectionAttribute()
+    {
+        var path = Path.Combine(TestsDir, "GitInvokerTests.cs");
+        Assert.True(File.Exists(path), "GitInvokerTests.cs must exist");
+        var content = File.ReadAllText(path);
+        Assert.Contains("[Collection(\"GitInvoker\")]", content, StringComparison.Ordinal);
+        Assert.Contains("public sealed class GitInvokerTests", content, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Every production git call site must route through
+    /// <see cref="VisualRelay.Core.Execution.GitInvoker"/>.  Bare
+    /// <c>"git"</c> in <c>ProcessCapture.RunAsync</c> or
+    /// <c>new ProcessStartInfo("git")</c> is forbidden in production
+    /// source — those are the exact patterns that fail under nix-shell
+    /// environment rot on macOS.
+    /// </summary>
+    [Fact]
+    public void NoBareGitString_InProductionCallSites()
+    {
+        var productionDirs = new[]
+        {
+            Path.Combine(RepoSetup.Root, "src", "VisualRelay.Core"),
+            Path.Combine(RepoSetup.Root, "src", "VisualRelay.App"),
+            Path.Combine(RepoSetup.Root, "src", "VisualRelay.Domain"),
+        };
+
+        var violations = new List<string>();
+
+        foreach (var dir in productionDirs)
+        {
+            if (!Directory.Exists(dir)) continue;
+
+            foreach (var file in Directory.EnumerateFiles(dir, "*.cs", SearchOption.AllDirectories))
+            {
+                // Exclude generated and obj artifacts.
+                if (file.Contains("/obj/") || file.Contains("\\obj\\")) continue;
+                if (file.Contains("/bin/") || file.Contains("\\bin\\")) continue;
+
+                var content = File.ReadAllText(file);
+                var relative = Path.GetRelativePath(RepoSetup.Root, file);
+
+                // Pattern 1: ProcessCapture.RunAsync("git", …)
+                if (content.Contains(@"ProcessCapture.RunAsync(""git"",", StringComparison.Ordinal))
+                {
+                    violations.Add($"{relative}: ProcessCapture.RunAsync(\"git\", …) — use GitInvoker.RunAsync instead");
+                }
+
+                // Pattern 2: new ProcessStartInfo("git")
+                if (content.Contains(@"new ProcessStartInfo(""git"")", StringComparison.Ordinal))
+                {
+                    violations.Add($"{relative}: new ProcessStartInfo(\"git\") — use GitInvoker.RunAsync instead");
+                }
+            }
+        }
+
+        Assert.Empty(violations);
+    }
 }

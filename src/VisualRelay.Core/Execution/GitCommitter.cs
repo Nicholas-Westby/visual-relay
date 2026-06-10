@@ -176,12 +176,11 @@ internal static class GitCommitter
         CancellationToken cancellationToken,
         TimeSpan? timeout,
         IReadOnlyDictionary<string, string>? environment) =>
-        ProcessCapture.RunAsync(
-            "git",
-            ["-C", rootPath, .. arguments],
+        GitInvoker.RunAsync(
             rootPath,
-            timeout ?? TimeSpan.FromSeconds(30),
+            arguments,
             cancellationToken,
+            timeout,
             environment);
 
     private static async Task<IReadOnlyList<string>> ResolveManifestFilesToStageAsync(
