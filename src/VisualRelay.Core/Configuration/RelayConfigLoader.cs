@@ -35,7 +35,8 @@ public static class RelayConfigLoader
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             // Default false: nono sandbox is required. Set bypassSandbox:true to opt out.
-            BypassSandbox: false);
+            BypassSandbox: false,
+            MaxPlanConcurrency: 10);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -120,7 +121,8 @@ public static class RelayConfigLoader
                 FirstOutputTimeoutMsByTier = firstOutputTiers,
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
-                BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox)
+                BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
+                MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

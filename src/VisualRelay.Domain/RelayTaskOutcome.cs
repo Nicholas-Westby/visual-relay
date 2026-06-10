@@ -4,7 +4,8 @@ public enum RelayTaskOutcomeStatus
 {
     Committed,
     Flagged,
-    Failed
+    Failed,
+    Planned
 }
 
 public sealed record RelayTaskOutcome(

@@ -29,4 +29,8 @@ public sealed record RelayConfig(
     // Linux) is a REQUIRED dependency. Swival runs under `nono run -p vr-guard`
     // by default. Set bypassSandbox:true in .relay/config.json to opt out —
     // this is the only supported no-nono path, never a silent fallback.
-    bool BypassSandbox = false);
+    bool BypassSandbox = false,
+    // Maximum concurrent planning tasks during Phase 1 (parallel planning).
+    // Planning stages (1–4) are read-only and run in isolated git worktrees,
+    // so they are safe to overlap. Stages 5–11 always run serially.
+    int MaxPlanConcurrency = 10);

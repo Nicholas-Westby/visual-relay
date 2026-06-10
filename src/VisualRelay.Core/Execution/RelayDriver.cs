@@ -72,6 +72,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             {
                 if (stage.Number < firstStageToRun)
                     continue;
+                if (_options.LastStageToRun is { } last && stage.Number > last)
+                    break;
                 if (stage.Number == 10 && stage10Handled)
                     continue;
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
@@ -235,6 +237,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
                 }
             }
+
+            // Plan-only run: stages 1–4 (or up to LastStageToRun) completed;
+            // return Planned without touching git. The artifacts on disk (ledger,
+            // manifest.txt, status.json, seals) are ready for a later Resume run.
+            if (_options.LastStageToRun is not null)
+                return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Planned, null, null, null);
 
             var commitSha = "simulated";
             if (_options.CreateGitCommit)

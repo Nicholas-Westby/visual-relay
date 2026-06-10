@@ -50,6 +50,7 @@ public sealed class FileRelayEventSink : IRelayEventSink
         builder.Append(relayEvent.Timestamp.ToString("O"));
         builder.Append(' ').Append(relayEvent.Level);
         builder.Append(" run=").Append(relayEvent.RunId);
+        builder.Append(" task=").Append(relayEvent.TaskId ?? "-");
         builder.Append(' ').Append(scope);
         builder.Append(' ').Append(relayEvent.EventName);
         if (relayEvent.Data is { Count: > 0 })

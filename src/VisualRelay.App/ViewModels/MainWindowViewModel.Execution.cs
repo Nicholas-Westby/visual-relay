@@ -5,7 +5,6 @@ using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
-using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -70,42 +69,56 @@ public partial class MainWindowViewModel
 
         await RunBusyAsync(async () =>
         {
-            var circuitBreaker = new DrainCircuitBreaker();
-            DrainCircuitBreaker.ClearHaltMarker(RootPath);
-            var queue = Tasks.Where(task => !task.NeedsReview).ToList();
-            var flaggedCount = 0;
-            while (queue.FirstOrDefault() is { } task && !PauseRequested)
-            {
-                SelectedTask = task;
-                var outcome = await RunOneAsync(task);
-                queue.Remove(task);
+            var config = await RelayConfigLoader.LoadAsync(RootPath);
 
-                if (circuitBreaker.ShouldHalt(RootPath, outcome))
-                {
-                    StatusText = $"Drain halted: {circuitBreaker.HaltMessage ?? "task needs review"}";
-                    await RefreshTasksAfterDrainAsync(outcome.TaskId);
-                    return;
-                }
+            // Per-task event sink factory for planning: each planning task
+            // gets its own ObservableRelayEventSink wired to HandleRelayEvent.
+            Func<string, IRelayEventSink> planSinkFactory = _ =>
+                new ObservableRelayEventSink(HandleRelayEvent);
 
-                if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
-                {
-                    flaggedCount++;
-                    // Keep the flagged task visible in the list as NeedsReview.
-                    if (!ShowArchive)
-                    {
-                        Tasks.Remove(task);
-                        Tasks.Add(new TaskRowViewModel(task.Task with { ReviewReason = outcome.Reason ?? "Needs review" }));
-                    }
-                }
-                else if (!ShowArchive)
-                {
-                    Tasks.Remove(task);
-                }
-            }
+            var executeSink = new ObservableRelayEventSink(HandleRelayEvent);
+            var executeTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
 
-            StatusText = flaggedCount > 0
-                ? $"Queue drained · {flaggedCount} flagged for review"
-                : PauseRequested ? "Paused at task boundary" : "Queue drained";
+            Func<string, ISubagentRunner> planSubagentFactory = taskId =>
+                new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent));
+            var planTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
+
+            var lifecycle = CreateDrainLifecycleCallbacks();
+
+            var controller = new RelayQueueController(
+                RootPath,
+                new GuiTaskRunner(RootPath, config, executeSink, executeTestRunner),
+                planSubagentRunnerFactory: planSubagentFactory,
+                planTestRunner: planTestRunner,
+                planEventSinkFactory: planSinkFactory,
+                lifecycle: lifecycle);
+
+            await controller.RefreshAsync();
+            // Wire pause.
+            if (PauseRequested)
+                controller.RequestPause();
+
+            var results = await controller.DrainAsync();
+
+            var flaggedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Flagged);
+            var committedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Committed);
+            var plannedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Planned);
+
+            if (controller.State == RelayQueueState.Paused)
+                StatusText = "Paused at task boundary";
+            else if (controller.State == RelayQueueState.Failed)
+                StatusText = "Drain halted: commit gate rejected consecutive tasks";
+            else if (controller.State == RelayQueueState.ReviewNeeded)
+                StatusText = flaggedCount > 0
+                    ? $"Queue drained · {flaggedCount} flagged for review"
+                    : "Queue drained";
+            else
+                StatusText = committedCount > 0
+                    ? $"Queue drained · {committedCount} committed"
+                    : plannedCount > 0
+                        ? $"Queue drained · {plannedCount} planned"
+                        : "Queue drained";
+
             await RefreshTasksAfterDrainAsync();
         });
     }
@@ -149,11 +162,6 @@ public partial class MainWindowViewModel
 
         await RefreshAsync();
 
-        // If a Run was blocked by the missing config, resume it now that the config
-        // loads. The pending id is cleared unconditionally so a non-resumable state
-        // (archive view, task gone) can't leave it stale. NOTE: the actual resumed run
-        // drives the real Swival pipeline (no runner injection seam), so it is verified
-        // manually, not in unit tests.
         if (_pendingRunTaskId is { } pending)
         {
             _pendingRunTaskId = null;
@@ -180,7 +188,6 @@ public partial class MainWindowViewModel
             return false;
         }
 
-        // Config is present — now gate on HF_TOKEN, the floor under every tier.
         if (!IsHuggingFaceConfigured)
         {
             _pendingHfRunTaskId = pendingTaskId;
@@ -195,7 +202,7 @@ public partial class MainWindowViewModel
 
     private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task, bool resume = false)
     {
-        ResetStages();
+        ResetStages(task.Id);
         ClearLogState();
         SelectedTaskError = null;
         StatusText = $"Running {task.Id}";
@@ -205,7 +212,8 @@ public partial class MainWindowViewModel
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
-        var dependencies = new RelayDriverDependencies(new SwivalSubagentRunner(config, eventSink: sink), new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), sink);
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
+        var dependencies = new RelayDriverDependencies(subagentRunner, new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), sink);
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
         {
@@ -223,6 +231,69 @@ public partial class MainWindowViewModel
         {
             ClearRunningTask(task.Id);
             NotifyPauseStateChanged();
+        }
+    }
+
+    private DrainLifecycleCallbacks CreateDrainLifecycleCallbacks()
+    {
+        return new DrainLifecycleCallbacks
+        {
+            OnPlanningStarted = taskId =>
+            {
+                StatusText = $"Planning {taskId}…";
+                Tasks.FirstOrDefault(t => t.Id == taskId)?.MarkPlanning();
+            },
+            OnPlanningCompleted = (taskId, status) =>
+            {
+                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+                if (task is not null)
+                {
+                    if (status == RelayTaskOutcomeStatus.Flagged)
+                        task.MarkIdle();
+                    else
+                        task.MarkPlanned();
+                }
+            },
+            OnExecuteStarted = taskId =>
+            {
+                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+                if (task is not null)
+                    BeginRunningTask(task);
+            },
+            OnExecuteCompleted = (taskId, _) => ClearRunningTask(taskId)
+        };
+    }
+
+    /// <summary>
+    /// Thin <see cref="IRelayTaskRunner"/> that creates a fresh driver per
+    /// execute call. Each call gets its own <see cref="SwivalSubagentRunner"/>
+    /// wired to a <see cref="CompositeRelayEventSink"/> so both driver and
+    /// subagent trace events land in run.log.
+    /// </summary>
+    private sealed class GuiTaskRunner : IRelayTaskRunner
+    {
+        private readonly string _mainRootPath;
+        private readonly RelayConfig _config;
+        private readonly IRelayEventSink _sharedSink;
+        private readonly ITestRunner _testRunner;
+
+        public GuiTaskRunner(string mainRootPath, RelayConfig config,
+            IRelayEventSink sharedSink, ITestRunner testRunner)
+        {
+            _mainRootPath = mainRootPath;
+            _config = config;
+            _sharedSink = sharedSink;
+            _testRunner = testRunner;
+        }
+
+        public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
+        {
+            var fileSink = new FileRelayEventSink(Path.Combine(_mainRootPath, ".relay", taskId, "run.log"));
+            var sink = new CompositeRelayEventSink(_sharedSink, fileSink);
+            var subagentRunner = new SwivalSubagentRunner(_config, eventSink: sink);
+            var deps = new RelayDriverDependencies(subagentRunner, _testRunner, sink);
+            var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
+            return driver.RunTaskAsync(rootPath, taskId, cancellationToken);
         }
     }
 }

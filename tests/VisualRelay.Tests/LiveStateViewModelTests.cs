@@ -49,6 +49,139 @@ public sealed class LiveStateViewModelTests
     }
 
     [Fact]
+    public async Task MultiTask_BeginRunningTask_DoesNotMarkOtherRunningTasksIdle()
+    {
+        // Starting task B while task A is still running must leave A running.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("task-a", "# A\n");
+        repo.WriteTask("task-b", "# B\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var taskA = viewModel.Tasks.Single(t => t.Id == "task-a");
+        var taskB = viewModel.Tasks.Single(t => t.Id == "task-b");
+
+        // Phase 1: planning starts for task-a.
+        viewModel.GetType()
+            .GetMethod("BeginRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(viewModel, [taskA]);
+        taskA.MarkPlanning(); // simulate OnPlanningStarted
+
+        Assert.True(taskA.IsRunning);
+        Assert.False(taskB.IsRunning);
+
+        // Phase 1: planning also starts for task-b (concurrent).
+        viewModel.GetType()
+            .GetMethod("BeginRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(viewModel, [taskB]);
+        taskB.MarkPlanning();
+
+        // Both must still be running — taskA must NOT have been marked idle.
+        Assert.True(taskA.IsRunning);
+        Assert.True(taskB.IsRunning);
+    }
+
+    [Fact]
+    public async Task MultiTask_ClearRunningTask_OnlyClearsSpecificTask()
+    {
+        // Clearing task A must leave task B running.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("task-a", "# A\n");
+        repo.WriteTask("task-b", "# B\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var taskA = viewModel.Tasks.Single(t => t.Id == "task-a");
+        var taskB = viewModel.Tasks.Single(t => t.Id == "task-b");
+
+        var beginRunning = viewModel.GetType()
+            .GetMethod("BeginRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var clearRunning = viewModel.GetType()
+            .GetMethod("ClearRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        beginRunning.Invoke(viewModel, [taskA]);
+        taskA.MarkPlanning();
+        beginRunning.Invoke(viewModel, [taskB]);
+        taskB.MarkPlanning();
+
+        Assert.True(taskA.IsRunning);
+        Assert.True(taskB.IsRunning);
+
+        // Phase 1 completes for task-a — only task-a should be idle now.
+        clearRunning.Invoke(viewModel, ["task-a"]);
+
+        Assert.False(taskA.IsRunning);
+        Assert.True(taskB.IsRunning);
+    }
+
+    [Fact]
+    public async Task MultiTask_UpdateRunningStage_UpdatesNonFollowedTaskRow()
+    {
+        // Stage events for a planning (non-followed) task must update its row.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("task-a", "# A\n");
+        repo.WriteTask("task-b", "# B\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var taskA = viewModel.Tasks.Single(t => t.Id == "task-a");
+        var taskB = viewModel.Tasks.Single(t => t.Id == "task-b");
+
+        var beginRunning = viewModel.GetType()
+            .GetMethod("BeginRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        var updateRunningStage = viewModel.GetType()
+            .GetMethod("UpdateRunningStage", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        // Start both tasks. task-b is the followed task (started second).
+        beginRunning.Invoke(viewModel, [taskA]);
+        taskA.MarkPlanning();
+        beginRunning.Invoke(viewModel, [taskB]);
+        taskB.MarkPlanning();
+
+        // task-a advances to stage 2 (Research) — its row must update.
+        updateRunningStage.Invoke(viewModel, ["task-a", 2, "Research"]);
+
+        Assert.True(taskA.IsRunning);
+        Assert.Equal("Stage 02 · Research", taskA.MetricsLine);
+        Assert.True(taskB.IsRunning); // still running, unaffected
+    }
+
+    [Fact]
+    public async Task MultiTask_RestoreRunningTaskState_ClearsPreviousRunningSet()
+    {
+        // RestoreRunningTaskState replaces the followed task and the running set.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("task-a", "# A\n");
+        repo.WriteTask("task-b", "# B\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var taskA = viewModel.Tasks.Single(t => t.Id == "task-a");
+        var taskB = viewModel.Tasks.Single(t => t.Id == "task-b");
+
+        var beginRunning = viewModel.GetType()
+            .GetMethod("BeginRunningTask", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+        beginRunning.Invoke(viewModel, [taskA]);
+        taskA.MarkPlanning();
+        beginRunning.Invoke(viewModel, [taskB]);
+        taskB.MarkPlanning();
+        Assert.True(taskA.IsRunning);
+        Assert.True(taskB.IsRunning);
+
+        // Restore replaces the entire running state with a single task.
+        viewModel.RestoreRunningTaskState("task-a", 5, "Author-tests");
+
+        Assert.True(taskA.IsRunning);
+        Assert.False(taskB.IsRunning);
+        Assert.Equal("Stage 05 · Author-tests", taskA.MetricsLine);
+    }
+
+    [Fact]
     public void TaskRow_RunningStateOverridesPersistedTaskState()
     {
         var task = new RelayTaskItem("add-multiply", "/tmp/llm-tasks/add-multiply.md", "/tmp/llm-tasks", false, []);

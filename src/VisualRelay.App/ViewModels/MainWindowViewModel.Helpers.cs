@@ -51,7 +51,7 @@ public partial class MainWindowViewModel
             var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
             if (relayEvent.EventName == "stage_start" &&
                 relayEvent.TaskId is { } taskId &&
-                string.Equals(taskId, _runningTaskId, StringComparison.Ordinal))
+                _runningTaskIds.Contains(taskId))
             {
                 var stageName = relayEvent.Data is not null && relayEvent.Data.TryGetValue("name", out var name)
                     ? name
@@ -143,16 +143,6 @@ public partial class MainWindowViewModel
         finally
         {
             IsBusy = false;
-        }
-    }
-
-    private void ResetStages()
-    {
-        foreach (var stage in Stages)
-        {
-            stage.Status = "Waiting";
-            stage.IsSelected = false;
-            stage.ClearMetric();
         }
     }
 

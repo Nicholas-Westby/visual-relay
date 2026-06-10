@@ -22,8 +22,10 @@ public sealed class TaskRowViewModel : ViewModelBase
 
     private bool _isSelected;
     private bool _isRunning;
+    private bool _planned;
     private int? _runningStageNumber;
     private string? _runningStageName;
+    private string? _planningLabel;
     private string _runningElapsedLabel = string.Empty;
 
     public TaskRowViewModel(RelayTaskItem task)
@@ -97,9 +99,34 @@ public sealed class TaskRowViewModel : ViewModelBase
     {
         _runningStageNumber = stageNumber;
         _runningStageName = stageName;
+        _planningLabel = null;
         IsRunning = true;
         OnPropertyChanged(nameof(RunningStepLabel));
         OnPropertyChanged(nameof(MetricsLine));
+        OnPropertyChanged(nameof(PhaseLabel));
+    }
+
+    public void MarkPlanning()
+    {
+        _runningStageNumber = null;
+        _runningStageName = null;
+        _planningLabel = "Planning…";
+        IsRunning = true;
+        OnPropertyChanged(nameof(RunningStepLabel));
+        OnPropertyChanged(nameof(MetricsLine));
+        OnPropertyChanged(nameof(PhaseLabel));
+    }
+
+    public void MarkPlanned()
+    {
+        _runningStageNumber = null;
+        _runningStageName = null;
+        _planningLabel = null;
+        _planned = true;
+        IsRunning = false;
+        OnPropertyChanged(nameof(StateLabel));
+        OnPropertyChanged(nameof(MetricsLine));
+        OnPropertyChanged(nameof(PhaseLabel));
     }
 
     public void MarkIdle()
@@ -107,11 +134,16 @@ public sealed class TaskRowViewModel : ViewModelBase
         _runningStageNumber = null;
         _runningStageName = null;
         _runningElapsedLabel = string.Empty;
+        _planningLabel = null;
+        _planned = false;
         IsRunning = false;
         OnPropertyChanged(nameof(RunningStepLabel));
         OnPropertyChanged(nameof(RunningElapsedLabel));
         OnPropertyChanged(nameof(MetricsLine));
+        OnPropertyChanged(nameof(PhaseLabel));
     }
+
+    public string PhaseLabel => _planningLabel ?? (_planned ? "Planned · queued" : string.Empty);
 
     private void NotifyVisualStateChanged()
     {

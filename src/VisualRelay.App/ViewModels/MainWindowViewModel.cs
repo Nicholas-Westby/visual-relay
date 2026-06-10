@@ -29,11 +29,16 @@ public partial class MainWindowViewModel : ViewModelBase
     private int? _selectedStageFilter;
     private DispatcherTimer? _backendMonitor;
     private DispatcherTimer? _elapsedTimer;
+    // Multi-task running state: _runningTaskIds tracks every concurrently-running
+    // task; _runningTask / _runningTaskId is the "followed" task in the detail pane.
+    private readonly HashSet<string> _runningTaskIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int?> _runningStageNumbers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, string?> _runningStageNames = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _runStartedAt = new(StringComparer.Ordinal);
     private TaskRowViewModel? _runningTask;
     private string? _runningTaskId;
     private int? _runningStageNumber;
     private string? _runningStageName;
-    private DateTimeOffset? _runStartedAt;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker(), new NullFilePicker())
@@ -277,10 +282,15 @@ public partial class MainWindowViewModel : ViewModelBase
         };
         _elapsedTimer.Tick += (_, _) =>
         {
-            if (_runningTask is not null && _runStartedAt is { } startedAt)
+            // Update elapsed for every currently-running task.
+            foreach (var taskId in _runningTaskIds)
             {
-                _runningTask.RunningElapsedLabel =
-                    ElapsedFormatter.Label(DateTimeOffset.UtcNow - startedAt);
+                if (_runStartedAt.TryGetValue(taskId, out var startedAt))
+                {
+                    var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+                    if (task is not null)
+                        task.RunningElapsedLabel = ElapsedFormatter.Label(DateTimeOffset.UtcNow - startedAt);
+                }
             }
         };
         _elapsedTimer.Start();
