@@ -59,9 +59,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 taskId,
                 Data: new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl }), cancellationToken);
 
-            // Snapshot untracked files before the first agent edit so the commit
-            // pass can distinguish files authored during the run from pre-existing
-            // scratch (editor notes, agent scratch, stale build output).
+            // Snapshot untracked files before the first agent edit so the commit pass
+            // can distinguish files authored during the run from pre-existing scratch.
             var preRunUntracked = _options.CreateGitCommit
                 ? await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken)
                 : null;
@@ -247,20 +246,47 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var commitSha = "simulated";
             if (_options.CreateGitCommit)
             {
-                var proofFiles = new[] { Path.Combine(".relay", taskId, "ledger.md"), Path.Combine(".relay", taskId, $"{taskId}.seals"), Path.Combine(".relay", taskId, "manifest.txt"), Path.Combine(".relay", taskId, "status.json") };
+                // Retire the task BEFORE committing so the rename (deletion of old
+                // path, addition of DONE-/archived path) lands in the same commit.
+                var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task);
+
+                var proofFiles = new List<string>
+                {
+                    Path.Combine(".relay", taskId, "ledger.md"),
+                    Path.Combine(".relay", taskId, $"{taskId}.seals"),
+                    Path.Combine(".relay", taskId, "manifest.txt"),
+                    Path.Combine(".relay", taskId, "status.json"),
+                };
+                if (retirement?.Additions is { Count: > 0 } additions)
+                    proofFiles.AddRange(additions);
+
                 var chain = BuildCommitChain(commitMessages, taskId);
                 var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLock.Nonce, preRunUntracked, cancellationToken);
                 if (!commit.Success)
                 {
+                    // Rollback: restore original paths so the task stays runnable.
+                    retirement?.Rollback?.Invoke();
                     return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
                 }
 
                 commitSha = commit.CommitSha ?? "unknown";
-                await TaskCompletionArchive.CompleteAsync(rootPath, config, taskId, task, _dependencies.EventSink, runId, cancellationToken);
-            }
 
-            // Post-commit: mark stage 11 done (belt-and-suspenders — it's already
-            // marked done in the loop, but this covers the simulated path too).
+                // Publish task_done / task_archived after successful commit.
+                if (retirement is not null)
+                {
+                    var eventName = config.ArchiveOnDone ? "task_archived" : "task_done";
+                    await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                        DateTimeOffset.UtcNow,
+                        "info",
+                        eventName,
+                        runId,
+                        rootPath,
+                        taskId,
+                        11,
+                        Data: new Dictionary<string, string> { ["path"] = retirement.DestinationPath }), cancellationToken);
+                }
+            }
+            // Belt-and-suspenders: mark stage 11 done (covers simulated path too).
             MarkStatus(statusEntries, 11, "Done");
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
