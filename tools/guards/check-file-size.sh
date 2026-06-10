@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# cd to repo root so find paths resolve regardless of caller cwd
+cd "$(dirname "$0")/../.."
+
 limit="${VISUAL_RELAY_FILE_LINE_LIMIT:-300}"
 failed=0
 

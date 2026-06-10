@@ -52,8 +52,10 @@ public sealed class Installer5Sandbox2LauncherTests
         finally { try { File.Delete(script); } catch { } }
     }
 
-    /// <summary>Generates bash snippet: sets up stubs + config, runs the launcher,
-    /// then runs the provided bash assertions. Returns the full script body.</summary>
+    /// <summary>Generates bash snippet: sets up stubs + config, copies the
+    /// launcher into the test sandbox so $SCRIPT_DIR resolves to $TEST_DIR,
+    /// runs the launcher, then runs the provided bash assertions. Returns the
+    /// full script body.</summary>
     private static string SetupRunAndAssert(bool bypassSandbox, bool stubNono,
         string? xdgRel, string assertions)
     {
@@ -64,7 +66,7 @@ public sealed class Installer5Sandbox2LauncherTests
         var bypass = bypassSandbox ? "true" : "false";
         return $$"""
             TEST_DIR=$(mktemp -d); STUB_DIR="$TEST_DIR/bin"
-            mkdir -p "$STUB_DIR" "$TEST_DIR/.relay" "$TEST_DIR/tools/backend"
+            mkdir -p "$STUB_DIR" "$TEST_DIR/.relay" "$TEST_DIR/tools/backend" "$TEST_DIR/packaging/nono"
             cat > "$STUB_DIR/dotnet" << 'X' && chmod +x "$STUB_DIR/dotnet"
             #!/bin/bash
             exit 0
@@ -74,10 +76,16 @@ public sealed class Installer5Sandbox2LauncherTests
             #!/bin/bash
             exit 0
             X
+            # Minimal vr-guard.json so _provision_nono has a source to install.
+            echo '{"extends":"swival"}' > "$TEST_DIR/packaging/nono/vr-guard.json"
             echo '{"testCmd":"true","bypassSandbox":{{bypass}}}' > "$TEST_DIR/.relay/config.json"
+            # Copy the launcher into the sandbox so SCRIPT_DIR == TEST_DIR.
+            # _read_bypass_sandbox reads $SCRIPT_DIR/.relay/config.json, not cwd.
+            cp "$LAUNCHER" "$TEST_DIR/visual-relay"
+            chmod +x "$TEST_DIR/visual-relay"
             cd "$TEST_DIR"
             RC=0
-            PATH="$STUB_DIR:/usr/bin:/bin" {{xdgEnv}} bash "$LAUNCHER" launch \
+            PATH="$STUB_DIR:/usr/bin:/bin" {{xdgEnv}} bash "$TEST_DIR/visual-relay" launch \
                 >/tmp/.vr-s2-out 2>/tmp/.vr-s2-err || RC=$?
             echo "$RC" > /tmp/.vr-s2-rc
             {{assertions}}
