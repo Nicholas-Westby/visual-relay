@@ -8,18 +8,38 @@ namespace VisualRelay.Core.Execution;
 // JSON line with no preceding newline. Rather than depend on fence placement, we
 // brace-match the first JSON value after the opening fence — string- and
 // escape-aware, so backticks or braces inside string values never confuse it.
+//
+// The "```json" marker itself can also appear INSIDE the contract's string
+// values (stages whose subject matter is fencing/contracts quote it — this
+// killed the stage-contract-retry task twice). A single LastIndexOf anchor
+// lands on such an embedded marker and fails, so we walk candidate markers
+// last-to-first and accept the first whose value actually parses: the last
+// *parseable* block still wins, embedded markers are skipped by construction.
 internal static class FencedJsonExtractor
 {
     public static string? Extract(string text)
     {
         const string marker = "```json";
         var index = text.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
-        if (index < 0)
+        while (index >= 0)
         {
-            return null;
+            var json = ExtractParseableAt(text, index);
+            if (json is not null)
+            {
+                return json;
+            }
+
+            index = index > 0
+                ? text.LastIndexOf(marker, index - 1, StringComparison.OrdinalIgnoreCase)
+                : -1;
         }
 
-        var start = text.IndexOf('\n', index);
+        return null;
+    }
+
+    private static string? ExtractParseableAt(string text, int markerIndex)
+    {
+        var start = text.IndexOf('\n', markerIndex);
         if (start < 0)
         {
             return null;
