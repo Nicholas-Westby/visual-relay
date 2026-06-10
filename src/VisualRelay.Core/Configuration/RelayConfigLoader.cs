@@ -24,7 +24,7 @@ public static class RelayConfigLoader
             MaxTurns: 200,
             BaselineVerify: true,
             ArchiveOnDone: true,
-            SubagentTimeoutMilliseconds: 1_200_000,
+            SubagentTimeoutMilliseconds: 0,
             TestTimeoutMilliseconds: 300_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             {
@@ -37,7 +37,9 @@ public static class RelayConfigLoader
             MaxContractRetries: 1,
             // Default false: nono sandbox is required. Set bypassSandbox:true to opt out.
             BypassSandbox: false,
-            MaxPlanConcurrency: 10);
+            MaxPlanConcurrency: 10,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -107,6 +109,19 @@ public static class RelayConfigLoader
                 }
             }
 
+            var inactivityTiers = defaults.InactivityTimeoutMsByTier is not null
+                ? new Dictionary<string, int>(defaults.InactivityTimeoutMsByTier)
+                : null;
+            if (root.TryGetProperty("inactivityTimeoutMsByTier", out var inactivityJson) && inactivityJson.ValueKind == JsonValueKind.Object)
+            {
+                inactivityTiers ??= new Dictionary<string, int>();
+                foreach (var property in inactivityJson.EnumerateObject())
+                {
+                    if (property.Value.TryGetInt32(out var ms))
+                        inactivityTiers[property.Name] = ms;
+                }
+            }
+
             var config = defaults with
             {
                 TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
@@ -125,6 +140,8 @@ public static class RelayConfigLoader
                 MaxContractRetries = OptionalInt(root, "maxContractRetries", defaults.MaxContractRetries),
                 BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
+                InactivityTimeoutMsByTier = inactivityTiers,
+                InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd")
             };

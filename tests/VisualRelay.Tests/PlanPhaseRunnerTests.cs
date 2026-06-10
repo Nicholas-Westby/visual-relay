@@ -48,7 +48,9 @@ public sealed class PlanPhaseRunnerTests
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             BypassSandbox: false,
-            MaxPlanConcurrency: maxConcurrency);
+            MaxPlanConcurrency: maxConcurrency,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root,

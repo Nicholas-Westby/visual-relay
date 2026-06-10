@@ -71,9 +71,8 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
                 $"because swival treats an empty whitelist as unrestricted.");
         }
 
-        // Resolve the first-output threshold for this tier.
-        var firstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(invocation.Tier, out var tierMs)
-            ? tierMs : _config.FirstOutputTimeoutMs;
+        // SubagentTimeoutMilliseconds is now an optional absolute ceiling (0 = disabled).
+        var absoluteCeilingMs = _config.SubagentTimeoutMilliseconds;
 
         // Parse trace-dir name so retries follow stage{n}-attempt{k}.
         var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
@@ -92,6 +91,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
             // Recompute first-output threshold for the current tier (may have escalated).
             var currentFirstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(currentInvocation.Tier, out var ctMs)
                 ? ctMs : _config.FirstOutputTimeoutMs;
+
+            // Recompute inactivity timeout for the current tier (may have escalated).
+            var currentInactivityMs = _config.InactivityTimeoutMsByTier?.TryGetValue(currentInvocation.Tier, out var itMs) == true
+                ? itMs : _config.InactivityTimeoutMs;
             var traceDir = attempt == startAttempt
                 ? invocation.TraceDirectory
                 : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
@@ -102,43 +105,87 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
 
             Directory.CreateDirectory(traceDir);
             await using var profileSession = await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
-            await using var traceTailer = _eventSink is null ? null
-                : RelayTraceTailer.Start(traceDir, (entry, token) => PublishTraceAsync(attemptInvocation, entry, token));
+
+            using var watchdogCts = new CancellationTokenSource();
+            using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
+
+            var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts);
+
+            await using var activeTraceTailer = RelayTraceTailer.Start(traceDir,
+                _eventSink is null ? null : (entry, token) => PublishTraceAsync(attemptInvocation, entry, token),
+                onActivity: () => watchdog.Pulse("trace"));
+
             var arguments = BuildArguments(attemptInvocation, resolvedCommands);
             arguments.Add(correctivePriorOutput is not null
                 ? BuildCorrectivePrompt(attemptInvocation, correctivePriorOutput, correctiveShapeError)
                 : BuildPrompt(attemptInvocation));
             var (fileName, launchArguments) = BuildLaunchTarget(arguments);
             var sandboxEnv = BuildSandboxEnvironment(_config);
-            var timeout = TimeSpan.FromMilliseconds(_config.SubagentTimeoutMilliseconds);
+            var processTimeout = absoluteCeilingMs <= 0
+                ? Timeout.InfiniteTimeSpan
+                : TimeSpan.FromMilliseconds(absoluteCeilingMs);
 
-            using var watchdogCts = new CancellationTokenSource();
-            using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
-            var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot, timeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token);
-            var watchdogTask = FirstOutputWatchdog.WaitAsync(traceDir, currentFirstOutputMs, watchdogCts, watchdogLinkedCts.Token);
+            var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot,
+                processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,
+                onActivity: watchdog.Pulse);
+            var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // Task.WhenAny may return processTask when the watchdog kill triggers
-            // a near-simultaneous process exit (race).  Check watchdogTask.IsCompleted
-            // to catch that case so a stall is never misreported as "exit 137".
+            // a near-simultaneous process exit (race).  Check watchdogCts cancellation
+            // (set synchronously by the watchdog before it returns) so a stall is
+            // never misreported as "exit 137".
             if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask
-                || watchdogTask.IsCompleted)
+                || watchdogCts.IsCancellationRequested)
             {
-                var watchdogFired = await watchdogTask;
-                if (watchdogFired)
+                var wdResult = await watchdogTask;
+                if (wdResult.Outcome != ActivityWatchdog.Outcome.Disarmed)
                 {
-                    // Watchdog fired — no output; killToken already triggered process.Kill().
+                    // Watchdog fired — killToken already triggered process.Kill().
                     await processTask;
-                    if (stallRetriesLeft > 0)
+
+                    // Publish stall/kill event with signal details.
+                    if (_eventSink is not null)
+                    {
+                        await _eventSink.PublishAsync(new RelayEvent(
+                            DateTimeOffset.UtcNow, "warn", "stall_kill",
+                            attemptInvocation.RunId, attemptInvocation.TargetRoot,
+                            attemptInvocation.TaskName, attemptInvocation.Stage.Number,
+                            attemptInvocation.Tier, attempt,
+                            Data: new Dictionary<string, string>
+                            {
+                                ["reason"] = wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling
+                                    ? "absolute_ceiling" : "stall",
+                                ["lastSignal"] = wdResult.LastPulseSource,
+                                ["silenceMs"] = wdResult.SilenceMs.ToString(),
+                                ["firstOutputTimeoutMs"] = currentFirstOutputMs.ToString(),
+                                ["inactivityTimeoutMs"] = currentInactivityMs.ToString()
+                            }), cancellationToken);
+                    }
+
+                    if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling)
+                    {
+                        stallResult = new SubagentResult(string.Empty, null, false,
+                            ErrorHintClassifier.WithHint(
+                                $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
+                                $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."));
+                    }
+                    else if (stallRetriesLeft > 0)
                     {
                         stallRetriesLeft--;
                         attempt++;
                         continue;
                     }
-                    stallResult = new SubagentResult(string.Empty, null, false,
-                        ErrorHintClassifier.WithHint(
-                            $"persistent model-backend stall: swival produced no output within the {currentFirstOutputMs}ms " +
-                            $"per-tier first-output threshold across {maxStallAttempts} attempts — " +
-                            "the upstream model-backend call is likely hanging at byte 0 (pre-stream stall)."));
+                    else
+                    {
+                        var phase = wdResult.LastPulseSource == "none" ? "first-output" : "inactivity";
+                        var threshold = wdResult.LastPulseSource == "none" ? currentFirstOutputMs : currentInactivityMs;
+                        stallResult = new SubagentResult(string.Empty, null, false,
+                            ErrorHintClassifier.WithHint(
+                                $"persistent model-backend stall: swival had no activity for " +
+                                $"{wdResult.SilenceMs}ms (phase={phase}, threshold={threshold}ms). " +
+                                $"Last signal: {wdResult.LastPulseSource}. " +
+                                $"{maxStallAttempts} attempts exhausted."));
+                    }
                 }
             }
 
@@ -151,13 +198,11 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
 
             if (result.TimedOut)
             {
-                var noTrace = !Directory.EnumerateFileSystemEntries(traceDir).Any();
-                var noOutput = string.IsNullOrWhiteSpace(result.Output);
-                var reason = noOutput && noTrace
-                    ? $"swival produced no output before the {_config.SubagentTimeoutMilliseconds}ms timeout — likely a stalled model-backend call."
-                    : $"swival timed out after {_config.SubagentTimeoutMilliseconds}ms. " +
-                      "If swival was running a test command that hung, fix the hang and re-run only the specific " +
-                      "tests you need (use a targeted subset, e.g. the TestFileCommand \"{files}\" pattern).";
+                // ProcessCapture's own timeout fired — only possible when
+                // SubagentTimeoutMilliseconds > 0 (absolute ceiling backstop).
+                var reason = $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
+                    "If swival was running a test command that hung, fix the hang and re-run only the specific " +
+                    "tests you need (use a targeted subset, e.g. the TestFileCommand \"{files}\" pattern).";
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
             }
 

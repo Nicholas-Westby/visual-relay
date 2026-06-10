@@ -28,7 +28,9 @@ internal static class PlanPhaseTestHelpers
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             BypassSandbox: false,
-            MaxPlanConcurrency: maxPlanConcurrency);
+            MaxPlanConcurrency: maxPlanConcurrency,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
     /// <summary>
     /// Initializes a fresh git repo with a seed commit so worktree creation

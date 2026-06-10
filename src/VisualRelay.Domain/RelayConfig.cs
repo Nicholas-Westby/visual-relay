@@ -11,6 +11,9 @@ public sealed record RelayConfig(
     int MaxTurns,
     bool BaselineVerify,
     bool ArchiveOnDone,
+    // Optional absolute wall-clock ceiling per stage invocation (ms).
+    // 0 = disabled (inactivity deadline + maxTurns cover failure modes).
+    // When > 0, a stage is killed after this many ms regardless of activity.
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
     // Per-tier first-output watchdog (ms). A swival invocation that emits zero
@@ -46,4 +49,13 @@ public sealed record RelayConfig(
     // Smoke command that proves the bootstrap still works from a fresh
     // evaluation. Null (default) means auto-detect: nix repos (any .nix file
     // in the manifest) get "nix develop --command true"; other repos skip.
-    string? BootstrapCheckCommand = null);
+    string? BootstrapCheckCommand = null,
+    // Per-tier inactivity timeout (ms). A stage with no liveness pulse
+    // (stdout/stderr bytes, trace-dir entry, or trace-file growth) within
+    // this window is killed and retried (up to MaxStallRetries).
+    // Tiers not in the map fall back to InactivityTimeoutMs.
+    // Suggested: cheap/balanced ~600_000 (10 min), frontier ~1_200_000 (20 min).
+    IReadOnlyDictionary<string, int>? InactivityTimeoutMsByTier = null,
+    // Fallback inactivity timeout (ms) for tiers absent from InactivityTimeoutMsByTier.
+    // Default 600_000 (10 min).
+    int InactivityTimeoutMs = 600_000);

@@ -53,7 +53,9 @@ public sealed class NoCommitContaminationTests
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             BypassSandbox: false,
-            MaxPlanConcurrency: 2);
+            MaxPlanConcurrency: 2,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root,
@@ -162,7 +164,9 @@ public sealed class NoCommitContaminationTests
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             BypassSandbox: false,
-            MaxPlanConcurrency: 2);
+            MaxPlanConcurrency: 2,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
         // Plan both.
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
@@ -254,7 +258,9 @@ public sealed class NoCommitContaminationTests
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             BypassSandbox: false,
-            MaxPlanConcurrency: 2);
+            MaxPlanConcurrency: 2,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
         // Plan both in parallel.
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(

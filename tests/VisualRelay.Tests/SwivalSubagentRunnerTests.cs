@@ -207,14 +207,31 @@ public sealed class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             sleep 60
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+        // Totally silent process: no stdout, no stderr, no trace dir.
+        // The first-output watchdog kills it at the per-tier window.
+        var config = TestConfig() with
+        {
+            FirstOutputTimeoutMsByTier = new Dictionary<string, int>
+            {
+                ["cheap"] = 2_000,
+                ["balanced"] = 120_000,
+                ["frontier"] = 660_000
+            },
+            SubagentTimeoutMilliseconds = 15_000,  // backstop
+            MaxStallRetries = 0
+        };
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: AlwaysReady);
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(Invocation(repo.Root));
+        sw.Stop();
 
         Assert.False(result.IsValid);
-        Assert.Contains("stalled model-backend call", result.Error, StringComparison.Ordinal);
-        Assert.DoesNotContain("re-run only the specific tests", result.Error, StringComparison.Ordinal);
-        Assert.Contains("5000ms", result.Error, StringComparison.Ordinal);
+        Assert.Contains("persistent model-backend stall", result.Error, StringComparison.Ordinal);
+        Assert.Contains("first-output", result.Error, StringComparison.Ordinal);
+        Assert.Contains("2000ms", result.Error, StringComparison.Ordinal);
+        Assert.True(sw.ElapsedMilliseconds < 10_000,
+            $"Expected kill at ~2 s first-output deadline, took {sw.ElapsedMilliseconds} ms");
     }
 
     [Fact]
@@ -234,14 +251,37 @@ public sealed class SwivalSubagentRunnerTests
             printf '%s\n' '{"type":"test","message":"running suite"}' > "$trace_dir/trace.jsonl"
             sleep 60
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: AlwaysReady);
+        // Produces output (disarms first-output watchdog), then goes silent.
+        // The inactivity deadline kills it after the per-tier window.
+        var config = TestConfig() with
+        {
+            FirstOutputTimeoutMsByTier = new Dictionary<string, int>
+            {
+                ["cheap"] = 90_000,
+                ["balanced"] = 120_000,
+                ["frontier"] = 660_000
+            },
+            InactivityTimeoutMsByTier = new Dictionary<string, int>
+            {
+                ["cheap"] = 2_000,       // short inactivity window
+                ["balanced"] = 600_000,
+                ["frontier"] = 1_200_000
+            },
+            SubagentTimeoutMilliseconds = 30_000,  // backstop
+            MaxStallRetries = 0
+        };
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: AlwaysReady);
 
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(Invocation(repo.Root));
+        sw.Stop();
 
         Assert.False(result.IsValid);
-        Assert.Contains("test command that hung", result.Error, StringComparison.Ordinal);
-        Assert.Contains("re-run only the specific tests", result.Error, StringComparison.Ordinal);
-        Assert.Contains("5000ms", result.Error, StringComparison.Ordinal);
+        Assert.Contains("persistent model-backend stall", result.Error, StringComparison.Ordinal);
+        Assert.Contains("inactivity", result.Error, StringComparison.Ordinal);
+        Assert.Contains("2000ms", result.Error, StringComparison.Ordinal);
+        Assert.True(sw.ElapsedMilliseconds < 10_000,
+            $"Expected kill at ~2 s inactivity deadline, took {sw.ElapsedMilliseconds} ms");
     }
 
     private static StageInvocation Invocation(string rootPath) =>
@@ -271,12 +311,14 @@ public sealed class SwivalSubagentRunnerTests
             1,
             false,
             true,
-            5_000,
+            0,              // SubagentTimeoutMilliseconds — 0 = disabled (inactivity + maxTurns cover failure modes)
             300_000,
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2,
-            BypassSandbox: true);
+            BypassSandbox: true,
+            InactivityTimeoutMsByTier: null,
+            InactivityTimeoutMs: 600_000);
 
     private static async Task<string> WriteExecutableAsync(string rootPath, string name, string text)
     {

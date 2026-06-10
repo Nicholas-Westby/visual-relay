@@ -3,57 +3,141 @@ using System.Diagnostics;
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// Polls the trace directory for first-output liveness.  When no trace entry or
-/// file appears within <c>timeoutMs</c>, cancels the <c>kill</c> source so the
-/// caller can kill the swival process and retry.  Disarms as soon as ANY file
-/// entry exists in <c>traceDir</c> — the first trace entry is the signal that
-/// the upstream model-backend call has started streaming.
+/// Tracks a sliding inactivity deadline, reset on every liveness pulse from
+/// process output (stdout/stderr bytes) or trace-dir activity (new entries,
+/// trace-file growth).  Two consumers:
+/// (a) first-output detection – arms until the first pulse, then disarms permanently;
+/// (b) ongoing inactivity deadline – resets on every pulse.
+/// An optional absolute ceiling kills the stage regardless of activity.
 /// </summary>
-internal static class FirstOutputWatchdog
+internal sealed class ActivityWatchdog
 {
-    /// <summary>
-    /// Polls <paramref name="traceDir"/> every 200 ms.
-    /// Returns <c>false</c> when a file appears (first output — disarmed) or
-    /// <paramref name="ct"/> is cancelled.
-    /// Returns <c>true</c> when <paramref name="timeoutMs"/> elapses with no
-    /// output — the caller must kill the process and either retry or flag the
-    /// stall.  The <paramref name="kill"/> source is cancelled before returning
-    /// <c>true</c> so any in-flight ProcessCapture reacts.
-    /// </summary>
-    public static async Task<bool> WaitAsync(
-        string traceDir,
-        int timeoutMs,
-        CancellationTokenSource kill,
-        CancellationToken ct)
+    public enum Outcome { Disarmed, FiredStall, FiredAbsoluteCeiling }
+
+    public readonly record struct Result(Outcome Outcome, string LastPulseSource, long SilenceMs);
+
+    private readonly int _firstOutputTimeoutMs;
+    private readonly int _inactivityTimeoutMs;
+    private readonly int _absoluteCeilingMs;
+    private readonly CancellationTokenSource _kill;
+    private readonly long _startTimestamp;
+    private readonly object _lock = new();
+    private long _lastPulseTimestamp;
+    private string _lastPulseSource = "none";
+    private bool _firstPulseReceived;
+
+    public ActivityWatchdog(
+        int firstOutputTimeoutMs,
+        int inactivityTimeoutMs,
+        int absoluteCeilingMs,
+        CancellationTokenSource kill)
     {
-        var deadline = TimeSpan.FromMilliseconds(timeoutMs);
-        var sw = Stopwatch.StartNew();
+        _firstOutputTimeoutMs = firstOutputTimeoutMs;
+        _inactivityTimeoutMs = inactivityTimeoutMs;
+        _absoluteCeilingMs = absoluteCeilingMs;
+        _kill = kill;
+        _startTimestamp = Stopwatch.GetTimestamp();
+        _lastPulseTimestamp = _startTimestamp;
+    }
+
+    /// <summary>
+    /// Thread-safe. Records the pulse source and timestamp.
+    /// Called from ProcessCapture data-received handlers (thread-pool threads)
+    /// and from the trace-tailer polling loop.
+    /// </summary>
+    public void Pulse(string source)
+    {
+        var now = Stopwatch.GetTimestamp();
+        lock (_lock)
+        {
+            _lastPulseTimestamp = now;
+            _lastPulseSource = source;
+            _firstPulseReceived = true;
+        }
+    }
+
+    /// <summary>
+    /// Polls every 200 ms (or sooner when a deadline is imminent).
+    /// Returns <see cref="Outcome.Disarmed"/> when <paramref name="ct"/> is cancelled
+    /// (process exited cleanly).  Returns <see cref="Outcome.FiredStall"/> when the
+    /// first-output or inactivity deadline expires.  Returns
+    /// <see cref="Outcome.FiredAbsoluteCeiling"/> when the absolute wall-clock
+    /// ceiling is reached (only when <c>_absoluteCeilingMs &gt; 0</c>).
+    /// On any fire, <see cref="_kill"/> is cancelled before returning so
+    /// ProcessCapture reacts.
+    /// </summary>
+    public async Task<Result> WaitAsync(CancellationToken ct)
+    {
         while (true)
         {
             if (ct.IsCancellationRequested)
-                return false;
-            if (Directory.Exists(traceDir) && Directory.EnumerateFileSystemEntries(traceDir).Any())
-                return false; // first output detected — disarm
+                return new Result(Outcome.Disarmed, _lastPulseSource, 0);
 
-            var remaining = deadline - sw.Elapsed;
-            if (remaining <= TimeSpan.Zero)
-                break;
+            bool firedStall;
+            bool firedCeiling;
+            string lastSource;
+            long silenceMs;
+            long nowTicks;
 
-            // Bound the last sleep to the remaining time so we never overshoot.
-            var delay = remaining < TimeSpan.FromMilliseconds(200) ? remaining : TimeSpan.FromMilliseconds(200);
-            if (delay > TimeSpan.Zero)
-                await Task.Delay(delay, ct);
+            lock (_lock)
+            {
+                nowTicks = Stopwatch.GetTimestamp();
+                var elapsedMs = TicksToMs(nowTicks - _startTimestamp);
+                silenceMs = TicksToMs(nowTicks - _lastPulseTimestamp);
+                lastSource = _lastPulseSource;
+
+                // Check absolute ceiling first (it wins when set).
+                firedCeiling = _absoluteCeilingMs > 0 && elapsedMs >= _absoluteCeilingMs;
+
+                if (!_firstPulseReceived)
+                {
+                    // First-output phase: compare elapsed from start.
+                    firedStall = elapsedMs >= _firstOutputTimeoutMs;
+                }
+                else
+                {
+                    // Inactivity phase: compare silence since last pulse.
+                    firedStall = silenceMs >= _inactivityTimeoutMs;
+                }
+            }
+
+            if (firedCeiling || firedStall)
+            {
+                if (!ct.IsCancellationRequested)
+                    _kill.Cancel();
+
+                var outcome = firedCeiling ? Outcome.FiredAbsoluteCeiling : Outcome.FiredStall;
+                return new Result(outcome, lastSource, silenceMs);
+            }
+
+            // Compute sleep duration: cap at 200 ms, but reduce to the nearest
+            // deadline so we never overshoot.
+            var deadlineMs = !_firstPulseReceived
+                ? _firstOutputTimeoutMs - TicksToMs(nowTicks - _startTimestamp)
+                : _inactivityTimeoutMs - TicksToMs(nowTicks - _lastPulseTimestamp);
+
+            if (_absoluteCeilingMs > 0)
+            {
+                var ceilingRemaining = _absoluteCeilingMs - TicksToMs(nowTicks - _startTimestamp);
+                if (ceilingRemaining < deadlineMs)
+                    deadlineMs = ceilingRemaining;
+            }
+
+            var delay = Math.Min(200L, Math.Max(1L, deadlineMs));
+            if (delay <= 0)
+                delay = 1;
+
+            var delayTask = Task.Delay(TimeSpan.FromMilliseconds(delay), ct);
+            try
+            {
+                await delayTask;
+            }
+            catch (OperationCanceledException)
+            {
+                return new Result(Outcome.Disarmed, _lastPulseSource, 0);
+            }
         }
-
-        // Final check: a trace entry may have been written during the last sleep.
-        if (ct.IsCancellationRequested)
-            return false;
-        if (Directory.Exists(traceDir) && Directory.EnumerateFileSystemEntries(traceDir).Any())
-            return false;
-
-        // No output appeared within the per-tier threshold.
-        if (!ct.IsCancellationRequested)
-            kill.Cancel();
-        return true; // fired — caller must kill + retry
     }
+
+    private static long TicksToMs(long ticks) => (long)(ticks / (double)Stopwatch.Frequency * 1000.0);
 }

@@ -8,18 +8,20 @@ public sealed class RelayTraceTailer : IAsyncDisposable
     private readonly CancellationTokenSource _stop = new();
     private readonly Dictionary<string, long> _offsets = [];
     private readonly string _traceDirectory;
-    private readonly Func<TraceEntry, CancellationToken, Task> _onEntry;
+    private readonly Func<TraceEntry, CancellationToken, Task>? _onEntry;
+    private readonly Action? _onActivity;
     private readonly Task _loop;
 
-    private RelayTraceTailer(string traceDirectory, Func<TraceEntry, CancellationToken, Task> onEntry)
+    private RelayTraceTailer(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry, Action? onActivity = null)
     {
         _traceDirectory = traceDirectory;
         _onEntry = onEntry;
+        _onActivity = onActivity;
         _loop = Task.Run(() => LoopAsync(_stop.Token));
     }
 
-    public static RelayTraceTailer Start(string traceDirectory, Func<TraceEntry, CancellationToken, Task> onEntry) =>
-        new(traceDirectory, onEntry);
+    public static RelayTraceTailer Start(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry = null, Action? onActivity = null) =>
+        new(traceDirectory, onEntry, onActivity);
 
     public async ValueTask DisposeAsync()
     {
@@ -54,10 +56,16 @@ public sealed class RelayTraceTailer : IAsyncDisposable
 
         foreach (var file in Directory.EnumerateFiles(_traceDirectory, "*.jsonl", SearchOption.AllDirectories))
         {
+            var hadEntry = _offsets.ContainsKey(file);
             var text = await ReadNewTextAsync(file, cancellationToken);
+            if (!hadEntry || text.Length > 0)
+            {
+                _onActivity?.Invoke();
+            }
             foreach (var entry in RelayTraceParser.Parse(text))
             {
-                await _onEntry(entry, cancellationToken);
+                if (_onEntry is not null)
+                    await _onEntry(entry, cancellationToken);
             }
         }
     }

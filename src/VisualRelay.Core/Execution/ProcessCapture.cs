@@ -12,10 +12,11 @@ internal static class ProcessCapture
         TimeSpan timeout,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
-        CancellationToken killToken = default)
+        CancellationToken killToken = default,
+        Action<string>? onActivity = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -25,7 +26,8 @@ internal static class ProcessCapture
         TimeSpan timeout,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
-        CancellationToken killToken = default)
+        CancellationToken killToken = default,
+        Action<string>? onActivity = null)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -33,7 +35,7 @@ internal static class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -42,7 +44,8 @@ internal static class ProcessCapture
         TimeSpan timeout,
         CancellationToken cancellationToken,
         IReadOnlyDictionary<string, string>? environment = null,
-        CancellationToken killToken = default)
+        CancellationToken killToken = default,
+        Action<string>? onActivity = null)
     {
         using var process = new Process();
         process.StartInfo = startInfo;
@@ -58,8 +61,8 @@ internal static class ProcessCapture
             }
         }
         var output = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) output.AppendLine(e.Data); };
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) { output.AppendLine(e.Data); onActivity?.Invoke("stdout"); } };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { output.AppendLine(e.Data); onActivity?.Invoke("stderr"); } };
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
