@@ -80,6 +80,80 @@ public sealed class Installer5LauncherTests
         }
     }
 
+    // ── 0. nix re-entry argument preservation ────────────────────────────
+
+    /// <summary>
+    /// When dotnet is absent from PATH and nix IS present, the launcher
+    /// re-enters itself through <c>nix develop</c>.  That re-entry must
+    /// preserve every subcommand argument byte-for-byte, including
+    /// arguments that contain spaces.
+    /// </summary>
+    [Fact]
+    public async Task NixReentry_PreservesSubcommandArguments()
+    {
+        var testBody = """
+            NIX_LOG="/tmp/.vr-test-nix-argv"
+            STUB_DIR="/tmp/.vr-test-stub-bin"
+            FAKE_TMPL="/tmp/.vr-test-fake-template.yaml"
+
+            rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+            mkdir -p "$STUB_DIR"
+
+            # Create a stub nix executable that logs every argument (one per line)
+            cat > "$STUB_DIR/nix" << 'NIXEOF'
+            #!/bin/bash
+            printf '%s\n' "$@" >> /tmp/.vr-test-nix-argv
+            exit 0
+            NIXEOF
+            chmod +x "$STUB_DIR/nix"
+
+            echo "fake" > "$FAKE_TMPL"
+
+            # PATH excludes dotnet, so _require_dotnet() reaches the nix re-entry.
+            # The trailing '|| true' keeps set -e from killing the test when dotnet
+            # happens to be on PATH (launcher runs dotnet run, which fails fast).
+            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" gen-backend-config "$FAKE_TMPL" 'arg with spaces' 2>/dev/null || true
+
+            # Verify every subcommand argument survived the nix re-entry.
+            if ! grep -qFx 'gen-backend-config' "$NIX_LOG"; then
+                echo "FAIL: 'gen-backend-config' not in nix argv log" >&2
+                echo "=== nix argv log ===" >&2
+                cat "$NIX_LOG" >&2
+                rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+                exit 1
+            fi
+
+            if ! grep -qFx '/tmp/.vr-test-fake-template.yaml' "$NIX_LOG"; then
+                echo "FAIL: template path not in nix argv log" >&2
+                echo "=== nix argv log ===" >&2
+                cat "$NIX_LOG" >&2
+                rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+                exit 1
+            fi
+
+            if ! grep -qFx 'arg with spaces' "$NIX_LOG"; then
+                echo "FAIL: spaced argument not in nix argv log" >&2
+                echo "=== nix argv log ===" >&2
+                cat "$NIX_LOG" >&2
+                rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+                exit 1
+            fi
+
+            rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
+            """;
+
+        var (exitCode, stdout, stderr) =
+            await RunLauncherTestAsync("nix-reentry-args", testBody);
+
+        Assert.Equal(0, exitCode);
+
+        // On failure the bash script writes diagnostics to stderr.
+        if (!string.IsNullOrEmpty(stderr))
+        {
+            Assert.Fail($"Regression test failed (args dropped during nix re-entry):\n{stderr}");
+        }
+    }
+
     // ── 1. sample-reset removal ──────────────────────────────────────────
 
     [Fact]
