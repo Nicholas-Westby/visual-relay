@@ -122,7 +122,9 @@ public static class RelayConfigLoader
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
                 BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
-                MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency)
+                MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
+                BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
+                BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd")
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
@@ -173,4 +175,21 @@ public static class RelayConfigLoader
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : fallback;
+
+    // Absent or non-array → empty list; present array → string values.
+    private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.Array)
+            return [];
+        return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
+    }
+
+    // Absent or non-string → null; present string → value.
+    private static string? OptionalStringOrNull(JsonElement root, string name)
+    {
+        if (!root.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.String)
+            return null;
+        var value = element.GetString();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
 }

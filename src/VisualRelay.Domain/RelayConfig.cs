@@ -33,4 +33,13 @@ public sealed record RelayConfig(
     // Maximum concurrent planning tasks during Phase 1 (parallel planning).
     // Planning stages (1–4) are read-only and run in isolated git worktrees,
     // so they are safe to overlap. Stages 5–11 always run serially.
-    int MaxPlanConcurrency = 10);
+    int MaxPlanConcurrency = 10,
+    // Glob patterns for environment-bootstrap files. Null (default) means the
+    // driver uses built-in defaults: flake.nix, flake.lock, *.nix, Brewfile,
+    // Dockerfile*, .tool-versions, rust-toolchain*. Set to a non-empty list to
+    // override. Set to [""] to disable built-in detection entirely.
+    IReadOnlyList<string>? BootstrapFiles = null,
+    // Smoke command that proves the bootstrap still works from a fresh
+    // evaluation. Null (default) means auto-detect: nix repos (any .nix file
+    // in the manifest) get "nix develop --command true"; other repos skip.
+    string? BootstrapCheckCommand = null);

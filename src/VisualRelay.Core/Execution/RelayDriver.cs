@@ -179,6 +179,26 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 9)
                     {
+                        // ── Bootstrap smoke check (if manifest touches env-bootstrap files) ──
+                        var bootstrapFailed = false;
+                        string? bootstrapFailureOutput = null;
+                        var (shouldRunBootstrap, bootstrapCmd) = ResolveBootstrapCheck(config, manifest);
+                        if (shouldRunBootstrap)
+                        {
+                            var bootstrapResult = await _dependencies.TestRunner.RunAsync(rootPath, bootstrapCmd, cancellationToken);
+                            if (bootstrapResult.TimedOut)
+                            {
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                    ErrorHintClassifier.WithHint(bootstrapResult.Output), null, statusEntries, cancellationToken);
+                            }
+
+                            if (bootstrapResult.ExitCode != 0)
+                            {
+                                bootstrapFailed = true;
+                                bootstrapFailureOutput = bootstrapResult.Output;
+                            }
+                        }
+
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                         if (testResult.TimedOut)
                         {
@@ -187,6 +207,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         }
 
                         check = testResult.ExitCode == 0 ? "green" : "red";
+                        if (bootstrapFailed)
+                            check = "red";
+
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
                         {
@@ -199,15 +222,26 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            var newFailures = config.BaselineVerify
+                            // Build the failure output for fix-verify (or flagging).
+                            string failingTestOutput;
+                            if (bootstrapFailed && testResult.ExitCode != 0)
+                                failingTestOutput = testResult.Output + "\n\n--- Bootstrap check output ---\n" + bootstrapFailureOutput;
+                            else if (bootstrapFailed)
+                                failingTestOutput = "Bootstrap check failed:\n" + bootstrapFailureOutput;
+                            else
+                                failingTestOutput = testResult.Output;
+
+                            // Baseline verify is skipped when the bootstrap itself is broken —
+                            // the bootstrap failure is definitely new (caused by the manifest change).
+                            var newFailures = (config.BaselineVerify && !bootstrapFailed)
                                 ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, cancellationToken)
                                 : null;
-                            if (!config.BaselineVerify || newFailures is not null)
+                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed)
                             {
                                 if (config.MaxVerifyLoops <= 0)
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, testResult.Output, statusEntries, cancellationToken);
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, failingTestOutput, statusEntries, cancellationToken);
                                 }
 
                                 // Genuinely red — record stage 9, then enter fix-verify loop.
@@ -216,7 +250,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                                 var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(
                                     rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
-                                    previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, testResult.Output, cancellationToken);
+                                    previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput,
+                                    shouldRunBootstrap ? bootstrapCmd : null, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

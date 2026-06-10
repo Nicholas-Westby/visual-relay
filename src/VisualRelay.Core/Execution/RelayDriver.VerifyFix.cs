@@ -128,6 +128,7 @@ public sealed partial class RelayDriver
         double sessionCostUsd,
         int unknownCostStageCount,
         string failingTestOutput,
+        string? bootstrapCheckCmd,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
@@ -165,6 +166,30 @@ public sealed partial class RelayDriver
             }
 
             var body = result.Json;
+
+            // Bootstrap re-check: runs before the test command. If it fails the
+            // stage is red and the agent gets the bootstrap failure for the next
+            // fix-verify iteration. The test command still runs so combined
+            // failures are visible.
+            TestRunResult? failingResult = null;
+            string? check = null;
+            if (bootstrapCheckCmd is not null)
+            {
+                var bootstrapResult = await _dependencies.TestRunner.RunAsync(rootPath, bootstrapCheckCmd, cancellationToken);
+                if (bootstrapResult.TimedOut)
+                {
+                    var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+                        ErrorHintClassifier.WithHint(bootstrapResult.Output), null, statusEntries, cancellationToken);
+                    return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+                }
+
+                if (bootstrapResult.ExitCode != 0)
+                {
+                    check = "red";
+                    failingResult = bootstrapResult;
+                }
+            }
+
             var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
             if (testResult.TimedOut)
             {
@@ -173,7 +198,9 @@ public sealed partial class RelayDriver
                 return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
             }
 
-            var check = testResult.ExitCode == 0 ? "green" : "red";
+            check ??= testResult.ExitCode == 0 ? "green" : "red";
+            if (failingResult is null && check != "green")
+                failingResult = testResult;
 
             // Record attempt in ledger with labeled section.
             var header = maxLoops > 1
@@ -203,7 +230,7 @@ public sealed partial class RelayDriver
                 return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
 
             // Update failing output for next attempt.
-            failingTestOutput = testResult.Output;
+            failingTestOutput = failingResult?.Output ?? string.Empty;
         }
 
         // All attempts exhausted — flag.

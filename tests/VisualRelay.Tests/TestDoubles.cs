@@ -104,6 +104,72 @@ internal sealed class TimeoutSimulatingTestRunner : ITestRunner
     }
 }
 
+/// <summary>
+/// Wraps a <see cref="ScriptedTestRunner"/> and records every invocation so
+/// tests can assert on call count and command strings (e.g. to verify that a
+/// bootstrap check command was passed or skipped).
+/// </summary>
+internal sealed class RecordingTestRunner : ITestRunner
+{
+    private readonly ScriptedTestRunner _inner;
+    private readonly List<(string RootPath, string Command)> _calls = [];
+
+    public RecordingTestRunner(params TestRunResult[] results)
+    {
+        _inner = new ScriptedTestRunner(results);
+    }
+
+    public IReadOnlyList<(string RootPath, string Command)> Calls => _calls;
+
+    public async Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
+    {
+        _calls.Add((rootPath, command));
+        return await _inner.RunAsync(rootPath, command, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Returns different results based on the command string. Bootstrap commands
+/// (matching a supplied sentinel) fail on the first call and pass on subsequent
+/// calls — simulating an agent fixing the bootstrap. Non-bootstrap commands
+/// return red on the first call (stage 5 author gate) and green thereafter.
+/// </summary>
+internal sealed class CommandAwareTestRunner : ITestRunner
+{
+    private int _nonBootstrapCallCount;
+    private int _bootstrapCallCount;
+    private readonly string _bootstrapSentinel;
+    private readonly List<(string RootPath, string Command)> _calls = [];
+
+    public CommandAwareTestRunner(string bootstrapSentinel = "nix develop")
+    {
+        _bootstrapSentinel = bootstrapSentinel;
+    }
+
+    public IReadOnlyList<(string RootPath, string Command)> Calls => _calls;
+
+    public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
+    {
+        _calls.Add((rootPath, command));
+        if (command.Contains(_bootstrapSentinel))
+        {
+            _bootstrapCallCount++;
+            // First bootstrap call fails (simulates a broken flake.nix),
+            // subsequent calls pass (agent remediated).
+            if (_bootstrapCallCount == 1)
+                return Task.FromResult(new TestRunResult(1, "nix build of nono failed"));
+            return Task.FromResult(new TestRunResult(0, "bootstrap ok"));
+        }
+
+        _nonBootstrapCallCount++;
+        // First non-bootstrap call = stage 5 author gate (must be red).
+        if (_nonBootstrapCallCount == 1)
+            return Task.FromResult(new TestRunResult(1, "red"));
+        // Subsequent = stage 9 verify / fix-verify re-verify (green).
+        return Task.FromResult(new TestRunResult(0, "all green"));
+    }
+}
+
 internal sealed class RecordingTaskRunner : IRelayTaskRunner
 {
     public List<string> TasksRun { get; } = [];
