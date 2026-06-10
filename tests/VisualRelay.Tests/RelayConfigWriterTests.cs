@@ -30,11 +30,58 @@ public sealed class RelayConfigWriterTests
     }
 
     [Fact]
+    public async Task Write_WithNullTestCmd_ProducesIncompleteConfig()
+    {
+        // (c) Exhaustion path: when no candidate can be validated, the
+        // writer receives null and must produce a config whose testCmd is
+        // null — which the loader treats as Incomplete (not a bad guess).
+        using var repo = TestRepository.Create();
+        var path = RelayConfigWriter.Write(repo.Root, null);
+        Assert.True(File.Exists(path));
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Incomplete, result.Status);
+    }
+
+    [Fact]
+    public async Task Write_WithNullTestCmd_JsonContainsNullValue()
+    {
+        // The on-disk JSON must have a null value (not a missing key) so
+        // the file is self-documenting: the user can see testCmd was
+        // explicitly set to null because detection failed.
+        using var repo = TestRepository.Create();
+        var path = RelayConfigWriter.Write(repo.Root, null);
+
+        var raw = await File.ReadAllTextAsync(path);
+        using var doc = JsonDocument.Parse(raw);
+
+        Assert.True(doc.RootElement.TryGetProperty("testCmd", out var testCmd));
+        Assert.Equal(JsonValueKind.Null, testCmd.ValueKind);
+    }
+
+    // ── Validate-then-write: validated command written verbatim ─────────
+
+    [Fact]
+    public async Task Write_ThenLoad_RoundTripsCommandVerbatim()
+    {
+        // (d) The validated command must survive the write → load
+        // round-trip exactly as provided — no trimming, no shell wrapping.
+        using var repo = TestRepository.Create();
+        var original = "dotnet test --filter Category=Unit --logger trx";
+
+        RelayConfigWriter.Write(repo.Root, original);
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(original, result.Config.TestCommand);
+    }
+
+    // ── UpsertBypassSandbox (existing, preserved) ───────────────────────
+
+    [Fact]
     public async Task UpsertBypassSandbox_True_RoundTripsThroughLoader()
     {
         using var repo = TestRepository.Create();
-        // First write a config with Write so it's loadable (upsert needs
-        // something to read-modify-write; a missing file is fine too).
         RelayConfigWriter.Write(repo.Root, "dotnet test");
 
         RelayConfigWriter.UpsertBypassSandbox(repo.Root, true);
@@ -48,11 +95,8 @@ public sealed class RelayConfigWriterTests
     public async Task UpsertBypassSandbox_PreservesExistingKeys()
     {
         using var repo = TestRepository.Create();
-        // Use WriteConfig to seed a config with tierProfiles and baselineVerify.
         repo.WriteConfig("dotnet test", [], baselineVerify: true);
-        var configPath = Path.Combine(repo.Root, ".relay", "config.json");
 
-        // Sanity: the seeded config is loadable and BypassSandbox defaults to false.
         var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, before.Status);
         Assert.False(before.Config.BypassSandbox);
@@ -64,7 +108,6 @@ public sealed class RelayConfigWriterTests
         var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, after.Status);
         Assert.True(after.Config.BypassSandbox);
-        // Existing keys must survive the upsert.
         Assert.True(after.Config.BaselineVerify);
         Assert.Contains("cheap", after.Config.TierProfiles);
         Assert.Equal("dotnet test", after.Config.TestCommand);

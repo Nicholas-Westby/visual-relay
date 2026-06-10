@@ -6,16 +6,20 @@ namespace VisualRelay.Core.Init;
 // Writes a minimal valid .relay/config.json with the given test command and an
 // empty logSources array (so the loader treats it as Loaded). Overwrites any
 // existing file at that path; callers gate on status before invoking.
+// Pass null for testCommand to write "testCmd": null — the loader treats this
+// as Incomplete, which is the deliberate exhaustion signal.
 public static class RelayConfigWriter
 {
-    public static string Write(string rootPath, string testCommand)
+    public static string Write(string rootPath, string? testCommand)
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
 
         var json = new JsonObject
         {
-            ["testCmd"] = testCommand,
+            ["testCmd"] = testCommand is not null
+                ? JsonValue.Create(testCommand)
+                : null,
             ["logSources"] = new JsonArray()
         };
 

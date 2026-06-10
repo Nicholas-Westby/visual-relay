@@ -153,7 +153,20 @@ public partial class MainWindowViewModel
     [RelayCommand(CanExecute = nameof(CanCreateConfig))]
     private async Task CreateConfigAsync()
     {
-        RelayConfigWriter.Write(RootPath, InitTestCommandInput.Trim());
+        var command = InitTestCommandInput.Trim();
+
+        // Smoke-validate before writing — never persist a command that can't start.
+        var runner = new DirectExecTestRunner(TimeSpan.FromSeconds(5));
+        var validator = new TestCommandValidator(runner);
+        var validation = await validator.ValidateAsync(RootPath, command);
+
+        if (!validation.Accepted)
+        {
+            StatusText = validation.RejectionReason ?? "test command validation failed";
+            return;
+        }
+
+        RelayConfigWriter.Write(RootPath, command);
         var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None);
         if (!hookResult.Installed && hookResult.Warning is not null)
         {
