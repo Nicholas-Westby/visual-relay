@@ -4,16 +4,13 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class SwivalSubagentRunnerContractRetryTests
+public sealed partial class SwivalSubagentRunnerContractRetryTests
 {
-    private static Task<BackendReadiness> AlwaysReady(CancellationToken _) =>
-        Task.FromResult(new BackendReadiness(true, null));
-
     [Fact]
     public async Task RunAsync_ContractFailureThenRecover_RetriesAndReturnsSuccess()
     {
         using var repo = TestRepository.Create();
-        var script = await WriteExecutableAsync(
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-contract-retry",
             """
@@ -35,9 +32,9 @@ public sealed class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, sink, AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
 
-        var result = await runner.RunAsync(Invocation(repo.Root));
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
         Assert.True(result.IsValid);
         Assert.Null(result.Error);
@@ -49,7 +46,7 @@ public sealed class SwivalSubagentRunnerContractRetryTests
     public async Task RunAsync_ContractRetry_CorrectivePromptContainsPriorOutput()
     {
         using var repo = TestRepository.Create();
-        var script = await WriteExecutableAsync(
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-contract-prompt",
             """
@@ -73,9 +70,9 @@ public sealed class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, sink, AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
 
-        var invocation = Invocation(repo.Root) with { TaskInput = "Implement the feature." };
+        var invocation = SwivalTestHelpers.Invocation(repo.Root) with { TaskInput = "Implement the feature." };
         var result = await runner.RunAsync(invocation);
 
         Assert.True(result.IsValid);
@@ -93,7 +90,7 @@ public sealed class SwivalSubagentRunnerContractRetryTests
     public async Task RunAsync_ContractRetryExhausted_FlagsWithHint()
     {
         using var repo = TestRepository.Create();
-        var script = await WriteExecutableAsync(
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-contract-exhaust",
             """
@@ -106,9 +103,9 @@ public sealed class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
 
-        var result = await runner.RunAsync(Invocation(repo.Root));
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
         Assert.False(result.IsValid);
         Assert.Contains("no valid fenced json block", result.Error, StringComparison.Ordinal);
@@ -118,7 +115,7 @@ public sealed class SwivalSubagentRunnerContractRetryTests
     public async Task RunAsync_MaxContractRetriesZero_PreservesFailFast()
     {
         using var repo = TestRepository.Create();
-        var script = await WriteExecutableAsync(
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-contract-failfast",
             """
@@ -131,10 +128,10 @@ public sealed class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 0,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = await runner.RunAsync(Invocation(repo.Root));
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
         sw.Stop();
 
         Assert.False(result.IsValid);
@@ -143,21 +140,6 @@ public sealed class SwivalSubagentRunnerContractRetryTests
         Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay", "task", "stage1-attempt2")),
             "MaxContractRetries=0 must not create a retry attempt directory.");
     }
-
-    private static StageInvocation Invocation(string rootPath) =>
-        new(
-            RelayStages.All[0],
-            "cheap",
-            "run-1",
-            rootPath,
-            "task",
-            "# Task",
-            string.Empty,
-            [],
-            [],
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1"),
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1.report.json"),
-            1);
 
     private static RelayConfig TestConfig() =>
         new(
@@ -179,16 +161,4 @@ public sealed class SwivalSubagentRunnerContractRetryTests
             BypassSandbox: true,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
-
-    private static async Task<string> WriteExecutableAsync(string rootPath, string name, string text)
-    {
-        var path = Path.Combine(rootPath, name);
-        await File.WriteAllTextAsync(path, text);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-
-        return path;
-    }
 }

@@ -4,11 +4,8 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class SwivalSubagentRunnerSandboxTests
+public sealed partial class SwivalSubagentRunnerSandboxTests
 {
-    private static Task<BackendReadiness> AlwaysReady(CancellationToken _) =>
-        Task.FromResult(new BackendReadiness(true, null));
-
     [Fact]
     public void BuildArguments_NeverInjectsSandboxFlagsIntoSwival()
     {
@@ -17,9 +14,9 @@ public sealed class SwivalSubagentRunnerSandboxTests
         foreach (var bypass in new[] { true, false })
         {
             var config = TestConfig() with { BypassSandbox = bypass };
-            var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
+            var runner = new SwivalSubagentRunner(config, "swival", backendProbe: SwivalTestHelpers.AlwaysReady);
 
-            var args = runner.BuildArguments(Invocation(Path.GetTempPath()));
+            var args = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
             Assert.DoesNotContain("--sandbox", args);
             Assert.DoesNotContain("--nono-profile", args);
@@ -32,8 +29,8 @@ public sealed class SwivalSubagentRunnerSandboxTests
     public void BuildLaunchTarget_SandboxEnabled_WrapsSwivalInNono()
     {
         var config = TestConfig() with { BypassSandbox = false }; // sandbox explicitly enabled (default is bypass)
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
-        var swivalArgs = runner.BuildArguments(Invocation(Path.GetTempPath()));
+        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: SwivalTestHelpers.AlwaysReady);
+        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
 
@@ -58,8 +55,8 @@ public sealed class SwivalSubagentRunnerSandboxTests
     public void BuildLaunchTarget_BypassSandbox_LaunchesSwivalDirectly()
     {
         var config = TestConfig() with { BypassSandbox = true };
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: AlwaysReady);
-        var swivalArgs = runner.BuildArguments(Invocation(Path.GetTempPath()));
+        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: SwivalTestHelpers.AlwaysReady);
+        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
 
@@ -118,19 +115,4 @@ public sealed class SwivalSubagentRunnerSandboxTests
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2);
-
-    private static StageInvocation Invocation(string rootPath) =>
-        new(
-            RelayStages.All[0],
-            "cheap",
-            "run-1",
-            rootPath,
-            "task",
-            "# Task",
-            string.Empty,
-            [],
-            [],
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1"),
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1.report.json"),
-            1);
 }

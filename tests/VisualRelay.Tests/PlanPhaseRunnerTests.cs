@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class PlanPhaseRunnerTests
+public sealed partial class PlanPhaseRunnerTests
 {
     [Fact]
     public async Task RunPlanPhase_EnforcesBatchLimit_NoMoreThanMaxConcurrencyInFlight()
@@ -24,33 +24,13 @@ public sealed class PlanPhaseRunnerTests
         var sharedCounter = new CountingConcurrencySubagentRunner();
         sharedCounter.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
 
-        var sink = new InMemoryRelayEventSink();
         var tasks = Enumerable.Range(0, taskCount).Select(i => (
             TaskId: $"task-{i:D2}",
             Runner: (ISubagentRunner)sharedCounter
         )).ToList();
 
         // Run PlanPhaseRunner directly — it orchestrates the parallel plan phase.
-        var config = new RelayConfig(
-            TasksDir: "llm-tasks",
-            TestCommand: "dotnet test",
-            TestFileCommand: "dotnet test {files}",
-            LogSources: [],
-            TierProfiles: new Dictionary<string, string>(),
-            MaxVerifyLoops: 5,
-            MaxStageFailures: 3,
-            MaxTurns: 200,
-            BaselineVerify: true,
-            ArchiveOnDone: true,
-            SubagentTimeoutMilliseconds: 1_200_000,
-            TestTimeoutMilliseconds: 300_000,
-            FirstOutputTimeoutMsByTier: new Dictionary<string, int>(),
-            FirstOutputTimeoutMs: 660_000,
-            MaxStallRetries: 2,
-            BypassSandbox: false,
-            MaxPlanConcurrency: maxConcurrency,
-            InactivityTimeoutMsByTier: null,
-            InactivityTimeoutMs: 600_000);
+        var config = PlanPhaseTestHelpers.MakeConfig(maxConcurrency);
 
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root,
@@ -86,11 +66,11 @@ public sealed class PlanPhaseRunnerTests
         // Git repo required for worktree creation.
         PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
-        var tasks = new[]
+        var tasks = new (string, ISubagentRunner)[]
         {
-            ("alpha", CreateRunner("src/alpha.cs", "tests/alpha.tests.cs")),
-            ("beta",  CreateRunner("src/beta.cs", "tests/beta.tests.cs")),
-            ("gamma", CreateRunner("src/gamma.cs", "tests/gamma.tests.cs")),
+            ("alpha", MakeRunner("src/alpha.cs", "tests/alpha.tests.cs")),
+            ("beta",  MakeRunner("src/beta.cs", "tests/beta.tests.cs")),
+            ("gamma", MakeRunner("src/gamma.cs", "tests/gamma.tests.cs")),
         };
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 3);
@@ -292,7 +272,7 @@ public sealed class PlanPhaseRunnerTests
         Assert.Equal("Flagged", status[2].Status);
     }
 
-    private static ISubagentRunner CreateRunner(string codeFile, string testFile)
+    private static ISubagentRunner MakeRunner(string codeFile, string testFile)
     {
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath(codeFile, testFile);

@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class SwivalSubagentRunnerGuardTests
+public sealed partial class SwivalSubagentRunnerGuardTests
 {
     [Fact]
     public async Task RunAsync_BackendNotReady_FailsFastWithoutSpawningSwival()
@@ -17,28 +17,13 @@ public sealed class SwivalSubagentRunnerGuardTests
             swivalBinary: "/nonexistent/swival",
             backendProbe: _ => Task.FromResult(new BackendReadiness(false, "backend down at http://127.0.0.1:4000")));
 
-        var result = await runner.RunAsync(Invocation(repo.Root));
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
         Assert.False(result.IsValid);
         Assert.Equal("backend down at http://127.0.0.1:4000", result.Error);
         Assert.Null(result.Json);
-        Assert.False(Directory.Exists(Invocation(repo.Root).TraceDirectory));
+        Assert.False(Directory.Exists(SwivalTestHelpers.Invocation(repo.Root).TraceDirectory));
     }
-
-    private static StageInvocation Invocation(string rootPath) =>
-        new(
-            RelayStages.All[0],
-            "cheap",
-            "run-1",
-            rootPath,
-            "task",
-            "# Task",
-            string.Empty,
-            [],
-            [],
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1"),
-            Path.Combine(rootPath, ".relay", "task", "stage1-attempt1.report.json"),
-            1);
 
     private static RelayConfig TestConfig() =>
         new(

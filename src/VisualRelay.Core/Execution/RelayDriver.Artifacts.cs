@@ -120,11 +120,6 @@ public sealed partial class RelayDriver
     private static bool IsImpl(string path) =>
         Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
 
-    private static string? ReadOptionalString(JsonElement json, string propertyName) =>
-        json.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
-            ? value.GetString()
-            : null;
-
     private static string WorkingTreeHash(string rootPath, IReadOnlyList<string> manifest)
     {
         var parts = new List<string>();
@@ -298,31 +293,4 @@ public sealed partial class RelayDriver
         await StageStatusRecord.WriteAsync(taskDirectory, entries, cancellationToken);
     }
 
-    // ── Pre-run untracked snapshot persistence ─────────────────────────
-
-    private static async Task WritePreRunUntrackedAsync(string path, IReadOnlySet<string> paths, CancellationToken ct)
-    {
-        var sorted = paths.Order(StringComparer.Ordinal);
-        await File.WriteAllTextAsync(
-            path,
-            string.Join(Environment.NewLine, sorted) + Environment.NewLine,
-            ct);
-    }
-
-    private static async Task<IReadOnlySet<string>> ReadPreRunUntrackedAsync(string path, CancellationToken ct)
-    {
-        if (!File.Exists(path))
-            return new HashSet<string>(StringComparer.Ordinal);
-
-        var lines = await File.ReadAllLinesAsync(path, ct);
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in lines)
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Length > 0)
-                set.Add(trimmed);
-        }
-
-        return set;
-    }
 }

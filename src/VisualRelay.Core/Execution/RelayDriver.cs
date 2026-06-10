@@ -49,98 +49,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     statusEntries, ref firstStageToRun);
 
             // ── Commit-gate resume validation ──────────────────────────────────────
-            // When stages 1–10 are Done and only stage 11 (Commit) failed,
-            // re-validate the gate test suite and the recorded tree hash against
-            // the current worktree before re-entering the commit step.
-            if (_options.Resume && firstStageToRun == 11
-                && statusEntries.Count >= 10
-                && statusEntries.Take(10).All(e => e.Status == "Done"))
-            {
-                var manifestPath = Path.Combine(taskDirectory, "manifest.txt");
-                var currentManifest = File.Exists(manifestPath)
-                    ? (await File.ReadAllLinesAsync(manifestPath, cancellationToken))
-                        .Where(l => !string.IsNullOrWhiteSpace(l)).ToList()
-                    : new List<string>();
-
-                // Re-run the gate test suite.
-                bool gatePassed = false;
-                try
-                {
-                    var testResult = await _dependencies.TestRunner.RunAsync(
-                        rootPath, config.TestCommand, cancellationToken);
-                    gatePassed = !testResult.TimedOut && testResult.ExitCode == 0;
-                }
-                catch
-                {
-                    // Test runner failure → treat as gate failure.
-                }
-
-                // Re-validate the recorded stage-10 tree hash against the current
-                // worktree. The taskHash from LoadResumeState is the seal hash, not
-                // the tree hash — extract treeHash from the stage-10 seal entry.
-                var recordedTreeHash = string.Empty;
-                if (seals.Count >= 10)
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(seals[9]); // 0-based index 9 = stage 10
-                        if (doc.RootElement.TryGetProperty("treeHash", out var th))
-                            recordedTreeHash = th.GetString() ?? string.Empty;
-                    }
-                    catch { /* malformed seal — treat as mismatch */ }
-                }
-                var currentHash = WorkingTreeHash(rootPath, currentManifest);
-                var hashMatches = !string.IsNullOrEmpty(recordedTreeHash)
-                    && string.Equals(currentHash, recordedTreeHash, StringComparison.Ordinal);
-
-                if (!gatePassed || !hashMatches)
-                {
-                    // Fall back to conservative restart at stage 5 (Author-tests).
-                    firstStageToRun = 5;
-
-                    // Truncate seals to stages 1–4 only.
-                    var truncated = new List<string>();
-                    foreach (var seal in seals)
-                    {
-                        try
-                        {
-                            using var doc = JsonDocument.Parse(seal);
-                            if (doc.RootElement.TryGetProperty("n", out var n) && n.GetInt32() <= 4)
-                                truncated.Add(seal);
-                        }
-                        catch { /* malformed seal — drop */ }
-                    }
-                    seals.Clear();
-                    seals.AddRange(truncated);
-
-                    // Reset previousSeal/taskHash from stage-4 seal.
-                    if (seals.Count > 0)
-                    {
-                        using var doc = JsonDocument.Parse(seals[^1]);
-                        if (doc.RootElement.TryGetProperty("seal", out var sp))
-                            taskHash = previousSeal = sp.GetString() ?? string.Empty;
-                    }
-                    else
-                    {
-                        previousSeal = string.Empty;
-                        taskHash = string.Empty;
-                    }
-
-                    // Reset status entries for stages 5–11 to Waiting (LoadResumeState
-                    // left them as Done since firstStageToRun was originally 11).
-                    for (int i = 0; i < statusEntries.Count; i++)
-                    {
-                        if (statusEntries[i].Stage >= 5)
-                            statusEntries[i] = statusEntries[i] with { Status = "Waiting", Error = null };
-                    }
-
-                    // Append fallback note to ledger.
-                    ledger.AppendLine("> **Resume fallback**: commit-gate re-validation failed");
-                    ledger.AppendLine($"> gatePassed={gatePassed} hashMatch={hashMatches}");
-                    ledger.AppendLine("> Restarting from stage 5 (Author-tests).");
-                    ledger.AppendLine();
-                }
-            }
+            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config,
+                ledger, seals, manifest, previousSeal, taskHash,
+                firstStageToRun, statusEntries, cancellationToken);
 
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
@@ -156,34 +67,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
             // Snapshot untracked files before the first agent edit so the commit pass
             // can distinguish files authored during the run from pre-existing scratch.
-            // Persist the snapshot on the FIRST run instance so a resumed instance
-            // reuses it — otherwise files authored by the interrupted instance are
-            // already untracked at resume start and would be misclassified as
-            // pre-existing, silently dropped from the sealed commit.
-            IReadOnlySet<string>? preRunUntracked = null;
-            if (_options.CreateGitCommit)
-            {
-                var snapshotPath = Path.Combine(taskDirectory, "pre-run-untracked.txt");
-                if (_options.Resume && File.Exists(snapshotPath))
-                {
-                    preRunUntracked = await ReadPreRunUntrackedAsync(snapshotPath, cancellationToken);
-                }
-                else if (_options.Resume)
-                {
-                    // Legacy resume: no persisted first-instance snapshot exists.
-                    // (Task was interrupted before this fix was deployed.)  Use an
-                    // empty baseline so every current untracked file is treated as
-                    // new and auto-included — the risk of including operator scratch
-                    // is lower than the alternative of silently dropping prior-
-                    // instance files and breaking HEAD.
-                    preRunUntracked = new HashSet<string>(StringComparer.Ordinal);
-                }
-                else
-                {
-                    preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
-                    await WritePreRunUntrackedAsync(snapshotPath, preRunUntracked, cancellationToken);
-                }
-            }
+            IReadOnlySet<string>? preRunUntracked =
+                await CapturePreRunUntrackedAsync(rootPath, taskDirectory, cancellationToken);
 
             var stage10Handled = false;
 
@@ -396,75 +281,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
             }
 
-            // Plan-only run: stages 1–4 (or up to LastStageToRun) completed;
-            // return Planned without touching git. The artifacts on disk (ledger,
-            // manifest.txt, status.json, seals) are ready for a later Resume run.
-            if (_options.LastStageToRun is not null)
-                return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Planned, null, null, null);
-
-            var commitSha = "simulated";
-            if (_options.CreateGitCommit)
-            {
-                // Retire the task BEFORE committing so the rename (deletion of old
-                // path, addition of DONE-/archived path) lands in the same commit.
-                var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task);
-
-                var proofFiles = new List<string>
-                {
-                    Path.Combine(".relay", taskId, "ledger.md"),
-                    Path.Combine(".relay", taskId, $"{taskId}.seals"),
-                    Path.Combine(".relay", taskId, "manifest.txt"),
-                    Path.Combine(".relay", taskId, "status.json"),
-                };
-                if (retirement?.Additions is { Count: > 0 } additions)
-                    proofFiles.AddRange(additions);
-
-                var chain = BuildCommitChain(commitMessages, taskId);
-                var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLock.Nonce, preRunUntracked, cancellationToken);
-                if (!commit.Success)
-                {
-                    // Rollback: restore original paths so the task stays runnable.
-                    retirement?.Rollback?.Invoke();
-                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
-                }
-
-                commitSha = commit.CommitSha ?? "unknown";
-
-                // Post-commit invariant: verify no authored file was left behind.
-                // Catches the whole class of missing-file bugs — resume
-                // misclassification, manifest gap, or any other mechanism.
-                if (preRunUntracked is not null)
-                {
-                    var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-                        rootPath, preRunUntracked, cancellationToken);
-                    if (missed.Count > 0)
-                    {
-                        retirement?.Rollback?.Invoke();
-                        return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11,
-                            $"sealed commit is missing authored files: {string.Join(", ", missed.Order(StringComparer.Ordinal).Select(f => $"`{f}`"))}",
-                            null, statusEntries, cancellationToken);
-                    }
-                }
-
-                // Publish task_done / task_archived after successful commit.
-                if (retirement is not null)
-                {
-                    var eventName = config.ArchiveOnDone ? "task_archived" : "task_done";
-                    await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                        DateTimeOffset.UtcNow,
-                        "info",
-                        eventName,
-                        runId,
-                        rootPath,
-                        taskId,
-                        11,
-                        Data: new Dictionary<string, string> { ["path"] = retirement.DestinationPath }), cancellationToken);
-                }
-            }
-            // Belt-and-suspenders: mark stage 11 done (covers simulated path too).
-            MarkStatus(statusEntries, 11, "Done");
-            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-            return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory,
+                config, task, commitMessages, manifest, taskHash, activeLock.Nonce,
+                preRunUntracked, statusEntries, cancellationToken);
         }
         catch (Exception ex)
         {
