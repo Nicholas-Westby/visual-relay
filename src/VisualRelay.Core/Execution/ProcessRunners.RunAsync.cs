@@ -8,6 +8,11 @@ namespace VisualRelay.Core.Execution;
 
 public sealed partial class SwivalSubagentRunner
 {
+    // Process-tree CPU sampling cadence for the filesystem-independent
+    // activity pulse (see ProcessTreeCpuSampler). Must stay well below the
+    // smallest configurable inactivity window.
+    private const int CpuPulseSampleIntervalMs = 4_000;
+
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         // Pre-flight guard: fail fast (~1-2s) when the backend is down.
@@ -84,7 +89,7 @@ public sealed partial class SwivalSubagentRunner
 
             var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot,
                 processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,
-                onActivity: watchdog.Pulse);
+                onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs);
             var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // Task.WhenAny may return processTask when the watchdog kill triggers
@@ -98,7 +103,13 @@ public sealed partial class SwivalSubagentRunner
                 if (wdResult.Outcome != ActivityWatchdog.Outcome.Disarmed)
                 {
                     // Watchdog fired — killToken already triggered process.Kill().
-                    await processTask;
+                    var killedProcess = await processTask;
+
+                    // Persist the killed attempt's captured output: it is the only
+                    // autopsy evidence when trace and report never materialized.
+                    var killedOutputPath = TryPersistKilledOutput(
+                        traceDirParent, stageNum, attempt, wdResult,
+                        currentFirstOutputMs, currentInactivityMs, killedProcess.Output);
 
                     // Publish stall/kill event with signal details.
                     if (_eventSink is not null)
@@ -115,7 +126,9 @@ public sealed partial class SwivalSubagentRunner
                                 ["lastSignal"] = wdResult.LastPulseSource,
                                 ["silenceMs"] = wdResult.SilenceMs.ToString(),
                                 ["firstOutputTimeoutMs"] = currentFirstOutputMs.ToString(),
-                                ["inactivityTimeoutMs"] = currentInactivityMs.ToString()
+                                ["inactivityTimeoutMs"] = currentInactivityMs.ToString(),
+                                ["outputBytes"] = killedProcess.Output.Length.ToString(),
+                                ["outputSaved"] = killedOutputPath ?? "(persist failed)"
                             }), cancellationToken);
                     }
 

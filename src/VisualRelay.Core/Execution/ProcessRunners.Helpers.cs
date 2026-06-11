@@ -214,4 +214,32 @@ public sealed partial class SwivalSubagentRunner
         var text = value.Trim();
         return text.Length <= 1_500 ? text : string.Concat(text.AsSpan(0, 1_500), "...");
     }
+
+    /// <summary>
+    /// Best-effort persistence of a killed attempt's captured stdout/stderr
+    /// next to the other attempt artifacts. Returns the path, or null when
+    /// the write failed (never throws — autopsy data must not break the run).
+    /// </summary>
+    private static string? TryPersistKilledOutput(
+        string traceDirParent, int stageNum, int attempt,
+        ActivityWatchdog.Result wdResult, int firstOutputMs, int inactivityMs, string output)
+    {
+        try
+        {
+            var path = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.killed-output.txt");
+            var reason = wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling
+                ? "absolute_ceiling" : "stall";
+            var header =
+                $"# killed-attempt output (autopsy artifact){Environment.NewLine}" +
+                $"# reason: {reason}  lastSignal: {wdResult.LastPulseSource}  silenceMs: {wdResult.SilenceMs}{Environment.NewLine}" +
+                $"# firstOutputTimeoutMs: {firstOutputMs}  inactivityTimeoutMs: {inactivityMs}{Environment.NewLine}" +
+                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}{Environment.NewLine}{Environment.NewLine}";
+            File.WriteAllText(path, header + output);
+            return path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

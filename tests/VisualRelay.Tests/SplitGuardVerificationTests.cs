@@ -66,10 +66,12 @@ public sealed partial class SplitGuardVerificationTests
 
     /// <summary>
     /// The total [Fact] count across the oversized-file families must match
-    /// the baseline of 127 established on 2026-06-10 before any split.
+    /// the baseline of 130: 127 established on 2026-06-10 before any split,
+    /// +3 on 2026-06-10 (CpuPulse partial: cpu-pulse survival, true-wedge kill,
+    /// killed-output persistence — the fs-blinded-watchdog regression family).
     ///
     /// Baseline composition:
-    ///   SwivalSubagentRunnerWatchdogTests.cs                  11
+    ///   SwivalSubagentRunnerWatchdogTests.cs (+ .CpuPulse.cs) 14
     ///   Installer5LauncherTests.cs                            20
     ///   GitCommitterTests.cs                                   9
     ///   RelayDriverResumeTests.cs                              5
@@ -82,12 +84,12 @@ public sealed partial class SplitGuardVerificationTests
     ///   NoCommitContaminationTests.cs                          3
     ///   PlanPhaseRunnerTests.cs                                6
     ///                                                       ----
-    ///   Total (oversized families)                           127
+    ///   Total (oversized families)                           130
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 127;
+        const int baseline = 130;
 
         string[] prefixes =
         [
