@@ -34,7 +34,7 @@ public sealed class GitInvokerTests
             Assert.Contains("status", capturedArgs);
             Assert.Contains("--porcelain", capturedArgs);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     [Fact]
@@ -51,7 +51,7 @@ public sealed class GitInvokerTests
             Assert.Equal(0, result.ExitCode);
             Assert.Equal("/usr/bin/git", result.Output);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     // ── Env sanitization: system git (outside /nix/store) ─────────────
@@ -83,7 +83,7 @@ public sealed class GitInvokerTests
                 "SDKROOT must be stripped when git binary is outside /nix/store");
             Assert.Equal("/Users/test", capturedEnv["HOME"]);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     [Fact]
@@ -103,7 +103,7 @@ public sealed class GitInvokerTests
                 environment: null);
             Assert.NotNull(capturedEnv);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     // ── Env sanitization: nix-store git (inside /nix/store) ───────────
@@ -141,7 +141,7 @@ public sealed class GitInvokerTests
                 "SDKROOT must be preserved when git binary is inside /nix/store");
             Assert.Equal("/Users/test", capturedEnv["HOME"]);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     // ── Fail-fast ─────────────────────────────────────────────────────
@@ -160,7 +160,7 @@ public sealed class GitInvokerTests
                 () => GitInvoker.RunAsync("/tmp/test-repo", ["status"], CancellationToken.None));
             Assert.Contains("no working git binary found", ex.Message);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     // ── Caching ───────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ public sealed class GitInvokerTests
             await GitInvoker.RunAsync("/tmp/repo", ["status"], CancellationToken.None);
             Assert.Equal(2, callCount);
         }
-        finally { GitInvoker.Override = null; }
+        finally { GitInvoker.ResetForTests(); }
     }
 
     // ── Real-git smoke test ───────────────────────────────────────────

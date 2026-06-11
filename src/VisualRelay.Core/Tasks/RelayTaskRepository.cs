@@ -6,9 +6,7 @@ namespace VisualRelay.Core.Tasks;
 public sealed class RelayTaskRepository
 {
     private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation"];
-    private static readonly HashSet<string> TextExtensions = ["html", "htm", "txt", "json", "csv", "tsv", "xml", "yaml", "yml", "log", "md"];
-    private const int PerFileContextLimit = 8_000;
-    private const int TotalContextLimit = 24_000;
+    // PerFileContextLimit and TotalContextLimit live in TaskContentHelper.
 
     public RelayTaskRepository(string rootPath)
     {
@@ -62,7 +60,9 @@ public sealed class RelayTaskRepository
         var config = loaded.Config;
         var tasksRoot = Path.Combine(RootPath, config.TasksDir);
         var tasks = new List<RelayTaskItem>();
-        // Top-level DONE-*.md files (stranded when batch move was skipped).
+        // Top-level DONE-*.md files (stranded when batch move was skipped),
+        // and DONE-*.md files in regular subdirectories (folder tasks where the
+        // only .md is DONE-prefixed — these are skipped by EmitSingleTaskFromFolder).
         if (Directory.Exists(tasksRoot))
         {
             foreach (var file in Directory.EnumerateFiles(tasksRoot, "DONE-*.md", SearchOption.TopDirectoryOnly))
@@ -72,7 +72,51 @@ public sealed class RelayTaskRepository
                 tasks.Add(new RelayTaskItem(id, file, tasksRoot, false, [],
                     IsArchived: true, ArchiveBatch: null));
             }
+
+            foreach (var subdir in Directory.EnumerateDirectories(tasksRoot))
+            {
+                var dirName = Path.GetFileName(subdir);
+                if (SkippedDirectories.Contains(dirName) || IsSkippedName(dirName))
+                    continue;
+
+                var doneFiles = Directory.EnumerateFiles(subdir, "DONE-*.md", SearchOption.TopDirectoryOnly).ToArray();
+                if (doneFiles.Length == 0)
+                    continue;
+
+                // Skip folders that still have an active (non-skipped) .md file —
+                // these are pending folders with DONE residue, not all-DONE folders.
+                var hasActiveMd = Directory.EnumerateFiles(subdir, "*.md", SearchOption.TopDirectoryOnly)
+                    .Any(f => !IsSkippedName(Path.GetFileName(f)));
+                if (hasActiveMd)
+                    continue;
+
+                var canonical = FindCanonicalArchivedPath(subdir, doneFiles);
+                if (canonical is null)
+                    continue;
+
+                var id = Path.GetFileNameWithoutExtension(canonical);
+                id = id.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ? id[5..] : id;
+
+                // Guard against double-count: skip if already added as top-level DONE-*.md.
+                if (tasks.Any(t => string.Equals(t.Id, id, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                var siblings = Directory.EnumerateFiles(subdir)
+                    .Where(file => !string.Equals(file, canonical, StringComparison.Ordinal))
+                    .Order(StringComparer.Ordinal)
+                    .ToArray();
+
+                tasks.Add(new RelayTaskItem(
+                    id,
+                    canonical,
+                    subdir,
+                    IsNested: true,
+                    siblings,
+                    IsArchived: true,
+                    ArchiveBatch: null));
+            }
         }
+
         // DONE-*.md files under completed/batch-n/ (grouped by directory).
         var completedRoot = Path.Combine(tasksRoot, "completed");
         if (Directory.Exists(completedRoot))
@@ -114,8 +158,8 @@ public sealed class RelayTaskRepository
     public async Task<RelayTaskInput> ReadTaskInputAsync(RelayTaskItem task, CancellationToken cancellationToken = default)
     {
         var markdown = await File.ReadAllTextAsync(task.MarkdownPath, cancellationToken);
-        markdown = StripBatchLine(markdown);
-        return new RelayTaskInput(markdown, BuildContext(task.SiblingPaths));
+        markdown = TaskContentHelper.StripBatchLine(markdown);
+        return new RelayTaskInput(markdown, TaskContentHelper.BuildContext(task.SiblingPaths));
     }
 
     private static void Walk(string tasksRoot, string directory, List<RelayTaskItem> tasks)
@@ -168,7 +212,8 @@ public sealed class RelayTaskRepository
         {
             // Legacy: pick the first .md file in the folder.
             markdownPath = entries.FirstOrDefault(
-                f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase));
+                f => f.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+                    && !IsSkippedName(Path.GetFileName(f)));
         }
 
         if (markdownPath is null)
@@ -244,54 +289,4 @@ public sealed class RelayTaskRepository
         name.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ||
         name.StartsWith("IGNORE-", StringComparison.OrdinalIgnoreCase);
 
-    private static string StripBatchLine(string markdown)
-    {
-        if (!markdown.StartsWith("batch:", StringComparison.OrdinalIgnoreCase))
-        {
-            return markdown;
-        }
-
-        var firstNewline = markdown.IndexOf('\n', StringComparison.Ordinal);
-        if (firstNewline < 0)
-        {
-            return string.Empty;
-        }
-
-        var rest = markdown[(firstNewline + 1)..];
-        return rest.StartsWith('\n') ? rest[1..] : rest;
-    }
-
-    private static string? BuildContext(IReadOnlyList<string> siblingPaths)
-    {
-        if (siblingPaths.Count == 0)
-        {
-            return null;
-        }
-
-        var parts = new List<string>();
-        var used = 0;
-        foreach (var path in siblingPaths)
-        {
-            var name = Path.GetFileName(path);
-            var extension = Path.GetExtension(name).TrimStart('.').ToLowerInvariant();
-            var size = new FileInfo(path).Length;
-            if (TextExtensions.Contains(extension) && size <= PerFileContextLimit && used < TotalContextLimit)
-            {
-                var body = File.ReadAllText(path);
-                if (used + body.Length > TotalContextLimit)
-                {
-                    body = string.Concat(body.AsSpan(0, TotalContextLimit - used), "\n...(truncated)");
-                }
-
-                used += body.Length;
-                parts.Add($"### {name} ({size} bytes){Environment.NewLine}{body}");
-            }
-            else
-            {
-                parts.Add($"### {name} ({size} bytes, not inlined)");
-            }
-        }
-
-        return string.Join($"{Environment.NewLine}{Environment.NewLine}", parts);
-    }
 }
