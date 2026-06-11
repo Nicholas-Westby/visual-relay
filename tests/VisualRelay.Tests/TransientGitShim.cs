@@ -44,7 +44,10 @@ internal sealed class TransientGitShim
         // Fall through to real git.  Using ProcessCapture directly avoids
         // coupling to GitInvoker.Override, eliminating cross-collection
         // races with GitInvokerTests that also manipulate the static Override.
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
+        // nix-store path inherited from the shell environment.
         return await ProcessCapture.RunAsync("git", argsList,
-            rootPath, timeout ?? TimeSpan.FromSeconds(30), ct, environment);
+            rootPath, timeout ?? TimeSpan.FromSeconds(30), ct, environment,
+            envRemove: new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" });
     }
 }

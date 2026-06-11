@@ -66,7 +66,12 @@ public sealed partial class SwivalSubagentRunner
             var attemptInvocation = currentInvocation with { TraceDirectory = traceDir, ReportFile = reportFile };
 
             Directory.CreateDirectory(traceDir);
-            await using var profileSession = await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
+            await using var profileSession = attemptInvocation.PinnedSwivalProfileContent is not null
+                ? await SwivalProfileSession.PrepareWithPinnedContentAsync(
+                    attemptInvocation.TargetRoot, attemptInvocation.PinnedSwivalProfileContent,
+                    attemptInvocation.RunId, attemptInvocation.TaskName,
+                    _eventSink, cancellationToken)
+                : await SwivalProfileSession.PrepareAsync(attemptInvocation.TargetRoot, cancellationToken);
 
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);

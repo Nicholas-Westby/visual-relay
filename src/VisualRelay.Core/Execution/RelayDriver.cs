@@ -31,6 +31,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+            // ── Pin swival launch profile for the duration of this run ──────────
+            var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(
+                rootPath, taskDirectory, cancellationToken);
 
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
@@ -94,7 +97,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest);
+                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest, pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
                     if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
@@ -264,7 +267,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                     rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
                                     previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput,
                                     shouldRunBootstrap ? bootstrapCmd : null,
-                                    config.GuardCommand, cancellationToken);
+                                    config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

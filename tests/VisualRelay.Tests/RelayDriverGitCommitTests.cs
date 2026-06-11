@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
-
 namespace VisualRelay.Tests;
 
 [Collection("GitCommitter")]
@@ -281,15 +280,17 @@ public sealed partial class RelayDriverGitCommitTests
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
     }
-
     private static string RunGit(string rootPath, string arguments)
     {
-        using var process = Process.Start(new ProcessStartInfo("/bin/sh", $"-lc \"git -C '{rootPath}' {arguments}\"")
+        var startInfo = new ProcessStartInfo("/bin/sh", $"-c \"git -C '{rootPath}' {arguments}\"")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
-        })!;
+        };
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun cannot resurrect a stale nix-store path.
+        startInfo.Environment.Remove("DEVELOPER_DIR"); startInfo.Environment.Remove("SDKROOT");
+        using var process = Process.Start(startInfo)!;
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();

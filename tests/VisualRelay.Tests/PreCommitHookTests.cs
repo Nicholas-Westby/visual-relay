@@ -96,13 +96,20 @@ public sealed class PreCommitHookTests
     {
         var repo = TestRepository.Create();
         // Initialize a git repository.
-        using var initProcess = Process.Start(new ProcessStartInfo("git")
+        var initStartInfo = new ProcessStartInfo("git")
         {
-            ArgumentList = { "-C", repo.Root, "init" },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
-        })!;
+        };
+        initStartInfo.ArgumentList.Add("-C");
+        initStartInfo.ArgumentList.Add(repo.Root);
+        initStartInfo.ArgumentList.Add("init");
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
+        // nix-store path inherited from the shell environment.
+        initStartInfo.Environment.Remove("DEVELOPER_DIR");
+        initStartInfo.Environment.Remove("SDKROOT");
+        using var initProcess = Process.Start(initStartInfo)!;
         initProcess.WaitForExit();
         Assert.True(initProcess.ExitCode == 0, "git init failed");
 
@@ -147,6 +154,11 @@ public sealed class PreCommitHookTests
         {
             startInfo.ArgumentList.Add(arg);
         }
+
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
+        // nix-store path inherited from the shell environment.
+        startInfo.Environment.Remove("DEVELOPER_DIR");
+        startInfo.Environment.Remove("SDKROOT");
 
         foreach (var (key, value) in environment)
         {

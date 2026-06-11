@@ -244,12 +244,17 @@ public sealed partial class GitCommitterTests
 
     private static string RunGit(string rootPath, string arguments)
     {
-        using var process = Process.Start(new ProcessStartInfo("/bin/sh", $"-lc \"git -C '{rootPath}' {arguments}\"")
+        var startInfo = new ProcessStartInfo("/bin/sh", $"-c \"git -C '{rootPath}' {arguments}\"")
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false
-        })!;
+        };
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
+        // nix-store path inherited from the shell environment.
+        startInfo.Environment.Remove("DEVELOPER_DIR");
+        startInfo.Environment.Remove("SDKROOT");
+        using var process = Process.Start(startInfo)!;
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();

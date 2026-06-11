@@ -15,4 +15,5 @@ public sealed record StageInvocation(
     int MaxTurns,
     string? LastTestOutput = null,
     string? TaskContext = null,
-    string? TestCommand = null);
+    string? TestCommand = null,
+    string? PinnedSwivalProfileContent = null);

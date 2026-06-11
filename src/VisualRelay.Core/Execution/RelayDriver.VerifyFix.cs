@@ -71,6 +71,7 @@ public sealed partial class RelayDriver
         string failingTestOutput,
         string? bootstrapCheckCmd,
         string? guardCmd,
+        string pinnedSwivalProfileContent,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
@@ -88,7 +89,8 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand);
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
+                pinnedSwivalProfileContent: pinnedSwivalProfileContent);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null)
@@ -203,6 +205,27 @@ public sealed partial class RelayDriver
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
 
+    /// <summary>
+    /// Snapshot the effective swival.toml content once at run start so task
+    /// edits to swival.toml cannot change the profile for later stages.
+    /// </summary>
+    private async Task<string> ResolvePinnedSwivalProfileContentAsync(
+        string rootPath, string taskDirectory, CancellationToken cancellationToken)
+    {
+        var pinnedProfilePath = Path.Combine(taskDirectory, "pinned-swival.toml");
+        if (_options.Resume && File.Exists(pinnedProfilePath))
+        {
+            return await File.ReadAllTextAsync(pinnedProfilePath, cancellationToken);
+        }
+
+        var treeProfilePath = Path.Combine(rootPath, SwivalProfileSession.FileName);
+        var content = File.Exists(treeProfilePath)
+            ? await File.ReadAllTextAsync(treeProfilePath, cancellationToken)
+            : SwivalProfileSession.DefaultToml;
+        await File.WriteAllTextAsync(pinnedProfilePath, content, cancellationToken);
+        return content;
+    }
+
     private StageInvocation BuildInvocation(
         string rootPath,
         string runId,
@@ -214,7 +237,8 @@ public sealed partial class RelayDriver
         StringBuilder ledger,
         IReadOnlyList<string> manifest,
         string? lastTestOutput = null,
-        string? testCommand = null)
+        string? testCommand = null,
+        string? pinnedSwivalProfileContent = null)
     {
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
@@ -232,7 +256,8 @@ public sealed partial class RelayDriver
             config.MaxTurns,
             LastTestOutput: lastTestOutput,
             TaskContext: input.Context,
-            TestCommand: testCommand);
+            TestCommand: testCommand,
+            PinnedSwivalProfileContent: pinnedSwivalProfileContent);
     }
 
     /// <summary>

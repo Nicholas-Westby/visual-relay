@@ -198,6 +198,9 @@ public sealed class SourceEnumerationGuardTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun cannot resurrect a stale nix-store path.
+        startInfo.Environment.Remove("DEVELOPER_DIR");
+        startInfo.Environment.Remove("SDKROOT");
 
         using var process = Process.Start(startInfo)!;
         process.WaitForExit(milliseconds: 10_000);

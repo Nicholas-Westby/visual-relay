@@ -100,6 +100,10 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
+        // nix-store path inherited from the shell environment.
+        startInfo.Environment.Remove("DEVELOPER_DIR");
+        startInfo.Environment.Remove("SDKROOT");
         startInfo.ArgumentList.Add("-C");
         startInfo.ArgumentList.Add(_root);
         foreach (var arg in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
