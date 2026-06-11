@@ -178,7 +178,41 @@ public sealed partial class SwivalSubagentRunner
 
             if (result.ExitCode != 0)
             {
-                var reason = $"swival exit {result.ExitCode}: {TrimForError(result.Output)}";
+                // Persist the full captured output — the real error is usually
+                // at the tail (past the sandbox startup banner).  This uses
+                // the same artifact name as the stall path so the autopsy
+                // trail is uniform.
+                var killedOutputPath = TryPersistKilledOutput(
+                    traceDirParent, stageNum, attempt, $"exit_{result.ExitCode}", result.Output);
+
+                if (_eventSink is not null)
+                {
+                    await _eventSink.PublishAsync(new RelayEvent(
+                        DateTimeOffset.UtcNow, "warn", "nonzero_exit",
+                        attemptInvocation.RunId, attemptInvocation.TargetRoot,
+                        attemptInvocation.TaskName, attemptInvocation.Stage.Number,
+                        attemptInvocation.Tier, attempt,
+                        Data: new Dictionary<string, string>
+                        {
+                            ["exitCode"] = result.ExitCode.ToString(),
+                            ["outputBytes"] = result.Output.Length.ToString(),
+                            ["outputSaved"] = killedOutputPath ?? "(persist failed)"
+                        }), cancellationToken);
+                }
+
+                // Retry within the shared stall-retry budget (combined
+                // stall+crash attempts stay bounded).
+                if (stallRetriesLeft > 0)
+                {
+                    stallRetriesLeft--;
+                    attempt++;
+                    continue;
+                }
+
+                // Retries exhausted — build the reason from the TAIL of the
+                // output (where errors actually are), not just the head.
+                var reason = $"swival exit {result.ExitCode}: {TrimForTail(result.Output)}" +
+                    (killedOutputPath is not null ? $" (full output: {killedOutputPath})" : "");
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
             }
 
@@ -252,24 +286,4 @@ public sealed partial class SwivalSubagentRunner
                 ["title"] = entry.Title,
                 ["content"] = TrimForTrace(entry.Content)
             }), cancellationToken);
-
-    private async Task PublishContractRetryAsync(StageInvocation invocation, int attempt, CancellationToken cancellationToken)
-    {
-        if (_eventSink is null)
-            return;
-        await _eventSink.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow,
-            "info",
-            "contract_retry",
-            invocation.RunId,
-            invocation.TargetRoot,
-            invocation.TaskName,
-            invocation.Stage.Number,
-            invocation.Tier,
-            attempt,
-            Data: new Dictionary<string, string>
-            {
-                ["message"] = "corrective retry for missing/malformed JSON contract block"
-            }), cancellationToken);
-    }
 }

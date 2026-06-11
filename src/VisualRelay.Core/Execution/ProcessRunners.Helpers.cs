@@ -8,10 +8,8 @@ namespace VisualRelay.Core.Execution;
 
 public sealed partial class SwivalSubagentRunner
 {
-    // Intersect a --commands whitelist with PATH so missing optional tools
-    // degrade gracefully instead of crashing swival's startup preflight. Emits
-    // a "command_dropped" event per unresolvable name. The special values "all"
-    // and "none" pass through unchanged (swival-special, not comma-separated).
+    // Intersect a --commands whitelist with PATH so missing optional tools degrade
+    // gracefully instead of crashing swival's startup preflight. "all"/"none" pass through.
     internal static string ResolveCommandsOnPath(
         string commands,
         IRelayEventSink? eventSink,
@@ -209,6 +207,17 @@ public sealed partial class SwivalSubagentRunner
         return text.Length <= 600 ? text : string.Concat(text.AsSpan(0, 600), "...");
     }
 
+    /// <summary>
+    /// Returns the TAIL of <paramref name="value"/> (last <paramref name="tailChars"/>
+    /// characters), prepended with "…" when truncated. Opposite of <see cref="TrimForError"/>
+    /// which takes the head — the real error is usually at the tail after a sandbox banner.
+    /// </summary>
+    internal static string TrimForTail(string value, int tailChars = 600)
+    {
+        var text = value.Trim();
+        return text.Length <= tailChars ? text : "…" + text[^tailChars..];
+    }
+
     internal static string TrimForTrace(string value)
     {
         var text = value.Trim();
@@ -241,5 +250,50 @@ public sealed partial class SwivalSubagentRunner
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Best-effort persistence overload for nonzero-exit paths (no watchdog result).
+    /// Writes the same stageN-attemptM.killed-output.txt artifact with a simple
+    /// reason label so the autopsy trail is uniform.
+    /// </summary>
+    private static string? TryPersistKilledOutput(
+        string traceDirParent, int stageNum, int attempt,
+        string reason, string output)
+    {
+        try
+        {
+            var path = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.killed-output.txt");
+            var header =
+                $"# killed-attempt output (autopsy artifact){Environment.NewLine}" +
+                $"# reason: {reason}{Environment.NewLine}" +
+                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}{Environment.NewLine}{Environment.NewLine}";
+            File.WriteAllText(path, header + output);
+            return path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private async Task PublishContractRetryAsync(StageInvocation invocation, int attempt, CancellationToken cancellationToken)
+    {
+        if (_eventSink is null)
+            return;
+        await _eventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow,
+            "info",
+            "contract_retry",
+            invocation.RunId,
+            invocation.TargetRoot,
+            invocation.TaskName,
+            invocation.Stage.Number,
+            invocation.Tier,
+            attempt,
+            Data: new Dictionary<string, string>
+            {
+                ["message"] = "corrective retry for missing/malformed JSON contract block"
+            }), cancellationToken);
     }
 }
