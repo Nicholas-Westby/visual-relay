@@ -231,6 +231,15 @@ public sealed partial class SwivalSubagentRunner
                     json = null;
             }
 
+            // Reject gitignored manifest entries at acceptance time (stages 4 & 10).
+            if (json is not null && (attemptInvocation.Stage.Number == 4 || attemptInvocation.Stage.Number == 10))
+            {
+                correctiveShapeError = await CheckManifestAgainstGitignoreAsync(
+                    json, attemptInvocation.Stage.Number, attemptInvocation.TargetRoot, cancellationToken);
+                if (correctiveShapeError is not null)
+                    json = null;
+            }
+
             if (json is null)
             {
                 if (contractRetriesLeft > 0)
@@ -277,14 +286,9 @@ public sealed partial class SwivalSubagentRunner
 
     private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
         _eventSink!.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow,
-            "info",
-            "trace",
-            invocation.RunId,
-            invocation.TargetRoot,
-            invocation.TaskName,
-            invocation.Stage.Number,
-            invocation.Tier,
+            DateTimeOffset.UtcNow, "info", "trace",
+            invocation.RunId, invocation.TargetRoot, invocation.TaskName,
+            invocation.Stage.Number, invocation.Tier,
             Data: new Dictionary<string, string>
             {
                 ["kind"] = entry.Kind.ToString(),

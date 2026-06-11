@@ -47,6 +47,24 @@ internal static class GitCommitter
             return GitCommitResult.Failed(ex.Message);
         }
 
+        // Pre-check: reject gitignored manifest entries before git add buries
+        // the path names in a multi-line hint.
+        if (manifest.Count > 0)
+        {
+            var checkArgs = new List<string> { "check-ignore", "--" };
+            checkArgs.AddRange(manifest);
+            var ci = await GitAsync(rootPath, checkArgs, cancellationToken);
+            if (ci.ExitCode == 0 && !string.IsNullOrWhiteSpace(ci.Output))
+            {
+                var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+                var q = string.Join(", ", ignored.Select(p => $"`{p}`"));
+                return GitCommitResult.Failed(
+                    ignored.Length == 1
+                        ? $"manifest contains gitignored path: {q}"
+                        : $"manifest contains gitignored paths: {q}");
+            }
+        }
+
         if (manifestFilesToStage.Count > 0)
         {
             var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
@@ -224,19 +242,14 @@ internal static class GitCommitter
         }
 
         if (string.IsNullOrWhiteSpace(result.Output))
-        {
             return new HashSet<string>(StringComparer.Ordinal);
-        }
 
-        var lines = result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
         var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in lines)
+        foreach (var line in result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
         {
             var trimmed = line.Trim();
             if (trimmed.Length > 0)
-            {
                 set.Add(trimmed);
-            }
         }
 
         return set;
@@ -245,22 +258,15 @@ internal static class GitCommitter
     private static bool IsInternalArtifact(string relativePath)
     {
         foreach (var prefix in InternalArtifactPrefixes)
-        {
             if (relativePath.StartsWith(prefix, StringComparison.Ordinal)
                 || string.Equals(relativePath, prefix.TrimEnd('/'), StringComparison.Ordinal))
-            {
                 return true;
-            }
-        }
-
         return false;
     }
 
     /// <summary>
-    /// Post-commit invariant check: returns any untracked, non-internal files
-    /// that are absent from <paramref name="preRunUntracked"/> — i.e. files the
-    /// run authored but the commit did not stage. An empty result means the
-    /// commit captured everything the run produced.
+    /// Post-commit: returns any untracked, non-internal files absent from
+    /// <paramref name="preRunUntracked"/> — files authored but not staged.
     /// </summary>
     public static async Task<IReadOnlyList<string>> FindUncommittedAuthoredFilesAsync(
         string rootPath,
@@ -286,3 +292,4 @@ internal sealed record GitCommitResult(bool Success, string? CommitSha, string? 
     public static GitCommitResult Committed(string sha) => new(true, sha, null);
     public static GitCommitResult Failed(string error) => new(false, null, error);
 }
+

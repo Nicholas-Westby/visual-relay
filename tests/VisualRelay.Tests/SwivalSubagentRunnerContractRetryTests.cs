@@ -87,6 +87,68 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenManifestContainsGitignoredPath_TriggersCorrectiveRetry()
+    {
+        using var repo = TestRepository.Create();
+        // Set up a real git repo with a .gitignore so git check-ignore works.
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
+        // Runtime artifact — exists on disk but is gitignored.
+        File.WriteAllText(Path.Combine(repo.Root, "swival.toml"), "[runtime]\nkey = \"val\"");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-gitignore-retry",
+            """
+            #!/usr/bin/env bash
+            last="${@: -1}"
+            while [[ $# -gt 0 ]]; do
+              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
+            done
+            printf '%s' "$last" > "prompt-$(basename "$trace_dir").txt"
+            if [[ "$trace_dir" == *attempt2* ]]; then
+              printf '```json\n{"plan":"edit tracked files only","manifest":["src/app.cs"]}\n```\n'
+              exit 0
+            else
+              printf '```json\n{"plan":"edit all files","manifest":["swival.toml","src/app.cs"]}\n```\n'
+              exit 0
+            fi
+            """);
+        var sink = new InMemoryRelayEventSink();
+        var config = TestConfig() with
+        {
+            MaxContractRetries = 1,
+            SubagentTimeoutMilliseconds = 30_000
+        };
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
+
+        var stage4 = RelayStages.All[3]; // stage 4 Plan — produces manifest
+        var invocation = new StageInvocation(
+            stage4, "balanced", "run-1", repo.Root, "task", "# Task",
+            string.Empty, [], [],
+            Path.Combine(repo.Root, ".relay", "task", "stage4-attempt1"),
+            Path.Combine(repo.Root, ".relay", "task", "stage4-attempt1.report.json"),
+            1);
+
+        var result = await runner.RunAsync(invocation);
+
+        Assert.True(result.IsValid);
+        Assert.Null(result.Error);
+        Assert.Contains("edit tracked files only", result.Json, StringComparison.Ordinal);
+        Assert.Contains(sink.Events, e => e.EventName == "contract_retry");
+
+        // The corrective prompt must name the gitignored path.
+        var correctivePrompt = await File.ReadAllTextAsync(
+            Path.Combine(repo.Root, "prompt-stage4-attempt2.txt"));
+        Assert.Contains("swival.toml", correctivePrompt, StringComparison.Ordinal);
+        Assert.Contains("gitignored", correctivePrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task RunAsync_ContractRetryExhausted_FlagsWithHint()
     {
         using var repo = TestRepository.Create();

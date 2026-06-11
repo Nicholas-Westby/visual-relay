@@ -225,6 +225,35 @@ public sealed partial class GitCommitterTests
     }
 
 
+    // ── gitignore rejection at stage 11 backstop ─────────────────────
+
+    [Fact]
+    public async Task CommitAsync_WhenManifestContainsGitignoredPath_ReturnsExplicitPathNames()
+    {
+        using var repo = TestRepository.Create();
+        await InitGitRepo(repo.Root);
+        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
+        await StageAndCommitSeed(repo.Root, "chore: seed");
+
+        // Runtime artifact that PrepareAsync regenerates — exists on disk
+        // but is gitignored. The manifest must not claim it.
+        File.WriteAllText(Path.Combine(repo.Root, "swival.toml"), "[runtime]\nkey = \"val\"");
+        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123",
+            ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
+            commitToken: null, preRunUntracked: null,
+            CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        // Must name the offending path explicitly — not bury it in raw git output.
+        Assert.Contains("manifest contains gitignored", result.Error, StringComparison.Ordinal);
+        Assert.Contains("swival.toml", result.Error, StringComparison.Ordinal);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────
 
     private static async Task InitGitRepo(string root)

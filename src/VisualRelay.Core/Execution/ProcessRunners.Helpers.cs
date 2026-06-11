@@ -139,8 +139,8 @@ public sealed partial class SwivalSubagentRunner
     internal static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
     {
         var problem = shapeError is not null
-            ? $"The previous completion had a valid fenced JSON block but its shape was wrong: {shapeError}. " +
-              "Reply with ONLY a corrected fenced JSON block — fix the shape issue, derive the values from the prior answer below. " +
+            ? $"The previous completion had a valid fenced JSON block but it was rejected: {shapeError}. " +
+              "Reply with ONLY a corrected fenced JSON block — fix the issue, derive the values from the prior answer below. " +
               "Do NOT redo the work or add any other text."
             : "The previous completion was missing the required fenced JSON block. " +
               "Reply with ONLY that block — derive it from the prior answer below. " +
@@ -293,7 +293,7 @@ public sealed partial class SwivalSubagentRunner
             attempt,
             Data: new Dictionary<string, string>
             {
-                ["message"] = "corrective retry for missing/malformed JSON contract block"
+                ["message"] = "corrective retry for rejected or missing JSON contract block"
             }), cancellationToken);
     }
 }
