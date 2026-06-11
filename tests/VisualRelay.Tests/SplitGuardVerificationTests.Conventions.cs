@@ -68,6 +68,83 @@ public sealed partial class SplitGuardVerificationTests
     }
 
     /// <summary>
+    /// Env-mutating test files must carry [Collection("Environment")] so their
+    /// process-global <see cref="System.Environment.SetEnvironmentVariable"/>
+    /// calls are serialized and cannot race with parallel env-reading tests.
+    /// </summary>
+    [Fact]
+    public void EnvironmentCollectionFiles_HaveCollectionAttribute()
+    {
+        string[] expected =
+        [
+            "KeyEnvFileTests.cs",
+            "KeySetupPanelUiTests.cs",
+        ];
+
+        foreach (var fileName in expected)
+        {
+            var fullPath = Path.Combine(TestsDir, fileName);
+            Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
+            var content = File.ReadAllText(fullPath);
+            Assert.Contains("[Collection(\"Environment\")]", content, StringComparison.Ordinal);
+            Assert.Contains("public sealed", content, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// Watchdog tests that launch real CPU-burning or long-sleeping
+    /// subprocesses must carry [Collection("Watchdog")] so they do not
+    /// starve parallel timing-assertion tests.
+    /// </summary>
+    [Fact]
+    public void WatchdogCollectionFiles_HaveCollectionAttribute()
+    {
+        string[] expected =
+        [
+            "SwivalSubagentRunnerWatchdogTests.cs",
+        ];
+
+        foreach (var fileName in expected)
+        {
+            var fullPath = Path.Combine(TestsDir, fileName);
+            Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
+            var content = File.ReadAllText(fullPath);
+            Assert.Contains("[Collection(\"Watchdog\")]", content, StringComparison.Ordinal);
+            Assert.Contains("public sealed partial class", content, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// After env-mutation isolation, NO test file may call
+    /// <c>Environment.SetEnvironmentVariable</c> directly — all env
+    /// mutation routes through <see cref="KeyEnvFile.EnvironmentAccessorOverride"/>.
+    /// </summary>
+    [Fact]
+    public void NoTestFile_CallsEnvironmentSetEnvironmentVariable()
+    {
+        var violations = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.TopDirectoryOnly))
+        {
+            // The repoServices helper in TestDoubles.cs and TestGit.Setup serve
+            // setup plumbing and do not race with parallel test classes.
+            if (Path.GetFileName(file) == "TestDoubles.cs") continue;
+            if (Path.GetFileName(file) == "RepoSetup.cs") continue;
+            // SplitGuardVerificationTests.Conventions.cs itself checks
+            // for this pattern as a string literal — skip it.
+            if (Path.GetFileName(file) == "SplitGuardVerificationTests.Conventions.cs") continue;
+
+            var content = File.ReadAllText(file);
+            if (content.Contains("Environment.SetEnvironmentVariable", StringComparison.Ordinal))
+            {
+                var relative = Path.GetRelativePath(RepoSetup.Root, file);
+                violations.Add($"{relative}: uses Environment.SetEnvironmentVariable");
+            }
+        }
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
     /// After the split the duplicated AlwaysReady, Invocation, and
     /// WriteExecutableAsync helpers must live in SwivalTestHelpers.cs
     /// so they are not repeated verbatim across six Swival* test files.

@@ -45,7 +45,7 @@ public sealed partial class MainWindowViewModelTests
 
         viewModel.SelectedTask = Assert.Single(viewModel.Tasks);
         Assert.Equal(taskId, viewModel.SelectedTask.Id);
-        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel != "No run history");
+        await WaitHelpers.WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel != "No run history");
 
         Assert.Equal(11, viewModel.Stages.Count);
         Assert.All(viewModel.Stages, stage => Assert.Equal("Complete", stage.StatusLabel));
@@ -105,7 +105,7 @@ public sealed partial class MainWindowViewModelTests
 
         viewModel.SelectedTask = Assert.Single(viewModel.Tasks);
         Assert.Equal(taskId, viewModel.SelectedTask.Id);
-        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.HasSelectedTaskError);
 
         Assert.Equal(11, viewModel.Stages.Count);
         // Stages 1-3: Done / Complete

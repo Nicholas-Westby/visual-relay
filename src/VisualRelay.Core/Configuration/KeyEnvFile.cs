@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Threading;
 
 namespace VisualRelay.Core.Configuration;
 
@@ -15,16 +16,44 @@ public static class KeyEnvFile
     private const string DirName = "visual-relay";
     private const string FileName = ".env";
 
+    // ── Environment accessor seam (testability) ──────────────────────────
+
+    /// <summary>
+    /// Scoped to the current async execution context so tests running in
+    /// parallel under xUnit class-level parallelism never observe each
+    /// other's fake accessor — eliminating the cross-test race that a
+    /// plain static property would reintroduce.
+    /// </summary>
+    private static readonly AsyncLocal<IEnvironmentAccessor?> _environmentAccessorOverride = new();
+
+    /// <summary>
+    /// When set, all environment reads route through this accessor instead of
+    /// the real process environment. Tests set a <see cref="DictionaryEnvironmentAccessor"/>
+    /// to eliminate process-global mutation races under parallel execution.
+    /// Reset to <c>null</c> in test dispose to restore real-env behaviour.
+    /// </summary>
+    public static IEnvironmentAccessor? EnvironmentAccessorOverride
+    {
+        get => _environmentAccessorOverride.Value;
+        set => _environmentAccessorOverride.Value = value;
+    }
+
+    /// <summary>
+    /// Reads an environment variable through <see cref="EnvironmentAccessorOverride"/>
+    /// when set, falling back to the real process environment.
+    /// </summary>
+    public static string? GetEnv(string name) =>
+        EnvironmentAccessorOverride?.GetEnvironmentVariable(name)
+        ?? Environment.GetEnvironmentVariable(name);
+
     // ── Path resolution ──────────────────────────────────────────────────
 
     /// <summary>
     /// Returns the user-level dotenv path, reading <c>XDG_CONFIG_HOME</c> and
-    /// <c>HOME</c> from the current process environment.
+    /// <c>HOME</c> from the environment accessor seam.
     /// </summary>
     public static string ResolvePath() =>
-        ResolvePath(
-            Environment.GetEnvironmentVariable("XDG_CONFIG_HOME"),
-            Environment.GetEnvironmentVariable("HOME"));
+        ResolvePath(GetEnv("XDG_CONFIG_HOME"), GetEnv("HOME"));
 
     /// <summary>
     /// Resolves the user-level dotenv path given explicit directory overrides
@@ -195,7 +224,7 @@ public static class KeyEnvFile
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in all)
         {
-            if (Environment.GetEnvironmentVariable(key) is null)
+            if (GetEnv(key) is null)
                 result[key] = value;
         }
 

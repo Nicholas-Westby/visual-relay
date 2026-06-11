@@ -11,37 +11,46 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-public sealed class KeySetupPanelUiTests
+[Collection("Environment")]
+public sealed class KeySetupPanelUiTests : IDisposable
 {
-    private static IDisposable SeedUserEnv(TestRepository repo, string content)
+    private readonly DictionaryEnvironmentAccessor _env = new();
+
+    public KeySetupPanelUiTests()
+    {
+        KeyEnvFile.EnvironmentAccessorOverride = _env;
+    }
+
+    public void Dispose()
+    {
+        KeyEnvFile.EnvironmentAccessorOverride = null;
+        _env.Clear();
+    }
+
+    /// <summary>
+    /// Seeds the fake environment accessor with XDG_CONFIG_HOME pointing to
+    /// <paramref name="repo"/>.Root, writes the given <paramref name="content"/>
+    /// to the <c>.env</c> file under <c>visual-relay/</c>, and returns a
+    /// disposable that clears XDG_CONFIG_HOME from the accessor.
+    /// </summary>
+    private IDisposable SeedUserEnv(TestRepository repo, string content)
     {
         var dir = Path.Combine(repo.Root, "visual-relay");
         Directory.CreateDirectory(dir);
         File.WriteAllText(Path.Combine(dir, ".env"), content);
-        var prev = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
-        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", repo.Root);
-        return new EnvVarRestore("XDG_CONFIG_HOME", prev);
+        _env["XDG_CONFIG_HOME"] = repo.Root;
+        return new EnvVarRestore("XDG_CONFIG_HOME", _env);
     }
 
-    private static void EnsureNoUserEnv() =>
-        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", null);
+    private void EnsureNoUserEnv() =>
+        _env["XDG_CONFIG_HOME"] = null;
 
-    private sealed class EnvVarRestore(string name, string? previous) : IDisposable
+    private sealed class EnvVarRestore(string name, DictionaryEnvironmentAccessor env) : IDisposable
     {
-        public void Dispose() => Environment.SetEnvironmentVariable(name, previous);
+        public void Dispose() => env[name] = null;
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        for (var i = 0; i < 50; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            if (condition()) return;
-            await Task.Delay(20);
-        }
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(condition());
-    }
+    // WaitUntilWithDispatcherAsync is provided by WaitHelpers.
 
     private static Button FindButton(Control root, string name)
     {
@@ -131,7 +140,7 @@ public sealed class KeySetupPanelUiTests
 
         vm.ShowArchive = true; Assert.True(vm.ShowArchive); vm.ShowArchive = false;
         vm.SelectedTask = vm.Tasks[1]; Assert.Equal("beta", vm.SelectedTask.Id);
-        await WaitUntilAsync(() => vm.SelectedTaskMarkdown.Contains("Beta"));
+        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.SelectedTaskMarkdown.Contains("Beta"));
 
         vm.SelectedTask = vm.Tasks[0];
         await vm.DrainQueueCommand.ExecuteAsync(null);
@@ -169,7 +178,7 @@ public sealed class KeySetupPanelUiTests
             vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").PendingValue);
 
         Click(panel.FindControl<Button>("HfSaveButton")!, window);
-        await WaitUntilAsync(() => vm.IsHuggingFaceConfigured);
+        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.IsHuggingFaceConfigured);
 
         Assert.True(vm.IsHuggingFaceConfigured);
         Assert.Equal(string.Empty, vm.HfGateMessage);
@@ -226,17 +235,13 @@ public sealed class KeySetupPanelUiTests
         Assert.True(vm.IsHuggingFaceConfigured);
         Assert.Equal(string.Empty, vm.HfGateMessage);
 
-        var prev = Environment.GetEnvironmentVariable("HF_TOKEN");
-        try
-        {
-            Environment.SetEnvironmentVariable("HF_TOKEN", "hf-from-env");
-            await vm.RefreshKeyStatesAsync();
-            Assert.True(vm.IsHuggingFaceConfigured);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HF_TOKEN", prev);
-        }
+        // Set HF_TOKEN in the fake accessor — process env always wins, so
+        // RefreshKeyStatesAsync should still see it as configured.
+        _env["HF_TOKEN"] = "hf-from-env";
+        await vm.RefreshKeyStatesAsync();
+        Assert.True(vm.IsHuggingFaceConfigured);
+        // Clean up the fake accessor entry.
+        _env["HF_TOKEN"] = null;
     }
 
     [AvaloniaFact]

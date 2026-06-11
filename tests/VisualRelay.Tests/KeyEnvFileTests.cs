@@ -3,8 +3,21 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-public sealed class KeyEnvFileTests
+[Collection("Environment")]
+public sealed class KeyEnvFileTests : IDisposable
 {
+    private readonly DictionaryEnvironmentAccessor _env = new();
+
+    public KeyEnvFileTests()
+    {
+        KeyEnvFile.EnvironmentAccessorOverride = _env;
+    }
+
+    public void Dispose()
+    {
+        KeyEnvFile.EnvironmentAccessorOverride = null;
+        _env.Clear();
+    }
     // ── Path resolution ────────────────────────────────────────────────
 
     [Fact]
@@ -226,24 +239,12 @@ public sealed class KeyEnvFileTests
         var envPath = Path.Combine(repo.Root, "test.env");
         File.WriteAllText(envPath, "MOONSHOT_API_KEY=sk-abc\nDEEPSEEK_API_KEY=sk-def\n");
 
-        var prevMoon = Environment.GetEnvironmentVariable("MOONSHOT_API_KEY");
-        var prevDeep = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", null);
-            Environment.SetEnvironmentVariable("DEEPSEEK_API_KEY", null);
+        // Neither key is set in the fake accessor — both should be returned.
+        var result = KeyEnvFile.GetUnsetKeys(envPath);
 
-            var result = KeyEnvFile.GetUnsetKeys(envPath);
-
-            Assert.Equal(2, result.Count);
-            Assert.Equal("sk-abc", result["MOONSHOT_API_KEY"]);
-            Assert.Equal("sk-def", result["DEEPSEEK_API_KEY"]);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", prevMoon);
-            Environment.SetEnvironmentVariable("DEEPSEEK_API_KEY", prevDeep);
-        }
+        Assert.Equal(2, result.Count);
+        Assert.Equal("sk-abc", result["MOONSHOT_API_KEY"]);
+        Assert.Equal("sk-def", result["DEEPSEEK_API_KEY"]);
     }
 
     [Fact]
@@ -253,21 +254,14 @@ public sealed class KeyEnvFileTests
         var envPath = Path.Combine(repo.Root, "test.env");
         File.WriteAllText(envPath, "MOONSHOT_API_KEY=sk-file\nDEEPSEEK_API_KEY=sk-def\n");
 
-        var prevMoon = Environment.GetEnvironmentVariable("MOONSHOT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", "sk-env");
+        // MOONSHOT_API_KEY is set in the fake accessor — it must be excluded.
+        _env["MOONSHOT_API_KEY"] = "sk-env";
 
-            var result = KeyEnvFile.GetUnsetKeys(envPath);
+        var result = KeyEnvFile.GetUnsetKeys(envPath);
 
-            Assert.False(result.ContainsKey("MOONSHOT_API_KEY"));
-            Assert.True(result.ContainsKey("DEEPSEEK_API_KEY"));
-            Assert.Equal("sk-def", result["DEEPSEEK_API_KEY"]);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", prevMoon);
-        }
+        Assert.False(result.ContainsKey("MOONSHOT_API_KEY"));
+        Assert.True(result.ContainsKey("DEEPSEEK_API_KEY"));
+        Assert.Equal("sk-def", result["DEEPSEEK_API_KEY"]);
     }
 
     [Fact]
@@ -280,17 +274,9 @@ public sealed class KeyEnvFileTests
         File.WriteAllText(envPath, "");
         Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath));
 
-        // All keys are already in the environment.
+        // All keys are already set in the fake accessor — nothing to return.
         File.WriteAllText(envPath, "MOONSHOT_API_KEY=sk-file\n");
-        var prevMoon = Environment.GetEnvironmentVariable("MOONSHOT_API_KEY");
-        try
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", "sk-env");
-            Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("MOONSHOT_API_KEY", prevMoon);
-        }
+        _env["MOONSHOT_API_KEY"] = "sk-env";
+        Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath));
     }
 }

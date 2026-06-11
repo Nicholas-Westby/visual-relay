@@ -3,6 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
+[Collection("Watchdog")]
 public sealed partial class SwivalSubagentRunnerWatchdogTests
 {
     [Fact]

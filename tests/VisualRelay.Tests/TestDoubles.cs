@@ -1,9 +1,41 @@
 using System.Diagnostics;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
+
+/// <summary>
+/// In-memory <see cref="IEnvironmentAccessor"/> backed by a
+/// concurrent dictionary so tests can set/clear env vars without
+/// mutating the process-global environment.
+/// </summary>
+internal sealed class DictionaryEnvironmentAccessor : IEnvironmentAccessor
+{
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string?> _vars = new();
+
+    public string? this[string name]
+    {
+        get => _vars.TryGetValue(name, out var v) ? v : null;
+        set { if (value is null) _vars.TryRemove(name, out _); else _vars[name] = value; }
+    }
+
+    public string? GetEnvironmentVariable(string name) => this[name];
+
+    public IReadOnlyDictionary<string, string> GetEnvironmentVariables()
+    {
+        var dict = new Dictionary<string, string>();
+        foreach (var (k, v) in _vars)
+        {
+            if (v is not null)
+                dict[k] = v;
+        }
+        return dict;
+    }
+
+    public void Clear() => _vars.Clear();
+}
 
 internal sealed class TestRepository : IDisposable
 {

@@ -22,17 +22,8 @@ internal static class GitInvoker
     /// </summary>
     internal static Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>>? Override { get; set; }
 
-    /// <summary>
-    /// The resolved git binary path.  Null until first resolution.
-    /// </summary>
-    internal static string? GitBinary
-    {
-        get
-        {
-            EnsureResolved();
-            return _gitBinary;
-        }
-    }
+    /// <summary>The resolved git binary path.  Null until first resolution.</summary>
+    internal static string? GitBinary => EnsureResolved();
 
     /// <summary>
     /// Test seam: resets all lazy state so tests can control resolution
@@ -76,17 +67,20 @@ internal static class GitInvoker
         CancellationToken killToken = default,
         Action<string>? onActivity = null)
     {
-        EnsureResolved();
-
+        // Capture both the resolved binary and the Override delegate into
+        // locals before any await so that a parallel ResetForTests() call
+        // cannot null them between the check and the use (TOCTOU race).
+        var gitBinary = EnsureResolved();
+        var overrideFn = Override;
         var sanitizedEnv = SanitizeEnvironment(environment);
 
-        if (Override is not null)
+        if (overrideFn is not null)
         {
-            return await Override(_gitBinary!, arguments, rootPath, cancellationToken, timeout, sanitizedEnv);
+            return await overrideFn(gitBinary, arguments, rootPath, cancellationToken, timeout, sanitizedEnv);
         }
 
         return await ProcessCapture.RunAsync(
-            _gitBinary!,
+            gitBinary,
             ["-C", rootPath, .. arguments],
             rootPath,
             timeout ?? TimeSpan.FromSeconds(30),
@@ -139,15 +133,16 @@ internal static class GitInvoker
         return sanitized;
     }
 
-    private static void EnsureResolved()
+    private static string EnsureResolved()
     {
-        if (_gitBinary is not null)
-            return;
+        var binary = _gitBinary;
+        if (binary is not null)
+            return binary;
 
         lock (Lock)
         {
             if (_gitBinary is not null)
-                return;
+                return _gitBinary;
 
             _gitBinary = ResolveGitBinary();
 
@@ -159,6 +154,8 @@ internal static class GitInvoker
             {
                 _envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
             }
+
+            return _gitBinary;
         }
     }
 

@@ -66,7 +66,7 @@ public sealed class ConfigInitEmptyStateUiTests
         Dispatcher.UIThread.RunJobs();
 
         // ── Wait for the async command to settle ──
-        await WaitUntilAsync(() => !viewModel.NeedsInitialization);
+        await WaitHelpers.WaitUntilWithDispatcherAsync(() => !viewModel.NeedsInitialization);
 
         // ── Assert: config file exists and parses ──
         Dispatcher.UIThread.RunJobs();
@@ -80,20 +80,5 @@ public sealed class ConfigInitEmptyStateUiTests
         Assert.True(taskList.IsVisible);
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        for (var i = 0; i < 50; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            if (condition())
-            {
-                return;
-            }
-
-            await Task.Delay(20);
-        }
-
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(condition());
-    }
+    // WaitUntilWithDispatcherAsync is provided by WaitHelpers.
 }

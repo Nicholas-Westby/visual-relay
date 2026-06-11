@@ -16,7 +16,7 @@ public sealed partial class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         await viewModel.LoadInitialAsync();
-        await WaitUntilAsync(() => viewModel.TraceEntries.Count == 2);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.TraceEntries.Count == 2);
 
         Assert.Equal("full", viewModel.LogScopeLabel);
         Assert.Equal(2, viewModel.Events.Count);
@@ -150,13 +150,13 @@ public sealed partial class MainWindowViewModelTests
 
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
-        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.HasSelectedTaskError);
 
         Assert.True(viewModel.HasSelectedTaskError);
         Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
 
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "clean");
-        await WaitUntilAsync(() => !viewModel.HasSelectedTaskError);
+        await WaitHelpers.WaitUntilAsync(() => !viewModel.HasSelectedTaskError);
 
         Assert.False(viewModel.HasSelectedTaskError);
         Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
@@ -175,7 +175,7 @@ public sealed partial class MainWindowViewModelTests
 
         // Select the failed task — error banner should appear.
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
-        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.HasSelectedTaskError);
         Assert.True(viewModel.HasSelectedTaskError);
         Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
 
@@ -185,9 +185,9 @@ public sealed partial class MainWindowViewModelTests
         // Navigate away and back. Wait for LoadRunHistoryAsync to settle
         // (metric label changes) before asserting the guard suppressed the error.
         viewModel.SelectedTask = null;
-        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
+        await WaitHelpers.WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
-        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel != "No run history");
+        await WaitHelpers.WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel != "No run history");
         Assert.False(viewModel.HasSelectedTaskError);
         Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
 
@@ -196,9 +196,9 @@ public sealed partial class MainWindowViewModelTests
 
         // Navigate away and back — error must return after the run settles.
         viewModel.SelectedTask = null;
-        await WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
+        await WaitHelpers.WaitUntilAsync(() => viewModel.SelectedTaskMetricLabel == "No run history");
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
-        await WaitUntilAsync(() => viewModel.HasSelectedTaskError);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.HasSelectedTaskError);
         Assert.True(viewModel.HasSelectedTaskError);
         Assert.Equal("the runner exploded", viewModel.SelectedTaskError);
     }
@@ -213,7 +213,7 @@ public sealed partial class MainWindowViewModelTests
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         await viewModel.LoadInitialAsync();
-        await WaitUntilAsync(() => viewModel.TraceEntries.Count == 1);
+        await WaitHelpers.WaitUntilAsync(() => viewModel.TraceEntries.Count == 1);
 
         // No stage selected yet, so there is no reveal target.
         Assert.False(viewModel.RevealStageArtifactsCommand.CanExecute(null));
@@ -273,18 +273,5 @@ public sealed partial class MainWindowViewModelTests
         StageStatusRecord.WriteAsync(taskDirectory, statusEntries).GetAwaiter().GetResult();
     }
 
-    private static async Task WaitUntilAsync(Func<bool> condition)
-    {
-        for (var i = 0; i < 50; i++)
-        {
-            if (condition())
-            {
-                return;
-            }
-
-            await Task.Delay(20);
-        }
-
-        Assert.True(condition());
-    }
+    // WaitUntilAsync is provided by WaitHelpers.
 }
