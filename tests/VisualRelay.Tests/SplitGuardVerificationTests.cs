@@ -75,7 +75,7 @@ public sealed partial class SplitGuardVerificationTests
     ///   Installer5LauncherTests.cs                            20
     ///   GitCommitterTests.cs                                   9
     ///   RelayDriverResumeTests.cs                              5
-    ///   BackendConfigGeneratorTests.cs                        13
+    ///   BackendConfigGeneratorTests.cs                        14
     ///   GitCommitterAutoIncludeTests.cs + .Snapshot.cs        14
     ///   RelayDriverGitCommitTests.cs                           9
     ///   SwivalSubagentRunnerCommandFilterTests.cs             15
@@ -84,12 +84,12 @@ public sealed partial class SplitGuardVerificationTests
     ///   NoCommitContaminationTests.cs                          3
     ///   PlanPhaseRunnerTests.cs                                6
     ///                                                       ----
-    ///   Total (oversized families)                           130
+    ///   Total (oversized families)                           131
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 130;
+        const int baseline = 131;
 
         string[] prefixes =
         [

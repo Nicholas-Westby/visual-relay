@@ -237,7 +237,7 @@ public sealed partial class MainWindowViewModelTests
             $$"""
             {
               "timestamp": "2026-05-31T20:00:0{{stage}}+00:00",
-              "model": "cheap-kimi",
+              "model": "cheap",
               "result": { "outcome": "error", "exit_code": 1, "error_message": "{{errorMessage}}" },
               "stats": { "total_llm_time_s": {{stage}}, "prompt_cache": { "cached_tokens": 0 } },
               "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
@@ -257,7 +257,7 @@ public sealed partial class MainWindowViewModelTests
             $$"""
             {
               "timestamp": "2026-05-31T20:00:0{{stage}}+00:00",
-              "model": "cheap-kimi",
+              "model": "cheap",
               "result": { "answer": "{{content}}" },
               "stats": { "total_llm_time_s": {{stage}}, "prompt_cache": { "cached_tokens": 0 } },
               "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]

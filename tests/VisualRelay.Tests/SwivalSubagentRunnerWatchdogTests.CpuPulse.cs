@@ -12,6 +12,12 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_SilentCpuBurn_SurvivesInactivityWindow()
     {
+        // Probe: cpu sampling requires ps(1) which may be absent in sandboxed
+        // macOS environments.  When unavailable the watchdog cannot pulse on
+        // cpu activity and the test is inherently unwinnable — skip cleanly.
+        if (ProcessTreeCpuSampler.TrySampleTreeCpuMs(Environment.ProcessId) is null)
+            return;
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

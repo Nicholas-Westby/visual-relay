@@ -104,9 +104,9 @@ static MainWindowViewModel BuildViewModel()
     viewModel.Stages[2].CostLabel = "$0.00";
     viewModel.Stages[1].IsSelected = true;
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_report", "demo", root, task.Id, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "stage_done", "demo", root, task.Id, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-28), "info", "tests_written", "demo", root, task.Id, 5, "balanced"));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-36), "info", "plan_accepted", "demo", root, task.Id, 4, "balanced"));
     return viewModel;
@@ -149,7 +149,7 @@ static void SeedTraceEntries(MainWindowViewModel viewModel)
     var taskId = viewModel.SelectedTask?.Id ?? "add-multiply-helper";
     viewModel.Events.Clear();
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow, "info", "stage_report", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap-kimi", ["time"] = "22s", ["cost"] = "$0.00" }));
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.00" }));
     viewModel.Events.Add(new RelayEvent(DateTimeOffset.UtcNow.AddSeconds(-12), "info", "trace", "demo", root, taskId, 2, "cheap",
         Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" }));
 

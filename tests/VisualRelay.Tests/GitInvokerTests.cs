@@ -16,10 +16,17 @@ public sealed class GitInvokerTests
     public async Task Override_WhenSet_DelegatesToOverride()
     {
         GitInvoker.ResetForTests();
+        var repoPath = $"/tmp/git-invoker-override-{Guid.NewGuid():N}";
         var capturedBinary = string.Empty;
         var capturedArgs = Array.Empty<string>();
-        GitInvoker.Override = (binary, args, _, _, _, _) =>
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
         {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
             capturedBinary = binary;
             capturedArgs = args.ToArray();
             return Task.FromResult((0, "override-output", false));
@@ -27,7 +34,7 @@ public sealed class GitInvokerTests
         try
         {
             var result = await GitInvoker.RunAsync(
-                "/tmp/test-repo", ["status", "--porcelain"], CancellationToken.None);
+                repoPath, ["status", "--porcelain"], CancellationToken.None);
             Assert.Equal("override-output", result.Output);
             Assert.Equal(0, result.ExitCode);
             Assert.NotEqual("git", capturedBinary);
@@ -42,12 +49,21 @@ public sealed class GitInvokerTests
     {
         GitInvoker.ResetForTests();
         GitInvoker.SetResolvedBinaryForTests("/usr/bin/git");
-        GitInvoker.Override = (binary, _, _, _, _, _) =>
-            Task.FromResult((0, binary, false));
+        var repoPath = $"/tmp/git-invoker-resolved-{Guid.NewGuid():N}";
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
+        {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
+            return Task.FromResult((0, binary, false));
+        };
         try
         {
             var result = await GitInvoker.RunAsync(
-                "/tmp/test-repo", ["rev-parse", "--is-inside-work-tree"], CancellationToken.None);
+                repoPath, ["rev-parse", "--is-inside-work-tree"], CancellationToken.None);
             Assert.Equal(0, result.ExitCode);
             Assert.Equal("/usr/bin/git", result.Output);
         }
@@ -61,15 +77,22 @@ public sealed class GitInvokerTests
     {
         GitInvoker.ResetForTests();
         GitInvoker.SetResolvedBinaryForTests("/usr/bin/git");
+        var repoPath = $"/tmp/git-invoker-sys-{Guid.NewGuid():N}";
         var capturedEnv = (IReadOnlyDictionary<string, string>?)null;
-        GitInvoker.Override = (_, _, _, _, _, env) =>
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
         {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
             capturedEnv = env;
             return Task.FromResult((0, string.Empty, false));
         };
         try
         {
-            await GitInvoker.RunAsync("/tmp/test-repo", ["status"], CancellationToken.None,
+            await GitInvoker.RunAsync(repoPath, ["status"], CancellationToken.None,
                 environment: new Dictionary<string, string>
                 {
                     ["DEVELOPER_DIR"] = "/nix/store/deadbeef-apple-sdk-14.4",
@@ -91,15 +114,22 @@ public sealed class GitInvokerTests
     {
         GitInvoker.ResetForTests();
         GitInvoker.SetResolvedBinaryForTests("/usr/bin/git");
+        var repoPath = $"/tmp/git-invoker-null-{Guid.NewGuid():N}";
         var capturedEnv = (IReadOnlyDictionary<string, string>?)null;
-        GitInvoker.Override = (_, _, _, _, _, env) =>
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
         {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
             capturedEnv = env;
             return Task.FromResult((0, string.Empty, false));
         };
         try
         {
-            await GitInvoker.RunAsync("/tmp/test-repo", ["status"], CancellationToken.None,
+            await GitInvoker.RunAsync(repoPath, ["status"], CancellationToken.None,
                 environment: null);
             Assert.NotNull(capturedEnv);
         }
@@ -119,15 +149,22 @@ public sealed class GitInvokerTests
     {
         GitInvoker.ResetForTests();
         GitInvoker.SetResolvedBinaryForTests("/nix/store/abc123-git-2.45/bin/git");
+        var repoPath = $"/tmp/git-invoker-nix-{Guid.NewGuid():N}";
         var capturedEnv = (IReadOnlyDictionary<string, string>?)null;
-        GitInvoker.Override = (_, _, _, _, _, env) =>
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
         {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
             capturedEnv = env;
             return Task.FromResult((0, string.Empty, false));
         };
         try
         {
-            await GitInvoker.RunAsync("/tmp/test-repo", ["status"], CancellationToken.None,
+            await GitInvoker.RunAsync(repoPath, ["status"], CancellationToken.None,
                 environment: new Dictionary<string, string>
                 {
                     ["DEVELOPER_DIR"] = "/nix/store/def456-apple-sdk-14.4",
@@ -150,14 +187,23 @@ public sealed class GitInvokerTests
     public async Task RunAsync_WhenNoGitFound_ThrowsDescriptiveError()
     {
         GitInvoker.ResetForTests();
-        GitInvoker.Override = (_, _, _, _, _, _) =>
+        var repoPath = $"/tmp/git-invoker-nogit-{Guid.NewGuid():N}";
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
+        {
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
             throw new InvalidOperationException(
                 "git: no working git binary found — tried xcrun --find git, " +
                 "command -v git, and /usr/bin/git");
+        };
         try
         {
             var ex = await Assert.ThrowsAsync<InvalidOperationException>(
-                () => GitInvoker.RunAsync("/tmp/test-repo", ["status"], CancellationToken.None));
+                () => GitInvoker.RunAsync(repoPath, ["status"], CancellationToken.None));
             Assert.Contains("no working git binary found", ex.Message);
         }
         finally { GitInvoker.ResetForTests(); }
@@ -169,10 +215,22 @@ public sealed class GitInvokerTests
     public async Task GitBinary_IsCached_AcrossInvocations()
     {
         GitInvoker.ResetForTests();
+        var repoPath = $"/tmp/git-invoker-cache-{Guid.NewGuid():N}";
         var callCount = 0;
         string? firstBinary = null;
-        GitInvoker.Override = (binary, _, _, _, _, _) =>
+        GitInvoker.Override = (binary, args, rootPath, cancellationToken, timeout, env) =>
         {
+            // Only intercept calls for this test's repo — pass through
+            // unrelated calls (e.g. from DrainQueue tests that run in
+            // parallel collections) so cross-collection interference
+            // cannot skew the count.
+            if (rootPath != repoPath)
+            {
+                return ProcessCapture.RunAsync(
+                    binary, args, rootPath,
+                    timeout ?? TimeSpan.FromSeconds(30), cancellationToken, env);
+            }
+
             var count = Interlocked.Increment(ref callCount);
             if (count == 1) firstBinary = binary;
             if (count == 2) Assert.Equal(firstBinary, binary);
@@ -180,8 +238,8 @@ public sealed class GitInvokerTests
         };
         try
         {
-            await GitInvoker.RunAsync("/tmp/repo", ["rev-parse", "--git-dir"], CancellationToken.None);
-            await GitInvoker.RunAsync("/tmp/repo", ["status"], CancellationToken.None);
+            await GitInvoker.RunAsync(repoPath, ["rev-parse", "--git-dir"], CancellationToken.None);
+            await GitInvoker.RunAsync(repoPath, ["status"], CancellationToken.None);
             Assert.Equal(2, callCount);
         }
         finally { GitInvoker.ResetForTests(); }

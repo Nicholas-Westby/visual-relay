@@ -8,7 +8,7 @@ public sealed class ErrorHintClassifierTests
     public void HintFor_ConnectionError_SuggestsBackendIsUnreachable()
     {
         const string raw =
-            "swival exit 1: Error: LLM call failed (model: cheap-kimi): " +
+            "swival exit 1: Error: LLM call failed (model: cheap): " +
             "litellm.InternalServerError: InternalServerError: OpenAIException - Connection error.";
 
         var hint = ErrorHintClassifier.HintFor(raw);

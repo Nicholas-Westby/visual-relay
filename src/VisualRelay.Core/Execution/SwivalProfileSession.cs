@@ -41,7 +41,7 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
     // Interpolated raw string so every base_url reads from the centralized
     // ModelBackend (one source of truth). static readonly because interpolation
     // is not a compile-time constant; the generated TOML is byte-identical.
-    private static readonly string DefaultToml =
+    internal static readonly string DefaultToml =
         $"""
         [profiles.frontier]
         provider = "generic"
@@ -52,13 +52,13 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         [profiles.balanced]
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"
-        model = "balanced-kimi"
+        model = "balanced"
         max_context_tokens = 128000
 
         [profiles.cheap]
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"
-        model = "cheap-kimi"
+        model = "cheap"
         max_context_tokens = 128000
 
         [profiles.vision]

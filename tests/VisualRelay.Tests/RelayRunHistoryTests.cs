@@ -99,7 +99,7 @@ public sealed class RelayRunHistoryTests
         // Metric labels are set.
         Assert.Equal("1s", row.DurationLabel);
         Assert.Equal("$0.00", row.CostLabel);
-        Assert.Equal("cheap-kimi", row.ModelLabel);
+        Assert.Equal("cheap", row.ModelLabel);
         Assert.Equal("report.json", row.ReportPath);
         // Status is NOT changed by ApplyMetric — it comes from the status record.
         Assert.Equal("Waiting", row.Status);
@@ -144,7 +144,7 @@ public sealed class RelayRunHistoryTests
         // Write a report with "outcome": "success" (swival's actual output).
         File.WriteAllText(
             Path.Combine(taskDir, "stage1-attempt1.report.json"),
-            """{ "timestamp": "2026-06-07T16:00:00+00:00", "model": "cheap-kimi", "result": { "outcome": "success" }, "stats": { "total_llm_time_s": 1 }, "timeline": [] }""");
+            """{ "timestamp": "2026-06-07T16:00:00+00:00", "model": "cheap", "result": { "outcome": "success" }, "stats": { "total_llm_time_s": 1 }, "timeline": [] }""");
         // Write a status record marking stage 1 as "done".
         var entries = new[] { new StageStatusEntry(1, "Ideate", "Done") };
         await StageStatusRecord.WriteAsync(taskDir, entries);
@@ -190,7 +190,7 @@ public sealed class RelayRunHistoryTests
         StageNumber: 1,
         StageName: "Ideate",
         Tier: "cheap",
-        Model: "cheap-kimi",
+        Model: "cheap",
         Timestamp: DateTimeOffset.UnixEpoch,
         DurationSeconds: 1,
         CostUsd: 0,
@@ -212,7 +212,7 @@ public sealed class RelayRunHistoryTests
             $$"""
             {
               "timestamp": "2026-05-31T20:00:0{{stage}}+00:00",
-              "model": "cheap-kimi",
+              "model": "cheap",
               "result": {{resultJson}},
               "stats": { "total_llm_time_s": {{attempt}}, "prompt_cache": { "cached_tokens": 0 } },
               "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]

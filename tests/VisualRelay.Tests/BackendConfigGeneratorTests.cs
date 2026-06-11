@@ -84,8 +84,8 @@ public sealed partial class BackendConfigGeneratorTests
         var (yaml, summary) = Generate(present);
         var aliases = ParseAliases(yaml);
 
-        Assert.Equal("fallback", aliases["cheap-kimi"]);
-        Assert.Equal("fallback", aliases["balanced-kimi"]);
+        Assert.Equal("fallback", aliases["cheap"]);
+        Assert.Equal("fallback", aliases["balanced"]);
         Assert.Equal("fallback", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
@@ -108,15 +108,15 @@ public sealed partial class BackendConfigGeneratorTests
         var aliases = GeneratedAliases(present);
         var fallbacks = GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash", aliases["cheap-kimi"]);
-        Assert.Equal("deepseek-v4-pro", aliases["balanced-kimi"]);
+        Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
         Assert.Equal("deepseek-v4-pro", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
         Assert.False(aliases.ContainsKey("claude"));
         Assert.DoesNotContain("kimi-k2", aliases.Values);
 
-        foreach (var tier in new[] { "cheap-kimi", "balanced-kimi", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
             Assert.True(ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
     }
@@ -130,8 +130,8 @@ public sealed partial class BackendConfigGeneratorTests
         var aliases = GeneratedAliases(present);
         var fallbacks = GeneratedFallbacks(present);
 
-        Assert.Equal("deepseek-v4-flash", aliases["cheap-kimi"]);
-        Assert.Equal("deepseek-v4-pro", aliases["balanced-kimi"]);
+        Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
+        Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
         Assert.Equal("kimi-k2", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
 
@@ -141,7 +141,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("hf-qwen3-coder-next", chain);
         Assert.Equal("fallback", chain[^1]);
 
-        foreach (var tier in new[] { "cheap-kimi", "balanced-kimi", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
             Assert.True(ChainTerminatesInFallback(tier, fallbacks));
     }
 
@@ -160,8 +160,8 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("claude-sonnet", fallbacks["claude"]);
         Assert.DoesNotContain("fallback", fallbacks["claude"]);
 
-        Assert.Equal("fallback", aliases["cheap-kimi"]);
-        Assert.Equal("fallback", aliases["balanced-kimi"]);
+        Assert.Equal("fallback", aliases["cheap"]);
+        Assert.Equal("fallback", aliases["balanced"]);
         Assert.Equal("fallback", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
     }
@@ -185,7 +185,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("stream_timeout:", yaml, StringComparison.Ordinal);
         Assert.Contains("request_timeout:", yaml, StringComparison.Ordinal);
 
-        foreach (var tier in new[] { "cheap-kimi", "balanced-kimi", "frontier", "vision", "fallback" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision", "fallback" })
         {
             Assert.True(aliases.ContainsKey(tier), $"tier '{tier}' must have an alias");
             Assert.False(string.IsNullOrWhiteSpace(aliases[tier]),
@@ -220,7 +220,7 @@ public sealed partial class BackendConfigGeneratorTests
         var (yaml, _) = Generate(present);
         var aliases = ParseAliases(yaml);
 
-        foreach (var tier in new[] { "cheap-kimi", "balanced-kimi", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
             Assert.True(aliases.ContainsKey(tier),
                 $"tier '{tier}' must have an alias even with no keys");
         Assert.False(aliases.ContainsKey("claude"));

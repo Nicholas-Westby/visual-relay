@@ -66,7 +66,7 @@ public sealed class RelayTaskRepositoryTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
-        WriteReport(repo.Root, "alpha", 1, "cheap-kimi", 2.5, 1_000);
+        WriteReport(repo.Root, "alpha", 1, "cheap", 2.5, 1_000);
 
         var task = Assert.Single(await new RelayTaskRepository(repo.Root).ListAsync());
 

@@ -10,8 +10,8 @@ internal static class RelayPricing
     public static IReadOnlyDictionary<string, ModelPricing> Default { get; } =
         new Dictionary<string, ModelPricing>(StringComparer.Ordinal)
         {
-            ["cheap-kimi"] = new(0.14, 0.28, 0.0028, 0.14),
-            ["balanced-kimi"] = new(0.435, 0.87, 0.003625, 0.435),
+            ["cheap"] = new(0.14, 0.28, 0.0028, 0.14),
+            ["balanced"] = new(0.435, 0.87, 0.003625, 0.435),
             ["frontier"] = new(0.95, 4.0, 0.16, 0.95),
             ["vision"] = new(0.30, 1.50),
             ["claude-opus-1m"] = new(5.0, 25.0),

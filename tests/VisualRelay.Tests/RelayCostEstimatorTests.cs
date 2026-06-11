@@ -58,7 +58,7 @@ public sealed class RelayCostEstimatorTests
         using var document = JsonDocument.Parse(
             """
             {
-              "model": "cheap-kimi",
+              "model": "cheap",
               "result": { "answer": "abcdefghijkl" },
               "stats": {
                 "total_llm_time_s": 1.5,
@@ -76,7 +76,7 @@ public sealed class RelayCostEstimatorTests
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
         Assert.True(cost.Priced);
-        Assert.Equal("cheap-kimi", cost.Model);
+        Assert.Equal("cheap", cost.Model);
         // PromptTokens now holds uncached input, not the sum of cumulative contexts.
         Assert.Equal(1_500, cost.PromptTokens);
         Assert.Equal(100, cost.CachedTokens);
@@ -93,7 +93,7 @@ public sealed class RelayCostEstimatorTests
         using var document = JsonDocument.Parse(
             $$"""
             {
-              "model": "balanced-kimi",
+              "model": "balanced",
               "result": { "answer": "{{new string('x', 400)}}" },
               "stats": { "prompt_cache": { "cached_tokens": 2000 } },
               "timeline": [
@@ -148,7 +148,7 @@ public sealed class RelayCostEstimatorTests
         using var document = JsonDocument.Parse(
             """
             {
-              "model": "balanced-kimi",
+              "model": "balanced",
               "result": { "answer": "test" },
               "stats": {
                 "prompt_cache": { "cached_tokens": 50000 }
@@ -177,11 +177,11 @@ public sealed class RelayCostEstimatorTests
     public void EstimateReport_EveryTokenClassContributes()
     {
         // uncached = 3000, cached = 1000, cache_write = 500, output = ceil(64/4)+3*50 = 166.
-        // balanced-kimi rates: input $0.435, cached $0.003625, output $0.87.
+        // balanced rates: input $0.435, cached $0.003625, output $0.87.
         using var document = JsonDocument.Parse(
             """
             {
-              "model": "balanced-kimi",
+              "model": "balanced",
               "result": { "answer": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!?" },
               "stats": {
                 "prompt_cache": { "cached_tokens": 1000, "cache_write_tokens": 500 }
@@ -244,7 +244,7 @@ public sealed class RelayCostEstimatorTests
     {
         // 5 entries: 3 llm_call, 2 tool_call → Turns == 3.
         using var document = JsonDocument.Parse(
-            """{"model":"cheap-kimi","result":{"answer":"ok"},"stats":{},"timeline":[{"type":"llm_call","prompt_tokens_est":100},{"type":"tool_call"},{"type":"llm_call","prompt_tokens_est":200},{"type":"tool_call"},{"type":"llm_call","prompt_tokens_est":300}]}""");
+            """{"model":"cheap","result":{"answer":"ok"},"stats":{},"timeline":[{"type":"llm_call","prompt_tokens_est":100},{"type":"tool_call"},{"type":"llm_call","prompt_tokens_est":200},{"type":"tool_call"},{"type":"llm_call","prompt_tokens_est":300}]}""");
 
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 
@@ -268,7 +268,7 @@ public sealed class RelayCostEstimatorTests
     public void EstimateReport_EmptyTimeline_HasZeroTurns()
     {
         using var document = JsonDocument.Parse(
-            """{"model":"cheap-kimi","result":{"answer":"x"},"stats":{},"timeline":[]}""");
+            """{"model":"cheap","result":{"answer":"x"},"stats":{},"timeline":[]}""");
 
         var cost = RelayCostEstimator.EstimateReport(document.RootElement);
 

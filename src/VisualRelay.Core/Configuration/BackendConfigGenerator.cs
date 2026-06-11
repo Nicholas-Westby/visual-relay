@@ -19,16 +19,24 @@ public static class BackendConfigGenerator
     /// (<c>model_name</c>, <c>required_env_var</c>) pair. The string
     /// <c>"fallback"</c> as a model name represents the fallback tier alias
     /// (which itself resolves to <see cref="FallbackFloorModel"/>).
+    /// WATCH: if DeepSeek ever starts ENFORCING reasoning_content on tool-call
+    /// history, the failure signature is HTTP 400 from turn 2 of tool-calling
+    /// stages — that day, swival's placeholder injection (alias containing
+    /// "deepseek") is the known mitigation: rename these aliases back to
+    /// include a "deepseek" substring so swival's _needs_reasoning_content
+    /// allowlist injects the placeholder into resent assistant tool-call
+    /// history. Until then the clean names are fine empirically (swival 1.0.30
+    /// on generic-provider + localhost LiteLLM, 33 proxied calls, zero 4xx).
     /// </summary>
-    private static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
+    internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
-        ["cheap-kimi"] = new()
+        ["cheap"] = new()
         {
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),
         },
-        ["balanced-kimi"] = new()
+        ["balanced"] = new()
         {
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("kimi-k2", "MOONSHOT_API_KEY"),

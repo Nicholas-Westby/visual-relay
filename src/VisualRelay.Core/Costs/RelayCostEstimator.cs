@@ -40,7 +40,7 @@ public static class RelayCostEstimator
     /// which telescopes to context[last] (the final cumulative context) because
     /// context is monotonically non-decreasing within a single stage conversation.
     ///
-    /// Worked example (stage 4, balanced-kimi, 18 turns):
+    /// Worked example (stage 4, balanced, 18 turns):
     ///   Turn  1:  8619 → delta =  8619
     ///   Turn  2: 14630 → delta =  6011
     ///   ...

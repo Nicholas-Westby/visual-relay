@@ -244,6 +244,12 @@ internal static class TestGit
             RedirectStandardError = true,
             UseShellExecute = false
         };
+        // On macOS, git may resolve through xcrun, which picks up stale
+        // DEVELOPER_DIR / SDKROOT from the nix-shell environment.  Strip
+        // them so the xcrun shim falls back to the Xcode-selected default
+        // (matching what GitInvoker.ResolveGitBinary does).
+        process.StartInfo.Environment.Remove("DEVELOPER_DIR");
+        process.StartInfo.Environment.Remove("SDKROOT");
         process.StartInfo.ArgumentList.Add("-C");
         process.StartInfo.ArgumentList.Add(rootPath);
         foreach (var argument in arguments)

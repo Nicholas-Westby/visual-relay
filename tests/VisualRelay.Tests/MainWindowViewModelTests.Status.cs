@@ -31,7 +31,7 @@ public sealed partial class MainWindowViewModelTests
                 $$"""
                 {
                   "timestamp": "2026-06-07T16:00:0{{i}}+00:00",
-                  "model": "cheap-kimi",
+                  "model": "cheap",
                   "result": { "answer": "stage {{i}} done" },
                   "stats": { "total_llm_time_s": 1 },
                   "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
@@ -91,7 +91,7 @@ public sealed partial class MainWindowViewModelTests
                 $$"""
                 {
                   "timestamp": "2026-06-07T16:00:0{{i}}+00:00",
-                  "model": "cheap-kimi",
+                  "model": "cheap",
                   "result": {{outcome}},
                   "stats": { "total_llm_time_s": 1 },
                   "timeline": [{ "type": "llm_call", "prompt_tokens_est": 1000 }]
