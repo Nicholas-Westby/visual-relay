@@ -26,28 +26,128 @@ PUBLISHED_GC="$SCRIPT_DIR/gen-backend-config/VisualRelay.GenBackendConfig"
 HAS_PUBLISHED=0
 [[ -x "$PUBLISHED_APP" ]] && HAS_PUBLISHED=1
 
+# ---------- nix location helper ----------
+_find_nix() {
+  if [[ -n "${_VISUAL_RELAY_FAKE_NO_NIX:-}" ]]; then
+    return 1
+  fi
+  if command -v nix >/dev/null 2>&1; then
+    command -v nix
+  elif [[ -x /nix/var/nix/profiles/default/bin/nix ]]; then
+    echo "/nix/var/nix/profiles/default/bin/nix"
+  elif [[ -x /run/current-system/sw/bin/nix ]]; then
+    echo "/run/current-system/sw/bin/nix"
+  fi
+}
+
+# ---------- consent-gated Determinate Nix install offer ----------
+_offer_nix_install() {
+  local nix_bin; nix_bin="$(_find_nix)"
+  if [[ -n "$nix_bin" ]]; then
+    return 0
+  fi
+
+  # Already offered and declined in this invocation — don't re-ask.
+  if [[ -n "${_VISUAL_RELAY_NIX_OFFERED:-}" ]]; then
+    return 1
+  fi
+  _VISUAL_RELAY_NIX_OFFERED=1
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'visual-relay: install Determinate Nix to provide the missing tools:\n  curl -fsSL https://install.determinate.systems/nix | sh -s -- install\n' >&2
+    return 1
+  fi
+
+  printf 'visual-relay: required tools missing. Install Determinate Nix to provide them? [y/N] ' >&2
+  IFS= read -r answer
+  case "$answer" in
+    [yY]|[yY][eE][sS])
+      eval "${VISUAL_RELAY_NIX_INSTALLER:-curl -fsSL https://install.determinate.systems/nix | sh -s -- install}"
+      unset _VISUAL_RELAY_FAKE_NO_NIX
+      nix_bin="$(_find_nix)"
+      if [[ -z "$nix_bin" ]]; then
+        echo "visual-relay: Nix installed but not found at expected paths" >&2
+        exit 1
+      fi
+      exec env -u DOTNET_ROOT ORIGINAL_CWD="$ORIGINAL_CWD" "$nix_bin" develop --command bash "$0" "$cmd" ${ARGS:+"${ARGS[@]}"}
+      ;;
+    *)
+      printf 'visual-relay: install Determinate Nix manually:\n  curl -fsSL https://install.determinate.systems/nix | sh -s -- install\n' >&2
+      return 1
+      ;;
+  esac
+}
+
 # ---------- dotnet bootstrap (used by dotnet-only dispatch cases) ----------
 _require_dotnet() {
   if command -v dotnet >/dev/null 2>&1; then
     return 0
   fi
 
-  local nix_bin=""
-  if command -v nix >/dev/null 2>&1; then
-    nix_bin="$(command -v nix)"
-  elif [[ -x /nix/var/nix/profiles/default/bin/nix ]]; then
-    nix_bin="/nix/var/nix/profiles/default/bin/nix"
-  elif [[ -x /run/current-system/sw/bin/nix ]]; then
-    nix_bin="/run/current-system/sw/bin/nix"
+  # If the unified gate already attempted nix re-entry, don't try again.
+  if [[ -n "${VISUAL_RELAY_NIX_REENTRY:-}" ]]; then
+    echo "visual-relay: dotnet not found. Install .NET 10 or run: nix develop" >&2
+    exit 127
   fi
 
+  local nix_bin; nix_bin="$(_find_nix)"
   if [[ -n "$nix_bin" ]]; then
     echo "visual-relay: dotnet not found; entering nix develop for this command" >&2
     exec env -u DOTNET_ROOT ORIGINAL_CWD="$ORIGINAL_CWD" "$nix_bin" develop --command bash "$0" "$cmd" ${ARGS:+"${ARGS[@]}"}
   fi
 
+  # No nix — offer to install it (on decline returns 1, fall through to exit).
+  _offer_nix_install || true
+
   echo "visual-relay: dotnet not found. Install .NET 10 or run: nix develop" >&2
   exit 127
+}
+
+# ---------- unified prerequisite gate ----------
+# Checks all required tools for the current command.  If any tool is missing
+# and nix is available, re-execs once into `nix develop` with
+# VISUAL_RELAY_NIX_REENTRY=1 so every subsequent call is a no-op.
+# Hard tools (block launch): dotnet (unless HAS_PUBLISHED), nono (unless
+# sandbox bypassed).  Soft tools: uv (missing alone never hard-fails).
+# Usage: _missing_required_tools [check_uv]
+_missing_required_tools() {
+  local check_uv="${1:-0}"
+  local missing_any=0
+
+  # dotnet (hard when not published)
+  if (( ! HAS_PUBLISHED )) && ! command -v dotnet >/dev/null 2>&1; then
+    missing_any=1
+  fi
+
+  # nono (hard when sandbox enabled)
+  if ! _read_bypass_sandbox && ! command -v nono >/dev/null 2>&1; then
+    missing_any=1
+  fi
+
+  # uv (soft — missing alone never blocks; backend degrades gracefully)
+  if (( check_uv )) && ! command -v uv >/dev/null 2>&1; then
+    missing_any=1
+  fi
+
+  if (( ! missing_any )); then
+    return 0
+  fi
+
+  # Already re-entered? Fall through to per-tool errors — no loop.
+  if [[ -n "${VISUAL_RELAY_NIX_REENTRY:-}" ]]; then
+    return 0
+  fi
+
+  # Probe nix (same order as _find_nix, Determinate-Nix-friendly).
+  local nix_bin; nix_bin="$(_find_nix)"
+  if [[ -n "$nix_bin" ]]; then
+    echo "visual-relay: missing required tools; entering nix develop for this command" >&2
+    exec env -u DOTNET_ROOT VISUAL_RELAY_NIX_REENTRY=1 ORIGINAL_CWD="$ORIGINAL_CWD" \
+      "$nix_bin" develop --command bash "$0" "$cmd" ${ARGS:+"${ARGS[@]}"}
+  fi
+
+  # No nix — fall through to per-tool error messages.
+  return 0
 }
 
 # ---------- nono sandbox prerequisite ----------
@@ -73,6 +173,8 @@ _require_nono() {
   if command -v nono >/dev/null 2>&1; then
     return 0
   fi
+
+  _offer_nix_install || true
 
   cat >&2 <<'EOF'
 visual-relay: nono sandbox is enabled but nono was not found on PATH.
@@ -184,18 +286,20 @@ _timeout_watchdog() {
 # ---------- dispatch ----------
 case "$cmd" in
   launch|run)
+    # Unified prerequisite gate: re-enter nix develop once if any hard tool
+    # (dotnet when not published, nono when sandbox enabled) or uv is missing.
+    _missing_required_tools 1
+    # Nono sandbox guard and provisioning (runs before any backend work).
+    if ! _read_bypass_sandbox; then
+      _require_nono
+      _provision_nono
+    fi
     # Best-effort: bring the local model backend up before launching so a fresh
     # launch can run a task without a manual proxy step. Idempotent and fast
     # when already healthy; if it fails (e.g. litellm not installed) the launch
     # still proceeds and the in-app pre-flight probe surfaces the down backend.
     "$SCRIPT_DIR/tools/backend/backend.sh" start || \
       echo "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)" >&2
-    # Nono sandbox guard: when the sandbox is enabled (bypassSandbox:false),
-    # require nono on PATH and provision the vr-guard profile + swival pack.
-    if ! _read_bypass_sandbox; then
-      _require_nono
-      _provision_nono
-    fi
     if (( HAS_PUBLISHED )); then
       exec "$PUBLISHED_APP" "$@"
     fi
@@ -221,6 +325,7 @@ case "$cmd" in
     dotnet run --project "$SCRIPT_DIR/tools/VisualRelay.Screenshots/VisualRelay.Screenshots.csproj" -- "$SCRIPT_DIR/docs/images/visual-relay-compact.png" 1060 720
     ;;
   run-task)
+    _missing_required_tools
     if ! _read_bypass_sandbox; then
       _require_nono
     fi

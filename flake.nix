@@ -24,6 +24,9 @@
               icu
               openssl
               zlib
+              nono
+              uv
+              python313
             ];
 
             DOTNET_CLI_TELEMETRY_OPTOUT = "1";

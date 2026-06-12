@@ -85,7 +85,7 @@ public sealed class Installer5Sandbox2LauncherTests
             chmod +x "$TEST_DIR/visual-relay"
             cd "$TEST_DIR"
             RC=0
-            PATH="$STUB_DIR:/usr/bin:/bin" {{xdgEnv}} bash "$TEST_DIR/visual-relay" launch \
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 {{xdgEnv}} bash "$TEST_DIR/visual-relay" launch \
                 >/tmp/.vr-s2-out 2>/tmp/.vr-s2-err || RC=$?
             echo "$RC" > /tmp/.vr-s2-rc
             {{assertions}}

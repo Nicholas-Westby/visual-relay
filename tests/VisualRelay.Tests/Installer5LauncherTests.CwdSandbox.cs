@@ -216,7 +216,7 @@ public sealed partial class Installer5LauncherTests
 
             # cd to a directory that is NOT the fake repo
             cd "$CALLER_DIR"
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$FAKE_REPO/visual-relay" launch 2>/dev/null || true
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 bash "$FAKE_REPO/visual-relay" launch 2>/dev/null || true
 
             # After the fix dotnet must have been called (bypass worked).
             # Before the fix _read_bypass_sandbox looks for .relay/config.json

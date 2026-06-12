@@ -34,7 +34,9 @@ If you are working from a source clone instead, use the launcher from the repo r
 ```
 
 The launcher requires `nono` for sandboxed Swival execution (install via `brew install nono`
-or from https://github.com/jedisct1/nono). To run without the sandbox, set
+or from https://github.com/jedisct1/nono). If Nix is installed, `nono` (and all other
+prerequisites) are provided automatically by the devshell — no global install required.
+To run without the sandbox, set
 `bypassSandbox:true` in `.relay/config.json`.
 
 The app opens with a native folder picker button. Point it at a repo containing
@@ -49,9 +51,19 @@ Common commands:
 ./visual-relay install-hooks
 ```
 
-The launcher uses an existing `dotnet` installation when available. If `dotnet` is
-missing and `nix` is installed, it automatically re-enters the command through
-`nix develop`, so a separate shell step is not required.
+The launcher uses existing tools when available. If any required tool (`dotnet`, `nono`,
+`uv`) is missing and `nix` is installed, it automatically re-enters the command through
+`nix develop` — everything is provisioned from the Nix store with zero global installs
+and no separate shell step.
+
+**No Nix?** On an interactive terminal the launcher offers a single `[y/N]` prompt to
+install [Determinate Nix](https://determinate.systems/nix) (the only global change;
+everything else stays in the Nix store and per-user data dirs). An explicit `y` runs the
+official installer and re-enters through `nix develop` — one keystroke to a fully
+provisioned sandbox. A `n`, Enter, or a non-interactive context (CI, piped invocation)
+prints a manual one-liner alongside the existing tool-missing messages and exits; nothing
+global is ever installed without explicit per-invocation consent. There is no `--yes`
+flag, no config key to pre-approve, and no persisted "already asked" state.
 
 See [AGENTS.md](AGENTS.md) for contributor dev tooling (the `sample` tooling,
 `run-task`, `screenshot`) — those are source-checkout-only and not shipped in the
