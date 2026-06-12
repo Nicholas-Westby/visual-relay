@@ -15,17 +15,11 @@ main() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-# When REPO_ROOT is not writable (brew install at root-owned libexec/),
-# redirect writable paths to the user's XDG data directory so the scratch
-# dir and the litellm venv are always user-owned.
-if [[ -w "${REPO_ROOT}" ]]; then
-  VENV_DIR="${SCRIPT_DIR}/.venv"                 # git-ignored; provisioned via uv
-  SCRATCH="${REPO_ROOT}/.relay-scratch"          # git-ignored
-else
-  DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/visual-relay"
-  VENV_DIR="${DATA_HOME}/backend-venv"
-  SCRATCH="${DATA_HOME}/scratch"
-fi
+# Per-machine state always lives under the user's XDG data directory — never in
+# the repo tree — so host and VM each own their own venv and scratch.
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/visual-relay"
+VENV_DIR="${DATA_HOME}/backend-venv"
+SCRATCH="${DATA_HOME}/scratch"
 
 HOST="127.0.0.1"
 PORT="4000"
@@ -70,8 +64,17 @@ live_pid() {
 # litellm already on PATH only when uv is unavailable. Returns non-zero when none
 # of those work.
 ensure_litellm() {
-  if [[ -x "${LITELLM_BIN}" ]]; then
+  # Execution probe: venv python must actually run (catches dangling/foreign
+  # interpreter shebangs from a host/VM mismatch) AND litellm must be executable.
+  if "${VENV_PY}" -V >/dev/null 2>&1 && [[ -x "${LITELLM_BIN}" ]]; then
     return 0
+  fi
+
+  # Probe failed and the venv dir exists => broken (dangling interpreter, partial
+  # provision, host/VM collision). Remove it so uv rebuilds from scratch.
+  if [[ -d "${VENV_DIR}" ]]; then
+    log "removing broken venv at ${VENV_DIR}"
+    rm -rf "${VENV_DIR}"
   fi
 
   if command -v uv >/dev/null 2>&1; then
@@ -147,6 +150,17 @@ load_env_file_if_unset() {
 # --- Subcommands -------------------------------------------------------------
 
 cmd_start() {
+  # Clean up legacy repo-local state from old checkouts (both gitignored).
+  # Whichever environment runs next re-provisions into its own XDG home.
+  if [[ -d "${SCRIPT_DIR}/.venv" ]]; then
+    log "removing legacy repo-local venv at ${SCRIPT_DIR}/.venv"
+    rm -rf "${SCRIPT_DIR}/.venv"
+  fi
+  if [[ -d "${REPO_ROOT}/.relay-scratch" ]]; then
+    log "removing legacy repo-local scratch at ${REPO_ROOT}/.relay-scratch"
+    rm -rf "${REPO_ROOT}/.relay-scratch"
+  fi
+
   mkdir -p "${SCRATCH}"
 
   if is_healthy; then

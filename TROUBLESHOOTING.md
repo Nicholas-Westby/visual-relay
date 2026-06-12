@@ -37,3 +37,28 @@ owns it`. All headless UI tests therefore use `[AvaloniaFact]`/`[AvaloniaTheory]
 
 `HeadlessUnitTestSession` is **banned** via `Microsoft.CodeAnalysis.BannedApiAnalyzers`
 (`tests/VisualRelay.Tests/BannedSymbols.txt`); reintroducing it fails the build (RS0030).
+
+## Backend state lives under `$XDG_DATA_HOME/visual-relay/`
+
+The model backend (LiteLLM proxy) keeps all per-machine state in your user data
+directory, never in the repo tree. This prevents host/VM venv collisions when the
+working copy is shared.
+
+| What | Location |
+|------|----------|
+| LiteLLM venv | `$XDG_DATA_HOME/visual-relay/backend-venv/` |
+| Scratch (pidfile, log, generated config) | `$XDG_DATA_HOME/visual-relay/scratch/` |
+| LiteLLM log | `$XDG_DATA_HOME/visual-relay/scratch/litellm.log` |
+| Pidfile | `$XDG_DATA_HOME/visual-relay/scratch/litellm.pid` |
+
+`XDG_DATA_HOME` defaults to `~/.local/share` if unset, so typical paths are
+`~/.local/share/visual-relay/backend-venv/` and
+`~/.local/share/visual-relay/scratch/`.
+
+The venv is a **disposable cache** — you can delete it at any time. The next
+`start` rebuilds it from pinned inputs. If a venv becomes broken (e.g. its Python
+interpreter path goes stale after a uv update), the launch detects this and
+rebuilds automatically.
+
+Legacy repo-local state (`tools/backend/.venv/` and `.relay-scratch/`) is cleaned
+up on first start by the new code.

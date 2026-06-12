@@ -1,11 +1,14 @@
+using System.Diagnostics;
+
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Tests for <c>tools/backend/backend.sh</c> changes in installer-5:
-/// user-writable path redirection when REPO_ROOT is not writable (brew layout).
+/// Tests for <c>tools/backend/backend.sh</c> changes in bootstrap-1:
+/// unconditional XDG paths, execution probe, broken-venv self-heal,
+/// and legacy repo-local state cleanup.
 /// These must FAIL before the implementation lands.
 /// </summary>
-public sealed class Installer5BackendShTests
+public sealed partial class Installer5BackendShTests
 {
     private static string RepoRoot => RepoSetup.Root;
     private static string BackendShPath => Path.Combine(RepoRoot, "tools", "backend", "backend.sh");
@@ -15,91 +18,137 @@ public sealed class Installer5BackendShTests
     private static string ReadBackendSh() =>
         File.ReadAllText(BackendShPath);
 
-    private static string[] ReadBackendShLines() =>
-        File.ReadAllLines(BackendShPath);
+    /// <summary>Runs an embedded bash test script that sources or copies
+    /// backend.sh in a controlled environment and returns
+    /// (exitCode, stdout, stderr). Modeled on RunLauncherTestAsync.</summary>
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunBackendShTestAsync(
+        string testName, string testBody)
+    {
+        var script = Path.Combine(Path.GetTempPath(), $"vr-backend-test-{testName}.sh");
+        var escapedBackendShPath = BackendShPath.Replace("'", "'\\''");
+        var fullScript = $$"""
+            #!/usr/bin/env bash
+            set -euo pipefail
+            BACKEND_SH='{{escapedBackendShPath}}'
+            {{testBody}}
+            """;
+        await File.WriteAllTextAsync(script, fullScript);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(script,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        Process? process = null;
+        try
+        {
+            process = new Process();
+            process.StartInfo = new ProcessStartInfo("/bin/bash", script)
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            process.Start();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            await process.WaitForExitAsync(cts.Token);
+            return (process.ExitCode,
+                await process.StandardOutput.ReadToEndAsync(),
+                await process.StandardError.ReadToEndAsync());
+        }
+        catch (OperationCanceledException)
+        {
+            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { }
+            throw;
+        }
+        finally { try { File.Delete(script); } catch { } }
+    }
 
-    // ── 1. Writable-REPO_ROOT guard ─────────────────────────────────────
+    // ── 1. Unconditional XDG paths ───────────────────────────────────────
 
     [Fact]
-    public void BackendSh_HasWritabilityCheckForRepoRoot()
+    public void BackendSh_UsesXdgDataHome_Unconditionally()
     {
         var content = ReadBackendSh();
 
-        // Must check whether REPO_ROOT is writable (e.g. [[ -w "$REPO_ROOT" ]])
-        // to distinguish brew install (root-owned libexec) from source checkout.
-        Assert.Contains("REPO_ROOT", content, StringComparison.Ordinal);
-        Assert.Contains("-w", content, StringComparison.Ordinal);
+        // DATA_HOME, VENV_DIR, and SCRATCH must be set to XDG paths
+        // unconditionally — not inside a [[ -w ... ]] branch.
+        Assert.Contains("DATA_HOME=\"${XDG_DATA_HOME:-$HOME/.local/share}/visual-relay\"",
+            content, StringComparison.Ordinal);
+        Assert.Contains("VENV_DIR=\"${DATA_HOME}/backend-venv\"",
+            content, StringComparison.Ordinal);
+        Assert.Contains("SCRATCH=\"${DATA_HOME}/scratch\"",
+            content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BackendSh_RedirectsScratchToXdgDataHome_WhenRepoRootNotWritable()
+    public void BackendSh_DoesNotCheckRepoRootWritability()
     {
         var content = ReadBackendSh();
 
-        // When REPO_ROOT is not writable, SCRATCH must be redirected to
-        // XDG_DATA_HOME/visual-relay/ (with ~/.local/share/visual-relay/ fallback).
-        Assert.Contains("XDG_DATA_HOME", content, StringComparison.Ordinal);
-        Assert.Contains("SCRATCH", content, StringComparison.Ordinal);
+        // The old [[ -w "${REPO_ROOT}" ]] branch must be gone.
+        Assert.DoesNotContain("-w \"${REPO_ROOT}\"", content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void BackendSh_RedirectsVenDirToXdgDataHome_WhenRepoRootNotWritable()
+    public void BackendSh_DoesNotReferToRelayScratchOrScriptDotVenv_AsPaths()
     {
         var content = ReadBackendSh();
 
-        // When REPO_ROOT is not writable, VENV_DIR must also be redirected
-        // so the litellm venv is created in a user-writable location.
-        Assert.Contains("VENV_DIR", content, StringComparison.Ordinal);
-
-        // The VENV_DIR assignment should be inside the writability conditional
-        // block (not just at the top as a static path).
-        var venvStaticAssignment = "VENV_DIR=\"${SCRIPT_DIR}/.venv\"";
-        var idx = content.IndexOf(venvStaticAssignment, StringComparison.Ordinal);
-        // The static path may still appear as a fallback/default, but the
-        // script must also set VENV_DIR to a DATA_HOME-based path somewhere.
-        Assert.Contains(".local/share", content, StringComparison.Ordinal);
+        // No repo-local .relay-scratch or SCRIPT_DIR/.venv as active paths.
+        // The only mention of .relay-scratch should be in the legacy cleanup
+        // (removing old state) — not as SCRATCH or VENV_DIR assignments.
+        Assert.DoesNotContain("SCRATCH=\"${REPO_ROOT}/.relay-scratch\"",
+            content, StringComparison.Ordinal);
+        Assert.DoesNotContain("VENV_DIR=\"${SCRIPT_DIR}/.venv\"",
+            content, StringComparison.Ordinal);
     }
 
-    // ── 2. Source-checkout behavior preserved ────────────────────────────
+    // ── 2. Execution probe ───────────────────────────────────────────────
 
     [Fact]
-    public void BackendSh_KeepsRepoRelativePaths_WhenRepoRootWritable()
+    public void BackendSh_HasExecutionProbe()
     {
         var content = ReadBackendSh();
 
-        // The existing paths (SCRATCH at REPO_ROOT/.relay-scratch,
-        // VENV_DIR at SCRIPT_DIR/.venv) must still be present as the
-        // writable-REPO_ROOT branch.
-        Assert.Contains(".relay-scratch", content, StringComparison.Ordinal);
-        Assert.Contains("SCRIPT_DIR", content, StringComparison.Ordinal);
+        // The ensure_litellm probe must execute the venv python to verify it
+        // actually runs — catches dangling/foreign interpreter shebangs.
+        Assert.Contains("\"${VENV_PY}\" -V", content, StringComparison.Ordinal);
+        Assert.Contains("2>&1", content, StringComparison.Ordinal);
     }
-
-    // ── 3. SCRATCH directory creation is safe ────────────────────────────
 
     [Fact]
-    public void BackendSh_MkdirScratchAfterRedirection()
+    public void BackendSh_HasBrokenVenvRemoval()
     {
         var content = ReadBackendSh();
 
-        // The mkdir -p "${SCRATCH}" call in cmd_start() must come AFTER
-        // SCRATCH has been resolved (writable or redirected). Verify the
-        // mkdir line still exists.
-        Assert.Contains("mkdir -p \"${SCRATCH}\"", content, StringComparison.Ordinal);
+        // After a failed execution probe the script must remove the broken venv
+        // so uv rebuilds from scratch.
+        Assert.Contains("removing broken venv", content, StringComparison.Ordinal);
+        Assert.Contains("rm -rf \"${VENV_DIR}\"", content, StringComparison.Ordinal);
     }
 
-    // ── 4. No hardcoded paths that would break in brew layout ────────────
+    // ── 3. Legacy cleanup ────────────────────────────────────────────────
 
     [Fact]
-    public void BackendSh_UsesVariablesNotHardcodedPaths_ForDirs()
+    public void BackendSh_HasLegacyCleanup()
     {
         var content = ReadBackendSh();
 
-        // All directory references for writable locations must go through
-        // SCRATCH or VENV_DIR variables, not hardcoded paths.
-        // Verify these variable names appear in context of mkdir, file writes.
-
-        // PID_FILE and LOG_FILE must be derived from SCRATCH.
-        Assert.Contains("PID_FILE=\"${SCRATCH}", content, StringComparison.Ordinal);
-        Assert.Contains("LOG_FILE=\"${SCRATCH}", content, StringComparison.Ordinal);
+        // cmd_start must remove legacy repo-local .venv and .relay-scratch.
+        Assert.Contains("removing legacy repo-local venv", content, StringComparison.Ordinal);
+        Assert.Contains("removing legacy repo-local scratch", content, StringComparison.Ordinal);
     }
+
+    // ── 4. Derived paths ─────────────────────────────────────────────────
+
+    [Fact]
+    public void BackendSh_DerivesPidAndLogFromScratch()
+    {
+        var content = ReadBackendSh();
+
+        // PID_FILE and LOG_FILE must be derived from SCRATCH (now always XDG).
+        Assert.Contains("PID_FILE=\"${SCRATCH}/litellm.pid\"",
+            content, StringComparison.Ordinal);
+        Assert.Contains("LOG_FILE=\"${SCRATCH}/litellm.log\"",
+            content, StringComparison.Ordinal);
+    }
+
 }
