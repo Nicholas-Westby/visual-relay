@@ -129,7 +129,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         Assert.Contains("Hugging Face", vm.HfGateMessage, StringComparison.OrdinalIgnoreCase);
 
         vm.SelectedTask = vm.Tasks[0];
-        Assert.Contains("Alpha", vm.SelectedTaskMarkdown, StringComparison.Ordinal);
+        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.SelectedTaskMarkdown.Contains("Alpha"));
         Assert.True(vm.RunSelectedCommand.CanExecute(null));
         Assert.True(vm.DrainQueueCommand.CanExecute(null));
 
