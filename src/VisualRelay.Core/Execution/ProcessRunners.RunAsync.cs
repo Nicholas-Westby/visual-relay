@@ -50,11 +50,9 @@ public sealed partial class SwivalSubagentRunner
 
         while (true)
         {
-            // Recompute first-output threshold for the current tier (may have escalated).
+            // Recompute first-output / inactivity for current tier (may have escalated).
             var currentFirstOutputMs = _config.FirstOutputTimeoutMsByTier.TryGetValue(currentInvocation.Tier, out var ctMs)
                 ? ctMs : _config.FirstOutputTimeoutMs;
-
-            // Recompute inactivity timeout for the current tier (may have escalated).
             var currentInactivityMs = _config.InactivityTimeoutMsByTier?.TryGetValue(currentInvocation.Tier, out var itMs) == true
                 ? itMs : _config.InactivityTimeoutMs;
             var traceDir = attempt == startAttempt
@@ -76,7 +74,14 @@ public sealed partial class SwivalSubagentRunner
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
 
-            var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts);
+            var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts,
+                onHeartbeat: _eventSink is null ? null : msg => _ = _eventSink.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow, "debug", "watchdog_heartbeat",
+                    attemptInvocation.RunId, attemptInvocation.TargetRoot,
+                    attemptInvocation.TaskName, attemptInvocation.Stage.Number,
+                    attemptInvocation.Tier, attempt,
+                    Data: new Dictionary<string, string> { ["message"] = msg }),
+                    CancellationToken.None));
 
             await using var activeTraceTailer = RelayTraceTailer.Start(traceDir,
                 _eventSink is null ? null : (entry, token) => PublishTraceAsync(attemptInvocation, entry, token),
@@ -97,10 +102,8 @@ public sealed partial class SwivalSubagentRunner
                 onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs);
             var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
-            // Task.WhenAny may return processTask when the watchdog kill triggers
-            // a near-simultaneous process exit (race).  Check watchdogCts cancellation
-            // (set synchronously by the watchdog before it returns) so a stall is
-            // never misreported as "exit 137".
+            // WhenAny may return processTask when watchdog kill triggers near-simultaneous
+            // exit (race). Check watchdogCts so stall is never misreported as "exit 137".
             if (await Task.WhenAny(processTask, watchdogTask) == watchdogTask
                 || watchdogCts.IsCancellationRequested)
             {
@@ -152,12 +155,11 @@ public sealed partial class SwivalSubagentRunner
                     }
                     else
                     {
-                        var phase = wdResult.LastPulseSource == "none" ? "first-output" : "inactivity";
-                        var threshold = wdResult.LastPulseSource == "none" ? currentFirstOutputMs : currentInactivityMs;
                         stallResult = new SubagentResult(string.Empty, null, false,
                             ErrorHintClassifier.WithHint(
                                 $"persistent model-backend stall: swival had no activity for " +
-                                $"{wdResult.SilenceMs}ms (phase={phase}, threshold={threshold}ms). " +
+                                $"{wdResult.SilenceMs}ms (phase={(wdResult.LastPulseSource == "none" ? "first-output" : "inactivity")}, " +
+                                $"threshold={(wdResult.LastPulseSource == "none" ? currentFirstOutputMs : currentInactivityMs)}ms). " +
                                 $"Last signal: {wdResult.LastPulseSource}. " +
                                 $"{maxStallAttempts} attempts exhausted."));
                     }

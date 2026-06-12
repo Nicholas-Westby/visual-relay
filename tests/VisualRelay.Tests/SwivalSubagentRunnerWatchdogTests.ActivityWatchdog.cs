@@ -164,4 +164,50 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         Assert.True(sw.ElapsedMilliseconds < 15_000,
             $"Expected kill at ~3 s inactivity window, took {sw.ElapsedMilliseconds} ms");
     }
+
+    /// <summary>
+    /// Unit test: drive <see cref="ActivityWatchdog"/> with a simulated
+    /// pulse history matching the 2026-06-12 socket-wedge incident —
+    /// pulses for the first ~2 min (simulated), then total silence for
+    /// the full inactivity window.  The watchdog must fire at the
+    /// inactivity deadline ± one polling interval (~200 ms).
+    ///
+    /// This test isolates the watchdog's deadline logic from all upstream
+    /// pulse sources.  If it passes while the integration tests fail, the
+    /// bug is upstream of the watchdog (in a <c>Pulse(...)</c> call site).
+    /// </summary>
+    [Fact]
+    public async Task WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline()
+    {
+        const int inactivityTimeoutMs = 2_000;
+        using var kill = new CancellationTokenSource();
+        var watchdog = new ActivityWatchdog(
+            firstOutputTimeoutMs: 1_000,
+            inactivityTimeoutMs: inactivityTimeoutMs,
+            absoluteCeilingMs: 0,
+            kill);
+
+        // Simulate early output burst (representing the first ~2 min of real
+        // activity: stdout lines, trace-file creation).
+        watchdog.Pulse("stdout");
+        await Task.Delay(50);
+        watchdog.Pulse("trace");
+
+        // Now total silence — no more pulses of any kind.
+        using var cts = new CancellationTokenSource();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await watchdog.WaitAsync(cts.Token);
+        sw.Stop();
+
+        Assert.Equal(ActivityWatchdog.Outcome.FiredStall, result.Outcome);
+        // Last real pulse before silence was "trace".
+        Assert.Equal("trace", result.LastPulseSource);
+        Assert.True(result.SilenceMs >= inactivityTimeoutMs,
+            $"Expected silence >= {inactivityTimeoutMs}ms, got {result.SilenceMs}ms");
+        // Must fire within inactivityTimeoutMs + generous margin for the
+        // 200 ms polling loop and OS scheduling jitter.
+        Assert.True(sw.ElapsedMilliseconds < inactivityTimeoutMs + 2_000,
+            $"Fired too late: {sw.ElapsedMilliseconds}ms (expected ~{inactivityTimeoutMs}ms)");
+        Assert.True(kill.IsCancellationRequested);
+    }
 }

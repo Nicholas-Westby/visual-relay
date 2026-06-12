@@ -20,24 +20,33 @@ internal sealed class ActivityWatchdog
     private readonly int _inactivityTimeoutMs;
     private readonly int _absoluteCeilingMs;
     private readonly CancellationTokenSource _kill;
+    private readonly Action<string>? _onHeartbeat;
     private readonly long _startTimestamp;
     private readonly object _lock = new();
     private long _lastPulseTimestamp;
     private string _lastPulseSource = "none";
     private bool _firstPulseReceived;
+    private long _lastHeartbeatTimestamp;
+
+    // Emit a diagnostic heartbeat line at most once per this interval so the
+    // watchdog's internal view of pulse history is visible in run.log.
+    private const long HeartbeatIntervalMs = 60_000;
 
     public ActivityWatchdog(
         int firstOutputTimeoutMs,
         int inactivityTimeoutMs,
         int absoluteCeilingMs,
-        CancellationTokenSource kill)
+        CancellationTokenSource kill,
+        Action<string>? onHeartbeat = null)
     {
         _firstOutputTimeoutMs = firstOutputTimeoutMs;
         _inactivityTimeoutMs = inactivityTimeoutMs;
         _absoluteCeilingMs = absoluteCeilingMs;
         _kill = kill;
+        _onHeartbeat = onHeartbeat;
         _startTimestamp = Stopwatch.GetTimestamp();
         _lastPulseTimestamp = _startTimestamp;
+        _lastHeartbeatTimestamp = _startTimestamp;
     }
 
     /// <summary>
@@ -78,6 +87,8 @@ internal sealed class ActivityWatchdog
             string lastSource;
             long silenceMs;
             long nowTicks;
+            long heartbeatDeadlineMs;
+            bool firstPulseReceived;
 
             lock (_lock)
             {
@@ -85,6 +96,7 @@ internal sealed class ActivityWatchdog
                 var elapsedMs = TicksToMs(nowTicks - _startTimestamp);
                 silenceMs = TicksToMs(nowTicks - _lastPulseTimestamp);
                 lastSource = _lastPulseSource;
+                firstPulseReceived = _firstPulseReceived;
 
                 // Check absolute ceiling first (it wins when set).
                 firedCeiling = _absoluteCeilingMs > 0 && elapsedMs >= _absoluteCeilingMs;
@@ -99,6 +111,11 @@ internal sealed class ActivityWatchdog
                     // Inactivity phase: compare silence since last pulse.
                     firedStall = silenceMs >= _inactivityTimeoutMs;
                 }
+
+                // Snapshot the deadline for heartbeat logging (outside lock).
+                heartbeatDeadlineMs = !_firstPulseReceived
+                    ? _firstOutputTimeoutMs - elapsedMs
+                    : _inactivityTimeoutMs - silenceMs;
             }
 
             if (firedCeiling || firedStall)
@@ -110,11 +127,23 @@ internal sealed class ActivityWatchdog
                 return new Result(outcome, lastSource, silenceMs);
             }
 
+            // Emit a diagnostic heartbeat line every ~60 s so the watchdog's
+            // internal view of pulse history is visible in run.log — future
+            // incidents become diagnosable from artifacts alone.
+            if (_onHeartbeat is not null)
+            {
+                var heartbeatElapsed = TicksToMs(nowTicks - _lastHeartbeatTimestamp);
+                if (heartbeatElapsed >= HeartbeatIntervalMs)
+                {
+                    _lastHeartbeatTimestamp = nowTicks;
+                    _onHeartbeat(
+                        $"silenceMs={silenceMs} lastPulseSource={lastSource} deadlineMs={heartbeatDeadlineMs}");
+                }
+            }
+
             // Compute sleep duration: cap at 200 ms, but reduce to the nearest
             // deadline so we never overshoot.
-            var deadlineMs = !_firstPulseReceived
-                ? _firstOutputTimeoutMs - TicksToMs(nowTicks - _startTimestamp)
-                : _inactivityTimeoutMs - TicksToMs(nowTicks - _lastPulseTimestamp);
+            var deadlineMs = heartbeatDeadlineMs;
 
             if (_absoluteCeilingMs > 0)
             {

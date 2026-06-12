@@ -24,7 +24,7 @@
               icu
               openssl
               zlib
-              nono
+              (nono.overrideAttrs (_: { doCheck = false; }))
               uv
               python313
             ];

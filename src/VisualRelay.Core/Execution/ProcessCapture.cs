@@ -113,9 +113,25 @@ internal static class ProcessCapture
     }
 
     /// <summary>
+    /// Single decision point for whether a CPU sample merits a liveness pulse.
+    /// Exposed as internal static so regression tests can exercise the exact
+    /// production algorithm rather than an inlined copy.
+    /// </summary>
+    internal static (bool Pulse, long? NewBaseline) TryDecideCpuPulse(
+        long? baseline, long sampleMs, long epsilonMs)
+    {
+        if (baseline is not null && sampleMs - baseline.Value >= epsilonMs)
+            return (true, sampleMs);
+        return (false, sampleMs);
+    }
+
+    /// <summary>
     /// Pulses onActivity("cpu") whenever the process tree accrues CPU between
     /// samples — the one activity signal the target repo's filesystem cannot
-    /// freeze. Sampling failures are silent: no signal, never fake activity.
+    /// freeze. Sampling failures (null return) invalidate the baseline so
+    /// accumulated CPU during a failure gap can never cross the epsilon and
+    /// emit a spurious pulse. The next successful sample silently
+    /// re-establishes the baseline without signalling.
     /// </summary>
     private static async Task SampleTreeCpuLoopAsync(
         int rootPid, int intervalMs, Action<string> onActivity, CancellationToken ct)
@@ -124,7 +140,7 @@ internal static class ProcessCapture
         // baseline — the first sample can already pulse. (A null-seeded
         // baseline would silently push the earliest pulse to 2× interval,
         // losing the race against small inactivity windows.)
-        long baseline = 0;
+        long? baseline = 0;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -132,10 +148,14 @@ internal static class ProcessCapture
                 await Task.Delay(intervalMs, ct);
                 var sample = ProcessTreeCpuSampler.TrySampleTreeCpuMs(rootPid);
                 if (sample is null)
+                {
+                    baseline = null;
                     continue;
-                if (sample.Value - baseline >= CpuPulseEpsilonMs)
+                }
+                var (pulse, newBaseline) = TryDecideCpuPulse(baseline, sample.Value, CpuPulseEpsilonMs);
+                if (pulse)
                     onActivity("cpu");
-                baseline = sample.Value;
+                baseline = newBaseline;
             }
         }
         catch (OperationCanceledException)
