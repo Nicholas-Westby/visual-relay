@@ -41,7 +41,8 @@ public static class WaitHelpers
     {
         for (var i = 0; i < 50; i++)
         {
-            Dispatcher.UIThread.RunJobs();
+            if (Dispatcher.UIThread.CheckAccess())
+                Dispatcher.UIThread.RunJobs();
             if (condition())
             {
                 return;
@@ -50,7 +51,8 @@ public static class WaitHelpers
             await Task.Delay(20);
         }
 
-        Dispatcher.UIThread.RunJobs();
+        if (Dispatcher.UIThread.CheckAccess())
+            Dispatcher.UIThread.RunJobs();
         Assert.True(condition());
     }
 }
