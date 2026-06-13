@@ -2,12 +2,8 @@ using System.Diagnostics;
 
 namespace VisualRelay.Tests;
 
-/// <summary>
-/// Tests for the <c>_timeout_watchdog</c> function that wraps <c>dotnet test</c>
-/// in <c>./visual-relay test</c>. A hung test suite (deadlocked Avalonia headless
-/// UI tests) would hang forever; the watchdog kills the process tree after a
-/// configurable wall-clock deadline (default 60s).
-/// </summary>
+/// <summary>Tests for the <c>_timeout_watchdog</c> function and its dispatch
+/// in <c>./visual-relay test</c> and <c>./visual-relay check</c>.</summary>
 public sealed class VisualRelayTestCommandTimeoutTests
 {
     private static string RepoRoot => RepoSetup.Root;
@@ -216,11 +212,27 @@ public sealed class VisualRelayTestCommandTimeoutTests
         Assert.Contains("timed out", stderr, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Writes a test script that extracts the <c>_timeout_watchdog</c> function
-    /// from <c>./visual-relay</c>, appends the caller-supplied body, then runs
-    /// it with bash. The script runs with <c>set -euo pipefail</c>.
-    /// </summary>
+    // The check) case must wrap dotnet test in _timeout_watchdog so a
+    // deadlocked suite self-terminates instead of stalling 34+ minutes.
+    [Fact]
+    public void Check_UsesTimeoutWatchdog()
+    {
+        EnsurePrerequisites();
+        var script = File.ReadAllText(VisualRelayPath);
+        var start = script.IndexOf("\n  check)\n", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Could not find '  check)' case in visual-relay.");
+        var after = script[(start + "\n  check)\n".Length)..];
+        var end = after.IndexOf("\n    ;;\n", StringComparison.Ordinal);
+        Assert.True(end >= 0, "Could not find end of check) case.");
+        var body = after[..end];
+        Assert.Contains("_timeout_watchdog", body);
+        Assert.NotNull(
+            Array.Find(body.Split('\n'),
+                line => line.Contains("_timeout_watchdog") && line.Contains("dotnet test")));
+    }
+
+    // Extracts _timeout_watchdog from ./visual-relay into a temp script,
+    // appends the test body, and runs it with bash.
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunWatchdogTestAsync(
         string name,
         string testBody)
@@ -232,9 +244,6 @@ public sealed class VisualRelayTestCommandTimeoutTests
             #!/usr/bin/env bash
             set -euo pipefail
 
-            # Extract and define the _timeout_watchdog function from ./visual-relay.
-            # If the function hasn't been implemented yet, this produces nothing and
-            # the declare -f check will fail.
             eval "$(sed -n '/^_timeout_watchdog()/,/^}/p' '{{escapedVisualRelayPath}}')"
 
             {{testBody}}
@@ -261,13 +270,8 @@ public sealed class VisualRelayTestCommandTimeoutTests
             var stdoutTask = process.StandardOutput.ReadToEndAsync();
             var stderrTask = process.StandardError.ReadToEndAsync();
 
-            // One deadline for BOTH process exit AND output drain. 15 s is
-            // generous headroom above the 2–3 s test timeouts used here. The
-            // drain matters: a correct watchdog kills its timer 'sleep' on
-            // teardown, but if it leaks that orphan it keeps the inherited
-            // stdout/stderr pipe open and the reads below would block for the
-            // full timeout even after the command finished. Bounding the drain
-            // turns that leak into a fast test failure instead of a slow pass.
+            // 15s safety cap: a correct watchdog kills its timer 'sleep' on
+            // teardown; an orphaned 'sleep' would keep the pipe open and block.
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             try
             {

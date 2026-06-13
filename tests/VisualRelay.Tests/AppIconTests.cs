@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Xml.Linq;
 
 namespace VisualRelay.Tests;
@@ -18,6 +19,73 @@ public sealed class AppIconTests
     private static string CsprojPath =>
         Path.Combine(RepoRoot, "src", "VisualRelay.App", "VisualRelay.App.csproj");
 
+    private static string ThisSourcePath =>
+        Path.Combine(RepoRoot, "tests", "VisualRelay.Tests", "AppIconTests.cs");
+
+    // ── FindInPath helper ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves a command name to its full path by searching the directories
+    /// listed in <c>PATH</c>. Returns <c>null</c> when the command is not found.
+    /// </summary>
+    private static string? FindInPath(string command)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrEmpty(path))
+            return null;
+
+        foreach (var dir in path.Split(Path.PathSeparator,
+                     StringSplitOptions.RemoveEmptyEntries))
+        {
+            var fullPath = Path.Combine(dir, command);
+            if (File.Exists(fullPath))
+                return fullPath;
+        }
+
+        return null;
+    }
+
+    // ── FindInPath tests ─────────────────────────────────────────────────
+
+    [Fact]
+    public void AppIcon_FindInPath_FindsExistingCommand()
+    {
+        // Any ubiquitous command on the PATH — bash is required by the
+        // repo's own prerequisites (visual-relay uses /bin/bash).
+        var result = FindInPath("bash");
+        Assert.NotNull(result);
+        Assert.True(File.Exists(result));
+    }
+
+    [Fact]
+    public void AppIcon_FindInPath_ReturnsNullForMissingCommand()
+    {
+        var result = FindInPath("no-such-command-xyzzy-42");
+        Assert.Null(result);
+    }
+
+    // ── Static-analysis guard ────────────────────────────────────────────
+
+    /// <summary>
+    /// The resolution test must not hardcode a fixed path to <c>magick</c>
+    /// (e.g. a Homebrew prefix). It must resolve <c>magick</c> from
+    /// <c>PATH</c> instead, and skip when absent.
+    /// </summary>
+    [Fact]
+    public void AppIcon_DoesNotHardcodeMagickPath()
+    {
+        Assert.True(File.Exists(ThisSourcePath),
+            $"Cannot self-inspect: {ThisSourcePath} not found.");
+
+        var source = File.ReadAllText(ThisSourcePath);
+
+        // Split the literal so this assertion does not match itself.
+        var forbidden = "/opt/homebrew" + "/bin/magick";
+        Assert.DoesNotContain(forbidden, source);
+    }
+
+    // ── Icon content tests ───────────────────────────────────────────────
+
     /// <summary>
     /// The brand icon file must exist in Assets/ so it can be referenced
     /// by the window and the OS/taskbar.
@@ -34,6 +102,7 @@ public sealed class AppIconTests
     /// The .ico must contain multiple resolutions so it renders correctly
     /// in the taskbar (16×16), alt-tab (32×32), file Explorer (48×48, 256×256),
     /// and other OS contexts. Uses ImageMagick identify to inspect the ICO.
+    /// Skips when <c>magick</c> is not on PATH rather than erroring.
     /// </summary>
     [Fact]
     public void AppIcon_ContainsMultipleResolutions()
@@ -41,11 +110,20 @@ public sealed class AppIconTests
         Assert.True(File.Exists(AppIconPath),
             $"app-icon.ico not found at {AppIconPath} — cannot inspect resolutions.");
 
-        var process = new System.Diagnostics.Process
+        var magickPath = FindInPath("magick");
+        if (magickPath is null)
         {
-            StartInfo = new System.Diagnostics.ProcessStartInfo
+            Assert.Skip(
+                "ImageMagick 'magick' not found on PATH. " +
+                "Enter the nix devshell (`nix develop`) or install ImageMagick " +
+                "to run the ICO resolution assertion.");
+        }
+
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
             {
-                FileName = "/opt/homebrew/bin/magick",
+                FileName = magickPath,
                 ArgumentList = { "identify", AppIconPath },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,

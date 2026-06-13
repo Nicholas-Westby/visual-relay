@@ -22,6 +22,7 @@
               git
               bash
               icu
+              imagemagick
               openssl
               zlib
               nono
