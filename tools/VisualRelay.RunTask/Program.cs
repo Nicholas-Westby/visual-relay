@@ -20,6 +20,7 @@ if (filteredArgs.Length < 2)
 
 var rootPath = Path.GetFullPath(filteredArgs[0]);
 var taskId = filteredArgs[1];
+VisualRelay.Core.Init.RelayGitignoreWriter.EnsureWritten(rootPath);
 var config = await RelayConfigLoader.LoadAsync(rootPath);
 var sink = new ConsoleRelayEventSink();
 var dependencies = new RelayDriverDependencies(

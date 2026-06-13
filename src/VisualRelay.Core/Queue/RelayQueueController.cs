@@ -55,6 +55,10 @@ public sealed class RelayQueueController
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
+        // Initialized-before-this-policy repos get the diagnostics gitignore
+        // on their next run; no-op when .relay is absent or the file exists.
+        Init.RelayGitignoreWriter.EnsureWritten(RootPath);
+
         State = RelayQueueState.Refreshing;
         Tasks.Clear();
         foreach (var task in await _repository.ListPendingAsync(cancellationToken))

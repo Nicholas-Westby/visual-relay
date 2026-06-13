@@ -14,6 +14,7 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
+        RelayGitignoreWriter.EnsureWritten(rootPath);
 
         var json = new JsonObject
         {
