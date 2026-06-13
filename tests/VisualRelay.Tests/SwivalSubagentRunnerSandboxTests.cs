@@ -9,8 +9,9 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildArguments_NeverInjectsSandboxFlagsIntoSwival()
     {
-        // swival has no --sandbox/--nono-* flags; the sandbox is applied by
-        // WRAPPING swival in `nono run`, never by passing flags to swival.
+        // swival 1.0.25+ has --sandbox/--nono-* flags, but VR doesn't use them:
+        // it drives `nono run` itself (see BuildLaunchTarget). This test pins that
+        // swival's own args stay sandbox-flag-free; the sandbox is the nono wrapper.
         foreach (var bypass in new[] { true, false })
         {
             var config = TestConfig() with { BypassSandbox = bypass };

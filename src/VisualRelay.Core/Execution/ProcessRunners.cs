@@ -11,7 +11,8 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
 
     // The nono capability-sandbox binary used to wrap swival when the sandbox is
     // enabled (BypassSandbox == false). nono is the WRAPPER command that runs
-    // swival — `nono run <flags> -- swival <args>` — not flags passed to swival.
+    // swival — `nono run <flags> -- swival <args>` — rather than delegating to
+    // swival's own `--sandbox nono` (see BuildArguments for why).
     private const string NonoBinary = "nono";
 
     // The vr-guard profile (~/.config/nono/profiles/vr-guard.json, extends the
@@ -36,10 +37,12 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         _probe = backendProbe ?? (token => BackendReadinessProbe.CheckAsync(ModelBackend.BaseUrl, ProbeTimeout, token));
     }
 
-    // Pure swival arguments. The sandbox is applied by WRAPPING this whole
-    // invocation in `nono run` (see BuildLaunchTarget) — never by passing
-    // sandbox flags to swival (swival has no --sandbox/--nono-* flags; doing so
-    // made nono print its version and exit 1, breaking every call).
+    // Pure swival arguments — no sandbox flags. swival 1.0.25+ does support
+    // `--sandbox nono` (it re-execs itself under nono), but we deliberately drive
+    // `nono run` ourselves (see BuildLaunchTarget) to pin the exact profile and
+    // invocation and avoid swival<->nono version skew. Delegating to swival once
+    // had it re-exec into a mismatched nono that printed its version and exited 1
+    // — that was version skew, not a missing flag.
     internal List<string> BuildArguments(StageInvocation invocation, string? resolvedCommands = null)
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
