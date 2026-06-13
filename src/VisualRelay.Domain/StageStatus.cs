@@ -17,7 +17,8 @@ public sealed record StageStatusEntry(
     double? CostUsd = null,
     int? Turns = null,
     string? Model = null,
-    string? Error = null);
+    string? Error = null,
+    string? TaskInputHash = null);
 
 /// <summary>
 /// Serializer / deserializer for the per-stage status record.

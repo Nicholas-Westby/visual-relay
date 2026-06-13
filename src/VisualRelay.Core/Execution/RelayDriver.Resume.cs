@@ -23,6 +23,11 @@ public sealed partial class RelayDriver
         var firstNonDone = priorStatus.FirstOrDefault(e => e.Status != "Done");
         firstStageToRun = firstNonDone?.Stage ?? (RelayStages.All.Count + 1);
 
+        // Capture prior task-input hash for re-add detection.
+        var priorTaskInputHash = priorStatus
+            .Select(e => e.TaskInputHash)
+            .FirstOrDefault(h => h is not null);
+
         // Load ledger, seals (extracting last seal hash), and manifest.
         var ledgerPath = Path.Combine(taskDirectory, "ledger.md");
         if (File.Exists(ledgerPath))
@@ -55,14 +60,17 @@ public sealed partial class RelayDriver
         }
 
         // Clone prior status; reset Done entries at/after resume point to Waiting.
+        // Preserve the prior TaskInputHash across all entries for re-add detection.
         statusEntries.Clear();
         foreach (var entry in priorStatus)
             statusEntries.Add(entry.Status == "Done" && entry.Stage >= firstStageToRun
-                ? entry with { Status = "Waiting" } : entry);
+                ? entry with { Status = "Waiting", TaskInputHash = priorTaskInputHash ?? entry.TaskInputHash }
+                : entry with { TaskInputHash = priorTaskInputHash ?? entry.TaskInputHash });
         while (statusEntries.Count < RelayStages.All.Count)
         {
             var n = statusEntries.Count + 1;
-            statusEntries.Add(new StageStatusEntry(n, RelayStages.All[n - 1].Name, "Waiting"));
+            statusEntries.Add(new StageStatusEntry(n, RelayStages.All[n - 1].Name, "Waiting",
+                TaskInputHash: priorTaskInputHash));
         }
     }
 }

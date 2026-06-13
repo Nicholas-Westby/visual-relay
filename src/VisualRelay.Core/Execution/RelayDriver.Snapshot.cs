@@ -38,21 +38,24 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Captures a pre-run untracked snapshot. On resume reuses the persisted
     /// first-instance snapshot; on fresh runs captures current state.
+    /// When <paramref name="forceFresh"/> is true, always captures a new
+    /// snapshot even on resume (used when a re-added task starts fresh).
     /// </summary>
     private async Task<IReadOnlySet<string>?> CapturePreRunUntrackedAsync(
         string rootPath,
         string taskDirectory,
-        CancellationToken cancellationToken)
+        bool forceFresh = false,
+        CancellationToken cancellationToken = default)
     {
         IReadOnlySet<string>? preRunUntracked = null;
         if (_options.CreateGitCommit)
         {
             var snapshotPath = Path.Combine(taskDirectory, "pre-run-untracked.txt");
-            if (_options.Resume && File.Exists(snapshotPath))
+            if (_options.Resume && !forceFresh && File.Exists(snapshotPath))
             {
                 preRunUntracked = await ReadPreRunUntrackedAsync(snapshotPath, cancellationToken);
             }
-            else if (_options.Resume)
+            else if (_options.Resume && !forceFresh)
             {
                 preRunUntracked = new HashSet<string>(StringComparer.Ordinal);
             }

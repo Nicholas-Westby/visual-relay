@@ -160,17 +160,4 @@ public sealed partial class RelayDriverResumeTests
         var seals = await File.ReadAllLinesAsync(sealsPath);
         Assert.Equal(11, seals.Length);
     }
-
-    private static async Task RunHappyPath(TestRepository repo, string taskId)
-    {
-        var runner = new ArtifactWritingSubagentRunner();
-        runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
-        var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
-                new TestRunResult(1, "red"),
-                new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
-            RelayDriverOptions.NoGitCommit);
-        Assert.Equal(RelayTaskOutcomeStatus.Committed,
-            (await driver.RunTaskAsync(repo.Root, taskId)).Status);
-    }
 }

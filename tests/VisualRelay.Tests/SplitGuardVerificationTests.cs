@@ -81,7 +81,8 @@ public sealed partial class SplitGuardVerificationTests
     ///     .ActivityWatchdog.cs, .TierWindows.cs, .NonzeroExit.cs) 19
     ///   Installer5LauncherTests.cs                                20
     ///   GitCommitterTests.cs + .CommitMsgHooks.cs                 10
-    ///   RelayDriverResumeTests.cs                                  5
+    ///   RelayDriverResumeTests.cs (+ .CommitGate.cs, .ReAdd.cs,
+    ///     .ReAdd2.cs)                                               9
     ///   BackendConfigGeneratorTests.cs                            14
     ///   GitCommitterAutoIncludeTests.cs + .Snapshot.cs            14
     ///   RelayDriverGitCommitTests.cs (+ .ResumeCommit.cs,
@@ -92,12 +93,12 @@ public sealed partial class SplitGuardVerificationTests
     ///   NoCommitContaminationTests.cs                              3
     ///   PlanPhaseRunnerTests.cs                                    6
     ///                                                           ----
-    ///   Total (oversized families)                               138
+    ///   Total (oversized families)                               142
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 138;
+        const int baseline = 142;
 
         string[] prefixes =
         [

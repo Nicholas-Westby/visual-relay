@@ -31,10 +31,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
-            // ── Pin swival launch profile for the duration of this run ──────────
-            var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(
-                rootPath, taskDirectory, cancellationToken);
-
+            var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);
             var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);
@@ -50,28 +47,30 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 LoadResumeState(taskDirectory, taskId, ledger, manifest, seals,
                     ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount,
                     statusEntries, ref firstStageToRun);
-
-            // ── Commit-gate resume validation ──────────────────────────────────────
+            // Commit-gate resume validation
             (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config,
                 ledger, seals, manifest, previousSeal, taskHash,
                 firstStageToRun, statusEntries, cancellationToken);
-
+            // Re-added task detection & task-input-hash stamping
+            var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count
+                && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId,
+                    input.Markdown, task?.MarkdownPath,
+                    ledger, manifest, seals, ref previousSeal, ref taskHash,
+                    ref sessionCostUsd, ref unknownCostStageCount,
+                    statusEntries, ref firstStageToRun);
+            EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 
+            var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl };
+            if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                DateTimeOffset.UtcNow,
-                "info",
-                "run_start",
-                runId,
-                rootPath,
-                taskId,
-                Data: new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl }), cancellationToken);
+                DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId,
+                Data: runStartData), cancellationToken);
 
-            // Snapshot untracked files before the first agent edit so the commit pass
-            // can distinguish files authored during the run from pre-existing scratch.
+            // Pre-run untracked snapshot for commit pass
             IReadOnlySet<string>? preRunUntracked =
-                await CapturePreRunUntrackedAsync(rootPath, taskDirectory, cancellationToken);
+                await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
 
             var stage10Handled = false;
 
@@ -287,14 +286,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
                 }
             }
-
             return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory,
                 config, task, commitMessages, manifest, taskHash, activeLock.Nonce,
                 preRunUntracked, statusEntries, cancellationToken);
         }
         catch (Exception ex)
         {
-            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0, $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
+            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0,
+                $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
         }
     }
 }
