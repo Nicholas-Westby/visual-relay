@@ -40,7 +40,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         var bp = bypass ? "true" : "false";
         var ie = isBody is not null
             ? "export VISUAL_RELAY_NIX_INSTALLER=REPLACE_S/vr-nix-installer" : ":";
-        var re = reentry ? "export VISUAL_RELAY_NIX_REENTRY=1" : ":";
+        var re = reentry ? "export VISUAL_RELAY_NIX_REENTRY=1" : "export VISUAL_RELAY_NIX_REENTRY=";
         var fn = !nix ? "export _VISUAL_RELAY_FAKE_NO_NIX=1" : ":";
         var ins = isBody is not null
             ? $"cat>\"$S/vr-nix-installer\"<<'X'&&chmod +x \"$S/vr-nix-installer\"\n#!/bin/bash\n{isBody}\nX"
@@ -107,7 +107,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         var dt = dotnet ? Stub("dotnet") : "# dotnet absent";
         var bp = bypass ? "true" : "false";
         var ie = isBody is not null ? "VISUAL_RELAY_NIX_INSTALLER=\"$S/vr-nix-installer\"" : "";
-        var re = reentry ? "VISUAL_RELAY_NIX_REENTRY=1" : "";
+        var re = reentry ? "VISUAL_RELAY_NIX_REENTRY=1" : "VISUAL_RELAY_NIX_REENTRY=";
         var fn = !nix ? "_VISUAL_RELAY_FAKE_NO_NIX=1" : "";
         var ins = isBody is not null
             ? $"cat>\"$S/vr-nix-installer\"<<'X'&&chmod +x \"$S/vr-nix-installer\"\n#!/bin/bash\n{isBody}\nX"
@@ -251,6 +251,7 @@ public sealed class Installer5Bootstrap3LauncherTests
             #!/bin/bash
             export PATH="REPLACE_S:/usr/bin:/bin"
             export VISUAL_RELAY_NIX_INSTALLER="REPLACE_S/vr-nix-installer"
+            export VISUAL_RELAY_NIX_REENTRY=
             exec bash "REPLACE_T/visual-relay" launch
             REOF
             sed -e 's|REPLACE_T|'"$T"'|g' -e 's|REPLACE_S|'"$S"'|g' "$T/run.sh">"$T/runf.sh"

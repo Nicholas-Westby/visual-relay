@@ -72,7 +72,7 @@ public sealed partial class Installer5LauncherTests
             exit 0
             X
             echo "fake" > "$FAKE_TMPL"
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" gen-backend-config \
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= bash "$LAUNCHER" gen-backend-config \
                 "$FAKE_TMPL" 'arg with spaces' 2>/dev/null || true
             for arg in 'gen-backend-config' '/tmp/.vr-test-fake-template.yaml' 'arg with spaces'; do
                 if ! grep -qFx "$arg" "$NIX_LOG"; then
@@ -258,7 +258,7 @@ public sealed partial class Installer5LauncherTests
 
             cd "$TEST_DIR"
             RC=0
-            SELFEDIT_TARGET="$LAUNCHER_COPY" PATH="$STUB_DIR:/usr/bin:/bin" \
+            SELFEDIT_TARGET="$LAUNCHER_COPY" VISUAL_RELAY_NIX_REENTRY=1 PATH="$STUB_DIR:/usr/bin:/bin" \
                 bash "$LAUNCHER_COPY" run-task test-id \
                 >/tmp/.vr-selfedit-out 2>/tmp/.vr-selfedit-err || RC=$?
 

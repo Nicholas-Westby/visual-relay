@@ -63,7 +63,7 @@ public sealed class Installer5Bootstrap2LauncherTests
         var nx = stubNix ? stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
         var uv = stubUv ? stub("uv") : "# uv absent";
         var by = bypass ? "true" : "false";
-        var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "";
+        var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "VISUAL_RELAY_NIX_REENTRY=";
         return $$"""
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-*' EXIT
             rm -f /tmp/.vr-b2-nix-argv /tmp/.vr-b2-backend-ran
@@ -102,6 +102,12 @@ public sealed class Installer5Bootstrap2LauncherTests
     public void Launcher_ContainsNixReentryMarkerGuard()
     {
         Assert.Contains("VISUAL_RELAY_NIX_REENTRY", ReadLauncher(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Launcher_ContainsEnsureDevshell()
+    {
+        Assert.Contains("_ensure_devshell", ReadLauncher(), StringComparison.Ordinal);
     }
 
     // ── 1. missing nono + nix available → re-exec via nix develop ────────
@@ -216,13 +222,42 @@ public sealed class Installer5Bootstrap2LauncherTests
             echo '{"testCmd":"true","bypassSandbox":false}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"
-            PATH="$S:/usr/bin:/bin" bash "$T/visual-relay" run-task 'task-id' 2>/dev/null||true
+            PATH="$S:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= bash "$T/visual-relay" run-task 'task-id' 2>/dev/null||true
             [[ -f /tmp/.vr-b2-rt-nix-argv ]]||{ echo "FAIL: nix not invoked" >&2;exit 1;}
             for a in develop '--command' bash run-task 'task-id'; do
               grep -qFx -- "$a" /tmp/.vr-b2-rt-nix-argv||{ echo "FAIL: '$a' missing">&2;exit 1;}
             done
             """;
         var (ec, _, err) = await RunBashTestAsync("e-runtask-nix", body);
+        if (!string.IsNullOrEmpty(err))
+            Assert.Fail(err);
+        Assert.Equal(0, ec);
+    }
+
+    // ── 6. all tools present + nix available → still re-exec via nix develop ─
+
+    /// <summary>
+    /// When nix is available and the devshell hasn't been entered yet, the
+    /// launcher must unconditionally re-exec into <c>nix develop</c> even when
+    /// every tool (dotnet, nono, uv) is already on PATH.  The devshell is the
+    /// canonical environment — not just a fallback for missing tools.
+    /// </summary>
+    [Fact]
+    public async Task Launch_AllToolsPresent_StillReexecsViaNixDevelop()
+    {
+        var body = SetupB2Test(bypass: false, stubNono: true, stubNix: true, stubUv: true,
+            marker: null, """
+            if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
+              echo "FAIL: nix not invoked when all tools present" >&2; exit 1
+            fi
+            for a in develop '--command' bash launch; do
+              grep -qFx -- "$a" /tmp/.vr-b2-nix-argv || { echo "FAIL: '$a' missing" >&2; exit 1; }
+            done
+            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
+              echo "FAIL: backend ran before gate" >&2; exit 1
+            fi
+            """);
+        var (ec, _, err) = await RunBashTestAsync("f-all-tools-present", body);
         if (!string.IsNullOrEmpty(err))
             Assert.Fail(err);
         Assert.Equal(0, ec);

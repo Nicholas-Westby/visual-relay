@@ -28,7 +28,7 @@ public sealed partial class Installer5LauncherTests
             X
 
             cd "$TEST_DIR"
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init 2>/dev/null || true
+            VISUAL_RELAY_NIX_REENTRY=1 PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init 2>/dev/null || true
 
             # Find the --project argument value (line after --project)
             PROJECT_VAL=$(awk '/^--project$/ { getline; print; exit }' "$DOTNET_LOG")
@@ -69,7 +69,7 @@ public sealed partial class Installer5LauncherTests
             X
 
             cd "$TEST_DIR"
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init 2>/dev/null || true
+            VISUAL_RELAY_NIX_REENTRY=1 ORIGINAL_CWD="$TEST_DIR" PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init 2>/dev/null || true
 
             # The last argument after '--' should be the original cwd (temp dir)
             ROOT_ARG=$(awk '/^--$/ { getline; print; exit }' "$DOTNET_LOG")
@@ -110,7 +110,7 @@ public sealed partial class Installer5LauncherTests
             X
 
             cd "$TEST_DIR"
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init "$EXPLICIT_PATH" 2>/dev/null || true
+            VISUAL_RELAY_NIX_REENTRY=1 PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init "$EXPLICIT_PATH" 2>/dev/null || true
 
             ROOT_ARG=$(awk '/^--$/ { getline; print; exit }' "$DOTNET_LOG")
             if [[ "$ROOT_ARG" != "$EXPLICIT_PATH" ]]; then
@@ -147,7 +147,7 @@ public sealed partial class Installer5LauncherTests
 
             cd "$TEST_DIR"
             # No dotnet on PATH — forces _require_dotnet to fall through to nix
-            PATH="$STUB_DIR:/usr/bin:/bin" bash "$LAUNCHER" init 2>/dev/null || true
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= ORIGINAL_CWD= bash "$LAUNCHER" init 2>/dev/null || true
 
             if [[ ! -f "$NIX_CWD_LOG" ]]; then
                 echo "FAIL: nix stub was not invoked (maybe real dotnet on PATH?)" >&2
