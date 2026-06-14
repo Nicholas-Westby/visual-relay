@@ -30,15 +30,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private DispatcherTimer? _backendMonitor;
     private DispatcherTimer? _elapsedTimer;
     // Multi-task running state: _runningTaskIds tracks every concurrently-running
-    // task; _runningTask / _runningTaskId is the "followed" task in the detail pane.
+    // task; _runningTaskId is the "followed" task in the detail pane.
     private readonly HashSet<string> _runningTaskIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int?> _runningStageNumbers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _runningStageNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _runStartedAt = new(StringComparer.Ordinal);
-    private TaskRowViewModel? _runningTask;
     private string? _runningTaskId;
-    private int? _runningStageNumber;
-    private string? _runningStageName;
 
     public MainWindowViewModel()
         : this(new NullFolderPicker(), new NullFilePicker())

@@ -251,6 +251,27 @@ public sealed class LiveStateViewModelTests
         Assert.Equal(task.MetricsLine, row.MetricsLine);
     }
 
+    [Fact]
+    public void MainWindowViewModel_DoesNotContainDeadRunningTaskScalarFields()
+    {
+        // The scalar fields _runningTask, _runningStageNumber, and
+        // _runningStageName on MainWindowViewModel are write-only dead
+        // code — they are assigned in LiveState but never read anywhere.
+        // The live state is tracked by the Dictionary<> equivalents
+        // (_runningTaskIds, _runningStageNumbers, _runningStageNames).
+        // Removing the dead scalars eliminates InspectCode findings
+        // without changing any observable behavior.
+        var fields = typeof(MainWindowViewModel)
+            .GetFields(System.Reflection.BindingFlags.NonPublic |
+                       System.Reflection.BindingFlags.Instance)
+            .Select(f => f.Name)
+            .ToHashSet();
+
+        Assert.DoesNotContain("_runningTask", fields);
+        Assert.DoesNotContain("_runningStageNumber", fields);
+        Assert.DoesNotContain("_runningStageName", fields);
+    }
+
     private static string ColorOf(IBrush brush)
     {
         var solid = Assert.IsAssignableFrom<ISolidColorBrush>(brush);

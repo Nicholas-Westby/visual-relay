@@ -16,11 +16,8 @@ public partial class MainWindowViewModel
         _runningTaskIds.Clear();
         _runningTaskIds.Add(taskId);
         _runningTaskId = taskId;
-        _runningStageNumber = stageNumber;
-        _runningStageName = stageName;
         _runningStageNumbers[taskId] = stageNumber;
         _runningStageNames[taskId] = stageName;
-        _runningTask = Tasks.FirstOrDefault(task => task.Id == taskId);
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
     }
@@ -28,7 +25,6 @@ public partial class MainWindowViewModel
     private void BeginRunningTask(TaskRowViewModel task)
     {
         _runningTaskIds.Add(task.Id);
-        _runningTask = task;
         _runningTaskId = task.Id;
         _runningStageNumbers[task.Id] = null;
         _runningStageNames[task.Id] = null;
@@ -56,8 +52,6 @@ public partial class MainWindowViewModel
         // If this is the followed task, update detail pane context too.
         if (string.Equals(taskId, _runningTaskId, StringComparison.Ordinal))
         {
-            _runningStageNumber = stageNumber;
-            _runningStageName = stageName;
             NotifyRunningTaskContextChanged();
         }
     }
@@ -75,10 +69,7 @@ public partial class MainWindowViewModel
 
         if (string.Equals(_runningTaskId, taskId, StringComparison.Ordinal))
         {
-            _runningTask = null;
             _runningTaskId = null;
-            _runningStageNumber = null;
-            _runningStageName = null;
         }
 
         NotifyRunningTaskContextChanged();
@@ -93,16 +84,10 @@ public partial class MainWindowViewModel
                 _runningStageNumbers.TryGetValue(task.Id, out var stageNum);
                 _runningStageNames.TryGetValue(task.Id, out var stageName);
                 task.MarkRunning(stageNum, stageName);
-                _runningTask = Tasks.FirstOrDefault(t => t.Id == task.Id);
             }
             // Do NOT mark other running tasks idle — during Phase 1 multiple
             // tasks plan concurrently, each owned by its own _runningTaskIds
             // entry. Only ClearRunningTask marks a specific task idle.
-        }
-
-        if (_runningTaskId is not null)
-        {
-            _runningTask = Tasks.FirstOrDefault(t => t.Id == _runningTaskId);
         }
     }
 

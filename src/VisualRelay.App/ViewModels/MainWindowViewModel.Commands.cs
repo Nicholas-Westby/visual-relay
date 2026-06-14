@@ -55,6 +55,7 @@ public partial class MainWindowViewModel
         catch
         {
             // Toolchain missing, script absent, etc. — leave the dot red.
+            Debug.WriteLine("StartBackendAsync: backend.sh failed to start.");
         }
 
         await RefreshBackendStatusAsync();
