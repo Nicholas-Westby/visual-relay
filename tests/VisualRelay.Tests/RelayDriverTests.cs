@@ -248,6 +248,32 @@ public sealed partial class RelayDriverTests
             $"NEEDS-REVIEW must describe the shape problem; got: {review}");
     }
 
+    [Fact]
+    public async Task WriteManifestAsync_StripsPlusPrefixBeforePersisting()
+    {
+        // The '+' prefix signals "new file to be created" in the agent's JSON.
+        // WriteManifestAsync must strip it before writing manifest.txt so the
+        // persisted file contains clean paths only.
+        var dir = Path.Combine(Path.GetTempPath(), "vr-manifest-strip", Guid.NewGuid().ToString("N"));
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var manifest = new[] { "src/existing.cs", "+src/NewFile.cs", "+tests/NewTest.cs" };
+            await RelayDriver.WriteManifestAsync(dir, manifest, CancellationToken.None);
+
+            var content = await File.ReadAllTextAsync(Path.Combine(dir, "manifest.txt"));
+            Assert.Contains("src/existing.cs", content, StringComparison.Ordinal);
+            Assert.Contains("src/NewFile.cs", content, StringComparison.Ordinal);
+            Assert.Contains("tests/NewTest.cs", content, StringComparison.Ordinal);
+            Assert.DoesNotContain("+", content, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+                Directory.Delete(dir, recursive: true);
+        }
+    }
+
     private static void InitGitRepo(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));

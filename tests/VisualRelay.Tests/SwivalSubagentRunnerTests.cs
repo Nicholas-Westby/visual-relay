@@ -67,6 +67,10 @@ public sealed partial class SwivalSubagentRunnerTests
     public async Task RunAsync_ExtractsJsonWhenStringContainsMarkdownFence()
     {
         using var repo = TestRepository.Create();
+        // The manifest lists src/calculator.py, which must exist on disk
+        // for the stage-4 existence check to pass.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "calculator.py"), "# exists for manifest validation");
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-json",

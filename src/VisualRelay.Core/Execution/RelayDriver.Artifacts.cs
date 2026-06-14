@@ -9,11 +9,14 @@ namespace VisualRelay.Core.Execution;
 
 public sealed partial class RelayDriver
 {
-    private static async Task WriteManifestAsync(string taskDirectory, IReadOnlyList<string> manifest, CancellationToken cancellationToken)
+    internal static async Task WriteManifestAsync(string taskDirectory, IReadOnlyList<string> manifest, CancellationToken cancellationToken)
     {
+        // Strip the '+' prefix from new-file entries — it is only meaningful in the
+        // agent's JSON output for the existence check, not in the persisted manifest.
+        var clean = manifest.Select(p => p.StartsWith('+') ? p[1..] : p).ToArray();
         await File.WriteAllTextAsync(
             Path.Combine(taskDirectory, "manifest.txt"),
-            string.Join(Environment.NewLine, manifest) + Environment.NewLine,
+            string.Join(Environment.NewLine, clean) + Environment.NewLine,
             cancellationToken);
     }
 

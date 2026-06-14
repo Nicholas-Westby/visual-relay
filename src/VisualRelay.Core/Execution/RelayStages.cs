@@ -41,7 +41,7 @@ public static class RelayStages
         "Ideate" => "Frame the task and list 2-3 solution options. Do not edit files.",
         "Research" => "Investigate the codebase; record findings and constraints. Do not edit files.",
         "Diagnose" => "Read application logs and extract evidence that explains the issue.",
-        "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/).",
+        "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/). For files that already exist, use their exact repo-relative path. For files that do not yet exist and will be created, prefix the path with '+' (e.g. '+src/NewFeature.cs').",
         "Author-tests" =>
             "Write tests for the target behavior only. They must fail before implementation. " +
             "Verify your tests compile and fail using ONLY the targeted test command shown in the " +

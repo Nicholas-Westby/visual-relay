@@ -106,7 +106,7 @@ public sealed partial class SplitGuardVerificationTests
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 147;
+        const int baseline = 149;
 
         string[] prefixes =
         [
