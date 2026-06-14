@@ -1,10 +1,10 @@
-using System.Windows.Input;
+using CommunityToolkit.Mvvm.Input;
 
 namespace VisualRelay.App.ViewModels;
 
 public sealed class AttachmentRowViewModel : ViewModelBase
 {
-    public AttachmentRowViewModel(string path, ICommand revealCommand, ICommand removeCommand)
+    public AttachmentRowViewModel(string path, IRelayCommand revealCommand, IRelayCommand removeCommand)
     {
         Path = path;
         RevealCommand = revealCommand;
@@ -12,6 +12,6 @@ public sealed class AttachmentRowViewModel : ViewModelBase
     }
 
     public string Path { get; }
-    public ICommand RevealCommand { get; }
-    public ICommand RemoveCommand { get; }
+    public IRelayCommand RevealCommand { get; }
+    public IRelayCommand RemoveCommand { get; }
 }

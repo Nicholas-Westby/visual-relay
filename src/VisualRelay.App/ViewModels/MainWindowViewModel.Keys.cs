@@ -66,10 +66,6 @@ public partial class MainWindowViewModel
     [NotifyPropertyChangedFor(nameof(HfGateMessage))]
     private bool _isHuggingFaceConfigured;
 
-    /// <summary>Whether the key-setup flyout is currently open.</summary>
-    [ObservableProperty]
-    private bool _isKeySetupOpen;
-
     /// <summary>
     /// Human-readable summary of tier→model resolutions given present keys,
     /// produced by <see cref="BackendConfigGenerator.Generate"/>.
@@ -80,7 +76,7 @@ public partial class MainWindowViewModel
     /// <summary>Remediation message shown when HF_TOKEN is missing.</summary>
     public string HfGateMessage => IsHuggingFaceConfigured
         ? string.Empty
-        : "Set a free Hugging Face token to run tasks — open Keys.";
+        : "Set a free Hugging Face token to run tasks — open Settings.";
 
     /// <summary>Honest pay-as-you-go note displayed under the HF row.</summary>
     public string HfPricingNote =>
@@ -89,14 +85,6 @@ public partial class MainWindowViewModel
     // ═══════════════════════════════════════════════════════════════════════
     // Commands
     // ═══════════════════════════════════════════════════════════════════════
-
-    [RelayCommand]
-    private void ToggleKeySetup()
-    {
-        IsKeySetupOpen = !IsKeySetupOpen;
-        if (IsKeySetupOpen)
-            _ = RefreshKeyStatesAsync();
-    }
 
     [RelayCommand]
     private async Task SaveKeyAsync(ProviderKeyState state)

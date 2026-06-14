@@ -231,7 +231,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         var vm = new MainWindowViewModel { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         Assert.False(vm.IsHuggingFaceConfigured);
-        Assert.Equal("Set a free Hugging Face token to run tasks — open Keys.", vm.HfGateMessage);
+        Assert.Equal("Set a free Hugging Face token to run tasks — open Settings.", vm.HfGateMessage);
 
         KeyEnvFile.Upsert(Path.Combine(repo.Root, "visual-relay", ".env"), "HF_TOKEN", "hf-test-token");
         await vm.RefreshKeyStatesAsync();

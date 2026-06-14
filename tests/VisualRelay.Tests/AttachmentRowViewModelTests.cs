@@ -121,4 +121,31 @@ public sealed class AttachmentRowViewModelTests
 
         Assert.IsAssignableFrom<ViewModelBase>(row);
     }
+
+    [Fact]
+    public void RevealCommand_PropertyType_IsIRelayCommand()
+    {
+        var propType = typeof(AttachmentRowViewModel).GetProperty(
+            nameof(AttachmentRowViewModel.RevealCommand))!.PropertyType;
+        Assert.Equal(typeof(IRelayCommand), propType);
+    }
+
+    [Fact]
+    public void RemoveCommand_PropertyType_IsIRelayCommand()
+    {
+        var propType = typeof(AttachmentRowViewModel).GetProperty(
+            nameof(AttachmentRowViewModel.RemoveCommand))!.PropertyType;
+        Assert.Equal(typeof(IRelayCommand), propType);
+    }
+
+    [Fact]
+    public void Constructor_ParameterTypes_AreIRelayCommand()
+    {
+        var ctor = typeof(AttachmentRowViewModel).GetConstructors().Single();
+        var parameters = ctor.GetParameters();
+        var revealParam = parameters.Single(p => p.Name == "revealCommand");
+        var removeParam = parameters.Single(p => p.Name == "removeCommand");
+        Assert.Equal(typeof(IRelayCommand), revealParam.ParameterType);
+        Assert.Equal(typeof(IRelayCommand), removeParam.ParameterType);
+    }
 }

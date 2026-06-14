@@ -32,6 +32,7 @@ public sealed class StartBackendAsyncTests
 
             // After the fix, the catch block must log a diagnostic
             // message so the swallowed exception is at least traceable.
+            listener.Flush();
             var output = writer.ToString();
             Assert.NotEmpty(output);
         }
