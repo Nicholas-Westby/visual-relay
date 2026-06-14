@@ -80,6 +80,9 @@ public sealed partial class SplitGuardVerificationTests
     /// net zero change to the oversized-family count).
     /// +1 on 2026-06-14 (tasks-dir exclusion: CommitAsync_ExcludesTasksDirFile
     /// FromAutoInclude_WhenCreatedMidRun in GitCommitterAutoIncludeTests.TasksDir.cs).
+    /// +3 on 2026-06-14 (Kimi K2.7 Code upgrade: KimiK2_UpstreamModel_IsKimiK2_7Code,
+    /// KimiK2_GeneratedConfig_ContainsKimiK2_7Code, KimiK2_Template_DoesNotContainK2_6
+    /// in BackendConfigGeneratorTests.KimiK2_7Upstream.cs).
     ///
     /// Baseline composition:
     ///   SwivalSubagentRunnerWatchdogTests.cs (+ .CpuPulse.cs,
@@ -88,7 +91,7 @@ public sealed partial class SplitGuardVerificationTests
     ///   GitCommitterTests.cs + .CommitMsgHooks.cs                 10
     ///   RelayDriverResumeTests.cs (+ .CommitGate.cs, .ReAdd.cs,
     ///     .ReAdd2.cs)                                               9
-    ///   BackendConfigGeneratorTests.cs                            14
+    ///   BackendConfigGeneratorTests.cs                            17
     ///   GitCommitterAutoIncludeTests.cs + .Snapshot.cs            14
     ///   RelayDriverGitCommitTests.cs (+ .ResumeCommit.cs,
     ///     .GitignoredBackstop.cs)                                 10
@@ -98,12 +101,12 @@ public sealed partial class SplitGuardVerificationTests
     ///   NoCommitContaminationTests.cs                              3
     ///   PlanPhaseRunnerTests.cs                                    6
     ///                                                           ----
-    ///   Total (oversized families)                               143
+    ///   Total (oversized families)                               146
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 143;
+        const int baseline = 146;
 
         string[] prefixes =
         [

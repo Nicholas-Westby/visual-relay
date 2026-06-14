@@ -19,6 +19,6 @@ internal static class RelayPricing
             ["claude-haiku"] = new(1.0, 5.0),
             ["gpt-5"] = new(1.25, 10.0),
             ["hf-qwen3-coder-next"] = new(0.30, 1.30),
-            ["kimi-k2"] = new(0.95, 4.0, 0.16, 0.95)
+            ["kimi-k2"] = new(0.95, 4.0, 0.16, 0.95)  // kimi-k2.7-code (2026-06-12); same sticker rate as k2.6
         };
 }
