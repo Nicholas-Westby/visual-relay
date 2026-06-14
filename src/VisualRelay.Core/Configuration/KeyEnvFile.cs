@@ -40,11 +40,14 @@ public static class KeyEnvFile
 
     /// <summary>
     /// Reads an environment variable through <see cref="EnvironmentAccessorOverride"/>
-    /// when set, falling back to the real process environment.
+    /// when set (the sole source), otherwise from the real process environment.
     /// </summary>
-    public static string? GetEnv(string name) =>
-        EnvironmentAccessorOverride?.GetEnvironmentVariable(name)
-        ?? Environment.GetEnvironmentVariable(name);
+    public static string? GetEnv(string name)
+    {
+        if (EnvironmentAccessorOverride is { } ov)
+            return ov.GetEnvironmentVariable(name);
+        return Environment.GetEnvironmentVariable(name);
+    }
 
     // ── Path resolution ──────────────────────────────────────────────────
 

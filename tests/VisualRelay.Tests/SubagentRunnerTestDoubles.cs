@@ -146,3 +146,68 @@ internal sealed class FlagAtStageSubagentRunner : ISubagentRunner
             Error: $"synthetic flag at stage {_flagAtStage}");
     }
 }
+
+/// <summary>
+/// Wraps a <see cref="ScriptedSubagentRunner"/> and returns stage-7 results
+/// from a FIFO queue.  Non-stage-7 calls delegate to the inner runner.
+/// Also captures every <see cref="StageInvocation"/> so tests can assert on
+/// call count and <see cref="StageInvocation.Tier"/> values.
+/// </summary>
+internal sealed class Stage7SequenceRunner : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _inner = new();
+    private readonly Queue<string> _stage7Results = new();
+    private readonly List<StageInvocation> _invocations = [];
+    private readonly Dictionary<int, string> _stageOverrides = new();
+
+    public IReadOnlyList<StageInvocation> Invocations => _invocations;
+
+    /// <summary>
+    /// Enqueue a stage-7 JSON result.  Dequeued in FIFO order on each
+    /// stage-7 call.  When the queue is exhausted, falls back to the
+    /// inner <see cref="ScriptedSubagentRunner"/> (which returns
+    /// <c>{"verdict":"pass","issues":[]}</c>).
+    /// </summary>
+    public void EnqueueStage7Result(string json)
+    {
+        _stage7Results.Enqueue(json);
+    }
+
+    /// <summary>
+    /// Override the JSON result for a specific stage number.
+    /// Takes precedence over the inner scripted runner and the stage-7 queue.
+    /// </summary>
+    public void SetStageResult(int stageNumber, string json)
+    {
+        _stageOverrides[stageNumber] = json;
+    }
+
+    public void SeedHappyPath(string codeFile, string testFile) =>
+        _inner.SeedHappyPath(codeFile, testFile);
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        _invocations.Add(invocation);
+
+        if (invocation.Stage.Number == 7 && _stage7Results.Count > 0)
+        {
+            var json = _stage7Results.Dequeue();
+            return Task.FromResult(new SubagentResult(
+                RawText: $"```json{Environment.NewLine}{json}{Environment.NewLine}```",
+                Json: json,
+                IsValid: true,
+                Error: null));
+        }
+
+        if (_stageOverrides.TryGetValue(invocation.Stage.Number, out var overrideJson))
+        {
+            return Task.FromResult(new SubagentResult(
+                RawText: $"```json{Environment.NewLine}{overrideJson}{Environment.NewLine}```",
+                Json: overrideJson,
+                IsValid: true,
+                Error: null));
+        }
+
+        return _inner.RunAsync(invocation, cancellationToken);
+    }
+}

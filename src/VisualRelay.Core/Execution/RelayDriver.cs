@@ -61,9 +61,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
 
             var stage10Handled = false;
-            // Targeted test command for coding stages (6, 8, 10). Initialised to the
-            // fallback (full testCmd); updated to the manifest-scoped command once stage
-            // 4 populates the manifest. See BuildTargetedTestCommand.
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest);
 
             foreach (var stage in RelayStages.All)
@@ -88,10 +85,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    var testCommandForCodingStage =
-                        stage.Number is 6 or 8 ? targetedTestCommand : null;
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest,
-                        testCommand: testCommandForCodingStage,
+                        testCommand: stage.Number is 6 or 8 ? targetedTestCommand : null,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
@@ -107,6 +102,19 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         return await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
                             contractError ?? "invalid contract JSON", result.RawText, statusEntries, cancellationToken);
                     }
+                    if (stage.Number == 7 && config.ReviewEscalationEnabled)
+                    {
+                        var er = await TryEscalateReviewAsync(json, manifest, rootPath, config, stage,
+                            body, cost, sessionCostUsd, unknownCostStageCount, runId, taskId, taskDirectory,
+                            input, ledger, pinnedSwivalProfileContent, statusEntries, cancellationToken);
+                        if (er.Outcome is { } o)
+                            return o;
+                        body = er.Body;
+                        cost = er.Cost;
+                        sessionCostUsd = er.SessionCostUsd;
+                        unknownCostStageCount = er.UnknownCostStageCount;
+                    }
+
                     if (stage.Number == 4)
                     {
                         manifest.Clear();
@@ -143,15 +151,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         if (hasImpl)
                         {
                             var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-                            var gateResult = await AuthorTestGate.RunAsync(
-                                rootPath,
-                                taskId,
-                                runId,
-                                manifest,
-                                testFiles,
-                                command,
-                                _dependencies.TestRunner,
-                                cancellationToken);
+                            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, cancellationToken);
                             if (gateResult.Error is not null)
                             {
                                 return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken);

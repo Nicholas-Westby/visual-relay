@@ -41,7 +41,10 @@ public static class RelayConfigLoader
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
             CommitProofArtifacts: true,
-            BoostTurnsTaskIds: []);
+            BoostTurnsTaskIds: [],
+            ReviewEscalationEnabled: true,
+            ReviewEscalationManifestFileThreshold: 10,
+            ReviewEscalationManifestLineThreshold: 500);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -148,7 +151,10 @@ public static class RelayConfigLoader
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
-                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds")
+                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
+                ReviewEscalationEnabled = OptionalBool(root, "reviewEscalationEnabled", defaults.ReviewEscalationEnabled),
+                ReviewEscalationManifestFileThreshold = OptionalInt(root, "reviewEscalationManifestFileThreshold", defaults.ReviewEscalationManifestFileThreshold),
+                ReviewEscalationManifestLineThreshold = OptionalInt(root, "reviewEscalationManifestLineThreshold", defaults.ReviewEscalationManifestLineThreshold)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
