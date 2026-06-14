@@ -54,24 +54,39 @@ public sealed partial class RelayDriver
         int stageNumber, string reason, string? details,
         List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
     {
-        Directory.CreateDirectory(taskDirectory);
-        var body = $"{reason}\nstage {stageNumber}\n";
-        if (!string.IsNullOrWhiteSpace(details))
-            body += $"\n{details.Trim()}\n";
-
-        var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
-        if (flaggedStage > 0)
+        try
         {
-            foreach (var e in statusEntries.Where(e => e.Stage < flaggedStage && e.Status == "Running").ToList())
-                MarkStatus(statusEntries, e.Stage, "Done");
-            MarkStatusFlagged(statusEntries, flaggedStage, reason);
-            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+            Directory.CreateDirectory(taskDirectory);
+            var body = $"{reason}\nstage {stageNumber}\n";
+            if (!string.IsNullOrWhiteSpace(details))
+                body += $"\n{details.Trim()}\n";
+
+            var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
+            if (flaggedStage > 0)
+            {
+                foreach (var e in statusEntries.Where(e => e.Stage < flaggedStage && e.Status == "Running").ToList())
+                    MarkStatus(statusEntries, e.Stage, "Done");
+                MarkStatusFlagged(statusEntries, flaggedStage, reason);
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+            }
+
+            await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
+                Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancellation must propagate — never swallow as a flag.
+            throw;
+        }
+        catch
+        {
+            // Defence-in-depth: if directory/file ops fail (e.g. EMFILE),
+            // still return a valid Flagged outcome carrying the original reason.
+            // The NEEDS-REVIEW marker and event sink write are best-effort.
         }
 
-        await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
-        await _dependencies.EventSink.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
-            Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);
     }
 }

@@ -104,8 +104,7 @@ public sealed class RelayQueueController
         DrainCircuitBreaker.ClearHaltMarker(RootPath);
         State = RelayQueueState.Running;
 
-        // Per-drain CancellationTokenSource so a pause/stop request cancels
-        // in-flight planning tasks at the batch level.
+        // Per-drain CTS so pause/stop cancels in-flight planning tasks.
         using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var drainRunId = $"drain-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
 
@@ -214,7 +213,22 @@ public sealed class RelayQueueController
             _lifecycle?.OnExecuteStarted?.Invoke(task.Id);
             DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "start");
 
-            var outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
+            RelayTaskOutcome outcome;
+            try
+            {
+                outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                State = RelayQueueState.Failed;
+                return results;
+            }
+            catch (Exception ex)
+            {
+                // Convert unhandled exception to a flagged outcome so the drain continues.
+                outcome = new RelayTaskOutcome(task.Id, RelayTaskOutcomeStatus.Flagged,
+                    null, null, $"unhandled exception: {ex.GetType().Name}: {ex.Message}");
+            }
             results.Add(outcome);
 
             var taskIdx = IndexOf(task.Id);
@@ -234,7 +248,8 @@ public sealed class RelayQueueController
 
             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
             {
-                WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review");
+                try { WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review"); }
+                catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }
                 Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
             }
 

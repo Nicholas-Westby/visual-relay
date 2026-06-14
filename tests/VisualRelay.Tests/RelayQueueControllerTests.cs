@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -292,4 +293,5 @@ public sealed class RelayQueueControllerTests
         // Aardvark remains for the next drain.
         Assert.Contains(controller.Tasks, t => t.Id == "aardvark");
     }
+
 }
