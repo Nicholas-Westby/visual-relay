@@ -78,8 +78,12 @@ internal static class ProcessCapture
             }
         }
         var output = new StringBuilder();
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) { output.AppendLine(e.Data); onActivity?.Invoke("stdout"); } };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { output.AppendLine(e.Data); onActivity?.Invoke("stderr"); } };
+        // stdout and stderr fire on separate threads; StringBuilder is not thread-safe,
+        // so all appends and reads of `output` must be serialized or it corrupts and
+        // throws ("Destination is too short"), crashing the whole run.
+        var outputLock = new object();
+        process.OutputDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stdout"); } };
+        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stderr"); } };
         process.Start();
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
@@ -99,11 +103,11 @@ internal static class ProcessCapture
             if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(waitTask, Task.Delay(timeout, cancellationToken)) != waitTask)
             {
                 process.Kill(entireProcessTree: true);
-                return (-1, output.ToString(), true);
+                lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
             await waitTask;
-            return (process.ExitCode, output.ToString(), false);
+            lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }
         finally
         {
