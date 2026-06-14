@@ -194,6 +194,23 @@ public sealed partial class SwivalSubagentRunnerTests
         Assert.DoesNotContain("## Verify command", captured, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void BuildPrompt_EveryStage_ContainsWorkingDirectoryFact()
+    {
+        // The harness passes TargetRoot as --base-dir and OS cwd, but the
+        // agent-visible prompt never included it, forcing agents to guess
+        // (cd /home/user, cd /workspace, ...) costing 2-4 turns per stage.
+        // Stage 11 (Commit, Kind="driver") runs in-process with no swival
+        // invocation, so it is excluded from the loop.
+        var root = "/tmp/test-repo";
+        foreach (var stage in RelayStages.All.Where(s => s.Kind != "driver"))
+        {
+            var invocation = SwivalTestHelpers.Invocation(root) with { Stage = stage };
+            var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+            Assert.Contains($"Working directory: {root}", prompt, StringComparison.Ordinal);
+        }
+    }
+
     private static RelayConfig TestConfig() =>
         new(
             "llm-tasks",

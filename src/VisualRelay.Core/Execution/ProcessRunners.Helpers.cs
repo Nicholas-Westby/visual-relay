@@ -104,6 +104,7 @@ public sealed partial class SwivalSubagentRunner
         {
             $"# Relay stage {invocation.Stage.Number}: {invocation.Stage.Name}",
             $"Task: {invocation.TaskName}",
+            $"Working directory: {invocation.TargetRoot}",
             string.Empty,
             "## Task input",
             invocation.TaskInput,
