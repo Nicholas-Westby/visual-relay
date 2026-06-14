@@ -43,11 +43,26 @@ public static class RelayStages
         "Diagnose" => "Read application logs and extract evidence that explains the issue.",
         "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/).",
         "Author-tests" => "Write tests for the target behavior only. They must fail before implementation.",
-        "Implement" => "Implement the change within the manifest files.",
+        "Implement" =>
+            "Implement the change within the manifest files. " +
+            "Verify your changes using ONLY the targeted test command shown in the " +
+            "## Verify command section of the prompt. Do NOT run the project's full " +
+            "check, lint, or format gate (e.g. `./visual-relay check`) during " +
+            "implementation — the harness runs the full gate at the Verify stage.",
         "Review" => "Review the actual diff and classify issues.",
-        "Fix" => "Resolve every blocker and warning from review.",
+        "Fix" =>
+            "Resolve every blocker and warning from review. " +
+            "Verify your changes using ONLY the targeted test command shown in the " +
+            "## Verify command section of the prompt. Do NOT run the project's full " +
+            "check, lint, or format gate during implementation — the harness runs the " +
+            "full gate at the Verify stage.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
-        "Fix-verify" => "Fix failures from the pinned suite. Run the exact verify command shown in the prompt and confirm it passes (exit 0) before returning success — do not run a self-selected subset of tests.",
+        "Fix-verify" =>
+            "Fix failures from the pinned suite. Run the exact verify command shown in " +
+            "the ## Verify command section of the prompt and confirm it passes (exit 0) " +
+            "before returning success. Do NOT run a self-selected subset of tests and do " +
+            "NOT run the project's full check, lint, or format gate — the harness runs " +
+            "the full gate.",
         _ => string.Empty
     };
 }

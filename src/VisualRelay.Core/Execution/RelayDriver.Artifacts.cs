@@ -120,6 +120,24 @@ public sealed partial class RelayDriver
     private static bool IsImpl(string path) =>
         Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
 
+    /// <summary>
+    /// Returns <paramref name="config"/>.TestFileCommand with the <c>{files}</c> token replaced
+    /// by the space-joined non-code files from <paramref name="manifest"/> (i.e. the complement
+    /// of <see cref="IsImpl"/>). Falls back to <paramref name="config"/>.TestCommand when
+    /// <c>testFileCmd</c> contains no <c>{files}</c> token, or when the manifest has no
+    /// non-code files after filtering.
+    /// </summary>
+    internal static string BuildTargetedTestCommand(RelayConfig config, IReadOnlyList<string> manifest)
+    {
+        if (!config.TestFileCommand.Contains("{files}", StringComparison.Ordinal))
+            return config.TestCommand;
+        var testFiles = manifest.Where(f => !IsImpl(f)).ToList();
+        if (testFiles.Count == 0)
+            return config.TestCommand;
+        return config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles),
+            StringComparison.Ordinal);
+    }
+
     private static string WorkingTreeHash(string rootPath, IReadOnlyList<string> manifest)
     {
         var parts = new List<string>();

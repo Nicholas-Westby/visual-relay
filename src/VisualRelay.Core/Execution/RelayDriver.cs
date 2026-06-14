@@ -73,6 +73,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
 
             var stage10Handled = false;
+            // Targeted test command for coding stages (6, 8, 10). Initialised to the
+            // fallback (full testCmd); updated to the manifest-scoped command once stage
+            // 4 populates the manifest. See BuildTargetedTestCommand.
+            var targetedTestCommand = BuildTargetedTestCommand(config, manifest);
 
             foreach (var stage in RelayStages.All)
             {
@@ -96,7 +100,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest, pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+                    var testCommandForCodingStage =
+                        stage.Number is 6 or 8 ? targetedTestCommand : null;
+                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest,
+                        testCommand: testCommandForCodingStage,
+                        pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
                     if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
@@ -125,6 +133,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 clean.Add(e);
                         }
                         manifest.AddRange(clean);
+                        targetedTestCommand = BuildTargetedTestCommand(config, manifest);
                         if (dropped.Count > 0)
                         {
                             var note = dropped.Count == 1
@@ -266,7 +275,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                     rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
                                     previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput,
                                     shouldRunBootstrap ? bootstrapCmd : null,
-                                    config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
+                                    config.GuardCommand, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;
