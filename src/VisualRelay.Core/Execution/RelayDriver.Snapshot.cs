@@ -1,4 +1,7 @@
+using System.Text;
 using System.Text.Json;
+using VisualRelay.Core.Configuration;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
@@ -66,5 +69,48 @@ public sealed partial class RelayDriver
             }
         }
         return preRunUntracked;
+    }
+
+    /// <summary>
+    /// Plan-completeness gate: on coverage gap, issues one corrective retry
+    /// of stage 4 with the gap error in <c>LastTestOutput</c>.  Returns the
+    /// (possibly updated) stage-4 JSON body, updated targeted test command,
+    /// and cost-tracking deltas.
+    /// </summary>
+    private async Task<(string Body, string TargetedTestCommand, double CostDelta, int UnknownDelta)>
+        TryPlanCompletenessRetryAsync(
+            string body, JsonElement json, List<string> manifest,
+            string rootPath, string runId, string taskId, string taskDirectory,
+            RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
+            StringBuilder ledger, string? pinnedSwivalProfileContent,
+            string targetedTestCommand,
+            CancellationToken cancellationToken)
+    {
+        if (_options.LastStageToRun == 4) return (body, targetedTestCommand, 0, 0);
+        var pn = ReadOptionalString(json, "plan");
+        if (pn is null) return (body, targetedTestCommand, 0, 0);
+        var ce = PlanCompletenessGate.CheckCoverage(pn, manifest, input.Markdown);
+        if (ce is null) return (body, targetedTestCommand, 0, 0);
+
+        var ri = BuildInvocation(rootPath, runId, taskId, taskDirectory,
+            config, stage, input, ledger, manifest,
+            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+        var rr = await _dependencies.SubagentRunner.RunAsync(
+            ri with { LastTestOutput = ce }, cancellationToken);
+        double cd = 0; int ud = 0;
+        if (TryEstimateCost(ri.ReportFile) is { } rc) cd = rc.CostUsd; else ud = 1;
+
+        if (rr.IsValid && !string.IsNullOrWhiteSpace(rr.Json)
+            && TryParseContractJson(rr.Json, out var rj, out _))
+        {
+            manifest.Clear();
+            manifest.AddRange(ReadStringArray(rj, "manifest")
+                .Distinct(StringComparer.Ordinal)
+                .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir)));
+            var ttc = BuildTargetedTestCommand(config, manifest);
+            await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
+            return (rr.Json, ttc, cd, ud);
+        }
+        return (body, targetedTestCommand, cd, ud);
     }
 }

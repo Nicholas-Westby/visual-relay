@@ -131,6 +131,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             ledger.AppendLine();
                         }
                         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
+                        (body, targetedTestCommand, var cd, var ud) = await TryPlanCompletenessRetryAsync(body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
+                        sessionCostUsd += cd; unknownCostStageCount += ud;
                     }
 
                     if (stage.Number == 5)
