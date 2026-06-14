@@ -277,4 +277,24 @@ public sealed partial class SplitGuardVerificationTests
 
         Assert.Empty(violations);
     }
+
+    // ── xunit runner parallelism guard ──────────────────────────────────
+
+    /// <summary>
+    /// The suite must serialize all test collections to prevent Avalonia
+    /// headless deadlocks caused by multiple UI test classes racing on the
+    /// single process-global dispatcher.  The canonical xunit v3 mechanism
+    /// is <c>xunit.runner.json</c> with <c>parallelizeTestCollections: false</c>
+    /// committed at the test project root.
+    /// </summary>
+    [Fact]
+    public void XunitRunnerJson_DisablesTestCollectionParallelism()
+    {
+        var configPath = Path.Combine(TestsDir, "xunit.runner.json");
+        Assert.True(File.Exists(configPath),
+            "xunit.runner.json must exist in the test project to serialize test collections");
+        var json = File.ReadAllText(configPath);
+        Assert.Contains("\"parallelizeTestCollections\": false", json,
+            StringComparison.Ordinal);
+    }
 }
