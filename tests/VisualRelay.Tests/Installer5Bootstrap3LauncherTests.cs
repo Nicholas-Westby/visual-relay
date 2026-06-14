@@ -6,7 +6,6 @@ public sealed class Installer5Bootstrap3LauncherTests
     static string R => RepoSetup.Root;
     static string L => Path.Combine(R, "visual-relay");
     static string C() => File.ReadAllText(L);
-
     static async Task<(int EC, string Out, string Err)> Run(string name, string body)
     {
         var s = Path.Combine(Path.GetTempPath(), $"vr-b3-{name}.sh");
@@ -25,10 +24,8 @@ public sealed class Installer5Bootstrap3LauncherTests
         try { return (p.ExitCode, await p.StandardOutput.ReadToEndAsync(), await p.StandardError.ReadToEndAsync()); }
         finally { try { File.Delete(s); } catch { } }
     }
-
     static string Stub(string name, string? body = null) =>
         $"cat>\"$S/{name}\"<<'X'&&chmod +x \"$S/{name}\"\n#!/bin/bash\n{body ?? "exit 0"}\nX";
-
     // Hermetic TTY test: runs launcher in a Python pty with stdin fed in.
     // isBody = installer stub body (null = no stub).
     static string TtyTest(string stdin, bool nono, bool nix, bool dotnet,
@@ -97,7 +94,6 @@ public sealed class Installer5Bootstrap3LauncherTests
             {{assert}}
             """;
     }
-
     // Non-TTY variant: stdin from /dev/null, stdout/stderr separated.
     static string NonTtyTest(bool nono, bool nix, bool dotnet, bool bypass,
         bool reentry, string? isBody, string assert)
@@ -130,9 +126,7 @@ public sealed class Installer5Bootstrap3LauncherTests
             {{assert}}
             """;
     }
-
     // ═══ Static analysis ═══
-
     [Fact] public void Has_FindNix() => Assert.Contains("_find_nix", C(), StringComparison.Ordinal);
     [Fact]
     public void Has_OfferNixInstall()
@@ -149,9 +143,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public void RequireNono_CallsOffer()
     { Assert.Contains("_offer_nix_install", ExtractFn(C(), "_require_nono"), StringComparison.Ordinal); }
-
     // ═══ TTY: y → install + re-exec ═══
-
     [Fact]
     public async Task Tty_Yes_InstallerInvokedAndReexecs()
     {
@@ -177,9 +169,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);
     }
-
     // ═══ Decline tests (n / empty / non-TTY) ═══
-
     static string NoInstallerStub => "echo ran > /tmp/.vr-b3-installer-ran\nexit 0\n";
     static string DeclineAssert(string extra = "") => $$"""
         RC=$(cat /tmp/.vr-b3-rc); O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)
@@ -188,7 +178,6 @@ public sealed class Installer5Bootstrap3LauncherTests
         echo "$O" | grep -q 'install.determinate.systems' || { echo FAIL: missing manual hint >&2; echo "$O" >&2; exit 1; }
         {{extra}}
         """;
-
     [Theory]
     [InlineData("n", true, "")]
     [InlineData("", true, "")]
@@ -202,9 +191,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);
     }
-
     // ═══ Nix already present ═══
-
     [Fact]
     public async Task NixPresent_NoPrompt_ReexecsDirectly()
     {
@@ -219,7 +206,6 @@ public sealed class Installer5Bootstrap3LauncherTests
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);
     }
-
     [Fact]
     public async Task NixPresent_DotnetMissing_NoPrompt_ReexecsDirectly()
     {
@@ -269,7 +255,26 @@ public sealed class Installer5Bootstrap3LauncherTests
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);
     }
-
+    // ═══ No-nix / no-reentry: reaches install-offer, not silent set -e death ═══
+    /// <summary>
+    /// When nix is absent and not in a reentry loop, the launcher must reach
+    /// the install-offer / tool-missing path — not silently exit 1 via set -e
+    /// because _find_nix returned non-zero.  Regression test for the
+    /// local nix_bin; nix_bin="$(_find_nix)" pattern at lines 55/67/115/164.
+    /// </summary>
+    [Fact]
+    public async Task NoNix_NoReentry_ReachesToolMissingNotSilentExit()
+    {
+        var body = NonTtyTest(nono: false, nix: false, dotnet: false,
+            bypass: true, reentry: false, isBody: null, assert: """
+                RC=$(cat /tmp/.vr-b3-rc); O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)
+                (( RC == 127 )) || { echo "FAIL: expected 127 got $RC" >&2; echo "$O" >&2; exit 1; }
+                echo "$O" | grep -q 'install.determinate.systems' || { echo "FAIL: missing install hint" >&2; echo "$O" >&2; exit 1; }
+                """);
+        var (ec, _, err) = await Run("no-nix-no-ree", body);
+        if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
+        Assert.Equal(0, ec);
+    }
     static string ExtractFn(string c, string name)
     {
         var i = c.IndexOf(name + "()", StringComparison.Ordinal);

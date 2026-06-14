@@ -134,7 +134,14 @@ public sealed class AppIconTests
 
         process.Start();
         var stdout = process.StandardOutput.ReadToEnd();
-        process.WaitForExit();
+        var exited = process.WaitForExit(10_000);
+        if (!exited)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+            Assert.Fail(
+                "magick identify did not exit within 10 s — process killed. " +
+                "This may indicate a corrupted ICO or a hung ImageMagick process.");
+        }
 
         Assert.True(process.ExitCode == 0,
             $"magick identify failed (exit {process.ExitCode}). " +
@@ -217,5 +224,45 @@ public sealed class AppIconTests
         Assert.False(File.Exists(OldLogoPath),
             $"The old default icon {OldLogoPath} should have been removed. " +
             "It is replaced by app-icon.ico.");
+    }
+
+    // ── WaitForExit timeout guard ─────────────────────────────────────────
+
+    /// <summary>
+    /// WaitForExit with a timeout must detect a hung process, return false
+    /// within ~15 s wall time, and allow the process to be killed.  Guards
+    /// against the unbounded WaitForExit() that would block the suite
+    /// indefinitely if magick identify hangs.
+    /// </summary>
+    [Fact]
+    public void AppIcon_WaitForExit_TimeoutKillsHungProcess()
+    {
+        var p = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = "/bin/bash",
+                ArgumentList = { "-c", "sleep 9999" },
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            }
+        };
+        p.Start();
+        var sw = Stopwatch.StartNew();
+        var exited = p.WaitForExit(10_000);
+        sw.Stop();
+
+        Assert.False(exited,
+            "WaitForExit(10_000) should return false for 'sleep 9999'.");
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15),
+            $"WaitForExit took {sw.Elapsed.TotalSeconds:F1} s; expected < 15 s.");
+
+        try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }
+        Assert.True(p.WaitForExit(5_000),
+            "Process was not reaped within 5 s after Kill().");
+        Assert.True(p.HasExited,
+            "HasExited should be true after Kill() + WaitForExit().");
     }
 }
