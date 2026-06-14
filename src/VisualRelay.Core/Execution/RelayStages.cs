@@ -58,11 +58,12 @@ public static class RelayStages
             "full gate at the Verify stage.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
         "Fix-verify" =>
-            "Fix failures from the pinned suite. Run the exact verify command shown in " +
-            "the ## Verify command section of the prompt and confirm it passes (exit 0) " +
-            "before returning success. Do NOT run a self-selected subset of tests and do " +
-            "NOT run the project's full check, lint, or format gate — the harness runs " +
-            "the full gate.",
+            "Fix failures from the pinned suite. Verify by running ONLY the command shown " +
+            "in the ## Verify command section of the prompt — run exactly that one command " +
+            "and nothing else — and confirm it passes (exit 0) before returning success. " +
+            "Do NOT run the project's full check, lint, format, build, or screenshot gate " +
+            "(e.g. `./visual-relay check`), and do NOT broaden the command to a fuller " +
+            "gate — the harness runs the full gate at its own stage.",
         _ => string.Empty
     };
 }
