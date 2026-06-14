@@ -156,7 +156,7 @@ public sealed partial class RelayDriver
                 proofFiles.AddRange(additions);
 
             var chain = BuildCommitChain(commitMessages, taskId);
-            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, cancellationToken);
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken);
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();
@@ -168,7 +168,7 @@ public sealed partial class RelayDriver
             if (preRunUntracked is not null)
             {
                 var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-                    rootPath, preRunUntracked, cancellationToken);
+                    rootPath, preRunUntracked, config.TasksDir, cancellationToken);
                 if (missed.Count > 0)
                 {
                     retirement?.Rollback?.Invoke();

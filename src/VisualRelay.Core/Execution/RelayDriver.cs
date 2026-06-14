@@ -43,30 +43,18 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
             var firstStageToRun = 1;
-            if (_options.Resume)
-                LoadResumeState(taskDirectory, taskId, ledger, manifest, seals,
-                    ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount,
-                    statusEntries, ref firstStageToRun);
+            if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             // Commit-gate resume validation
-            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config,
-                ledger, seals, manifest, previousSeal, taskHash,
-                firstStageToRun, statusEntries, cancellationToken);
+            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config, ledger, seals, manifest, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
             // Re-added task detection & task-input-hash stamping
-            var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count
-                && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId,
-                    input.Markdown, task?.MarkdownPath,
-                    ledger, manifest, seals, ref previousSeal, ref taskHash,
-                    ref sessionCostUsd, ref unknownCostStageCount,
-                    statusEntries, ref firstStageToRun);
+            var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 
             var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl };
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
-            await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId,
-                Data: runStartData), cancellationToken);
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
 
             // Pre-run untracked snapshot for commit pass
             IReadOnlySet<string>? preRunUntracked =

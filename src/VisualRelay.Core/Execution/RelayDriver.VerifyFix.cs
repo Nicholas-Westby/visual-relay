@@ -96,14 +96,7 @@ public sealed partial class RelayDriver
                 pinnedSwivalProfileContent: pinnedSwivalProfileContent);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
-            if (cost is not null)
-            {
-                sessionCostUsd += cost.CostUsd;
-            }
-            else
-            {
-                unknownCostStageCount++;
-            }
+            if (cost is not null) { sessionCostUsd += cost.CostUsd; } else { unknownCostStageCount++; }
 
             if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
             {

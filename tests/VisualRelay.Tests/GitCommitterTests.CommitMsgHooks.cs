@@ -34,6 +34,7 @@ public sealed partial class GitCommitterTests
             [],
             commitToken: nonce,
             preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success,
@@ -70,6 +71,7 @@ public sealed partial class GitCommitterTests
             [],
             commitToken: nonce,
             preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success,

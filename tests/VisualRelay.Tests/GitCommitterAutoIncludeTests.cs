@@ -39,6 +39,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -85,6 +86,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -128,6 +130,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -173,6 +176,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -215,6 +219,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -250,6 +255,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);

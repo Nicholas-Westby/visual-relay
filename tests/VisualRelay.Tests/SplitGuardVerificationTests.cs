@@ -66,7 +66,7 @@ public sealed partial class SplitGuardVerificationTests
 
     /// <summary>
     /// The total [Fact] count across the oversized-file families must match
-    /// the baseline of 142: 127 established on 2026-06-10 before any split,
+    /// the baseline of 143: 127 established on 2026-06-10 before any split,
     /// +3 on 2026-06-10 (CpuPulse partial: cpu-pulse survival, true-wedge kill,
     /// killed-output persistence — the fs-blinded-watchdog regression family),
     /// +3 on 2026-06-11 (NonzeroExit: retry-and-persist nonzero swival exits),
@@ -78,6 +78,8 @@ public sealed partial class SplitGuardVerificationTests
     /// +2 then -2 on 2026-06-13 (proof-opt-out: 2 new facts added then
     /// extracted to standalone RelayDriverGitCommitProofOptOutTests.cs,
     /// net zero change to the oversized-family count).
+    /// +1 on 2026-06-14 (tasks-dir exclusion: CommitAsync_ExcludesTasksDirFile
+    /// FromAutoInclude_WhenCreatedMidRun in GitCommitterAutoIncludeTests.TasksDir.cs).
     ///
     /// Baseline composition:
     ///   SwivalSubagentRunnerWatchdogTests.cs (+ .CpuPulse.cs,
@@ -96,12 +98,12 @@ public sealed partial class SplitGuardVerificationTests
     ///   NoCommitContaminationTests.cs                              3
     ///   PlanPhaseRunnerTests.cs                                    6
     ///                                                           ----
-    ///   Total (oversized families)                               142
+    ///   Total (oversized families)                               143
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 142;
+        const int baseline = 143;
 
         string[] prefixes =
         [

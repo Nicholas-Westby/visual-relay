@@ -24,6 +24,7 @@ internal static class GitCommitter
         IReadOnlyList<string> proofFiles,
         string? commitToken,
         IReadOnlySet<string>? preRunUntracked,
+        string? tasksDir,
         CancellationToken cancellationToken)
     {
         var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
@@ -113,7 +114,7 @@ internal static class GitCommitter
             var newAuthored = new List<string>();
             foreach (var path in currentUntracked)
             {
-                if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path))
+                if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path) && !IsUnderTasksDir(rootPath, path, tasksDir))
                 {
                     newAuthored.Add(path);
                 }
@@ -264,6 +265,16 @@ internal static class GitCommitter
         return false;
     }
 
+    private static bool IsUnderTasksDir(string rootPath, string relativePath, string? tasksDir)
+    {
+        if (string.IsNullOrEmpty(tasksDir))
+            return false;
+        var fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
+        var dirFullPath = Path.GetFullPath(Path.Combine(rootPath, tasksDir));
+        return fullPath.StartsWith(dirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(fullPath, dirFullPath, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
     /// Post-commit: returns any untracked, non-internal files absent from
     /// <paramref name="preRunUntracked"/> — files authored but not staged.
@@ -271,13 +282,14 @@ internal static class GitCommitter
     public static async Task<IReadOnlyList<string>> FindUncommittedAuthoredFilesAsync(
         string rootPath,
         IReadOnlySet<string> preRunUntracked,
+        string? tasksDir,
         CancellationToken cancellationToken)
     {
         var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
         var missed = new List<string>();
         foreach (var path in currentUntracked)
         {
-            if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path))
+            if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path) && !IsUnderTasksDir(rootPath, path, tasksDir))
             {
                 missed.Add(path);
             }
@@ -286,10 +298,3 @@ internal static class GitCommitter
         return missed;
     }
 }
-
-internal sealed record GitCommitResult(bool Success, string? CommitSha, string? Error)
-{
-    public static GitCommitResult Committed(string sha) => new(true, sha, null);
-    public static GitCommitResult Failed(string error) => new(false, null, error);
-}
-

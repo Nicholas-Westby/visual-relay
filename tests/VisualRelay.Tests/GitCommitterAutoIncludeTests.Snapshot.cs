@@ -87,12 +87,16 @@ public sealed partial class GitCommitterAutoIncludeTests
         var manifest = new[] { "src/app.cs" };
         var commit = await GitCommitter.CommitAsync(
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
-            commitToken: null, preRunUntracked, CancellationToken.None);
+            commitToken: null, preRunUntracked,
+            tasksDir: null,
+            CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: no authored file should remain untracked.
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-            repo.Root, preRunUntracked, CancellationToken.None);
+            repo.Root, preRunUntracked,
+            tasksDir: null,
+            CancellationToken.None);
         Assert.Empty(missed);
     }
 
@@ -120,13 +124,16 @@ public sealed partial class GitCommitterAutoIncludeTests
         var manifest = new[] { "src/app.cs" };
         var commit = await GitCommitter.CommitAsync(
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
-            commitToken: null, preRunUntracked: null, // null = no auto-include
+            commitToken: null, preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: the authored test file is still untracked.
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-            repo.Root, preRunUntracked, CancellationToken.None);
+            repo.Root, preRunUntracked,
+            tasksDir: null,
+            CancellationToken.None);
         Assert.Contains("tests/new-test.cs", missed);
     }
 
@@ -156,11 +163,14 @@ public sealed partial class GitCommitterAutoIncludeTests
         var commit = await GitCommitter.CommitAsync(
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-            repo.Root, preRunUntracked, CancellationToken.None);
+            repo.Root, preRunUntracked,
+            tasksDir: null,
+            CancellationToken.None);
         // The new test file IS missed (authored but not committed).
         Assert.Contains("tests/new-test.py", missed);
         // The internal artifact is NOT reported as missed.

@@ -50,6 +50,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             firstInstanceSnapshot,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
@@ -97,6 +98,7 @@ public sealed partial class GitCommitterAutoIncludeTests
             [],
             commitToken: null,
             firstInstanceSnapshot,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.True(result.Success, result.Error);

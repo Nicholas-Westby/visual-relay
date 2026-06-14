@@ -26,6 +26,7 @@ public sealed partial class GitCommitterTests
                 repo.Root, "my-task", "abc123",
                 ["feat: add widget"], ["src/app.cs"], [],
                 commitToken: null, preRunUntracked: null,
+                tasksDir: null,
                 CancellationToken.None);
 
             Assert.True(result.Success, $"Expected success, got: {result.Error}");
@@ -56,6 +57,7 @@ public sealed partial class GitCommitterTests
                 repo.Root, "my-task", "abc123",
                 ["feat: add widget"], ["src/app.cs"], [],
                 commitToken: null, preRunUntracked: null,
+                tasksDir: null,
                 CancellationToken.None);
 
             Assert.False(result.Success);
@@ -87,6 +89,7 @@ public sealed partial class GitCommitterTests
                 repo.Root, "my-task", "abc123",
                 ["feat: add widget"], ["src/app.cs"], [],
                 commitToken: null, preRunUntracked: null,
+                tasksDir: null,
                 CancellationToken.None);
 
             Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
@@ -115,6 +118,7 @@ public sealed partial class GitCommitterTests
                 repo.Root, "my-task", "abc123",
                 ["feat: test"], [], [],
                 commitToken: null, preRunUntracked: null,
+                tasksDir: null,
                 CancellationToken.None);
             sw.Stop();
 
@@ -150,8 +154,9 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-            preRunUntracked: null,
-            CancellationToken.None);
+                preRunUntracked: null,
+                tasksDir: null,
+                CancellationToken.None);
 
         Assert.True(result.Success);
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
@@ -186,8 +191,9 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-            preRunUntracked: null,
-            CancellationToken.None);
+                preRunUntracked: null,
+                tasksDir: null,
+                CancellationToken.None);
 
         Assert.True(result.Success);
         var subject = RunGit(repo.Root, "log -1 --pretty=%s");
@@ -216,14 +222,14 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-            preRunUntracked: null,
-            CancellationToken.None);
+                preRunUntracked: null,
+                tasksDir: null,
+                CancellationToken.None);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
         Assert.Contains("commit rejected", result.Error);
     }
-
 
     // ── gitignore rejection at stage 11 backstop ─────────────────────
 
@@ -245,6 +251,7 @@ public sealed partial class GitCommitterTests
             repo.Root, "my-task", "abc123",
             ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
+            tasksDir: null,
             CancellationToken.None);
 
         Assert.False(result.Success);
@@ -270,7 +277,6 @@ public sealed partial class GitCommitterTests
         RunGit(root, $"commit -m \"{message}\"");
     }
 
-
     private static string RunGit(string rootPath, string arguments)
     {
         var startInfo = new ProcessStartInfo("/bin/sh", $"-c \"git -C '{rootPath}' {arguments}\"")
@@ -290,5 +296,4 @@ public sealed partial class GitCommitterTests
         Assert.True(process.ExitCode == 0, stderr);
         return stdout;
     }
-
 }
