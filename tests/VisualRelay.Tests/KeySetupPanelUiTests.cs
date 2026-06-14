@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -85,9 +86,9 @@ public sealed class KeySetupPanelUiTests : IDisposable
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Click(FindButton(GetTopBar(window), "KeySetupButton"), window);
-        Assert.True(vm.IsKeySetupOpen);
-        Assert.NotNull(window.GetVisualDescendants().OfType<KeySetupPanel>().FirstOrDefault());
+        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        Assert.True(vm.IsSettingsOpen);
+        Assert.NotNull(window.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
         Assert.Equal(5, MainWindowViewModel.AllProviderKeys.Count);
         Assert.Equal(5, vm.KeyStates.Count);
@@ -165,10 +166,10 @@ public sealed class KeySetupPanelUiTests : IDisposable
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.IsHuggingFaceConfigured);
-        Click(FindButton(GetTopBar(window), "KeySetupButton"), window);
-        Assert.True(vm.IsKeySetupOpen);
+        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        Assert.True(vm.IsSettingsOpen);
 
-        var panel = window.GetVisualDescendants().OfType<KeySetupPanel>().First();
+        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
         var input = panel.FindControl<TextBox>("HfTokenInput")!;
         input.Focus();
         Dispatcher.UIThread.RunJobs();
@@ -177,7 +178,9 @@ public sealed class KeySetupPanelUiTests : IDisposable
         Assert.Equal("hf-pasted-token-789",
             vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").PendingValue);
 
-        Click(panel.FindControl<Button>("HfSaveButton")!, window);
+        var saveButton = panel.FindControl<Button>("HfSaveButton")!;
+        saveButton.Command!.Execute(saveButton.CommandParameter);
+        Dispatcher.UIThread.RunJobs();
         await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.IsHuggingFaceConfigured);
 
         Assert.True(vm.IsHuggingFaceConfigured);

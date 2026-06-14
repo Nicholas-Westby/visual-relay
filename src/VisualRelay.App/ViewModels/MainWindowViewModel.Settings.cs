@@ -45,8 +45,10 @@ public partial class MainWindowViewModel
     private bool _isSettingsOpen;
 
     [RelayCommand]
-    private void ToggleSettings()
+    private async Task ToggleSettings()
     {
         IsSettingsOpen = !IsSettingsOpen;
+        if (IsSettingsOpen)
+            await RefreshKeyStatesAsync();
     }
 }

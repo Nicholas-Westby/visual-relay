@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Threading;
@@ -75,6 +76,26 @@ public sealed class SettingsPanelUiTests : IDisposable
             json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
 
+    /// <summary>
+    /// Seeds the fake environment accessor with XDG_CONFIG_HOME pointing to
+    /// <paramref name="repo"/>.Root, writes the given <paramref name="content"/>
+    /// to the <c>.env</c> file under <c>visual-relay/</c>, and returns a
+    /// disposable that clears XDG_CONFIG_HOME from the accessor.
+    /// </summary>
+    private IDisposable SeedUserEnv(TestRepository repo, string content)
+    {
+        var dir = Path.Combine(repo.Root, "visual-relay");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, ".env"), content);
+        _env["XDG_CONFIG_HOME"] = repo.Root;
+        return new EnvVarRestore("XDG_CONFIG_HOME", _env);
+    }
+
+    private sealed class EnvVarRestore(string name, DictionaryEnvironmentAccessor env) : IDisposable
+    {
+        public void Dispose() => env[name] = null;
+    }
+
     [AvaloniaFact]
     public async Task CogOpensSettingsPanel()
     {
@@ -133,5 +154,115 @@ public sealed class SettingsPanelUiTests : IDisposable
         // Other keys must be preserved.
         Assert.Equal("dotnet test", result.Config.TestCommand);
         Assert.Empty(result.Config.LogSources);
+    }
+
+    // ── Consolidated Settings panel tests ────────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task SettingsPanelContainsScrollViewerWithNoHorizontalScroll()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: true);
+        repo.WriteTask("alpha", "# Alpha\n");
+        using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        Assert.True(vm.IsSettingsOpen);
+
+        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var scrollViewer = panel.FindControl<ScrollViewer>("SettingsScrollViewer");
+        Assert.NotNull(scrollViewer);
+        Assert.Equal(ScrollBarVisibility.Disabled, scrollViewer.HorizontalScrollBarVisibility);
+    }
+
+    [AvaloniaFact]
+    public async Task SettingsPanelShowsBothCommitProofCheckboxAndProviderKeyRows()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: true);
+        repo.WriteTask("alpha", "# Alpha\n");
+        using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        Assert.True(vm.IsSettingsOpen);
+
+        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+
+        // Commit proof checkbox must still be present.
+        var commitCheckBox = panel.FindControl<CheckBox>("CommitProofCheckBox");
+        Assert.NotNull(commitCheckBox);
+        Assert.True(commitCheckBox.IsChecked);
+
+        // Provider key rows must be present — the named HF controls are the
+        // canonical smoke test that the key rows were copied into SettingsPanel.
+        var hfInput = panel.FindControl<TextBox>("HfTokenInput");
+        Assert.NotNull(hfInput);
+
+        var hfSave = panel.FindControl<Button>("HfSaveButton");
+        Assert.NotNull(hfSave);
+    }
+
+    [Fact]
+    public async Task ToggleSettingsRefreshesKeyStatesOnOpen()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: true);
+        using var r = SeedUserEnv(repo, "HF_TOKEN=hf-from-env-file\nDEEPSEEK_API_KEY=sk-deepseek-999\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+
+        // Before toggling settings, key states should already be populated
+        // by LoadInitialAsync, but ToggleSettings should refresh them again.
+        // Clear them to verify ToggleSettings repopulates.
+        vm.KeyStates.Clear();
+        Assert.Empty(vm.KeyStates);
+
+        vm.ToggleSettingsCommand.Execute(null);
+        Assert.True(vm.IsSettingsOpen);
+
+        // KeyStates must be repopulated after ToggleSettings opens the panel.
+        Assert.Equal(5, vm.KeyStates.Count);
+        Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").IsSet);
+        Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "DEEPSEEK_API_KEY").IsSet);
+    }
+
+    [AvaloniaFact]
+    public async Task KeySetupButtonIsAbsentFromTopBar()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: true);
+        repo.WriteTask("alpha", "# Alpha\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var topBar = GetTopBar(window);
+        // The separate "Keys" button must be gone after consolidation.
+        var keyButton = topBar.FindControl<Button>("KeySetupButton");
+        Assert.Null(keyButton);
+
+        // The Settings cog must still be present.
+        var settingsButton = topBar.FindControl<Button>("SettingsButton");
+        Assert.NotNull(settingsButton);
     }
 }
