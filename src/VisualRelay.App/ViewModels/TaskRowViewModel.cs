@@ -33,7 +33,7 @@ public sealed class TaskRowViewModel : ViewModelBase
         Task = task;
     }
 
-    public RelayTaskItem Task { get; }
+    public RelayTaskItem Task { get; internal set; }
     public string Id => Task.Id;
     public string MarkdownPath => Task.MarkdownPath;
     public string ReviewReason => Task.ReviewReason ?? string.Empty;

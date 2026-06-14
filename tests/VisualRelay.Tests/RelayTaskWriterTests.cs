@@ -8,14 +8,15 @@ public sealed class RelayTaskWriterTests
     // ── CreateAsync ──────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateAsync_WritesFlatTaskFileAndReturnsPath()
+    public async Task CreateAsync_WritesNestedTaskFileAndReturnsPath()
     {
         using var repo = TestRepository.Create();
         var path = await RelayTaskWriter.CreateAsync(repo.Root, "hello-world", "# Hello\n\nWorld.");
 
         Assert.NotNull(path);
         Assert.True(File.Exists(path));
-        Assert.EndsWith("hello-world.md", path, StringComparison.Ordinal);
+        Assert.EndsWith($"hello-world{Path.DirectorySeparatorChar}hello-world.md", path, StringComparison.Ordinal);
+        Assert.True(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "hello-world")));
         Assert.Equal("# Hello\n\nWorld.", await File.ReadAllTextAsync(path));
     }
 
@@ -27,6 +28,7 @@ public sealed class RelayTaskWriterTests
         var path = await RelayTaskWriter.CreateAsync(repo.Root, "new-task", "# Body");
 
         Assert.True(Directory.Exists(Path.Combine(repo.Root, "llm-tasks")));
+        Assert.True(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "new-task")));
         Assert.True(File.Exists(path));
     }
 
@@ -55,12 +57,28 @@ public sealed class RelayTaskWriterTests
     }
 
     [Fact]
-    public async Task CreateAsync_ThrowsWhenSlugCollidesWithExistingFlatFile()
+    public async Task CreateAsync_ThrowsWhenSlugCollidesWithExistingNestedTask()
     {
         using var repo = TestRepository.Create();
+        // First CreateAsync now writes a nested layout, so the collision
+        // is detected via Directory.Exists on the <slug>/ directory.
         await RelayTaskWriter.CreateAsync(repo.Root, "collide", "# First");
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => RelayTaskWriter.CreateAsync(repo.Root, "collide", "# Second"));
+    }
+
+    [Fact]
+    public async Task CreateAsync_ThrowsWhenSlugCollidesWithExistingFlatFile()
+    {
+        using var repo = TestRepository.Create();
+        // Create a flat <slug>.md directly (bypass CreateAsync) so we
+        // exercise the File.Exists collision path in ValidateSlug.
+        var tasksDir = Path.Combine(repo.Root, "llm-tasks");
+        Directory.CreateDirectory(tasksDir);
+        await File.WriteAllTextAsync(Path.Combine(tasksDir, "flat-collide.md"), "# Flat");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => RelayTaskWriter.CreateAsync(repo.Root, "flat-collide", "# Second"));
     }
 
     [Fact]
@@ -82,7 +100,7 @@ public sealed class RelayTaskWriterTests
     {
         using var repo = TestRepository.Create();
         var path = await RelayTaskWriter.CreateAsync(repo.Root, "mutable", "# Original");
-        var task = new RelayTaskItem("mutable", path, Path.GetDirectoryName(path)!, false, []);
+        var task = new RelayTaskItem("mutable", path, Path.GetDirectoryName(path)!, true, []);
 
         await RelayTaskWriter.SaveAsync(task, "# Updated\n\nNew body.");
 
@@ -110,8 +128,12 @@ public sealed class RelayTaskWriterTests
     public async Task PromoteToNestedAsync_MovesFlatMdIntoFolderNamedAfterSlug()
     {
         using var repo = TestRepository.Create();
-        var flatPath = await RelayTaskWriter.CreateAsync(repo.Root, "promotable", "# Promotable");
-        var flatTask = new RelayTaskItem("promotable", flatPath, Path.GetDirectoryName(flatPath)!, false, []);
+        // Write a flat file directly (bypass CreateAsync which now writes nested).
+        var tasksDir = Path.Combine(repo.Root, "llm-tasks");
+        Directory.CreateDirectory(tasksDir);
+        var flatPath = Path.Combine(tasksDir, "promotable.md");
+        await File.WriteAllTextAsync(flatPath, "# Promotable");
+        var flatTask = new RelayTaskItem("promotable", flatPath, tasksDir, false, []);
 
         var newMarkdownPath = await RelayTaskWriter.PromoteToNestedAsync(repo.Root, flatTask);
 
@@ -166,8 +188,11 @@ public sealed class RelayTaskWriterTests
     public async Task AddAttachmentAsync_PromotesFlatTaskToNestedBeforeCopying()
     {
         using var repo = TestRepository.Create();
-        var flatPath = await RelayTaskWriter.CreateAsync(repo.Root, "flat-to-grow", "# Flat");
+        // Write a flat file directly (bypass CreateAsync which now writes nested).
         var tasksDir = Path.Combine(repo.Root, "llm-tasks");
+        Directory.CreateDirectory(tasksDir);
+        var flatPath = Path.Combine(tasksDir, "flat-to-grow.md");
+        await File.WriteAllTextAsync(flatPath, "# Flat");
         var flatTask = new RelayTaskItem("flat-to-grow", flatPath, tasksDir, false, []);
 
         var sourceFile = Path.Combine(repo.Root, "extra.txt");

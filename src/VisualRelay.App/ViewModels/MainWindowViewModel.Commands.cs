@@ -176,6 +176,16 @@ public partial class MainWindowViewModel
         }
 
         ResetStages();
+
+        // Lazily promote active flat tasks to the nested subfolder layout
+        // so the convention spreads incrementally without a bulk migration.
+        if (!task.Task.IsNested && !task.Task.IsArchived)
+        {
+            var newPath = await RelayTaskWriter.PromoteToNestedAsync(RootPath, task.Task);
+            var newDir = Path.GetDirectoryName(newPath)!;
+            task.Task = task.Task with { IsNested = true, MarkdownPath = newPath, TaskDirectory = newDir };
+        }
+
         var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task);
         SelectedTaskMarkdown = input.Markdown;
         SelectedTaskContext = input.Context ?? string.Empty;

@@ -68,7 +68,14 @@ public static class RelayTaskWriter
     }
 
     /// <summary>
-    /// Creates a flat task file: <c>llm-tasks/&lt;slug&gt;.md</c>.
+    /// Returns the canonical nested markdown path:
+    /// <c>llm-tasks/&lt;slug&gt;/&lt;slug&gt;.md</c>.
+    /// </summary>
+    private static string BuildNestedMarkdownPath(string tasksDir, string slug) =>
+        Path.Combine(tasksDir, slug, $"{slug}.md");
+
+    /// <summary>
+    /// Creates a nested task file: <c>llm-tasks/&lt;slug&gt;/&lt;slug&gt;.md</c>.
     /// Returns the full path to the written file.
     /// Throws <see cref="ArgumentException"/> or <see cref="InvalidOperationException"/>
     /// on invalid input so callers can surface the message.
@@ -93,7 +100,9 @@ public static class RelayTaskWriter
         var tasksDir = Path.Combine(rootPath, "llm-tasks");
         Directory.CreateDirectory(tasksDir);
 
-        var filePath = Path.Combine(tasksDir, $"{slug}.md");
+        var nestedDir = Path.Combine(tasksDir, slug);
+        Directory.CreateDirectory(nestedDir);
+        var filePath = BuildNestedMarkdownPath(tasksDir, slug);
         await File.WriteAllTextAsync(filePath, markdown);
         return filePath;
     }
@@ -123,7 +132,7 @@ public static class RelayTaskWriter
         var nestedDir = Path.Combine(tasksDir, task.Id);
         Directory.CreateDirectory(nestedDir);
 
-        var newMarkdownPath = Path.Combine(nestedDir, $"{task.Id}.md");
+        var newMarkdownPath = BuildNestedMarkdownPath(tasksDir, task.Id);
 
         // Read existing content before we delete the flat file.
         var content = await File.ReadAllTextAsync(task.MarkdownPath);

@@ -52,9 +52,11 @@ public sealed class NewTaskAuthoringTests
         // ── Assert: dialog closed ──
         Assert.False(viewModel.IsNewTaskDialogOpen);
 
-        // ── Assert: task file exists on disk ──
-        var expectedPath = Path.Combine(repo.Root, "llm-tasks",
-            "implement-feature-x.md");
+        // ── Assert: task file exists on disk (nested layout) ──
+        var expectedDir = Path.Combine(repo.Root, "llm-tasks", "implement-feature-x");
+        var expectedPath = Path.Combine(expectedDir, "implement-feature-x.md");
+        Assert.True(Directory.Exists(expectedDir),
+            $"Expected task directory at {expectedDir}");
         Assert.True(File.Exists(expectedPath),
             $"Expected task file at {expectedPath}");
 
