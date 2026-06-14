@@ -36,6 +36,7 @@ LOG_FILE="${SCRATCH}/litellm.log"
 
 READY_TIMEOUT="${VISUAL_RELAY_BACKEND_TIMEOUT:-30}" # seconds to wait for readiness
 STOP_GRACE="${VISUAL_RELAY_BACKEND_STOP_GRACE:-10}" # seconds before SIGKILL
+GEN_CONFIG_TIMEOUT="${VISUAL_RELAY_GEN_CONFIG_TIMEOUT:-15}" # seconds before config gen falls back to static
 
 log() { echo "backend: $*" >&2; }
 
@@ -147,6 +148,52 @@ load_env_file_if_unset() {
   done < "${file}"
 }
 
+# Bound the gen-backend-config invocation so a wedged generator (slow/missing
+# nix, dotnet restore stall, FS hang) cannot block backend startup indefinitely.
+# Prefers GNU coreutils `timeout`; falls back to a background watchdog that
+# mirrors _timeout_watchdog in the visual-relay launcher.
+_gen_config_with_timeout() {
+  local out_file="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=1s "${GEN_CONFIG_TIMEOUT}" "${REPO_ROOT}/visual-relay" gen-backend-config "$@" \
+      >"${out_file}" 2>/tmp/.vr-gen-stderr
+    local rc=$?
+    # When --kill-after fires SIGKILL, timeout may exit 137 (128+9) on some
+    # GNU coreutils versions.  Normalize to 124 so the caller's timeout check
+    # fires and the static-config fallback engages.
+    if (( rc == 137 )); then
+      rc=124
+    fi
+    return $rc
+  fi
+  # Fallback: background watchdog.
+  local cmd_pid watchdog_pid cmd_rc flag_file
+  flag_file="$(mktemp 2>/dev/null || echo "/tmp/.vr-gen-config-watchdog-$$")"
+  set -m
+  "${REPO_ROOT}/visual-relay" gen-backend-config "$@" >"${out_file}" 2>/tmp/.vr-gen-stderr &
+  cmd_pid=$!
+  (
+    sleep "${GEN_CONFIG_TIMEOUT}"
+    if kill -0 "$cmd_pid" 2>/dev/null; then
+      echo "timed out" > "$flag_file"
+      kill -TERM -- -"$cmd_pid" 2>/dev/null || true
+      sleep 1
+      kill -KILL -- -"$cmd_pid" 2>/dev/null || true
+    fi
+  ) &
+  watchdog_pid=$!
+  cmd_rc=0
+  wait "$cmd_pid" 2>/dev/null || cmd_rc=$?
+  pkill -P "$watchdog_pid" 2>/dev/null || true
+  kill -- -"$watchdog_pid" 2>/dev/null || kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  if [[ -s "$flag_file" ]]; then
+    cmd_rc=124
+  fi
+  rm -f "$flag_file"
+  return "$cmd_rc"
+}
+
 # --- Subcommands -------------------------------------------------------------
 
 cmd_start() {
@@ -201,11 +248,16 @@ cmd_start() {
 
     # Generate key-aware config from present provider keys; static fallback if unavailable.
     local generated="${SCRATCH}/litellm-config.generated.yaml"
-    if "${REPO_ROOT}/visual-relay" gen-backend-config "${CONFIG}" >"${generated}" 2>/tmp/.vr-gen-stderr; then
+    if _gen_config_with_timeout "${generated}" "${CONFIG}"; then
       CONFIG="${generated}"
       [[ -s /tmp/.vr-gen-stderr ]] && log "$(head -n1 /tmp/.vr-gen-stderr)"
     else
-      log "gen-backend-config unavailable; using static config"
+      local gen_rc=$?
+      if (( gen_rc == 124 )); then
+        log "gen-backend-config timed out after ${GEN_CONFIG_TIMEOUT}s; using static config"
+      else
+        log "gen-backend-config unavailable (exit ${gen_rc}); using static config"
+      fi
     fi
     rm -f /tmp/.vr-gen-stderr
 

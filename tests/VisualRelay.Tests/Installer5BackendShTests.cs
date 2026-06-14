@@ -151,4 +151,42 @@ public sealed partial class Installer5BackendShTests
             content, StringComparison.Ordinal);
     }
 
+    // ── 5. Gen-backend-config timeout ────────────────────────────────────
+
+    [Fact]
+    public void BackendSh_HasGenConfigTimeout()
+    {
+        var content = ReadBackendSh();
+
+        // GEN_CONFIG_TIMEOUT must be defined with a default value so the
+        // config-generation step is always bounded.
+        Assert.Contains("GEN_CONFIG_TIMEOUT", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackendSh_GenConfigTimeoutIsOverridable()
+    {
+        var content = ReadBackendSh();
+
+        // The timeout must be overridable via VISUAL_RELAY_GEN_CONFIG_TIMEOUT
+        // so callers (CI, operators) can tune it.
+        Assert.Contains("VISUAL_RELAY_GEN_CONFIG_TIMEOUT", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BackendSh_HasTimeoutGuardForGenBackendConfig()
+    {
+        var content = ReadBackendSh();
+
+        // The gen-backend-config invocation must be wrapped with some form of
+        // timeout guard — either the GNU coreutils 'timeout' command or a
+        // dedicated bash helper — so a wedged generator cannot hang startup.
+        var hasTimeoutGuard =
+            content.Contains("timeout \"${GEN_CONFIG_TIMEOUT}\"", StringComparison.Ordinal) ||
+            content.Contains("_gen_config_with_timeout", StringComparison.Ordinal) ||
+            content.Contains("timeout \"${GEN_CONFIG_TIMEOUT}\" \"${REPO_ROOT}", StringComparison.Ordinal);
+        Assert.True(hasTimeoutGuard,
+            "backend.sh must wrap gen-backend-config with a timeout guard (timeout command or _gen_config_with_timeout helper)");
+    }
+
 }
