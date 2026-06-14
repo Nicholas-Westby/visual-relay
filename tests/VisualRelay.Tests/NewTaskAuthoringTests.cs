@@ -3,6 +3,7 @@ using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
 
+[Collection("Headless")]
 public sealed class NewTaskAuthoringTests
 {
     /// <summary>

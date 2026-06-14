@@ -10,6 +10,7 @@ using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.Tests;
 
+[Collection("Headless")]
 public sealed class ConfigInitEmptyStateUiTests
 {
     [AvaloniaFact]

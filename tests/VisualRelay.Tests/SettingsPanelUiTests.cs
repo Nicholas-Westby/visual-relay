@@ -14,7 +14,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-[Collection("Environment")]
+[Collection("Headless")]
 public sealed class SettingsPanelUiTests : IDisposable
 {
     private readonly DictionaryEnvironmentAccessor _env = new();

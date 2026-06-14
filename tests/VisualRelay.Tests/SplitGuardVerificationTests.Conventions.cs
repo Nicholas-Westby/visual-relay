@@ -19,10 +19,9 @@ public sealed partial class SplitGuardVerificationTests
             .Where(f =>
             {
                 var name = Path.GetFileName(f);
-                // This file itself matches the companion pattern but its own
-                // source contains "[Collection(" string literals used in
-                // assertions — exclude it so the check doesn't fail on itself.
-                if (name == "SplitGuardVerificationTests.Conventions.cs") return false;
+                // Exclude guard companion files that contain "[Collection(" string
+                // literals in assertions — they would false-positive this check.
+                if (name.StartsWith("SplitGuardVerificationTests.", StringComparison.Ordinal)) return false;
                 var idx = name.IndexOf("Tests.", StringComparison.Ordinal);
                 if (idx < 0) return false;
                 var after = name[(idx + "Tests.".Length)..];
@@ -67,18 +66,33 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>
-    /// Env-mutating test files must carry [Collection("Environment")] so their
-    /// process-global <see cref="System.Environment.SetEnvironmentVariable"/>
-    /// calls are serialized and cannot race with parallel env-reading tests.
-    /// </summary>
+    // Only KeyEnvFileTests.cs remains in "Environment" — the two UI classes moved to "Headless".
     [Fact]
     public void EnvironmentCollectionFiles_HaveCollectionAttribute()
     {
+        foreach (var fileName in new[] { "KeyEnvFileTests.cs" })
+        {
+            var fullPath = Path.Combine(TestsDir, fileName);
+            Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
+            var content = File.ReadAllText(fullPath);
+            Assert.Contains("[Collection(\"Environment\")]", content, StringComparison.Ordinal);
+            Assert.Contains("public sealed", content, StringComparison.Ordinal);
+        }
+    }
+
+    // All six Avalonia headless classes must be in "Headless" — serializes them on the
+    // single process-global dispatcher; non-headless collections run in parallel.
+    [Fact]
+    public void HeadlessCollectionFiles_HaveCollectionAttribute()
+    {
         string[] expected =
         [
-            "KeyEnvFileTests.cs",
+            "ActivityColumnItemsPanelTests.cs",
+            "AddAttachmentsTests.cs",
+            "ConfigInitEmptyStateUiTests.cs",
+            "NewTaskAuthoringTests.cs",
             "KeySetupPanelUiTests.cs",
+            "SettingsPanelUiTests.cs",
         ];
 
         foreach (var fileName in expected)
@@ -86,8 +100,8 @@ public sealed partial class SplitGuardVerificationTests
             var fullPath = Path.Combine(TestsDir, fileName);
             Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
             var content = File.ReadAllText(fullPath);
-            Assert.Contains("[Collection(\"Environment\")]", content, StringComparison.Ordinal);
-            Assert.Contains("public sealed", content, StringComparison.Ordinal);
+            Assert.Contains("[Collection(\"Headless\")]", content, StringComparison.Ordinal);
+            Assert.Contains("public sealed class", content, StringComparison.Ordinal);
         }
     }
 
@@ -278,23 +292,4 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Empty(violations);
     }
 
-    // ── xunit runner parallelism guard ──────────────────────────────────
-
-    /// <summary>
-    /// The suite must serialize all test collections to prevent Avalonia
-    /// headless deadlocks caused by multiple UI test classes racing on the
-    /// single process-global dispatcher.  The canonical xunit v3 mechanism
-    /// is <c>xunit.runner.json</c> with <c>parallelizeTestCollections: false</c>
-    /// committed at the test project root.
-    /// </summary>
-    [Fact]
-    public void XunitRunnerJson_DisablesTestCollectionParallelism()
-    {
-        var configPath = Path.Combine(TestsDir, "xunit.runner.json");
-        Assert.True(File.Exists(configPath),
-            "xunit.runner.json must exist in the test project to serialize test collections");
-        var json = File.ReadAllText(configPath);
-        Assert.Contains("\"parallelizeTestCollections\": false", json,
-            StringComparison.Ordinal);
-    }
 }

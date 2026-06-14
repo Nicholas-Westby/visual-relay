@@ -42,14 +42,24 @@ public static class RelayStages
         "Research" => "Investigate the codebase; record findings and constraints. Do not edit files.",
         "Diagnose" => "Read application logs and extract evidence that explains the issue.",
         "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/).",
-        "Author-tests" => "Write tests for the target behavior only. They must fail before implementation.",
+        "Author-tests" =>
+            "Write tests for the target behavior only. They must fail before implementation. " +
+            "Verify your tests compile and fail using ONLY the targeted test command shown in the " +
+            "## Verify command section of the prompt. Do NOT run the project's full " +
+            "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
+            "the harness runs the full gate at its Verify/Commit stages.",
         "Implement" =>
             "Implement the change within the manifest files. " +
             "Verify your changes using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, or format gate (e.g. `./visual-relay check`) during " +
             "implementation — the harness runs the full gate at the Verify stage.",
-        "Review" => "Review the actual diff and classify issues.",
+        "Review" =>
+            "Review the actual diff and classify issues. " +
+            "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
+            "## Verify command section of the prompt. Do NOT run the project's full " +
+            "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
+            "the harness runs the full gate at its Verify/Commit stages.",
         "Fix" =>
             "Resolve every blocker and warning from review. " +
             "Verify your changes using ONLY the targeted test command shown in the " +

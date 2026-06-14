@@ -11,7 +11,7 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-[Collection("Environment")]
+[Collection("Headless")]
 public sealed class KeySetupPanelUiTests : IDisposable
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
