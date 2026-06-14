@@ -1,5 +1,7 @@
 using System;
+using System.ComponentModel;
 using Avalonia.Controls;
+using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.App.Views;
 
@@ -7,10 +9,60 @@ public partial class MainWindow : Window
 {
     private const double PreferredWidth = 1440;
     private const double PreferredHeight = 900;
+    private MainWindowViewModel? _vm;
 
     public MainWindow()
     {
         InitializeComponent();
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        if (_vm is not null)
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+
+        base.OnDataContextChanged(e);
+
+        if (DataContext is MainWindowViewModel vm)
+        {
+            _vm = vm;
+            vm.PropertyChanged += OnViewModelPropertyChanged;
+            ApplyCenterSplit();
+        }
+        else
+        {
+            _vm = null;
+        }
+    }
+
+    private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(MainWindowViewModel.IsStagesCollapsed))
+        {
+            ApplyCenterSplit();
+        }
+    }
+
+    private void ApplyCenterSplit()
+    {
+        if (DataContext is not MainWindowViewModel vm)
+            return;
+
+        if (CenterGrid is null)
+            return;
+
+        // When Stages is collapsed: TASK fills the full center (row 0 = *, row 1 = Auto).
+        // When expanded: restore the 1.45:1 ratio (row 0 = 1.45*, row 1 = *).
+        if (vm.IsStagesCollapsed)
+        {
+            CenterGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
+            CenterGrid.RowDefinitions[1].Height = Avalonia.Controls.GridLength.Auto;
+        }
+        else
+        {
+            CenterGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1.45, Avalonia.Controls.GridUnitType.Star);
+            CenterGrid.RowDefinitions[1].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
+        }
     }
 
     protected override void OnOpened(EventArgs e)
