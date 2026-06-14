@@ -101,6 +101,7 @@ public partial class MainWindowViewModel
         if (configResult.Status == RelayConfigStatus.Loaded)
         {
             BypassSandbox = configResult.Config.BypassSandbox;
+            CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
         }
 
         // IsNullOrEmpty (not WhiteSpace) so detection runs only when the user hasn't

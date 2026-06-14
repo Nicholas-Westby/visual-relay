@@ -64,4 +64,33 @@ public static class RelayConfigWriter
 
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
+
+    /// <summary>
+    /// Read-modify-write upsert of the <c>commitProofArtifacts</c> key into
+    /// <c>.relay/config.json</c>. Preserves all existing keys (testCmd,
+    /// tierProfiles, baselineVerify, etc.) so toggling the checkbox never
+    /// clobbers other settings.
+    /// </summary>
+    public static void UpsertCommitProofArtifacts(string rootPath, bool commitProofArtifacts)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        json["commitProofArtifacts"] = commitProofArtifacts;
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
 }

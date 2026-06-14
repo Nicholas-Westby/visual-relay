@@ -61,4 +61,11 @@ public sealed record RelayConfig(
     IReadOnlyDictionary<string, int>? InactivityTimeoutMsByTier = null,
     // Fallback inactivity timeout (ms) for tiers absent from InactivityTimeoutMsByTier.
     // Default 600_000 (10 min).
-    int InactivityTimeoutMs = 600_000);
+    int InactivityTimeoutMs = 600_000,
+    // When true (default), the four proof files under .relay/<taskId>/
+    // (ledger.md, <taskId>.seals, manifest.txt, status.json) are force-added
+    // to each relay commit so the run is verifiable.  When false, the proof
+    // files are still written to disk (for local resume / re-added-task
+    // detection) but are omitted from the commit.  Task retirement
+    // (DONE- / archive) records are always committed regardless of this flag.
+    bool CommitProofArtifacts = true);

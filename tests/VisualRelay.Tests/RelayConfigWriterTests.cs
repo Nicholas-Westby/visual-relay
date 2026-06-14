@@ -113,4 +113,42 @@ public sealed class RelayConfigWriterTests
         Assert.Equal("dotnet test", after.Config.TestCommand);
         Assert.Empty(after.Config.LogSources);
     }
+
+    // ── UpsertCommitProofArtifacts ──────────────────────────────────────
+
+    [Fact]
+    public async Task UpsertCommitProofArtifacts_False_RoundTripsThroughLoader()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "dotnet test");
+
+        RelayConfigWriter.UpsertCommitProofArtifacts(repo.Root, false);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.False(result.Config.CommitProofArtifacts);
+    }
+
+    [Fact]
+    public async Task UpsertCommitProofArtifacts_PreservesExistingKeys()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: true);
+
+        var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, before.Status);
+        Assert.True(before.Config.CommitProofArtifacts); // default
+        Assert.True(before.Config.BaselineVerify);
+        Assert.Contains("cheap", before.Config.TierProfiles);
+
+        RelayConfigWriter.UpsertCommitProofArtifacts(repo.Root, false);
+
+        var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, after.Status);
+        Assert.False(after.Config.CommitProofArtifacts);
+        Assert.True(after.Config.BaselineVerify);
+        Assert.Contains("cheap", after.Config.TierProfiles);
+        Assert.Equal("dotnet test", after.Config.TestCommand);
+        Assert.Empty(after.Config.LogSources);
+    }
 }

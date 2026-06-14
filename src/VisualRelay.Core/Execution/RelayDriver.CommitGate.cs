@@ -141,13 +141,17 @@ public sealed partial class RelayDriver
         {
             var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task);
 
-            var proofFiles = new List<string>
+            var proofFiles = new List<string>();
+            if (config.CommitProofArtifacts)
             {
-                Path.Combine(".relay", taskId, "ledger.md"),
-                Path.Combine(".relay", taskId, $"{taskId}.seals"),
-                Path.Combine(".relay", taskId, "manifest.txt"),
-                Path.Combine(".relay", taskId, "status.json"),
-            };
+                proofFiles.AddRange(new[]
+                {
+                    Path.Combine(".relay", taskId, "ledger.md"),
+                    Path.Combine(".relay", taskId, $"{taskId}.seals"),
+                    Path.Combine(".relay", taskId, "manifest.txt"),
+                    Path.Combine(".relay", taskId, "status.json"),
+                });
+            }
             if (retirement?.Additions is { Count: > 0 } additions)
                 proofFiles.AddRange(additions);
 

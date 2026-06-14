@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;
@@ -19,5 +20,33 @@ public partial class MainWindowViewModel
         {
             RelayConfigWriter.UpsertBypassSandbox(RootPath, value);
         }
+    }
+
+    /// <summary>
+    /// When true (default), the four proof files under .relay/&lt;taskId&gt;/
+    /// (ledger.md, &lt;taskId&gt;.seals, manifest.txt, status.json) are force-added
+    /// to each relay commit. When false, the proof files are still written to
+    /// disk but omitted from commits. Task retirement records are always committed.
+    /// </summary>
+    [ObservableProperty]
+    private bool _commitProofArtifacts = true;
+
+    /// <summary>Persist every toggle to .relay/config.json.</summary>
+    partial void OnCommitProofArtifactsChanged(bool value)
+    {
+        if (Directory.Exists(RootPath))
+        {
+            RelayConfigWriter.UpsertCommitProofArtifacts(RootPath, value);
+        }
+    }
+
+    /// <summary>Whether the settings flyout is currently open.</summary>
+    [ObservableProperty]
+    private bool _isSettingsOpen;
+
+    [RelayCommand]
+    private void ToggleSettings()
+    {
+        IsSettingsOpen = !IsSettingsOpen;
     }
 }

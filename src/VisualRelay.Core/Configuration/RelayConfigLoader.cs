@@ -39,7 +39,8 @@ public static class RelayConfigLoader
             BypassSandbox: false,
             MaxPlanConcurrency: 10,
             InactivityTimeoutMsByTier: null,
-            InactivityTimeoutMs: 600_000);
+            InactivityTimeoutMs: 600_000,
+            CommitProofArtifacts: true);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -139,6 +140,7 @@ public static class RelayConfigLoader
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
                 MaxContractRetries = OptionalInt(root, "maxContractRetries", defaults.MaxContractRetries),
                 BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
+                CommitProofArtifacts = OptionalBool(root, "commitProofArtifacts", defaults.CommitProofArtifacts),
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 InactivityTimeoutMsByTier = inactivityTiers,
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),

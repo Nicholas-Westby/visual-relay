@@ -66,7 +66,7 @@ public sealed partial class SplitGuardVerificationTests
 
     /// <summary>
     /// The total [Fact] count across the oversized-file families must match
-    /// the baseline of 138: 127 established on 2026-06-10 before any split,
+    /// the baseline of 142: 127 established on 2026-06-10 before any split,
     /// +3 on 2026-06-10 (CpuPulse partial: cpu-pulse survival, true-wedge kill,
     /// killed-output persistence — the fs-blinded-watchdog regression family),
     /// +3 on 2026-06-11 (NonzeroExit: retry-and-persist nonzero swival exits),
@@ -74,7 +74,10 @@ public sealed partial class SplitGuardVerificationTests
     /// + RelayDriverGitCommitTests end-to-end backstop),
     /// +2 on 2026-06-12 (watchdog socket-wedge regression:
     /// WaitAsync_BurstThenTotalSilence unit test + RunAsync_EarlyBurst
-    /// integration test).
+    /// integration test),
+    /// +2 then -2 on 2026-06-13 (proof-opt-out: 2 new facts added then
+    /// extracted to standalone RelayDriverGitCommitProofOptOutTests.cs,
+    /// net zero change to the oversized-family count).
     ///
     /// Baseline composition:
     ///   SwivalSubagentRunnerWatchdogTests.cs (+ .CpuPulse.cs,
