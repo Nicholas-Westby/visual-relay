@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Init;
 using VisualRelay.Core.Tasks;
@@ -189,6 +190,21 @@ public partial class MainWindowViewModel
 
         var index = Tasks.IndexOf(selected);
         return index >= 0 && index < Tasks.Count - 1;
+    }
+
+    private void RebuildAttachments(TaskRowViewModel? task)
+    {
+        Attachments.Clear();
+        if (task?.SiblingPaths is { Count: > 0 } paths)
+        {
+            foreach (var path in paths)
+            {
+                Attachments.Add(new AttachmentRowViewModel(
+                    path,
+                    new RelayCommand(() => RevealAttachment(path)),
+                    new AsyncRelayCommand(async () => await RemoveAttachmentAsync(path))));
+            }
+        }
     }
 
     private void ClearLogState()

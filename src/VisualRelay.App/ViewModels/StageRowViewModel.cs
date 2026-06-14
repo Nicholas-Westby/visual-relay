@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media;
+using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -19,17 +20,19 @@ public sealed class StageRowViewModel : ViewModelBase
     private static readonly BoxShadows SelectedShadow = BoxShadows.Parse("0 0 20 0 #553F8CFF");
     private static readonly BoxShadows RunningShadow = BoxShadows.Parse("0 0 20 0 #445AD47D");
 
-    public StageRowViewModel(RelayStageDefinition stage)
+    public StageRowViewModel(RelayStageDefinition stage, IRelayCommand<StageRowViewModel>? selectCommand = null)
     {
         Number = stage.Number;
         Name = stage.Name;
         Tier = stage.Tier;
         Status = "Waiting";
+        SelectCommand = selectCommand;
     }
 
     public int Number { get; }
     public string Name { get; }
     public string Tier { get; }
+    public IRelayCommand<StageRowViewModel>? SelectCommand { get; }
     public string Ordinal => Number.ToString("00");
     public string StatusLabel => Status == "Done" ? "Complete" : Status;
     public string MetricLabel => (CostLabel == "No cost yet" ? DurationLabel : $"{DurationLabel}  {CostLabel}")

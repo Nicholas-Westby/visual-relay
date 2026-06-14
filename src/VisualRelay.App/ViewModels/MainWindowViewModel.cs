@@ -57,7 +57,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _rootPath = RootFolderDisplay.DefaultPath();
         foreach (var stage in RelayStages.All)
         {
-            Stages.Add(new StageRowViewModel(stage));
+            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));
         }
 
         Tasks.CollectionChanged += (_, _) =>
@@ -71,6 +71,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<StageRowViewModel> Stages { get; } = [];
     public ObservableCollection<RelayEvent> Events { get; } = [];
     public ObservableCollection<TraceEntry> TraceEntries { get; } = [];
+    public ObservableCollection<AttachmentRowViewModel> Attachments { get; } = [];
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]

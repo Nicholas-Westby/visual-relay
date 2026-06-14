@@ -135,6 +135,7 @@ public partial class MainWindowViewModel
     {
         _selectedStageFilter = null;
         LogScopeLabel = "full";
+        RebuildAttachments(value);
         foreach (var task in Tasks)
         {
             task.IsSelected = ReferenceEquals(task, value);

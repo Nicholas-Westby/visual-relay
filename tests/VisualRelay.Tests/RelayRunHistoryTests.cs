@@ -69,7 +69,7 @@ public sealed class RelayRunHistoryTests
     [Fact]
     public void ApplyMetric_ShowsTurnsWhenPresent()
     {
-        var row = new StageRowViewModel(RelayStages.All[0]);
+        var row = new StageRowViewModel(RelayStages.All[0], null);
 
         row.ApplyMetric(MetricFor(turns: 17));
 
@@ -80,7 +80,7 @@ public sealed class RelayRunHistoryTests
     [Fact]
     public void ApplyMetric_OmitsTurnsWhenZero()
     {
-        var row = new StageRowViewModel(RelayStages.All[0]);
+        var row = new StageRowViewModel(RelayStages.All[0], null);
 
         row.ApplyMetric(MetricFor()); // turns defaults to 0
 
@@ -91,7 +91,7 @@ public sealed class RelayRunHistoryTests
     [Fact]
     public void ApplyMetric_SetsMetricLabelsButDoesNotSetStatus()
     {
-        var row = new StageRowViewModel(RelayStages.All[0]);
+        var row = new StageRowViewModel(RelayStages.All[0], null);
         Assert.Equal("Waiting", row.Status);
 
         row.ApplyMetric(MetricFor());
