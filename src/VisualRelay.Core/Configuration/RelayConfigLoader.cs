@@ -40,7 +40,8 @@ public static class RelayConfigLoader
             MaxPlanConcurrency: 10,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
-            CommitProofArtifacts: true);
+            CommitProofArtifacts: true,
+            BoostTurnsTaskIds: []);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -146,7 +147,8 @@ public static class RelayConfigLoader
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
-                GuardCommand = OptionalStringOrNull(root, "guardCmd")
+                GuardCommand = OptionalStringOrNull(root, "guardCmd"),
+                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds")
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

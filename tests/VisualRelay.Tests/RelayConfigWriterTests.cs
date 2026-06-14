@@ -151,4 +151,71 @@ public sealed class RelayConfigWriterTests
         Assert.Equal("dotnet test", after.Config.TestCommand);
         Assert.Empty(after.Config.LogSources);
     }
+
+    // ── SetTurnBoost ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task SetTurnBoost_adds_taskId()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "dotnet test");
+
+        RelayConfigWriter.SetTurnBoost(repo.Root, "big-task", enabled: true);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Contains("big-task", result.Config.BoostTurnsTaskIds!);
+    }
+
+    [Fact]
+    public async Task SetTurnBoost_adds_idempotent()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "dotnet test");
+
+        RelayConfigWriter.SetTurnBoost(repo.Root, "big-task", enabled: true);
+        RelayConfigWriter.SetTurnBoost(repo.Root, "big-task", enabled: true);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        // Should only appear once (de-duplicated).
+        Assert.Single(result.Config.BoostTurnsTaskIds!, id => id == "big-task");
+    }
+
+    [Fact]
+    public async Task SetTurnBoost_removes_taskId()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "dotnet test");
+
+        RelayConfigWriter.SetTurnBoost(repo.Root, "big-task", enabled: true);
+        RelayConfigWriter.SetTurnBoost(repo.Root, "big-task", enabled: false);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.DoesNotContain("big-task", result.Config.BoostTurnsTaskIds!);
+    }
+
+    [Fact]
+    public async Task SetTurnBoost_preserves_all_other_keys()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: true);
+
+        var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, before.Status);
+        Assert.Empty(before.Config.BoostTurnsTaskIds!);
+        Assert.True(before.Config.BaselineVerify);
+        Assert.Contains("cheap", before.Config.TierProfiles);
+        Assert.Equal("dotnet test", before.Config.TestCommand);
+        Assert.Empty(before.Config.LogSources);
+
+        RelayConfigWriter.SetTurnBoost(repo.Root, "huge-task", enabled: true);
+
+        var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, after.Status);
+        Assert.Contains("huge-task", after.Config.BoostTurnsTaskIds!);
+        Assert.True(after.Config.BaselineVerify);
+        Assert.Contains("cheap", after.Config.TierProfiles);
+        Assert.Equal("dotnet test", after.Config.TestCommand);
+        Assert.Empty(after.Config.LogSources);
+    }
 }

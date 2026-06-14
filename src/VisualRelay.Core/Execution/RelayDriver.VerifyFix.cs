@@ -9,6 +9,9 @@ namespace VisualRelay.Core.Execution;
 
 public sealed partial class RelayDriver
 {
+    /// <summary>10× multiplier for tasks whose id appears in
+    /// <see cref="RelayConfig.BoostTurnsTaskIds"/>.</summary>
+    private const int TurnBoostMultiplier = 10;
     private static HashSet<string> ExtractFailureIds(string? output)
     {
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -47,7 +50,6 @@ public sealed partial class RelayDriver
             }
         }
     }
-
     /// <summary>
     /// Runs the fix-verify loop: stage 10 → re-verify, bounded by <see cref="RelayConfig.MaxVerifyLoops"/>.
     /// Returns null outcome when the suite turns green (success). Returns a Flagged outcome when all
@@ -204,7 +206,6 @@ public sealed partial class RelayDriver
             $"verify failed after {maxLoops} fix-verify {(maxLoops == 1 ? "attempt" : "attempts")}", failingTestOutput, statusEntries, cancellationToken);
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
-
     /// <summary>
     /// Snapshot the effective swival.toml content once at run start so task
     /// edits to swival.toml cannot change the profile for later stages.
@@ -217,7 +218,6 @@ public sealed partial class RelayDriver
         {
             return await File.ReadAllTextAsync(pinnedProfilePath, cancellationToken);
         }
-
         var treeProfilePath = Path.Combine(rootPath, SwivalProfileSession.FileName);
         var content = File.Exists(treeProfilePath)
             ? await File.ReadAllTextAsync(treeProfilePath, cancellationToken)
@@ -225,7 +225,6 @@ public sealed partial class RelayDriver
         await File.WriteAllTextAsync(pinnedProfilePath, content, cancellationToken);
         return content;
     }
-
     private StageInvocation BuildInvocation(
         string rootPath,
         string runId,
@@ -240,6 +239,9 @@ public sealed partial class RelayDriver
         string? testCommand = null,
         string? pinnedSwivalProfileContent = null)
     {
+        var turns = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true
+            ? config.MaxTurns * TurnBoostMultiplier
+            : config.MaxTurns;
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
             stage,
@@ -253,13 +255,12 @@ public sealed partial class RelayDriver
             config.LogSources,
             Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}"),
             Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}.report.json"),
-            config.MaxTurns,
+            turns,
             LastTestOutput: lastTestOutput,
             TaskContext: input.Context,
             TestCommand: testCommand,
             PinnedSwivalProfileContent: pinnedSwivalProfileContent);
     }
-
     /// <summary>
     /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.
     /// Returns the updated <paramref name="previousSeal"/> and <paramref name="taskHash"/>.

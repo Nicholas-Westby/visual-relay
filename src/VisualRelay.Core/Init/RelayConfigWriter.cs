@@ -93,4 +93,63 @@ public static class RelayConfigWriter
 
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
+
+    /// <summary>
+    /// Read-modify-write upsert of the <c>boostTurnsTaskIds</c> JSON array into
+    /// <c>.relay/config.json</c>. Adds or removes <paramref name="taskId"/>,
+    /// de-duplicating entries, while preserving all other keys.
+    /// </summary>
+    public static void SetTurnBoost(string rootPath, string taskId, bool enabled)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        // Get or create the boostTurnsTaskIds array.
+        var array = json["boostTurnsTaskIds"] as JsonArray;
+        if (array is null)
+        {
+            array = new JsonArray();
+            json["boostTurnsTaskIds"] = array;
+        }
+
+        if (enabled)
+        {
+            // Add taskId if not already present (de-duplicate).
+            if (!array.Any(node => node is JsonValue v && v.TryGetValue(out string? existing) && string.Equals(existing, taskId, StringComparison.Ordinal)))
+            {
+                array.Add(JsonValue.Create(taskId));
+            }
+        }
+        else
+        {
+            // Remove all occurrences of taskId.
+            var toRemove = new List<JsonNode?>();
+            foreach (var node in array)
+            {
+                if (node is JsonValue v && v.TryGetValue(out string? existing) && string.Equals(existing, taskId, StringComparison.Ordinal))
+                {
+                    toRemove.Add(node);
+                }
+            }
+            foreach (var node in toRemove)
+            {
+                array.Remove(node);
+            }
+        }
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
 }

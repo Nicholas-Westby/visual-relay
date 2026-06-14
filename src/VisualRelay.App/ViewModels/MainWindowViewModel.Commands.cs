@@ -159,6 +159,9 @@ public partial class MainWindowViewModel
         NotifyRunningTaskContextChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
         AddAttachmentsCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(SelectedTaskBoostsTurns));
+        OnPropertyChanged(nameof(TurnBudgetLabel));
+        OnPropertyChanged(nameof(CanToggleTurnBudget));
         _ = LoadSelectedTaskAsync(value);
     }
 

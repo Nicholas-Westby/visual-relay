@@ -68,4 +68,7 @@ public sealed record RelayConfig(
     // files are still written to disk (for local resume / re-added-task
     // detection) but are omitted from the commit.  Task retirement
     // (DONE- / archive) records are always committed regardless of this flag.
-    bool CommitProofArtifacts = true);
+    bool CommitProofArtifacts = true,
+    // Task ids whose per-stage turn budget is multiplied by 10 (for unusually
+    // large tasks).
+    IReadOnlyList<string>? BoostTurnsTaskIds = null);

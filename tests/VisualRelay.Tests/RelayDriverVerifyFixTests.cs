@@ -123,4 +123,79 @@ public sealed class RelayDriverVerifyFixTests
             Assert.Null(inv.LastTestOutput);
         }
     }
+
+    // ── 10× turn-budget multiplier ──────────────────────────────────────
+
+    [Fact]
+    public async Task RunTaskAsync_Boosted_Applies10xMultiplierToEveryStage()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "logSources": [],
+              "baselineVerify": false,
+              "maxVerifyLoops": 1,
+              "boostTurnsTaskIds": ["big-one"]
+            }
+            """);
+        repo.WriteTask("big-one", "# Big task\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),     // stage 5 author gate
+            new TestRunResult(0, "green"));  // stage 9 verify — green
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "big-one");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.NotEmpty(runner.Invocations);
+        // Every stage invocation must carry the boosted turn count (200 * 10 = 2000).
+        foreach (var inv in runner.Invocations)
+        {
+            Assert.Equal(2000, inv.MaxTurns);
+        }
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_NonBoosted_UsesDefaultMaxTurns()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, ".relay", "config.json"),
+            """
+            {
+              "testCmd": "dotnet test",
+              "logSources": [],
+              "baselineVerify": false,
+              "maxVerifyLoops": 1
+            }
+            """);
+        repo.WriteTask("normal-task", "# Normal task\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),     // stage 5 author gate
+            new TestRunResult(0, "green"));  // stage 9 verify — green
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "normal-task");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        Assert.NotEmpty(runner.Invocations);
+        // Every stage must use the default 200.
+        foreach (var inv in runner.Invocations)
+        {
+            Assert.Equal(200, inv.MaxTurns);
+        }
+    }
 }

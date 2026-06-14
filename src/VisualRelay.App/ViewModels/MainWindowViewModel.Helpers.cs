@@ -102,6 +102,7 @@ public partial class MainWindowViewModel
         {
             BypassSandbox = configResult.Config.BypassSandbox;
             CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
+            HydrateTurnBudget(configResult.Config);
         }
 
         // IsNullOrEmpty (not WhiteSpace) so detection runs only when the user hasn't
