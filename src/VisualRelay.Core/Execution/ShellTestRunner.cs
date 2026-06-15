@@ -3,10 +3,9 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
-public sealed class ShellTestRunner : ITestRunner
+public sealed class ShellTestRunner(TimeSpan? timeout = null) : ITestRunner
 {
-    private readonly TimeSpan _timeout;
-    public ShellTestRunner(TimeSpan? timeout = null) => _timeout = timeout ?? Timeout.InfiniteTimeSpan;
+    private readonly TimeSpan _timeout = timeout ?? Timeout.InfiniteTimeSpan;
     public async Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var sw = Stopwatch.StartNew();

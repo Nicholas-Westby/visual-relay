@@ -117,20 +117,13 @@ internal sealed class ArrayRootSubagentRunner : ISubagentRunner
 /// and returns an invalid result for stages at or after <c>flagAtStage</c>,
 /// simulating a flagged run that stops partway through the stage loop.
 /// </summary>
-internal sealed class FlagAtStageSubagentRunner : ISubagentRunner
+internal sealed class FlagAtStageSubagentRunner(int flagAtStage, ISubagentRunner? inner = null) : ISubagentRunner
 {
-    private readonly int _flagAtStage;
-    private readonly ISubagentRunner _inner;
-
-    public FlagAtStageSubagentRunner(int flagAtStage, ISubagentRunner? inner = null)
-    {
-        _flagAtStage = flagAtStage;
-        _inner = inner ?? new ScriptedSubagentRunner();
-    }
+    private readonly ISubagentRunner _inner = inner ?? new ScriptedSubagentRunner();
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        if (invocation.Stage.Number < _flagAtStage)
+        if (invocation.Stage.Number < flagAtStage)
         {
             return await _inner.RunAsync(invocation, cancellationToken);
         }
@@ -142,6 +135,6 @@ internal sealed class FlagAtStageSubagentRunner : ISubagentRunner
             RawText: string.Empty,
             Json: null,
             IsValid: false,
-            Error: $"synthetic flag at stage {_flagAtStage}");
+            Error: $"synthetic flag at stage {flagAtStage}");
     }
 }

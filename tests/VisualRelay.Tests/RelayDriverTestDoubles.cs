@@ -69,6 +69,9 @@ internal sealed class ThrowingSubagentRunner : ISubagentRunner
 internal sealed class RedGateObservingTestRunner : ITestRunner
 {
     private readonly string _rootPath;
+    // ReSharper disable once ConvertToPrimaryConstructor — a primary-ctor 'rootPath'
+    // would be shadowed by RunAsync(string rootPath); the field disambiguates the
+    // captured construction-time root from the per-call argument.
     public RedGateObservingTestRunner(string rootPath) => _rootPath = rootPath;
     public List<string> StatusSnapshots { get; } = [];
 

@@ -8,12 +8,9 @@ namespace VisualRelay.Core.Execution;
 /// Runs a test command via direct exec (no /bin/sh -lc wrapper) so exit code 127
 /// (command-not-found) is surfaced reliably. Time-boxed by a configurable timeout.
 /// </summary>
-public sealed class DirectExecTestRunner : ITestRunner
+public sealed class DirectExecTestRunner(TimeSpan? timeout = null) : ITestRunner
 {
-    private readonly TimeSpan _timeout;
-
-    public DirectExecTestRunner(TimeSpan? timeout = null) =>
-        _timeout = timeout ?? TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _timeout = timeout ?? TimeSpan.FromSeconds(5);
 
     public async Task<TestRunResult> RunAsync(
         string rootPath,

@@ -7,16 +7,11 @@ namespace VisualRelay.Core.Init;
 // Asks the frontier tier (via the local proxy) for a project's test command.
 // The completer seam (prompt -> raw model text) is injectable so prompt assembly
 // and response parsing are unit-testable without a network call.
-public sealed class LlmTestCommandFinder
+public sealed class LlmTestCommandFinder(Func<string, CancellationToken, Task<string>>? complete = null)
 {
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(60) };
 
-    private readonly Func<string, CancellationToken, Task<string>> _complete;
-
-    public LlmTestCommandFinder(Func<string, CancellationToken, Task<string>>? complete = null)
-    {
-        _complete = complete ?? DefaultCompleteAsync;
-    }
+    private readonly Func<string, CancellationToken, Task<string>> _complete = complete ?? DefaultCompleteAsync;
 
     public async Task<string> FindAsync(string rootPath, CancellationToken cancellationToken = default)
     {

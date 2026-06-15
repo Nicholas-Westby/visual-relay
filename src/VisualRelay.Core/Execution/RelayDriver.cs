@@ -11,6 +11,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 {
     private readonly RelayDriverDependencies _dependencies;
     private readonly RelayDriverOptions _options;
+
+    // ReSharper disable once ConvertToPrimaryConstructor — _dependencies is read in
+    // 22 sites across 8 partial files; a primary ctor would trigger
+    // ReplaceWithPrimaryConstructorParameter and force rewriting every reference.
+    // The explicit ctor keeps the field declaration cohesive with the partials.
     public RelayDriver(RelayDriverDependencies dependencies, RelayDriverOptions? options = null)
     {
         _dependencies = dependencies;
