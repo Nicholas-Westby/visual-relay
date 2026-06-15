@@ -67,6 +67,27 @@ internal sealed class TestRepository : IDisposable
             """);
     }
 
+    /// <summary>
+    /// Writes a config JSON with the <c>downshiftOnEarlyImplementation</c> flag
+    /// explicitly set, so integration tests can exercise the kill-switch path.
+    /// </summary>
+    public void WriteConfigWithDownshift(string testCommand, string[] logSources, bool downshiftOnEarlyImplementation, bool baselineVerify = true, int maxVerifyLoops = 0, bool archiveOnDone = true)
+    {
+        Directory.CreateDirectory(Path.Combine(Root, ".relay"));
+        File.WriteAllText(
+            Path.Combine(Root, ".relay", "config.json"),
+            $$"""
+            {
+              "testCmd": "{{testCommand}}",
+              "logSources": [{{string.Join(",", logSources.Select(s => $"\"{s}\""))}}],
+              "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}},
+              "maxVerifyLoops": {{maxVerifyLoops}},
+              "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}},
+              "downshiftOnEarlyImplementation": {{downshiftOnEarlyImplementation.ToString().ToLowerInvariant()}}
+            }
+            """);
+    }
+
     public void WriteTask(string id, string markdown)
     {
         var path = Path.Combine(Root, "llm-tasks", $"{id}.md");

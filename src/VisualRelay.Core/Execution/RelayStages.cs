@@ -82,4 +82,12 @@ public static class RelayStages
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         _ => string.Empty
     };
+
+    internal const string ConfirmImplementationSystemPrompt =
+        "The implementation appears to already be in the working tree (an earlier stage wrote it). " +
+        "Do NOT re-narrate or re-implement. Read the existing diff against the manifest, confirm it " +
+        "matches the plan, and make ONLY small corrective amendments if something is missing or wrong. " +
+        "Verify using ONLY the targeted test command shown in the ## Verify command section — do NOT " +
+        "run the project's full check, lint, format, build, or screenshot gate; the harness runs the " +
+        "full gate at the Verify stage.";
 }

@@ -59,6 +59,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
             var stage10Handled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
+            var implementationFrontLoaded = false;
 
             foreach (var stage in RelayStages.All)
             {
@@ -83,7 +84,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 else
                 {
                     var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
-                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest,
+                    var effectiveStage = implementationFrontLoaded && stage.Number == 6
+                        ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
+                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
                         testCommand: testCommandForCodingStage,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
@@ -126,6 +129,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
                         (body, targetedTestCommand, var cd, var ud) = await TryPlanCompletenessRetryAsync(body, json, manifest, rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
                         sessionCostUsd += cd; unknownCostStageCount += ud;
+                        if (config.DownshiftOnEarlyImplementation)
+                            implementationFrontLoaded = await EarlyImplementationDetector
+                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken);
                     }
 
                     if (stage.Number == 5)

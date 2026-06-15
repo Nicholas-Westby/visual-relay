@@ -113,6 +113,51 @@ internal sealed class OnlyTaskDirManifestSubagentRunner : ISubagentRunner
         return Task.FromResult(new SubagentResult(json, json, true, null));
     }
 }
+/// <summary>
+/// Simulates an agent that front-loads implementation at <b>stage 3</b> (Diagnose)
+/// by writing the impl file(s) from the manifest directly to disk before the Plan
+/// stage has even produced the manifest. This is the scenario the down-shift
+/// feature targets: the implementation is already in the working tree when
+/// Implement (stage 6) is about to run.
+/// </summary>
+internal sealed class Stage3FrontLoadRunner : ISubagentRunner
+{
+    private bool _frontLoaded;
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        // Front-load at stage 3: write the canonical impl file before Plan runs.
+        if (invocation.Stage.Number == 3 && !_frontLoaded)
+        {
+            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "src"));
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new\n");
+            _frontLoaded = true;
+        }
+
+        if (invocation.Stage.Number == 5)
+        {
+            Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "status.test"), "expects new status");
+        }
+
+        var json = invocation.Stage.Number switch
+        {
+            1 => """{"summary":"framed","options":["small"]}""",
+            2 => """{"findings":"found","constraints":[]}""",
+            3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
+            4 => """{"plan":"edit status","manifest":["src/status.cs","tests/status.test"]}""",
+            5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
+            6 => """{"summary":"implementation already present"}""",
+            7 => """{"verdict":"pass","issues":[]}""",
+            8 => """{"summary":"no changes"}""",
+            9 => """{"summary":"verified"}""",
+            10 => """{"summary":"no changes"}""",
+            _ => """{"summary":"ok"}"""
+        };
+        return Task.FromResult(new SubagentResult(json, json, true, null));
+    }
+}
+
 internal sealed class TurnsReportingSubagentRunner : ISubagentRunner
 {
     private readonly int _llmCallCount;

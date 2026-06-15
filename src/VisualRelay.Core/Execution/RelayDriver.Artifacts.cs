@@ -111,7 +111,7 @@ public sealed partial class RelayDriver
         return chain;
     }
 
-    private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
     { ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv" };
 
     /// <summary>
@@ -120,7 +120,7 @@ public sealed partial class RelayDriver
     /// Files with no extension are treated as non-code (docs/config/data).
     /// Unknown extensions default to code (fail-safe toward requiring a test).
     /// </summary>
-    private static bool IsImpl(string path) =>
+    internal static bool IsImpl(string path) =>
         Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
 
     /// <summary>

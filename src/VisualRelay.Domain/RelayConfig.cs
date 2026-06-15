@@ -81,4 +81,10 @@ public sealed record RelayConfig(
     bool CommitProofArtifacts = true,
     // Task ids whose per-stage turn budget is multiplied by 10 (for unusually
     // large tasks).
-    IReadOnlyList<string>? BoostTurnsTaskIds = null);
+    IReadOnlyList<string>? BoostTurnsTaskIds = null,
+    // When true (default), if the agent front-loads implementation into an earlier
+    // stage (manifest impl files already differ from HEAD before Implement runs),
+    // the redundant Implement narration stage runs on the cheapest tier with a
+    // "confirm/amend only" prompt instead of full freight. Set false to always run
+    // every stage on its declared tier. No effect on non-git roots or a dirty start.
+    bool DownshiftOnEarlyImplementation = true);

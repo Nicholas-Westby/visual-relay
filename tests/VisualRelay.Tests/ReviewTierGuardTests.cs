@@ -16,4 +16,15 @@ public sealed class ReviewTierGuardTests
         var review = RelayStages.All.Single(s => s.Name == "Review");
         Assert.Equal("frontier", review.Tier);
     }
+
+    // The down-shift feature only ever LOWERS the Implement tier at runtime via
+    // `stage with { Tier = "cheap" }` — it NEVER changes the canonical table.
+    // This guard fails the build if a future change lowers the table-level tier,
+    // because a table change could cascade to non-down-shifted runs.
+    [Fact]
+    public void DefaultImplementTierIsBalanced()
+    {
+        var implement = RelayStages.All.Single(s => s.Name == "Implement");
+        Assert.Equal("balanced", implement.Tier);
+    }
 }

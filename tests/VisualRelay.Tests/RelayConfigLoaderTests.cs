@@ -280,4 +280,21 @@ public sealed class RelayConfigLoaderTests
         Assert.Equal(90_000, result.Config.FirstOutputTimeoutMsByTier["cheap"]);
     }
 
+    [Fact]
+    public void DownshiftOnEarlyImplementation_DefaultsToTrue()
+    {
+        Assert.True(RelayConfigLoader.Defaults().DownshiftOnEarlyImplementation);
+    }
+
+    [Fact]
+    public async Task TryLoadAsync_DownshiftOnEarlyImplementation_False_OverridesDefault()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"),
+            """{ "testCmd": "dotnet test", "downshiftOnEarlyImplementation": false }""");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.False(result.Config.DownshiftOnEarlyImplementation);
+    }
 }

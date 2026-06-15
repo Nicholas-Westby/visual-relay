@@ -67,4 +67,21 @@ public sealed class CodingStageSystemPromptTests
         var stage = RelayStages.All.Single(s => s.Name == stageName);
         Assert.Contains("diff-scoped", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void ConfirmImplementationPrompt_ProhibitsReNarrationAndFullGate()
+    {
+        var prompt = RelayStages.ConfirmImplementationSystemPrompt;
+
+        // Must instruct the agent NOT to re-narrate or re-implement.
+        Assert.Contains("do NOT re-narrate", prompt, StringComparison.OrdinalIgnoreCase);
+
+        // Must retain the full-gate prohibition (same invariant as the canonical
+        // Implement prompt).
+        Assert.Contains("do NOT run", prompt, StringComparison.OrdinalIgnoreCase);
+
+        // Must reference the ## Verify command section so the agent knows where to
+        // find the targeted test command.
+        Assert.Contains("## Verify command", prompt, StringComparison.Ordinal);
+    }
 }

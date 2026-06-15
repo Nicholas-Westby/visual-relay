@@ -41,7 +41,8 @@ public static class RelayConfigLoader
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
             CommitProofArtifacts: true,
-            BoostTurnsTaskIds: []);
+            BoostTurnsTaskIds: [],
+            DownshiftOnEarlyImplementation: true);
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -149,7 +150,8 @@ public static class RelayConfigLoader
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
-                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds")
+                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
+                DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
