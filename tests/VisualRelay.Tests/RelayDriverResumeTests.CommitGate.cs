@@ -21,7 +21,6 @@ public sealed partial class RelayDriverResumeTests
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "hello");
 
-        var taskDir = Path.Combine(repo.Root, ".relay", "commit-resume");
         var manifest = new[] { "src/app.cs" };
         var treeHash = ComputeTreeHash(repo.Root, manifest);
         SetupCommitGateResumeScenario(repo.Root, "commit-resume", manifest, treeHash);
@@ -70,7 +69,6 @@ public sealed partial class RelayDriverResumeTests
         TestGit.Run(repo.Root, "add", ".");
         TestGit.Run(repo.Root, "commit", "-m", "seed");
 
-        var taskDir = Path.Combine(repo.Root, ".relay", "dirty-resume");
         var manifest = new[] { "src/app.cs" };
         var originalTreeHash = ComputeTreeHash(repo.Root, manifest);
         SetupCommitGateResumeScenario(repo.Root, "dirty-resume", manifest, originalTreeHash);

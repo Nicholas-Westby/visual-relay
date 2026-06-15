@@ -34,7 +34,6 @@ public sealed partial class SplitGuardVerificationTests
         foreach (var file in companionFiles)
         {
             var content = File.ReadAllText(file);
-            var relative = Path.GetRelativePath(RepoSetup.Root, file);
             Assert.Contains("public sealed partial class", content, StringComparison.Ordinal);
             // Companions inherit [Collection] — must not redundantly declare it.
             Assert.DoesNotContain("[Collection(", content, StringComparison.Ordinal);

@@ -87,7 +87,7 @@ public sealed class VisualRelayTestCommandTimeoutTests
     {
         EnsurePrerequisites();
 
-        var (exitCode, stdout, stderr) = await RunWatchdogTestAsync(
+        var (exitCode, _, stderr) = await RunWatchdogTestAsync(
             "diagnostic-msg",
             """
             export VISUAL_RELAY_TEST_TIMEOUT=2

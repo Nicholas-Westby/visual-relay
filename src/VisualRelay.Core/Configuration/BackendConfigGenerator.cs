@@ -83,14 +83,12 @@ public static class BackendConfigGenerator
     {
         var lines = File.ReadAllLines(templatePath);
 
-        // Locate the three boundary markers in the template.
+        // Locate the boundary markers in the template.
         var aliasStart = -1;
-        var fallbackStart = -1;
         var litellmStart = -1;
         for (var i = 0; i < lines.Length; i++)
         {
             if (lines[i] == "  model_group_alias:") aliasStart = i;
-            if (lines[i] == "  fallbacks:") fallbackStart = i;
             if (lines[i] == "litellm_settings:") litellmStart = i;
         }
 

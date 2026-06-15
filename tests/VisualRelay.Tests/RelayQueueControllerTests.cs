@@ -250,7 +250,7 @@ public sealed class RelayQueueControllerTests
         };
 
         await controller.RefreshAsync();
-        var results = await controller.DrainAsync();
+        await controller.DrainAsync();
 
         // Delta was added mid-drain and must NOT have been entered.
         Assert.Equal(["alpha", "beta", "gamma"], runner.TasksRun);
@@ -282,7 +282,7 @@ public sealed class RelayQueueControllerTests
         };
 
         await controller.RefreshAsync();
-        var results = await controller.DrainAsync();
+        await controller.DrainAsync();
 
         // Snapshot preserves original order; aardvark must NOT displace the
         // in-flight drain and the original three tasks must all complete.

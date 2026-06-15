@@ -166,7 +166,7 @@ public sealed class PreCommitHookTests
         }
 
         using var process = Process.Start(startInfo)!;
-        var stdout = process.StandardOutput.ReadToEnd();
+        _ = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();
         process.WaitForExit();
         return (process.ExitCode, stderr);

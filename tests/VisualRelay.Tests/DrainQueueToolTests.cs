@@ -47,7 +47,6 @@ public sealed partial class DrainQueueToolTests
     [Fact]
     public void Parse_RelativeRoot_ResolvesToFullPath()
     {
-        var cwd = Environment.CurrentDirectory;
         var (result, error) = ArgParser.Parse(["relay-root"]);
         Assert.Null(error);
         Assert.NotNull(result);

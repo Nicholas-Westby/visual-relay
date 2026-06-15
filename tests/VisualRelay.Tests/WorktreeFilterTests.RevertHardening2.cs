@@ -121,7 +121,7 @@ public sealed partial class WorktreeFilterTests
         using var repo = TestRepository.Create();
 
         // Commit a baseline first so the repo is valid.
-        var prodPath = await InitRepoWithTrackedFile(repo.Root, "src/app.cs", "original");
+        await InitRepoWithTrackedFile(repo.Root, "src/app.cs", "original");
 
         // Create a new tracked file AFTER the commit — it will be staged
         // but never committed, so it's absent from HEAD.

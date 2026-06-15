@@ -44,7 +44,7 @@ public sealed partial class WorktreeFilterTests
         // Modify the production file in the working tree.
         await File.WriteAllTextAsync(prodPath, "modified");
 
-        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+        await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, ["b.txt"], tasksDir: null, CancellationToken.None);
 
         // ── CRITICAL assertion ──────────────────────────────────

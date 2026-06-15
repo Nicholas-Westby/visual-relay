@@ -88,7 +88,6 @@ internal sealed class ActivityWatchdog
             long silenceMs;
             long nowTicks;
             long heartbeatDeadlineMs;
-            bool firstPulseReceived;
 
             lock (_lock)
             {
@@ -96,7 +95,6 @@ internal sealed class ActivityWatchdog
                 var elapsedMs = TicksToMs(nowTicks - _startTimestamp);
                 silenceMs = TicksToMs(nowTicks - _lastPulseTimestamp);
                 lastSource = _lastPulseSource;
-                firstPulseReceived = _firstPulseReceived;
 
                 // Check absolute ceiling first (it wins when set).
                 firedCeiling = _absoluteCeilingMs > 0 && elapsedMs >= _absoluteCeilingMs;

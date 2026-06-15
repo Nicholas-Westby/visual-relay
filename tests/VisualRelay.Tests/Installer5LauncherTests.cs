@@ -83,7 +83,7 @@ public sealed partial class Installer5LauncherTests
             done
             rm -rf "$NIX_LOG" "$STUB_DIR" "$FAKE_TMPL"
             """;
-        var (exitCode, stdout, stderr) =
+        var (exitCode, _, stderr) =
             await RunLauncherTestAsync("nix-reentry-args", testBody);
         Assert.Equal(0, exitCode);
         if (!string.IsNullOrEmpty(stderr))
