@@ -114,7 +114,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             if (IsPathUnderDirectory(rootPath, e, config.TasksDir))
                                 dropped.Add(e);
                             else
-                                clean.Add(e);
+                                clean.Add(e.StartsWith('+') ? e[1..] : e);
                         }
                         manifest.AddRange(clean);
                         targetedTestCommand = BuildTargetedTestCommand(config, manifest);

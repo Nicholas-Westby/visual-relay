@@ -129,7 +129,8 @@ public sealed class RelayQueueController
                             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                             {
                                 await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, "plan", drainCts.Token);
-                                WriteNeedsReviewMarker(taskId, outcome.Reason ?? "Needs review");
+                                try { WriteNeedsReviewMarker(taskId, outcome.Reason ?? "Needs review"); }
+                                catch { DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "exception", "WriteNeedsReviewMarker failed"); }
                                 var idx = IndexOf(taskId);
                                 if (idx >= 0 && queueTask is not null)
                                 { Tasks.RemoveAt(idx); Tasks.Add(queueTask with { ReviewReason = outcome.Reason ?? "Needs review" }); }

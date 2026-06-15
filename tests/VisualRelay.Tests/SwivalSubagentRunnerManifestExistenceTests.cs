@@ -139,4 +139,37 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         Assert.Contains("does not exist", error, StringComparison.Ordinal);
         Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task ManifestExistenceCheck_DirectoryEntry_IsAccepted()
+    {
+        // A manifest entry that names an existing directory (e.g. a project
+        // root or a folder the agent intends to enumerate) must pass the
+        // existence check — it is NOT a missing path.
+        Directory.CreateDirectory(Path.Combine(_root, "src"));
+        Directory.CreateDirectory(Path.Combine(_root, "src", "sub"));
+        File.WriteAllText(Path.Combine(_root, "src", "status.cs"), "content");
+
+        var json = """{"plan":"edit files","manifest":["src/status.cs","src/sub"]}""";
+
+        var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
+            json, stageNumber: 4, _root, CancellationToken.None);
+
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public async Task ManifestExistenceCheck_MissingNeitherFileNorDir_IsRejected()
+    {
+        // A path that is neither a file nor a directory must still produce
+        // the "does not exist" rejection (regression guard for Bug 2 fix).
+        var json = """{"plan":"edit files","manifest":["src/ghost.cs"]}""";
+
+        var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
+            json, stageNumber: 4, _root, CancellationToken.None);
+
+        Assert.NotNull(error);
+        Assert.Contains("does not exist", error, StringComparison.Ordinal);
+        Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
+    }
 }

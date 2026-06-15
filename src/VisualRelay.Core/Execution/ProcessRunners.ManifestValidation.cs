@@ -44,7 +44,8 @@ public sealed partial class SwivalSubagentRunner
         var existingEntries = paths.Where(p => !p.StartsWith("+", StringComparison.Ordinal)).ToList();
 
         var missing = existingEntries
-            .Where(p => !File.Exists(Path.Combine(targetRoot, p)))
+            .Where(p => !File.Exists(Path.Combine(targetRoot, p))
+                     && !Directory.Exists(Path.Combine(targetRoot, p)))
             .ToList();
 
         if (missing.Count > 0)

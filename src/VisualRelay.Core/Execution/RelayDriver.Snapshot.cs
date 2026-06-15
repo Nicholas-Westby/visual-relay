@@ -106,7 +106,8 @@ public sealed partial class RelayDriver
             manifest.Clear();
             manifest.AddRange(ReadStringArray(rj, "manifest")
                 .Distinct(StringComparer.Ordinal)
-                .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir)));
+                .Where(e => !IsPathUnderDirectory(rootPath, e, config.TasksDir))
+                .Select(e => e.StartsWith('+') ? e[1..] : e));
             var ttc = BuildTargetedTestCommand(config, manifest);
             await WriteManifestAsync(taskDirectory, manifest, cancellationToken);
             return (rr.Json, ttc, cd, ud);
