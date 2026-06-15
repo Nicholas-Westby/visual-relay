@@ -13,6 +13,31 @@ public sealed class EarlyImplementationDetectorTests
         !new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv" }.Contains(ext);
 
+    // IsTestFile delegate mirroring RelayDriver's toolchain-agnostic heuristic:
+    // paths under a tests/ directory, filenames matching *.tests.*, *_test.*,
+    // or *.spec.* are treated as authored test files.
+    private static readonly Func<string, bool> IsTestFile = path =>
+    {
+        var normalized = path.Replace('\\', '/');
+        var fileName = Path.GetFileName(path);
+
+        if (normalized.StartsWith("tests/", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("/tests/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (fileName.Contains(".tests.", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (Path.GetFileNameWithoutExtension(fileName)
+                .EndsWith("_test", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (fileName.Contains(".spec.", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    };
+
     [Fact]
     public async Task ReturnsTrue_WhenTrackedImplFileModifiedVsHead()
     {
@@ -62,7 +87,7 @@ public sealed class EarlyImplementationDetectorTests
     }
 
     [Fact]
-    public async Task ReturnsFalse_WhenOnlyTestFilesModified()
+    public async Task ReturnsFalse_WhenOnlyNonCodeFileModified()
     {
         using var repo = TestRepository.Create();
         InitGitRepo(repo.Root);
@@ -77,6 +102,44 @@ public sealed class EarlyImplementationDetectorTests
             repo.Root, manifest, IsImpl, CancellationToken.None);
 
         Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ReturnsFalse_WhenOnlyCodeExtensionTestFileModified()
+    {
+        using var repo = TestRepository.Create();
+        InitGitRepo(repo.Root);
+
+        // Modify a committed test file with a code extension (.cs) —
+        // IsImpl returns true for .cs, but IsTestFile returns true for
+        // paths under tests/, so the detector must exclude it and return false.
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, "tests", "x.tests.cs"), "modified\n");
+
+        var manifest = new[] { "tests/x.tests.cs" };
+        var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
+            repo.Root, manifest, IsImpl, CancellationToken.None, isTestFile: IsTestFile);
+
+        Assert.False(result);
+    }
+
+    [Fact]
+    public async Task ReturnsTrue_WhenNonTestImplFileModified()
+    {
+        using var repo = TestRepository.Create();
+        InitGitRepo(repo.Root);
+
+        // Modify a committed impl file that is NOT a test file —
+        // IsImpl returns true and IsTestFile returns false, so the
+        // detector must return true.
+        await File.WriteAllTextAsync(
+            Path.Combine(repo.Root, "src", "x.cs"), "modified\n");
+
+        var manifest = new[] { "src/x.cs" };
+        var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
+            repo.Root, manifest, IsImpl, CancellationToken.None, isTestFile: IsTestFile);
+
+        Assert.True(result);
     }
 
     [Fact]

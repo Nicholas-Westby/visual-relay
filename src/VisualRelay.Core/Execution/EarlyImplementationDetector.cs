@@ -7,17 +7,22 @@ internal static class EarlyImplementationDetector
     /// differs from its committed (HEAD) content — i.e. the agent front-loaded the
     /// change into an earlier stage. Returns FALSE (the safe default) when the root
     /// is not a git work tree, when HEAD is unavailable, when the manifest has no
-    /// impl files, or on any git error. Test files (per IsImpl) are excluded.
+    /// impl files, or on any git error. Authored test files (per the
+    /// <paramref name="isTestFile"/> heuristic — files under a <c>tests/</c>
+    /// directory or whose names match <c>*.tests.*</c>, <c>*_test.*</c>, or
+    /// <c>*.spec.*</c>) are excluded.
     /// </summary>
     internal static async Task<bool> ImplementationAlreadyUnderwayAsync(
         string rootPath,
         IReadOnlyList<string> manifest,
         Func<string, bool> isImpl,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<string, bool>? isTestFile = null)
     {
         var implFiles = manifest
             .Select(p => p.StartsWith('+') ? p[1..] : p) // manifest may carry '+' new-file prefix
             .Where(isImpl)
+            .Where(f => isTestFile == null || !isTestFile(f))
             .Distinct(StringComparer.Ordinal)
             .ToList();
         if (implFiles.Count == 0) return false;

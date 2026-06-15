@@ -124,6 +124,34 @@ public sealed partial class RelayDriver
         Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
 
     /// <summary>
+    /// Returns true when <paramref name="path"/> is an authored test file.
+    /// Heuristic is toolchain-agnostic: recognizes paths under a <c>tests/</c>
+    /// directory, filenames matching <c>*.tests.*</c>, <c>*_test.*</c>, or
+    /// <c>*.spec.*</c>. Normalises backslashes so Windows paths match.
+    /// </summary>
+    internal static bool IsTestFile(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        var fileName = Path.GetFileName(path);
+
+        if (normalized.StartsWith("tests/", StringComparison.OrdinalIgnoreCase) ||
+            normalized.Contains("/tests/", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (fileName.Contains(".tests.", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (Path.GetFileNameWithoutExtension(fileName)
+                .EndsWith("_test", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        if (fileName.Contains(".spec.", StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        return false;
+    }
+
+    /// <summary>
     /// Returns <paramref name="config"/>.TestFileCommand with the <c>{files}</c> token replaced
     /// by the space-joined non-code files from <paramref name="manifest"/> (i.e. the complement
     /// of <see cref="IsImpl"/>). Falls back to <paramref name="config"/>.TestCommand when
