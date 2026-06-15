@@ -183,21 +183,12 @@ public sealed partial class SwivalProfileSessionPinningTests
 /// <see cref="SwivalProfileSession.DisposeAsync"/> can distinguish task
 /// edits (leave untouched) from no-op sessions (restore original).
 /// </summary>
-internal sealed class ProfileEditingSubagentRunner : ISubagentRunner
+internal sealed class ProfileEditingSubagentRunner(
+    int editAtStage, string editContent, IRelayEventSink? eventSink = null) : ISubagentRunner
 {
     private readonly ScriptedSubagentRunner _inner = new();
-    private readonly int _editAtStage;
-    private readonly string _editContent;
-    private readonly IRelayEventSink? _eventSink;
     private readonly List<string?> _pinnedContents = [];
     private readonly Dictionary<int, string?> _pinnedContentsByStage = [];
-
-    public ProfileEditingSubagentRunner(int editAtStage, string editContent, IRelayEventSink? eventSink = null)
-    {
-        _editAtStage = editAtStage;
-        _editContent = editContent;
-        _eventSink = eventSink;
-    }
 
     /// <summary>
     /// Every <see cref="StageInvocation.PinnedSwivalProfileContent"/> value
@@ -226,16 +217,16 @@ internal sealed class ProfileEditingSubagentRunner : ISubagentRunner
             await using var session = await SwivalProfileSession.PrepareWithPinnedContentAsync(
                 invocation.TargetRoot, invocation.PinnedSwivalProfileContent,
                 invocation.RunId, invocation.TaskName,
-                _eventSink, cancellationToken);
+                eventSink, cancellationToken);
 
             // Simulate the task editing swival.toml while swival is running
             // (inside the session lifetime). DisposeAsync will detect the
             // edit and leave it untouched, so it survives to the next stage
             // (which will then see divergence between tree and pinned).
-            if (invocation.Stage.Number == _editAtStage)
+            if (invocation.Stage.Number == editAtStage)
             {
                 var tomlPath = Path.Combine(invocation.TargetRoot, "swival.toml");
-                await File.WriteAllTextAsync(tomlPath, _editContent, cancellationToken);
+                await File.WriteAllTextAsync(tomlPath, editContent, cancellationToken);
             }
         }
 

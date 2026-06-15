@@ -169,11 +169,9 @@ internal sealed class Stage3FrontLoadRunner : ISubagentRunner
     }
 }
 
-internal sealed class TurnsReportingSubagentRunner : ISubagentRunner
+internal sealed class TurnsReportingSubagentRunner(int llmCallCount) : ISubagentRunner
 {
-    private readonly int _llmCallCount;
     private readonly ScriptedSubagentRunner _scripted = new();
-    public TurnsReportingSubagentRunner(int llmCallCount) => _llmCallCount = llmCallCount;
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
@@ -181,7 +179,7 @@ internal sealed class TurnsReportingSubagentRunner : ISubagentRunner
         await File.WriteAllTextAsync(Path.Combine(invocation.TraceDirectory, $"{Guid.NewGuid():N}.jsonl"),
             """{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}""", cancellationToken);
         await File.WriteAllTextAsync(invocation.ReportFile,
-            $$"""{"model":"cheap","result":{"answer":"ok"},"stats":{},"timeline":[{{string.Join(",", Enumerable.Range(0, _llmCallCount).Select(i => $$"""{"type":"llm_call","prompt_tokens_est":{{(i + 1) * 1000}}}"""))}}]}""", cancellationToken);
+            $$"""{"model":"cheap","result":{"answer":"ok"},"stats":{},"timeline":[{{string.Join(",", Enumerable.Range(0, llmCallCount).Select(i => $$"""{"type":"llm_call","prompt_tokens_est":{{(i + 1) * 1000}}}"""))}}]}""", cancellationToken);
         return await _scripted.RunAsync(invocation, cancellationToken);
     }
 }

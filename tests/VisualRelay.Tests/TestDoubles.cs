@@ -126,14 +126,9 @@ internal sealed class InMemoryRelayEventSink : IRelayEventSink
     }
 }
 
-internal sealed class ScriptedTestRunner : ITestRunner
+internal sealed class ScriptedTestRunner(params TestRunResult[] results) : ITestRunner
 {
-    private readonly Queue<TestRunResult> _results;
-
-    public ScriptedTestRunner(params TestRunResult[] results)
-    {
-        _results = new Queue<TestRunResult>(results);
-    }
+    private readonly Queue<TestRunResult> _results = new(results);
 
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
@@ -162,15 +157,10 @@ internal sealed class TimeoutSimulatingTestRunner : ITestRunner
 /// tests can assert on call count and command strings (e.g. to verify that a
 /// bootstrap check command was passed or skipped).
 /// </summary>
-internal sealed class RecordingTestRunner : ITestRunner
+internal sealed class RecordingTestRunner(params TestRunResult[] results) : ITestRunner
 {
-    private readonly ScriptedTestRunner _inner;
+    private readonly ScriptedTestRunner _inner = new(results);
     private readonly List<(string RootPath, string Command)> _calls = [];
-
-    public RecordingTestRunner(params TestRunResult[] results)
-    {
-        _inner = new ScriptedTestRunner(results);
-    }
 
     public IReadOnlyList<(string RootPath, string Command)> Calls => _calls;
 
@@ -187,24 +177,18 @@ internal sealed class RecordingTestRunner : ITestRunner
 /// calls — simulating an agent fixing the bootstrap. Non-bootstrap commands
 /// return red on the first call (stage 5 author gate) and green thereafter.
 /// </summary>
-internal sealed class CommandAwareTestRunner : ITestRunner
+internal sealed class CommandAwareTestRunner(string bootstrapSentinel = "nix develop") : ITestRunner
 {
     private int _nonBootstrapCallCount;
     private int _bootstrapCallCount;
-    private readonly string _bootstrapSentinel;
     private readonly List<(string RootPath, string Command)> _calls = [];
-
-    public CommandAwareTestRunner(string bootstrapSentinel = "nix develop")
-    {
-        _bootstrapSentinel = bootstrapSentinel;
-    }
 
     public IReadOnlyList<(string RootPath, string Command)> Calls => _calls;
 
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
         _calls.Add((rootPath, command));
-        if (command.Contains(_bootstrapSentinel))
+        if (command.Contains(bootstrapSentinel))
         {
             _bootstrapCallCount++;
             // First bootstrap call fails (simulates a broken flake.nix),
@@ -248,32 +232,20 @@ internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner
         Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, "commit rejected: empty commit"));
 }
 
-internal sealed class FlaggingTaskRunner : IRelayTaskRunner
+internal sealed class FlaggingTaskRunner(string reason) : IRelayTaskRunner
 {
-    private readonly string _reason;
-
-    public FlaggingTaskRunner(string reason)
-    {
-        _reason = reason;
-    }
-
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, _reason));
+        Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason));
 }
 
 /// <summary>
 /// Returns scripted outcomes in FIFO order. When the queue is exhausted, falls
 /// back to Committed so tests don't need to script every task explicitly.
 /// </summary>
-internal sealed class ScriptedOutcomeTaskRunner : IRelayTaskRunner
+internal sealed class ScriptedOutcomeTaskRunner(params RelayTaskOutcome[] outcomes) : IRelayTaskRunner
 {
-    private readonly Queue<RelayTaskOutcome> _outcomes;
+    private readonly Queue<RelayTaskOutcome> _outcomes = new(outcomes);
     public List<string> TasksRun { get; } = [];
-
-    public ScriptedOutcomeTaskRunner(params RelayTaskOutcome[] outcomes)
-    {
-        _outcomes = new Queue<RelayTaskOutcome>(outcomes);
-    }
 
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
@@ -286,10 +258,9 @@ internal sealed class ScriptedOutcomeTaskRunner : IRelayTaskRunner
     }
 }
 
-internal sealed class ElapsedTestRunner : ITestRunner
+internal sealed class ElapsedTestRunner(params TestRunResult[] results) : ITestRunner
 {
-    private readonly Queue<TestRunResult> _results;
-    public ElapsedTestRunner(params TestRunResult[] results) => _results = new Queue<TestRunResult>(results);
+    private readonly Queue<TestRunResult> _results = new(results);
 
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
         => Task.FromResult(_results.Count > 0

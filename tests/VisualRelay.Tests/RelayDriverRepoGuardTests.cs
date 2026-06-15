@@ -239,15 +239,10 @@ public sealed class RelayDriverRepoGuardTests
     /// Each inner runner is typically a <see cref="ScriptedTestRunner"/>
     /// with its own independent queue.
     /// </summary>
-    internal sealed class CommandDispatchTestRunner : ITestRunner
+    internal sealed class CommandDispatchTestRunner(
+        params (string Sentinel, ITestRunner Runner)[] routes) : ITestRunner
     {
-        private readonly List<(string Sentinel, ITestRunner Runner)> _routes;
-
-        public CommandDispatchTestRunner(
-            params (string Sentinel, ITestRunner Runner)[] routes)
-        {
-            _routes = [.. routes];
-        }
+        private readonly List<(string Sentinel, ITestRunner Runner)> _routes = [.. routes];
 
         public Task<TestRunResult> RunAsync(
             string rootPath, string command, CancellationToken cancellationToken = default)

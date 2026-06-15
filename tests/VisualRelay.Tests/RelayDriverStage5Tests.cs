@@ -215,20 +215,11 @@ public sealed partial class RelayDriverTests
     // Helper — wraps another runner and adds extra test files at stage 5
     // ═══════════════════════════════════════════════════════════════
 
-    private sealed class ExtraTestFileRunner : ISubagentRunner
+    private sealed class ExtraTestFileRunner(ISubagentRunner inner, string extraTestFile) : ISubagentRunner
     {
-        private readonly ISubagentRunner _inner;
-        private readonly string _extraTestFile;
-
-        public ExtraTestFileRunner(ISubagentRunner inner, string extraTestFile)
-        {
-            _inner = inner;
-            _extraTestFile = extraTestFile;
-        }
-
         public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
         {
-            var result = await _inner.RunAsync(invocation, cancellationToken);
+            var result = await inner.RunAsync(invocation, cancellationToken);
 
             // For stage 5, inject the extra test file into the JSON.
             if (invocation.Stage.Number == 5 && result.IsValid && !string.IsNullOrWhiteSpace(result.Json))
@@ -239,7 +230,7 @@ public sealed partial class RelayDriverTests
                 {
                     existing.AddRange(arr.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0));
                 }
-                existing.Add(_extraTestFile);
+                existing.Add(extraTestFile);
 
                 var rationale = doc.RootElement.TryGetProperty("rationale", out var r)
                     ? r.GetString() ?? "red first"

@@ -231,18 +231,11 @@ internal sealed class CapturingFlakeNixSubagentRunner : ISubagentRunner
 /// Returns a stage-4 manifest with the exact files specified at
 /// construction time. Used to inject custom bootstrap file paths.
 /// </summary>
-internal sealed class CustomManifestSubagentRunner : ISubagentRunner
+internal sealed class CustomManifestSubagentRunner(string[] manifest) : ISubagentRunner
 {
-    private readonly string[] _manifest;
-
-    public CustomManifestSubagentRunner(string[] manifest)
-    {
-        _manifest = manifest;
-    }
-
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        var manifestJson = string.Join("\",\"", _manifest);
+        var manifestJson = string.Join("\",\"", manifest);
         var json = invocation.Stage.Number switch
         {
             1 => """{"summary":"framed","options":["custom"]}""",

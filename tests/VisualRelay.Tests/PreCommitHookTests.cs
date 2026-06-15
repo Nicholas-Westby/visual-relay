@@ -176,18 +176,14 @@ public sealed class PreCommitHookTests
     /// Wraps TestRepository so the hook is cleaned up on disposal even if the
     /// hook file is read-only after chmod.
     /// </summary>
-    private sealed class TestRepo : IDisposable
+    private sealed class TestRepo(TestRepository repo) : IDisposable
     {
-        private readonly TestRepository _repo;
-
-        public TestRepo(TestRepository repo) => _repo = repo;
-
-        public string Root => _repo.Root;
+        public string Root => repo.Root;
 
         public void Dispose()
         {
             // Ensure hook file is writable before cleanup on Unix.
-            var hookPath = Path.Combine(_repo.Root, ".git", "hooks", "pre-commit");
+            var hookPath = Path.Combine(repo.Root, ".git", "hooks", "pre-commit");
             if (File.Exists(hookPath) && !OperatingSystem.IsWindows())
             {
                 try
@@ -201,7 +197,7 @@ public sealed class PreCommitHookTests
                 }
             }
 
-            _repo.Dispose();
+            repo.Dispose();
         }
     }
 }

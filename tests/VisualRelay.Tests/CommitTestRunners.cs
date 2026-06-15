@@ -43,12 +43,8 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
 /// Runner that simulates an agent trying to git-commit at stage 8 (mid-run).
 /// The pre-commit hook should reject it because RELAY_COMMIT_TOKEN is absent.
 /// </summary>
-internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
+internal sealed class MidRunCommittingSubagentRunner(string root) : ISubagentRunner
 {
-    private readonly string _root;
-
-    public MidRunCommittingSubagentRunner(string root) => _root = root;
-
     /// <summary>True after the hook rejected the agent's git commit at stage 8.</summary>
     public bool AgentCommitRejected { get; private set; }
 
@@ -105,7 +101,7 @@ internal sealed class MidRunCommittingSubagentRunner : ISubagentRunner
         startInfo.Environment.Remove("DEVELOPER_DIR");
         startInfo.Environment.Remove("SDKROOT");
         startInfo.ArgumentList.Add("-C");
-        startInfo.ArgumentList.Add(_root);
+        startInfo.ArgumentList.Add(root);
         foreach (var arg in arguments.Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             startInfo.ArgumentList.Add(arg);

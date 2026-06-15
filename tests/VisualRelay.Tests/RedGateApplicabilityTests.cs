@@ -133,17 +133,8 @@ public sealed class RedGateApplicabilityTests
     }
 }
 
-internal sealed class AlreadyResolvedSubagentRunner : ISubagentRunner
+internal sealed class AlreadyResolvedSubagentRunner(string implFile, string testFile) : ISubagentRunner
 {
-    private readonly string _implFile;
-    private readonly string _testFile;
-
-    public AlreadyResolvedSubagentRunner(string implFile, string testFile)
-    {
-        _implFile = implFile;
-        _testFile = testFile;
-    }
-
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         var json = invocation.Stage.Number switch
@@ -151,8 +142,8 @@ internal sealed class AlreadyResolvedSubagentRunner : ISubagentRunner
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
-            4 => $$"""{"plan":"add regression test","manifest":["{{_implFile}}","{{_testFile}}"]}""",
-            5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"green regression coverage for pre-existing fix"}""",
+            4 => $$"""{"plan":"add regression test","manifest":["{{implFile}}","{{testFile}}"]}""",
+            5 => $$"""{"testFiles":["{{testFile}}"],"rationale":"green regression coverage for pre-existing fix"}""",
             6 => """{"summary":"no implementation changes needed"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"no changes"}""",

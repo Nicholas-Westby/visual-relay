@@ -5,19 +5,17 @@ namespace VisualRelay.Tests;
 
 public sealed class RelayDriverPlanCompletenessTests
 {
-    private sealed class Stage4Runner : ISubagentRunner
+    private sealed class Stage4Runner(string plan, string[] manifest) : ISubagentRunner
     {
-        readonly string _plan; readonly string[] _manifest;
         readonly ScriptedSubagentRunner _inner = new();
         public readonly List<StageInvocation> Invocations = [];
-        public Stage4Runner(string plan, string[] manifest) { _plan = plan; _manifest = manifest; }
         public void Seed(string code, string test) => _inner.SeedHappyPath(code, test);
         public Task<SubagentResult> RunAsync(StageInvocation inv, CancellationToken ct = default)
         {
             Invocations.Add(inv);
             if (inv.Stage.Number != 4) return _inner.RunAsync(inv, ct);
-            var mj = string.Join(",", _manifest.Select(x => $"\"{x}\""));
-            var ep = _plan.Replace("\\", "\\\\").Replace("\"", "\\\"");
+            var mj = string.Join(",", manifest.Select(x => $"\"{x}\""));
+            var ep = plan.Replace("\\", "\\\\").Replace("\"", "\\\"");
             var j = $$"""{"plan":"{{ep}}","manifest":[{{mj}}]}""";
             return Task.FromResult(new SubagentResult(j, j, true, null));
         }

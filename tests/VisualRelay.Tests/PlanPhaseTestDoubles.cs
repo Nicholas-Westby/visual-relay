@@ -94,20 +94,14 @@ internal sealed class CountingConcurrencySubagentRunner : ISubagentRunner
 /// Writes a marker file into <c>TargetRoot/dirty-marker.txt</c> during
 /// stage 2 (Research) — the earliest write-capable planning stage.
 /// </summary>
-internal sealed class ShellWritingSubagentRunner : ISubagentRunner
+internal sealed class ShellWritingSubagentRunner(string markerFileName = "dirty-marker.txt") : ISubagentRunner
 {
     private readonly ScriptedSubagentRunner _inner = new();
-    private readonly string _markerFileName;
 
     /// <summary>
     /// The absolute path where the stray write was placed (set after RunAsync).
     /// </summary>
     public string? WrittenFilePath { get; private set; }
-
-    public ShellWritingSubagentRunner(string markerFileName = "dirty-marker.txt")
-    {
-        _markerFileName = markerFileName;
-    }
 
     public void SeedHappyPath(string codeFile, string testFile) =>
         _inner.SeedHappyPath(codeFile, testFile);
@@ -118,7 +112,7 @@ internal sealed class ShellWritingSubagentRunner : ISubagentRunner
         // Stages 2–4 have commands="all" so a write is plausible.
         if (invocation.Stage.Number == 2)
         {
-            WrittenFilePath = Path.Combine(invocation.TargetRoot, _markerFileName);
+            WrittenFilePath = Path.Combine(invocation.TargetRoot, markerFileName);
             Directory.CreateDirectory(Path.GetDirectoryName(WrittenFilePath)!);
             await File.WriteAllTextAsync(WrittenFilePath, "stray planning write", cancellationToken);
         }
@@ -131,43 +125,33 @@ internal sealed class ShellWritingSubagentRunner : ISubagentRunner
 /// A subagent runner that seeds distinct manifests for two tasks so the
 /// commit-contamination test has clearly separable file sets.
 /// </summary>
-internal sealed class DualTaskSubagentRunner : ISubagentRunner
+internal sealed class DualTaskSubagentRunner(string taskId, string codeFile, string testFile) : ISubagentRunner
 {
-    private readonly string _taskId;
-    private readonly string _codeFile;
-    private readonly string _testFile;
-
-    public DualTaskSubagentRunner(string taskId, string codeFile, string testFile)
-    {
-        _taskId = taskId;
-        _codeFile = codeFile;
-        _testFile = testFile;
-    }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         if (invocation.Stage.Number == 5)
         {
             Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, _testFile), $"// red test for {_taskId}");
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, testFile), $"// red test for {taskId}");
         }
         else if (invocation.Stage.Number == 6)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(invocation.TargetRoot, _codeFile))!);
-            File.WriteAllText(Path.Combine(invocation.TargetRoot, _codeFile), $"// impl for {_taskId}");
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.Combine(invocation.TargetRoot, codeFile))!);
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, codeFile), $"// impl for {taskId}");
         }
 
         var json = invocation.Stage.Number switch
         {
-            1 => $$"""{"summary":"framed for {{_taskId}}","options":["option-a"]}""",
+            1 => $$"""{"summary":"framed for {{taskId}}","options":["option-a"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
-            4 => $$"""{"plan":"edit files for {{_taskId}}","manifest":["{{_codeFile}}","{{_testFile}}"]}""",
-            5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"red first for {{_taskId}}"}""",
-            6 => $$"""{"summary":"implemented {{_taskId}}"}""",
+            4 => $$"""{"plan":"edit files for {{taskId}}","manifest":["{{codeFile}}","{{testFile}}"]}""",
+            5 => $$"""{"testFiles":["{{testFile}}"],"rationale":"red first for {{taskId}}"}""",
+            6 => $$"""{"summary":"implemented {{taskId}}"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"fixed"}""",
-            9 => $$"""{"summary":"verified","commitMessages":["feat: {{_taskId}} feature","chore: {{_taskId}} cleanup","test: {{_taskId}} coverage"]}""",
+            9 => $$"""{"summary":"verified","commitMessages":["feat: {{taskId}} feature","chore: {{taskId}} cleanup","test: {{taskId}} coverage"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -217,24 +201,15 @@ internal sealed class PerTaskDriverFactory : IRelayTaskRunner
 /// path used for each — enabling assertions that planning happened in
 /// worktree paths and execution in the main repo path.
 /// </summary>
-internal sealed class PhaseTrackingTaskRunner : IRelayTaskRunner
+internal sealed class PhaseTrackingTaskRunner(
+    string mainRootPath, ISubagentRunner subagent, ITestRunner testRunner) : IRelayTaskRunner
 {
-    private readonly string _mainRootPath;
-    private readonly ISubagentRunner _subagent;
-    private readonly ITestRunner _testRunner;
-
-    public PhaseTrackingTaskRunner(string mainRootPath, ISubagentRunner subagent, ITestRunner testRunner)
-    {
-        _mainRootPath = mainRootPath;
-        _subagent = subagent;
-        _testRunner = testRunner;
-    }
 
     public List<(string TaskId, string RootPath, RelayDriverOptions Options)> Runs { get; } = [];
 
     public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
-        var options = rootPath == _mainRootPath
+        var options = rootPath == mainRootPath
             ? new RelayDriverOptions(CreateGitCommit: true, Resume: true) // serial execute phase
             : new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4); // parallel plan phase
 
@@ -242,7 +217,7 @@ internal sealed class PhaseTrackingTaskRunner : IRelayTaskRunner
 
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(_subagent, _testRunner, sink),
+            RelayDriverDependencies.ForTests(subagent, testRunner, sink),
             options);
         return await driver.RunTaskAsync(rootPath, taskId, cancellationToken);
     }
@@ -255,25 +230,17 @@ internal sealed class PhaseTrackingTaskRunner : IRelayTaskRunner
 /// When <c>traceSink</c> is null, trace events are silently dropped
 /// (mirroring the GUI gap where planSubagentFactory doesn't pass an eventSink).
 /// </summary>
-internal sealed class TraceEmittingSubagentRunner : ISubagentRunner
+internal sealed class TraceEmittingSubagentRunner(
+    ScriptedSubagentRunner inner, IRelayEventSink? traceSink = null) : ISubagentRunner
 {
-    private readonly ScriptedSubagentRunner _inner;
-    private readonly IRelayEventSink? _traceSink;
-
-    public TraceEmittingSubagentRunner(ScriptedSubagentRunner inner, IRelayEventSink? traceSink = null)
-    {
-        _inner = inner;
-        _traceSink = traceSink;
-    }
-
     public void SeedHappyPath(string codeFile, string testFile) =>
-        _inner.SeedHappyPath(codeFile, testFile);
+        inner.SeedHappyPath(codeFile, testFile);
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        if (_traceSink is not null)
+        if (traceSink is not null)
         {
-            await _traceSink.PublishAsync(new RelayEvent(
+            await traceSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow,
                 "debug",
                 "trace_entry",
@@ -289,6 +256,6 @@ internal sealed class TraceEmittingSubagentRunner : ISubagentRunner
                 }), cancellationToken);
         }
 
-        return await _inner.RunAsync(invocation, cancellationToken);
+        return await inner.RunAsync(invocation, cancellationToken);
     }
 }

@@ -148,23 +148,16 @@ public sealed class RelayDriverEarlyImplementationTests
     /// other stages to a <see cref="CapturingSubagentRunner"/> so invocations are
     /// recorded for assertion.
     /// </summary>
-    private sealed class Stage3FrontLoadCapturingRunner : ISubagentRunner
+    private sealed class Stage3FrontLoadCapturingRunner(
+        ISubagentRunner frontLoader, CapturingSubagentRunner capturer) : ISubagentRunner
     {
-        private readonly ISubagentRunner _frontLoader;
-        private readonly CapturingSubagentRunner _capturer;
-
-        public Stage3FrontLoadCapturingRunner(ISubagentRunner frontLoader, CapturingSubagentRunner capturer)
-        {
-            _frontLoader = frontLoader;
-            _capturer = capturer;
-        }
 
         public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
         {
             if (invocation.Stage.Number == 3)
-                return _frontLoader.RunAsync(invocation, cancellationToken);
+                return frontLoader.RunAsync(invocation, cancellationToken);
 
-            return _capturer.RunAsync(invocation, cancellationToken);
+            return capturer.RunAsync(invocation, cancellationToken);
         }
     }
 }

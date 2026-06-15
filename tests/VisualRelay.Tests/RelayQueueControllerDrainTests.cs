@@ -122,22 +122,16 @@ public sealed class RelayQueueControllerDrainTests
     /// later calls <c>File.WriteAllText</c> on the same path it throws
     /// because NEEDS-REVIEW is a directory, not a file.
     /// </summary>
-    private sealed class NeedsReviewDirPoisoningRunner : ISubagentRunner
+    private sealed class NeedsReviewDirPoisoningRunner(int flagAtStage) : ISubagentRunner
     {
         private readonly ScriptedSubagentRunner _inner = new();
-        private readonly int _flagAtStage;
-
-        public NeedsReviewDirPoisoningRunner(int flagAtStage)
-        {
-            _flagAtStage = flagAtStage;
-        }
 
         public void SeedHappyPath(string codeFile, string testFile) =>
             _inner.SeedHappyPath(codeFile, testFile);
 
         public async Task<SubagentResult> RunAsync(StageInvocation inv, CancellationToken ct = default)
         {
-            if (inv.Stage.Number < _flagAtStage)
+            if (inv.Stage.Number < flagAtStage)
             {
                 return await _inner.RunAsync(inv, ct);
             }
@@ -152,7 +146,7 @@ public sealed class RelayQueueControllerDrainTests
 
             return new SubagentResult(
                 string.Empty, null, false,
-                $"synthetic flag at stage {_flagAtStage}");
+                $"synthetic flag at stage {flagAtStage}");
         }
     }
 

@@ -212,18 +212,14 @@ public sealed class SourceEnumerationGuardTests
     /// Wraps <see cref="TestRepository"/> to guarantee the guard script copy
     /// (which may be read-only after chmod) is cleaned up on disposal.
     /// </summary>
-    private sealed class TestRepo : IDisposable
+    private sealed class TestRepo(TestRepository repo) : IDisposable
     {
-        private readonly TestRepository _repo;
-
-        public TestRepo(TestRepository repo) => _repo = repo;
-
-        public string Root => _repo.Root;
+        public string Root => repo.Root;
 
         public void Dispose()
         {
             // Best-effort: ensure copied scripts are deletable on Unix.
-            var guardDir = Path.Combine(_repo.Root, "tools", "guards");
+            var guardDir = Path.Combine(repo.Root, "tools", "guards");
             if (Directory.Exists(guardDir) && !OperatingSystem.IsWindows())
             {
                 foreach (var f in Directory.GetFiles(guardDir))
@@ -240,7 +236,7 @@ public sealed class SourceEnumerationGuardTests
                 }
             }
 
-            _repo.Dispose();
+            repo.Dispose();
         }
     }
 }
