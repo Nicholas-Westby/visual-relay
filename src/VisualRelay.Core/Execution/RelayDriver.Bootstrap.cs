@@ -87,9 +87,9 @@ public sealed partial class RelayDriver
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "info", "verify_retry_pass", runId, rootPath, taskId, stageNumber,
                 Data: new Dictionary<string, string> { ["result"] = "pass-on-retry" }), ct);
-            return retryResult;
+            return retryResult with { Elapsed = result.Elapsed + retryResult.Elapsed };
         }
 
-        return result; // both failed — return original
+        return result with { Elapsed = result.Elapsed + retryResult.Elapsed }; // both failed — return original with total elapsed
     }
 }

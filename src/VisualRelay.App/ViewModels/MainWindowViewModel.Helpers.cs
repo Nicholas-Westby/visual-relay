@@ -289,5 +289,9 @@ public partial class MainWindowViewModel
         {
             stage.TurnsLabel = turns + "t";
         }
+        if (relayEvent.Data.TryGetValue("testTime", out var testTime))
+        {
+            stage.TestDurationLabel = testTime;
+        }
     }
 }

@@ -36,7 +36,8 @@ public sealed class StageRowViewModel : ViewModelBase
     public string Ordinal => Number.ToString("00");
     public string StatusLabel => Status == "Done" ? "Complete" : Status;
     public string MetricLabel => (CostLabel == "No cost yet" ? DurationLabel : $"{DurationLabel}  {CostLabel}")
-        + (string.IsNullOrEmpty(TurnsLabel) ? string.Empty : $"  {TurnsLabel}");
+        + (string.IsNullOrEmpty(TurnsLabel) ? string.Empty : $"  {TurnsLabel}")
+        + (string.IsNullOrEmpty(TestDurationLabel) ? string.Empty : $"  test {TestDurationLabel}");
     public IBrush AccentBrush => Status switch
     {
         "Done" => SuccessBrush,
@@ -129,6 +130,33 @@ public sealed class StageRowViewModel : ViewModelBase
         }
     }
 
+    private string _testDurationLabel = string.Empty;
+    public string TestDurationLabel
+    {
+        get => _testDurationLabel;
+        set
+        {
+            if (SetProperty(ref _testDurationLabel, value))
+            {
+                OnPropertyChanged(nameof(MetricLabel));
+            }
+        }
+    }
+
+    public void SetTestDurationSeconds(double? seconds)
+    {
+        TestDurationLabel = seconds.HasValue ? FormatDuration(seconds.Value) : string.Empty;
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        if (seconds < 60)
+            return $"{Math.Max(0, seconds):0}s";
+        var minutes = Math.Floor(seconds / 60);
+        var remainder = seconds % 60;
+        return $"{minutes:0}m {remainder:00}s";
+    }
+
     public string? ReportPath { get; private set; }
     public string? TraceDirectory { get; private set; }
 
@@ -151,6 +179,7 @@ public sealed class StageRowViewModel : ViewModelBase
         CostLabel = "No cost yet";
         ModelLabel = string.Empty;
         TurnsLabel = string.Empty;
+        TestDurationLabel = string.Empty;
         ReportPath = null;
         TraceDirectory = null;
     }

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -28,6 +29,7 @@ public sealed class DirectExecTestRunner : ITestRunner
 
         try
         {
+            var sw = Stopwatch.StartNew();
             var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
                 parts[0],
                 parts.Skip(1),
@@ -35,7 +37,7 @@ public sealed class DirectExecTestRunner : ITestRunner
                 _timeout,
                 cancellationToken);
 
-            return new TestRunResult(exitCode, output, timedOut);
+            return new TestRunResult(exitCode, output, timedOut, sw.Elapsed);
         }
         catch (Win32Exception)
         {

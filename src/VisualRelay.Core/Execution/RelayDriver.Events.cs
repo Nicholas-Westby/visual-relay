@@ -17,7 +17,8 @@ public sealed partial class RelayDriver
         RelayCostEstimate? cost,
         double sessionCostUsd,
         int unknownCostStageCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        double? testDurationSeconds = null)
     {
         var costLabel = cost is not null
             ? MoneyFormatter.Dollars(cost.CostUsd)
@@ -42,6 +43,10 @@ public sealed partial class RelayDriver
         if (cost?.Turns > 0)
         {
             data["turns"] = cost.Turns.ToString();
+        }
+        if (testDurationSeconds.HasValue)
+        {
+            data["testTime"] = FormatDuration(testDurationSeconds.Value);
         }
 
         return _dependencies.EventSink.PublishAsync(

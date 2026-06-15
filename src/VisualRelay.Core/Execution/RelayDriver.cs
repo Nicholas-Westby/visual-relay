@@ -43,9 +43,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var unknownCostStageCount = 0;
             var firstStageToRun = 1;
             if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
-            // Commit-gate resume validation
             (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config, ledger, seals, manifest, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
-            // Re-added task detection & task-input-hash stamping
             var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];
@@ -75,6 +73,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 string body;
                 string? check = null;
                 RelayCostEstimate? cost = null;
+                double? testDurationSeconds = null;
 
                 if (stage.Kind == "driver")
                 {
@@ -153,6 +152,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             }
 
                             var testResult = gateResult.TestResult;
+                            testDurationSeconds = testResult.Elapsed.TotalSeconds;
                             if (testResult.TimedOut)
                             {
                                 return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
@@ -177,7 +177,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 9)
                     {
-                        // ── Bootstrap smoke check (if manifest touches env-bootstrap files) ──
                         var bootstrapFailed = false;
                         string? bootstrapFailureOutput = null;
                         var (shouldRunBootstrap, bootstrapCmd) = ResolveBootstrapCheck(config, manifest);
@@ -196,14 +195,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 bootstrapFailureOutput = bootstrapResult.Output;
                             }
                         }
-                        // ── New-guard probe: run any guard scripts the task itself added ──
                         var (newGuardOutput, probeTimedOut) = await NewGuardProbeAsync(
                             rootPath, manifest, config.NewGuardPatterns, cancellationToken);
                         if (probeTimedOut)
                             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
                                 ErrorHintClassifier.WithHint(newGuardOutput ?? "new guard timed out"),
                                 null, statusEntries, cancellationToken);
-                        // ── Repo guard check ──
                         var (guardFailed, guardOutput, guardTimedOut) = await IntegrateGuardAsync(
                             rootPath, taskId, runId, config, ledger, cancellationToken);
                         if (guardTimedOut)
@@ -214,6 +211,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         }
 
                         var testResult = await RunTestCommandWithRetryAsync(rootPath, config, cancellationToken, 9, runId, taskId);
+                        testDurationSeconds = testResult.Elapsed.TotalSeconds;
                         if (testResult.TimedOut)
                         {
                             return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
@@ -249,7 +247,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 }
 
                                 // Genuinely red — record stage 9, then enter fix-verify loop.
-                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
 
                                 var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, shouldRunBootstrap ? bootstrapCmd : null, config.GuardCommand, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
                                 if (loopOutcome is not null)
@@ -269,7 +267,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                                 stopwatch, ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-                                cancellationToken);
+                                cancellationToken, testDurationSeconds);
                             // Skip stage 10: nothing to fix.
                             var stage10 = RelayStages.All[9];
                             (previousSeal, taskHash) = await RecordStageAsync(
@@ -287,7 +285,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 if (stage.Number != 9 || !stage10Handled)
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                        stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                        stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                 }
             }
             return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, taskHash, activeLock.Nonce, preRunUntracked, statusEntries, cancellationToken);

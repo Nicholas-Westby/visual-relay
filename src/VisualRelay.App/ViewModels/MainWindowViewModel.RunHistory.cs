@@ -28,6 +28,7 @@ public partial class MainWindowViewModel
             if (statusEntry is not null)
             {
                 stage.Status = statusEntry.Status;
+                stage.SetTestDurationSeconds(statusEntry.TestDurationSeconds);
             }
 
             var stageMetric = metric.Stages.FirstOrDefault(item => item.StageNumber == stage.Number);

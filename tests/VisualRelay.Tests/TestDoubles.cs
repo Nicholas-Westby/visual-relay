@@ -286,3 +286,14 @@ internal sealed class ScriptedOutcomeTaskRunner : IRelayTaskRunner
     }
 }
 
+internal sealed class ElapsedTestRunner : ITestRunner
+{
+    private readonly Queue<TestRunResult> _results;
+    public ElapsedTestRunner(params TestRunResult[] results) => _results = new Queue<TestRunResult>(results);
+
+    public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
+        => Task.FromResult(_results.Count > 0
+            ? _results.Dequeue()
+            : new TestRunResult(0, "green", Elapsed: TimeSpan.FromMilliseconds(1)));
+}
+

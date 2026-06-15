@@ -9,10 +9,11 @@ public sealed class ShellTestRunner : ITestRunner
     public ShellTestRunner(TimeSpan? timeout = null) => _timeout = timeout ?? Timeout.InfiniteTimeSpan;
     public async Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
+        var sw = Stopwatch.StartNew();
         var result = await ProcessCapture.RunAsync("/bin/sh", $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"", rootPath, _timeout, cancellationToken);
         var output = result.TimedOut
             ? $"test command timed out after {_timeout.TotalMilliseconds:F0}ms\n\n{result.Output}"
             : result.Output;
-        return new TestRunResult(result.ExitCode, output, result.TimedOut);
+        return new TestRunResult(result.ExitCode, output, result.TimedOut, sw.Elapsed);
     }
 }

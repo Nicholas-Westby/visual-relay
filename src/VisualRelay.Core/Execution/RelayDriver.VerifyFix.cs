@@ -154,6 +154,7 @@ public sealed partial class RelayDriver
             }
 
             var testResult = await RunTestCommandWithRetryAsync(rootPath, config, cancellationToken, 10, runId, taskId);
+            var testDurationSeconds = (double?)testResult.Elapsed.TotalSeconds;
             if (testResult.TimedOut)
             {
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
@@ -181,11 +182,11 @@ public sealed partial class RelayDriver
             await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
 
             stopwatch.Stop();
-            MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check);
+            MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
 
             await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost,
-                sessionCostUsd, unknownCostStageCount, cancellationToken);
+                sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
 
             if (check == "green")
                 return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
@@ -277,7 +278,8 @@ public sealed partial class RelayDriver
         string taskHash,
         double sessionCostUsd,
         int unknownCostStageCount,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        double? testDurationSeconds = null)
     {
         AppendLedgerSection(ledger, stage, body);
         var treeHash = stage.Number >= 4 ? WorkingTreeHash(rootPath, manifest) : string.Empty;
@@ -286,9 +288,9 @@ public sealed partial class RelayDriver
         seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
         await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
         stopwatch.Stop();
-        MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check);
+        MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
         await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken);
+        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
         return (seal, seal);
     }
 }

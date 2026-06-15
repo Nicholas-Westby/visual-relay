@@ -248,7 +248,7 @@ public sealed partial class RelayDriver
         }
     }
 
-    private static void MarkStatusDone(List<StageStatusEntry> entries, RelayStageDefinition stage, TimeSpan elapsed, RelayCostEstimate? cost, string? check)
+    private static void MarkStatusDone(List<StageStatusEntry> entries, RelayStageDefinition stage, TimeSpan elapsed, RelayCostEstimate? cost, string? check, double? testDurationSeconds = null)
     {
         var idx = stage.Number - 1;
         if (idx < 0 || idx >= entries.Count) return;
@@ -259,7 +259,8 @@ public sealed partial class RelayDriver
             CostUsd = stage.Kind == "driver" ? 0 : cost?.CostUsd,
             Turns = cost?.Turns > 0 ? cost.Turns : null,
             Model = stage.Kind == "driver" ? null : cost?.Model,
-            Check = check
+            Check = check,
+            TestDurationSeconds = testDurationSeconds
         };
     }
 
