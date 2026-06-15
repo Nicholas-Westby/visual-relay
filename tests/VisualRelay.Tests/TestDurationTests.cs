@@ -144,6 +144,16 @@ public sealed class TestDurationTests
         repo.WriteConfig("dotnet test", [], baselineVerify: false);
         repo.WriteTask("no-impl", "# No impl\n");
         var runner = new OnlyTaskDirManifestSubagentRunner();
+
+        // Minimal git repo so the stage-5 worktree filter can enumerate.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "llm-tasks"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "llm-tasks", "a.md"), "# a");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "seed");
+
         var testRunner = new ElapsedTestRunner(
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.0)));
         var driver = new RelayDriver(

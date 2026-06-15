@@ -64,6 +64,13 @@ public sealed partial class RelayDriverResumeTests
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "original content");
 
+        // Minimal git repo so the stage-5 worktree filter can enumerate.
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "seed");
+
         var taskDir = Path.Combine(repo.Root, ".relay", "dirty-resume");
         var manifest = new[] { "src/app.cs" };
         var originalTreeHash = ComputeTreeHash(repo.Root, manifest);

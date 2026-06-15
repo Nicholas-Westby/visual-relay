@@ -103,6 +103,15 @@ public sealed partial class RelayDriverTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
 
+        // Minimal git repo so the worktree filter can enumerate.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "seed");
+
         // Override stage 5 to return a test file under llm-tasks/.
         var wrapped = new ExtraTestFileRunner(runner, "llm-tasks/extra-test.md");
         var tests = new ScriptedTestRunner(

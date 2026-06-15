@@ -32,6 +32,16 @@ public sealed class RelayDriverPlanCompletenessTests
         repo.WriteTask("t", "## Done when\n- Implement auth\n- Create tests\n");
         var r = new Stage4Runner("Implement auth and create tests.", ["src/Auth.cs", "tests/T.cs"]);
         r.Seed("src/Auth.cs", "tests/T.cs");
+
+        // Minimal git repo so the stage-5 worktree filter can enumerate.
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "Auth.cs"), "old");
+        TestGit.Run(repo.Root, "init");
+        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
+        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        TestGit.Run(repo.Root, "add", ".");
+        TestGit.Run(repo.Root, "commit", "-m", "seed");
+
         var sink = new InMemoryRelayEventSink();
         var d = new RelayDriver(RelayDriverDependencies.ForTests(r,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), sink),

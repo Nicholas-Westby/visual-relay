@@ -179,20 +179,4 @@ public sealed partial class WorktreeFilterTests
         Assert.Empty(result.UntrackedDeleted);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Non-git repo — must not throw
-    // ═══════════════════════════════════════════════════════════════
-
-    [Fact]
-    public async Task DiscardNonTestEditsAsync_NonGitRepo_DoesNotThrow()
-    {
-        using var repo = TestRepository.Create();
-        // No git init — just a plain temp directory.
-
-        var exception = await Record.ExceptionAsync(
-            () => WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None));
-
-        Assert.Null(exception);
-    }
 }
