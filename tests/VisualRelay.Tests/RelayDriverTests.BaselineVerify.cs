@@ -18,7 +18,8 @@ public sealed partial class RelayDriverTests
 
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "Failed OldTest"),   // stage 5 author gate — red (passes)
-            new TestRunResult(1, "Failed OldTest"),   // stage 9 verify working — same failure
+            new TestRunResult(1, "Failed OldTest"),   // stage 9 verify working — first run fails
+            new TestRunResult(1, "Failed OldTest"),   // stage 9 verify — retry also fails
             new TestRunResult(1, "Failed OldTest"));  // stage 9 verify baseline — same failure
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), tests, new InMemoryRelayEventSink()),
@@ -63,7 +64,8 @@ public sealed partial class RelayDriverTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate — red (passes)
-            new TestRunResult(1, "Failed AnyTest"));  // stage 9 verify — fails, no baseline run
+            new TestRunResult(1, "Failed AnyTest"),    // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed AnyTest"));   // stage 9 verify — retry also fails
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);

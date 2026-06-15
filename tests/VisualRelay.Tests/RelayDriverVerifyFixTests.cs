@@ -16,8 +16,10 @@ public sealed class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — red
-            new TestRunResult(0, "green"));            // fix-verify attempt 1 re-verify — green
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 first run — red
+            new TestRunResult(0, "green"));            // fix-verify attempt 1 retry — green
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, sink),
@@ -47,9 +49,12 @@ public sealed class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — red
-            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 re-verify — still red
-            new TestRunResult(1, "Failed TestX"));     // fix-verify attempt 2 re-verify — still red
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 first run — red
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 retry — still red
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 first run — red
+            new TestRunResult(1, "Failed TestX"));     // fix-verify attempt 2 retry — still red
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -76,9 +81,12 @@ public sealed class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — red
-            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 re-verify — red
-            new TestRunResult(0, "green"));            // fix-verify attempt 2 re-verify — green
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 first run — red
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 retry — red
+            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 first run — red
+            new TestRunResult(0, "green"));            // fix-verify attempt 2 retry — green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -103,8 +111,10 @@ public sealed class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                    // stage 5 author gate
-            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — red
-            new TestRunResult(0, "green"));                  // fix-verify attempt 1 re-verify — green
+            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed DeepCheck"),        // fix-verify attempt 1 first run — red
+            new TestRunResult(0, "green"));                  // fix-verify attempt 1 retry — green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);

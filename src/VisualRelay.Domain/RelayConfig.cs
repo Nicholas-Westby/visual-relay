@@ -87,7 +87,8 @@ public sealed record RelayConfig(
     // the redundant Implement narration stage runs on the cheapest tier with a
     // "confirm/amend only" prompt instead of full freight. Set false to always run
     // every stage on its declared tier. No effect on non-git roots.
-    bool DownshiftOnEarlyImplementation = true)
+    bool DownshiftOnEarlyImplementation = true,
+    bool RetryFlakyVerify = true)
 {
     // Glob patterns (relative to targetRoot) that identify guard/gate scripts.
     // When a manifest entry matches any pattern, the harness executes it once

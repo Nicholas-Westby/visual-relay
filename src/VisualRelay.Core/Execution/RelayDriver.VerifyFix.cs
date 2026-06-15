@@ -153,7 +153,7 @@ public sealed partial class RelayDriver
                 }
             }
 
-            var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
+            var testResult = await RunTestCommandWithRetryAsync(rootPath, config, cancellationToken, 10, runId, taskId);
             if (testResult.TimedOut)
             {
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,

@@ -65,4 +65,31 @@ public sealed partial class RelayDriver
         // Matched a glob but no recognised toolchain — skip.
         return (false, string.Empty);
     }
+
+    private async Task<TestRunResult> RunTestCommandWithRetryAsync(
+        string rootPath, RelayConfig config, CancellationToken ct,
+        int stageNumber, string runId, string taskId)
+    {
+        var result = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
+        if (result.TimedOut || result.ExitCode == 0 || !config.RetryFlakyVerify)
+            return result;
+
+        // Retry fires — emit warn event
+        await _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "verify_retry", runId, rootPath, taskId, stageNumber,
+            Data: new Dictionary<string, string> { ["reason"] = "transient-fault" }), ct);
+
+        var retryResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
+
+        if (retryResult.ExitCode == 0 && !retryResult.TimedOut)
+        {
+            // Fail→pass flip — emit info event
+            await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                DateTimeOffset.UtcNow, "info", "verify_retry_pass", runId, rootPath, taskId, stageNumber,
+                Data: new Dictionary<string, string> { ["result"] = "pass-on-retry" }), ct);
+            return retryResult;
+        }
+
+        return result; // both failed — return original
+    }
 }

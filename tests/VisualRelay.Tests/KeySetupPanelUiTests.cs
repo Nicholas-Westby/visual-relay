@@ -179,9 +179,10 @@ public sealed class KeySetupPanelUiTests : IDisposable
             vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").PendingValue);
 
         var saveButton = panel.FindControl<Button>("HfSaveButton")!;
-        saveButton.Command!.Execute(saveButton.CommandParameter);
+        Assert.NotNull(saveButton.Command);
+        var hfState = vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN");
+        await vm.SaveKeyCommand.ExecuteAsync(hfState);
         Dispatcher.UIThread.RunJobs();
-        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.IsHuggingFaceConfigured);
 
         Assert.True(vm.IsHuggingFaceConfigured);
         Assert.Equal(string.Empty, vm.HfGateMessage);

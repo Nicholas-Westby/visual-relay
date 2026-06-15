@@ -42,7 +42,8 @@ public static class RelayConfigLoader
             InactivityTimeoutMs: 600_000,
             CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
-            DownshiftOnEarlyImplementation: true)
+            DownshiftOnEarlyImplementation: true,
+            RetryFlakyVerify: true)
         {
             NewGuardPatterns = ["tools/guards/**/*.sh"]
         };
@@ -155,7 +156,8 @@ public static class RelayConfigLoader
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
-                DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation)
+                DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
+                RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
