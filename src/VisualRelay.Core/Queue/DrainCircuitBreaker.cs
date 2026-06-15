@@ -10,7 +10,7 @@ public sealed class DrainCircuitBreaker
     private int _consecutiveCommitRejects;
     private int _consecutiveFlags;
 
-    public string? HaltMessage { get; private set; }
+    private string? HaltMessage { get; set; }
 
     public static void ClearHaltMarker(string rootPath)
     {

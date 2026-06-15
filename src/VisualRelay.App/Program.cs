@@ -12,6 +12,8 @@ sealed class Program
         .StartWithClassicDesktopLifetime(args);
 
     // Avalonia configuration, don't remove; also used by visual designer.
+    // ReSharper disable once MemberCanBePrivate.Global — Avalonia's visual designer
+    // discovers this entry point by name via reflection; it must stay public.
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()

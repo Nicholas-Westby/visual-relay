@@ -51,7 +51,7 @@ public static class KeyEnvFile
     /// Returns the user-level dotenv path, reading <c>XDG_CONFIG_HOME</c> and
     /// <c>HOME</c> from the environment accessor seam.
     /// </summary>
-    public static string ResolvePath() =>
+    private static string ResolvePath() =>
         ResolvePath(GetEnv("XDG_CONFIG_HOME"), GetEnv("HOME"));
 
     /// <summary>

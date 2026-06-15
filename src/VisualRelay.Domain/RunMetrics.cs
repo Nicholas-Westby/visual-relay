@@ -40,12 +40,12 @@ public sealed record TaskRunMetric(
     public double CostUsd => Stages.Sum(stage => stage.CostUsd);
     public double DurationSeconds => Stages.Sum(stage => stage.DurationSeconds);
     public int CompletedStageCount => Stages.Count;
-    public string CostLabel => CompletedStageCount == 0
+    private string CostLabel => CompletedStageCount == 0
         ? "No cost yet"
         : Stages.All(s => s.Priced)
             ? MoneyFormatter.Dollars(CostUsd)
             : "?";
-    public string DurationLabel => CompletedStageCount == 0 ? "No run yet" : FormatDuration(DurationSeconds);
+    private string DurationLabel => CompletedStageCount == 0 ? "No run yet" : FormatDuration(DurationSeconds);
     public string SummaryLabel => CompletedStageCount == 0
         ? "No run history"
         : $"{CompletedStageCount} {(CompletedStageCount == 1 ? "stage" : "stages")}  {DurationLabel}  {CostLabel}";
