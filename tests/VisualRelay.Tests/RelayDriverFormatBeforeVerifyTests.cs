@@ -62,11 +62,9 @@ public sealed class RelayDriverFormatBeforeVerifyTests
         Assert.True(guardIdx >= 0, "guard was never called");
         Assert.True(fmtIdx < guardIdx, "formatter must run before guard");
 
-        // Stage 10 runs in the main loop (green stage 9 does not skip it),
-        // but it was NOT entered via the fix-verify path — no failure output.
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.Null(stage10!.LastTestOutput);
+        // Verify was green on the first try, so the Fix-verify (stage 10) LLM
+        // call is skipped entirely — there must be no stage-10 subagent invocation.
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 10);
     }
 
     /// <summary>
@@ -197,11 +195,9 @@ public sealed class RelayDriverFormatBeforeVerifyTests
         Assert.Contains(testRunner.Calls,
             c => c.Command.Contains("my-guard", StringComparison.Ordinal));
 
-        // Stage 10 runs in the main loop (green stage 9 does not skip it),
-        // but it was NOT entered via the fix-verify path — no failure output.
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.Null(stage10!.LastTestOutput);
+        // Verify was green on the first try, so the Fix-verify (stage 10) LLM
+        // call is skipped entirely — there must be no stage-10 subagent invocation.
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 10);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

@@ -124,6 +124,49 @@ public sealed class RelayDriverVerifyFixTests
         }
     }
 
+    [Fact]
+    public async Task RunTaskAsync_VerifyGreen_SkipsFixVerifyLlmCall_ButRecordsStage10Green()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteTask("green-skip", "# Verify green, skip fix-verify\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),     // stage 5 author gate (must be red)
+            new TestRunResult(0, "green"));  // stage 9 verify — green on first try
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "green-skip");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // (1) NO stage-10 LLM subagent invocation happened.
+        Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 10);
+
+        // (2) status.json still has all 11 stages Done, and stage 10 is green.
+        var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "green-skip"));
+        Assert.Equal(11, entries.Count);
+        Assert.All(entries, e => Assert.Equal("Done", e.Status));
+        var stage10 = entries.Single(e => e.Stage == 10);
+        Assert.Equal("green", stage10.Check);
+        Assert.Null(stage10.CostUsd);   // no LLM ran
+        Assert.Null(stage10.Turns);
+
+        // (3) The seal chain reached 10 stage seals; stage 10 seal is green.
+        var seals = await File.ReadAllLinesAsync(
+            Path.Combine(repo.Root, ".relay", "green-skip", "green-skip.seals"));
+        Assert.Contains(seals, l =>
+            l.Contains("\"n\":10", StringComparison.Ordinal) &&
+            l.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+
+        // (4) stage_done event for stage 10 was still published (UI parity).
+        Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 10);
+    }
+
     // ── 10× turn-budget multiplier ──────────────────────────────────────
 
     [Fact]

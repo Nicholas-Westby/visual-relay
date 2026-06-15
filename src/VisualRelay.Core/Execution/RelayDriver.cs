@@ -51,20 +51,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-
             var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl };
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
 
-            // Pre-run untracked snapshot for commit pass
-            IReadOnlySet<string>? preRunUntracked =
-                await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
+            IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // pre-run untracked snapshot
 
             var stage10Handled = false;
-            // Targeted test command for coding stages (6, 8, 10). Initialised to the
-            // fallback (full testCmd); updated to the manifest-scoped command once stage
-            // 4 populates the manifest. See BuildTargetedTestCommand.
-            var targetedTestCommand = BuildTargetedTestCommand(config, manifest);
+            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
 
             foreach (var stage in RelayStages.All)
             {
@@ -88,8 +82,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    var testCommandForCodingStage =
-                        stage.Number is 6 or 8 ? targetedTestCommand : null;
+                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage, input, ledger, manifest,
                         testCommand: testCommandForCodingStage,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
@@ -143,15 +136,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         if (hasImpl)
                         {
                             var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-                            var gateResult = await AuthorTestGate.RunAsync(
-                                rootPath,
-                                taskId,
-                                runId,
-                                manifest,
-                                testFiles,
-                                command,
-                                _dependencies.TestRunner,
-                                cancellationToken);
+                            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, cancellationToken);
                             if (gateResult.Error is not null)
                             {
                                 return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken);
@@ -178,9 +163,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                         "author-tests passed after implementation files were stripped", null, statusEntries, cancellationToken);
                                 }
 
-                                // Already-resolved: no implementation delta to strip;
-                                // accept green regression coverage.
-                                check = "green";
+                                check = "green"; // already-resolved: no impl delta
                                 ledger.AppendLine("> **Already-resolved**: no implementation delta to strip; accepted green regression coverage.");
                                 ledger.AppendLine();
                             }
@@ -198,8 +181,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             var bootstrapResult = await _dependencies.TestRunner.RunAsync(rootPath, bootstrapCmd, cancellationToken);
                             if (bootstrapResult.TimedOut)
                             {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                    ErrorHintClassifier.WithHint(bootstrapResult.Output), null, statusEntries, cancellationToken);
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(bootstrapResult.Output), null, statusEntries, cancellationToken);
                             }
 
                             if (bootstrapResult.ExitCode != 0)
@@ -214,15 +196,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             rootPath, taskId, runId, config, ledger, cancellationToken);
                         if (guardTimedOut)
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"), null, statusEntries, cancellationToken);
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"), null, statusEntries, cancellationToken);
                         }
 
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                         if (testResult.TimedOut)
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
                         }
 
                         check = testResult.ExitCode == 0 ? "green" : "red";
@@ -258,14 +238,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 }
 
                                 // Genuinely red — record stage 9, then enter fix-verify loop.
-                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                                    stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
 
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(
-                                    rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest,
-                                    previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput,
-                                    shouldRunBootstrap ? bootstrapCmd : null,
-                                    config.GuardCommand, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, shouldRunBootstrap ? bootstrapCmd : null, config.GuardCommand, pinnedSwivalProfileContent, targetedTestCommand, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;
@@ -276,6 +251,30 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 check = "green"; // baseline-excluded: all failures pre-existing
                             }
                         }
+                        if (check == "green" && !stage10Handled)
+                        {
+                            // Record stage 9 (green) explicitly — the bottom-of-loop recorder is
+                            // suppressed once stage10Handled is set, mirroring the red path.
+                            (previousSeal, taskHash) = await RecordStageAsync(
+                                rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
+                                stopwatch, ledger, seals, statusEntries, manifest,
+                                previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
+                                cancellationToken);
+
+                            // Stage 10 (Fix-verify) has nothing to fix on a green Verify — skip
+                            // its LLM call, record it as green so status stays all-Done and the
+                            // seal chain reaches 10 entries for the commit-gate resume fast path.
+                            var stage10 = RelayStages.All[9];
+                            (previousSeal, taskHash) = await RecordStageAsync(
+                                rootPath, runId, taskId, taskDirectory, stage10,
+                                "_Skipped: Verify passed; nothing to fix._",
+                                "green", null, Stopwatch.StartNew(),
+                                ledger, seals, statusEntries, manifest,
+                                previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
+                                cancellationToken);
+
+                            stage10Handled = true;
+                        }
                     }
                 }
 
@@ -285,14 +284,11 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
                 }
             }
-            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory,
-                config, task, commitMessages, manifest, taskHash, activeLock.Nonce,
-                preRunUntracked, statusEntries, cancellationToken);
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, taskHash, activeLock.Nonce, preRunUntracked, statusEntries, cancellationToken);
         }
         catch (Exception ex)
         {
-            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0,
-                $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
+            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 0, $"exception: {ex.Message}", ex.ToString(), statusEntries, cancellationToken);
         }
     }
 }
