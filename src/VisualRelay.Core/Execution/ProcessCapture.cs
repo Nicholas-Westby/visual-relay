@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace VisualRelay.Core.Execution;
@@ -85,6 +86,12 @@ internal static class ProcessCapture
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stdout"); } };
         process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stderr"); } };
         process.Start();
+        int? stageGroupId = null;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            stageGroupId = process.Id;
+            SetProcessGroup(stageGroupId.Value, stageGroupId.Value);
+        }
         process.BeginOutputReadLine();
         process.BeginErrorReadLine();
 
@@ -100,13 +107,25 @@ internal static class ProcessCapture
                 : default;
 
             var waitTask = process.WaitForExitAsync(cancellationToken);
+
             if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(waitTask, Task.Delay(timeout, cancellationToken)) != waitTask)
             {
                 process.Kill(entireProcessTree: true);
+                if (stageGroupId.HasValue)
+                {
+                    try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
+                }
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
             await waitTask;
+            // Reap survivors via process-group kill.  The wrapper placed the
+            // stage in its own process group at start, so kill(-pgid) targets
+            // exactly this stage's descendants.
+            if (stageGroupId.HasValue)
+            {
+                try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
+            }
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }
         finally
@@ -170,5 +189,30 @@ internal static class ProcessCapture
         {
             // sampling must never break the capture
         }
+    }
+
+    // ── Process-group helpers (POSIX only) ─────────────────────────
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int setpgid(int pid, int pgid);
+
+    [DllImport("libc", SetLastError = true)]
+    private static extern int kill(int pgid, int sig);
+
+    private const int SIGKILL = 9;
+
+    private static void SetProcessGroup(int pid, int pgid)
+    {
+        // Best-effort: child may have already exec'd; ignore errno.
+        _ = setpgid(pid, pgid);
+    }
+
+    private static void KillProcessGroup(int pgid)
+    {
+        // Safety: never kill group 0 (caller) or -1 (broadcast).
+        // Also guard against accidentally targeting the host's own session.
+        if (pgid <= 0 || pgid == Process.GetCurrentProcess().SessionId)
+            return;
+        _ = kill(-pgid, SIGKILL);
     }
 }

@@ -27,6 +27,7 @@ internal static class ProcessTreeCpuSampler
             if (!ps.WaitForExit(2_000))
             {
                 try { ps.Kill(entireProcessTree: true); } catch { /* gone */ }
+                _ = ps.StandardOutput.ReadToEnd();
                 return null;
             }
 
