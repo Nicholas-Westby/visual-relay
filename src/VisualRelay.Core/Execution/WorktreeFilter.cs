@@ -1,59 +1,29 @@
 namespace VisualRelay.Core.Execution;
 
-/// <summary>
-/// Result from <see cref="DiscardNonTestEditsAsync"/>.
-/// </summary>
+/// <summary>Result from <see cref="WorktreeFilter.DiscardNonTestEditsAsync"/>.</summary>
 internal sealed record WorktreeFilterResult(
     IReadOnlyList<string> TrackedDiscarded,
     IReadOnlyList<string> UntrackedDeleted,
     string? Error = null);
 
 /// <summary>
-/// Discards all worktree changes that are not in the declared test-files list,
-/// so that after stage 5 (Author-tests) the worktree contains only the test
-/// edits the agent authored.  Production-file modifications the agent made
-/// during stage 5 are reverted to HEAD; untracked files outside testFiles are
-/// deleted.
+/// Reverts all worktree changes not in the declared test-files list so that
+/// after stage 5 only test-file edits remain.  Production-file modifications
+/// are reverted to HEAD; untracked files outside <c>testFiles</c> are deleted.
+/// Compile stubs are unnecessary — a compile failure counts as "red".
+/// This filter is broader than <see cref="RedGate.ComputeStripSet"/>: it also
+/// catches production edits to files outside the manifest and removes
+/// untracked files not listed in testFiles.
 /// </summary>
-/// <remarks>
-/// <para>
-/// <b>Compile stubs are unnecessary.</b> A test file may import a symbol that
-/// does not yet exist (new interface, method, type). The test then fails to
-/// compile, which counts as "red" — a compile failure is a legitimate red exit
-/// code, not a green. No production stub is needed for the red-gate to pass.
-/// If a test legitimately requires a new production stub to compile at all
-/// (e.g. the missing type is in a different assembly), the compile failure
-/// satisfies the red-check. Stage 6 (Implement) creates the real
-/// implementation. The discard of any production edits the agent made during
-/// stage 5 is therefore safe: compile-red is still red.
-/// </para>
-/// <para>
-/// This filter is broader than <see cref="RedGate.ComputeStripSet"/>: it
-/// catches production edits to files outside the manifest (which
-/// <c>ComputeStripSet</c> never sees) and removes untracked files not listed
-/// in testFiles.
-/// </para>
-/// </remarks>
 internal static class WorktreeFilter
 {
-    // Mirror the internal-artifact prefixes used by GitCommitter and
-    // WorktreeResetter so we never delete Visual Relay's own run data.
     private static readonly string[] InternalArtifactPrefixes =
         [".relay/", ".relay-scratch/", ".swival/"];
 
     /// <summary>
-    /// Normalize an agent-supplied repo-relative path (or a git-emitted
-    /// path) into a canonical form so that the set-based <c>Contains</c>
-    /// checks are robust against formatting variance.
+    /// Normalize a repo-relative path: strip leading <c>+</c>, replace <c>\</c>
+    /// with <c>/</c>, trim leading <c>./</c> or <c>/</c>, trim trailing <c>/</c>.
     /// </summary>
-    /// <remarks>
-    /// <list type="bullet">
-    /// <item>Strips a single leading <c>+</c> (stage-4 manifest new-file convention).</item>
-    /// <item>Replaces <c>\</c> with <c>/</c> (agents may emit Windows separators).</item>
-    /// <item>Trims a leading <c>./</c> and any leading <c>/</c>.</item>
-    /// <item>Trims a trailing <c>/</c>.</item>
-    /// </list>
-    /// </remarks>
     private static string NormalizeRepoRelativePath(string path)
     {
         if (path.Length > 0 && path[0] == '+')
@@ -68,55 +38,52 @@ internal static class WorktreeFilter
 
     /// <summary>
     /// Discard every dirty tracked and new untracked file that is <b>not</b>
-    /// in <paramref name="testFiles"/>.  After this call the worktree contains
-    /// only the test-file edits the agent declared.
+    /// in <paramref name="testFiles"/>.
     /// </summary>
-    /// <param name="rootPath">Repository root.</param>
-    /// <param name="testFiles">Paths the agent declared as test files (repo-relative).</param>
-    /// <param name="tasksDir">Optional tasks-directory name (e.g. "llm-tasks") for the ledger note; used only to skip deletion of task files.</param>
-    /// <param name="cancellationToken">Cancellation token.</param>
-    /// <returns>A <see cref="WorktreeFilterResult"/> describing what was discarded.</returns>
     internal static async Task<WorktreeFilterResult> DiscardNonTestEditsAsync(
         string rootPath,
         IReadOnlyList<string> testFiles,
         string? tasksDir,
         CancellationToken cancellationToken)
     {
+        // Host-gated path comparer (Defect D): OrdinalIgnoreCase on macOS/Windows.
+        var pathComparer = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()
+            ? StringComparer.OrdinalIgnoreCase
+            : StringComparer.Ordinal;
+
         var testSet = new HashSet<string>(
             testFiles.Select(NormalizeRepoRelativePath),
-            StringComparer.OrdinalIgnoreCase);
+            pathComparer);
 
-        // ── 0. Pre-check: are we inside a git worktree? ────────────────
-        // If not, there is nothing to discard — return empty immediately.
-        // This also avoids flagging tests that don't set up a git repo.
+        // 0. Pre-check: inside a git worktree?
         var insideResult = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (insideResult.ExitCode != 0 || insideResult.TimedOut
             || !string.Equals(insideResult.Output.Trim(), "true", StringComparison.Ordinal))
-        {
             return new WorktreeFilterResult([], []);
-        }
 
-        // ── 1. Enumerate all dirty tracked files ────────────────────────
-        // Combine unstaged (working-tree) and staged (index) diffs so we
-        // catch every tracked change: modified, added, deleted, renamed, etc.
-        // ── 1a. Tracked-file diffs (working-tree + staged) ─────────────
-        var unstagedDiff = await GitAsync(rootPath, ["diff", "--name-only"], cancellationToken);
+        // 1. Enumerate dirty tracked files (combine unstaged + staged diffs).
+        //    -c core.quotePath=false disables octal quoting of non-ASCII paths (Defect C).
+        var unstagedDiff = await GitAsync(rootPath,
+            ["-c", "core.quotePath=false", "diff", "--name-only"], cancellationToken);
         if (unstagedDiff.ExitCode != 0 || unstagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --name-only failed");
-        // Use --name-status -M for the staged diff so we detect both old
-        // and new names of staged renames (e.g. after `git mv`).
-        var stagedDiff = await GitAsync(rootPath, ["diff", "--cached", "--name-status", "-M"], cancellationToken);
+
+        // --name-status -M so staged renames expose both old and new names.
+        var stagedDiff = await GitAsync(rootPath,
+            ["-c", "core.quotePath=false", "diff", "--cached", "--name-status", "-M"], cancellationToken);
         if (stagedDiff.ExitCode != 0 || stagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --cached --name-status failed");
+
         var dirtyTracked = new List<string>();
+        // Defect A: track rename pairs so both endpoints are excluded when either is a testFile.
+        var renamePairs = new Dictionary<string, string>(pathComparer);
 
         void AddLines(string output, List<string> target)
         {
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
-                var trimmed = line.Trim();
-                if (trimmed.Length > 0)
-                    target.Add(trimmed);
+                var t = line.Trim();
+                if (t.Length > 0) target.Add(t);
             }
         }
 
@@ -127,28 +94,22 @@ internal static class WorktreeFilter
             foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {
                 var trimmed = line.Trim();
-                if (trimmed.Length == 0)
-                    continue;
-                // Status letter is the first character; paths follow after tabs.
+                if (trimmed.Length == 0) continue;
                 var parts = trimmed.Split('\t');
-                if (parts.Length >= 2)
+                if (parts.Length < 2) continue;
+                if (parts[0].Length > 0 && parts[0][0] == 'R' && parts.Length >= 3)
                 {
-                    if (parts[0].Length > 0 && parts[0][0] == 'R' && parts.Length >= 3)
-                    {
-                        // Rename: capture both old and new names.
-                        var oldName = parts[1].Trim();
-                        var newName = parts[2].Trim();
-                        if (oldName.Length > 0)
-                            target.Add(oldName);
-                        if (newName.Length > 0)
-                            target.Add(newName);
-                    }
-                    else
-                    {
-                        var path = parts[1].Trim();
-                        if (path.Length > 0)
-                            target.Add(path);
-                    }
+                    var oldName = parts[1].Trim();
+                    var newName = parts[2].Trim();
+                    if (oldName.Length > 0) target.Add(oldName);
+                    if (newName.Length > 0) target.Add(newName);
+                    if (oldName.Length > 0 && newName.Length > 0)
+                    { renamePairs[oldName] = newName; renamePairs[newName] = oldName; }
+                }
+                else
+                {
+                    var path = parts[1].Trim();
+                    if (path.Length > 0) target.Add(path);
                 }
             }
         }
@@ -156,84 +117,126 @@ internal static class WorktreeFilter
         AddLines(unstagedDiff.Output, dirtyTracked);
         AddNameStatusLines(stagedDiff.Output, dirtyTracked);
 
-        // Also include deleted tracked files (git diff --name-only does not
-        // always list deleted files when the deletion is the only change).
-        var deletedResult = await GitAsync(rootPath, ["ls-files", "--deleted"], cancellationToken);
+        // Also include deleted tracked files.
+        var deletedResult = await GitAsync(rootPath,
+            ["-c", "core.quotePath=false", "ls-files", "--deleted"], cancellationToken);
         if (deletedResult.ExitCode != 0 || deletedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --deleted failed");
         AddLines(deletedResult.Output, dirtyTracked);
 
-        // ── 1b. Untracked files ────────────────────────────────────────
-        var untrackedResult = await GitAsync(
-            rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
+        // 1b. Untracked files.
+        var untrackedResult = await GitAsync(rootPath,
+            ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cancellationToken);
         if (untrackedResult.ExitCode != 0 || untrackedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --others failed");
         var dirtyUntracked = new List<string>();
         AddLines(untrackedResult.Output, dirtyUntracked);
 
-        // ── 2. Separate testFiles from non-test-files ──────────────────
+        // Defect A: exclude rename-pair endpoints when either touches a testFile.
+        if (renamePairs.Count > 0)
+        {
+            var exclude = new HashSet<string>(pathComparer);
+            foreach (var kvp in renamePairs)
+            {
+                // Each pair appears twice; only process old→new (key < value lexicographically).
+                if (string.CompareOrdinal(kvp.Key, kvp.Value) >= 0) continue;
+                if (testSet.Contains(NormalizeRepoRelativePath(kvp.Key))
+                    || testSet.Contains(NormalizeRepoRelativePath(kvp.Value)))
+                { exclude.Add(kvp.Key); exclude.Add(kvp.Value); }
+            }
+            if (exclude.Count > 0)
+                dirtyTracked = dirtyTracked.Where(p => !exclude.Contains(p)).ToList();
+        }
+
+        // 2. Separate testFiles from non-test-files.
         var nonTestTracked = dirtyTracked
             .Where(p => !testSet.Contains(NormalizeRepoRelativePath(p))
                 && !IsInternalArtifact(p)
                 && !IsUnderTasksDir(rootPath, p, tasksDir))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+            .Distinct(pathComparer).ToList();
 
         var nonTestUntracked = dirtyUntracked
             .Where(p => !testSet.Contains(NormalizeRepoRelativePath(p))
                 && !IsInternalArtifact(p)
                 && !IsUnderTasksDir(rootPath, p, tasksDir))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+            .Distinct(pathComparer).ToList();
 
-        // ── 3. Revert dirty tracked files to HEAD ──────────────────────
-        // Revert each path individually so a staged rename (new path absent
-        // from HEAD) cannot abort the batch.  When checkout fails the path
-        // is unstaged via `git rm --cached` and deleted from disk.
-        if (nonTestTracked.Count > 0)
+        // Defect F: accumulate ALL errors from both phases; never early-return.
+        var allErrors = new List<string>();
+        var trackedDiscarded = new List<string>();
+
+        // 3. Revert dirty tracked files to HEAD.
+        foreach (var rel in nonTestTracked)
         {
-            var revertErrors = new List<string>();
-            foreach (var rel in nonTestTracked)
+            cancellationToken.ThrowIfCancellationRequested();
+            var checkoutResult = await GitAsync(rootPath, ["checkout", "HEAD", "--", rel], cancellationToken);
+            if (checkoutResult.ExitCode == 0 && !checkoutResult.TimedOut)
+            { trackedDiscarded.Add(rel); continue; }
+
+            // Defect B: checkout failed — probe whether path is in HEAD.
+            // TimedOut is a hard error — never delete on timeout.
+            if (checkoutResult.TimedOut)
+            { allErrors.Add($"{rel}: checkout timed out"); continue; }
+
+            var probeResult = await GitAsync(rootPath, ["cat-file", "-e", $"HEAD:{rel}"], cancellationToken);
+            if (probeResult.TimedOut)
+            { allErrors.Add($"{rel}: cat-file -e probe timed out"); continue; }
+
+            if (probeResult.ExitCode == 0)
             {
-                var checkoutResult = await GitAsync(rootPath, ["checkout", "HEAD", "--", rel], cancellationToken);
-                if (checkoutResult.ExitCode != 0 || checkoutResult.TimedOut)
-                {
-                    // Path absent from HEAD (staged rename destination,
-                    // new staged file).  Unstage and delete.
-                    var rmResult = await GitAsync(rootPath, ["rm", "--cached", "--", rel], cancellationToken);
-                    if (rmResult.ExitCode != 0 || rmResult.TimedOut)
-                        revertErrors.Add($"{rel}: checkout={checkoutResult.ExitCode}, rm={rmResult.ExitCode}");
-                    var fullPath = Path.Combine(rootPath, rel);
-                    if (File.Exists(fullPath))
-                        File.Delete(fullPath);
-                }
+                // Path IS in HEAD — checkout failure was transient. Do NOT delete.
+                allErrors.Add($"{rel}: checkout failed (exit {checkoutResult.ExitCode}) but path is in HEAD — not deleted");
+                continue;
             }
-            if (revertErrors.Count > 0)
-                return new WorktreeFilterResult(nonTestTracked, nonTestUntracked,
-                    $"revert failures: {string.Join("; ", revertErrors)}");
+
+            // Path genuinely absent from HEAD (staged rename destination, new staged file).
+            // Defect E: --ignore-unmatch so exit-128 on absent index entry is benign.
+            var rmResult = await GitAsync(rootPath,
+                ["rm", "--cached", "--ignore-unmatch", "--", rel], cancellationToken);
+            if (rmResult.TimedOut)
+            { allErrors.Add($"{rel}: rm --cached timed out"); continue; }
+
+            // Defect F: wrap File.Delete in try/catch.
+            var fullPath = Path.Combine(rootPath, rel);
+            try { if (File.Exists(fullPath)) File.Delete(fullPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { allErrors.Add($"{rel}: File.Delete failed: {ex.Message}"); continue; }
+
+            trackedDiscarded.Add(rel);
         }
 
-        // ── 4. Delete untracked non-test files ──────────────────────────
+        // 4. Delete untracked non-test files.
+        var untrackedDeleted = new List<string>();
         foreach (var rel in nonTestUntracked)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var full = Path.Combine(rootPath, rel);
-            if (File.Exists(full))
-                File.Delete(full);
+            try { if (File.Exists(full)) File.Delete(full); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            { allErrors.Add($"{rel}: File.Delete (untracked) failed: {ex.Message}"); continue; }
+            untrackedDeleted.Add(rel);
         }
 
         // Remove empty leaf directories left after deletions.
         foreach (var dir in nonTestUntracked
             .Select(r => Path.GetDirectoryName(Path.Combine(rootPath, r)))
-            .Where(d => d is not null)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderByDescending(d => d!.Length))
+            .Where(d => d is not null).Distinct(pathComparer).OrderByDescending(d => d!.Length))
         {
             if (dir is not null && Directory.Exists(dir)
                 && !Directory.EnumerateFileSystemEntries(dir).Any())
-                Directory.Delete(dir);
+            {
+                try { Directory.Delete(dir); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                { allErrors.Add($"Directory.Delete({dir}): {ex.Message}"); }
+            }
         }
 
-        return new WorktreeFilterResult(nonTestTracked, nonTestUntracked);
+        // Defect F: surface ALL accumulated errors after BOTH phases complete.
+        if (allErrors.Count > 0)
+            return new WorktreeFilterResult(trackedDiscarded, untrackedDeleted,
+                $"revert/delete failures: {string.Join("; ", allErrors)}");
+
+        return new WorktreeFilterResult(trackedDiscarded, untrackedDeleted);
     }
 
     private static bool IsInternalArtifact(string relativePath)
@@ -247,8 +250,7 @@ internal static class WorktreeFilter
 
     private static bool IsUnderTasksDir(string rootPath, string relativePath, string? tasksDir)
     {
-        if (string.IsNullOrEmpty(tasksDir))
-            return false;
+        if (string.IsNullOrEmpty(tasksDir)) return false;
         var fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
         var dirFullPath = Path.GetFullPath(Path.Combine(rootPath, tasksDir));
         return fullPath.StartsWith(dirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)

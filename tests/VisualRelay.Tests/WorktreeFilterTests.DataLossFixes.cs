@@ -254,8 +254,12 @@ public sealed partial class WorktreeFilterTests
                 repo.Root, [], tasksDir: null, CancellationToken.None);
 
             Assert.NotNull(result.Error);
-            Assert.Contains("revert failures", result.Error, StringComparison.Ordinal);
-            Assert.Contains("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
+            Assert.Contains("revert/delete failures", result.Error, StringComparison.Ordinal);
+            Assert.Contains("src/app.cs", result.Error, StringComparison.Ordinal);
+            // With the cat-file -e probe, an in-HEAD path that fails checkout
+            // transiently is NOT deleted and NOT added to TrackedDiscarded.
+            Assert.DoesNotContain("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
+            Assert.True(File.Exists(prodFile), "in-HEAD file must survive transient checkout failure");
         }
         finally
         {

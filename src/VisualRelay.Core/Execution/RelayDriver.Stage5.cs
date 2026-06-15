@@ -43,14 +43,9 @@ public sealed partial class RelayDriver
         // starts with a clean base: only test edits present.
         var filterResult = await WorktreeFilter.DiscardNonTestEditsAsync(
             rootPath, testFiles, config.TasksDir, cancellationToken);
-        if (filterResult.Error is not null)
-        {
-            return new Stage5Result(
-                await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                    $"worktree filter failed: {filterResult.Error}", null,
-                    statusEntries, cancellationToken),
-                null, null);
-        }
+
+        // Record the ledger note BEFORE the error check so the discarded
+        // inventory is captured even when an Error causes a flag.
         if (filterResult.TrackedDiscarded.Count > 0 || filterResult.UntrackedDeleted.Count > 0)
         {
             var parts = new List<string>();
@@ -60,6 +55,15 @@ public sealed partial class RelayDriver
                 parts.Add($"untracked deleted: {filterResult.UntrackedDeleted.Count}");
             ledger.AppendLine($"> **Worktree filter (stage 5)**: discarded {string.Join(", ", parts)}.");
             ledger.AppendLine();
+        }
+
+        if (filterResult.Error is not null)
+        {
+            return new Stage5Result(
+                await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
+                    $"worktree filter failed: {filterResult.Error}", null,
+                    statusEntries, cancellationToken),
+                null, null);
         }
 
         // ── Step 2: Merge testFiles into manifest ────────────────────
