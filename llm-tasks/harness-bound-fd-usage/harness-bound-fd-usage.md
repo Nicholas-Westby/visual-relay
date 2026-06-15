@@ -95,12 +95,19 @@ deterministic disposal is always correct.
 
 In `ProcessCapture.RunAsync` (`src/VisualRelay.Core/Execution/ProcessCapture.cs`):
 
-- Before `process.Start()`, configure the stage process to start in its own
-  process group. On POSIX, this is done by setting the process group before
-  exec; on Linux/macOS with .NET, the portable approach is:
+- Place the stage process in its OWN process group so detached grandchildren can be
+  reaped as a group. Use a CROSS-PLATFORM, IN-PROCESS approach — do NOT shell out to an
+  external `script`/`setsid`/`setpgrp` wrapper binary. (That approach is macOS/Linux-
+  availability-specific and was REVERTED before for breaking on Linux; a racy parent-side
+  setpgid was also a problem. Do not reintroduce either.) Specifically:
   - Set `process.StartInfo.UseShellExecute = false` (already set).
-  - After start, call the OS-level `setpgid(pid, pid)` via P/Invoke or use
-    a wrapper script that calls `setsid`/`setpgrp` before exec.
+  - On POSIX ONLY (guard EVERY native call with `RuntimeInformation.IsOSPlatform(OSPlatform.Linux)`
+    `|| RuntimeInformation.IsOSPlatform(OSPlatform.OSX)`): immediately after `process.Start()`,
+    call `setpgid(childPid, childPid)` via `[DllImport("libc")]` P/Invoke, BEST-EFFORT —
+    ignore a non-zero/errno result (the child may have already exec'd; accept that tiny
+    start-race rather than a fragile wrapper). The group id is `childPid`.
+  - On Windows: do NOT call setpgid; rely SOLELY on `Process.Kill(entireProcessTree: true)`
+    (it uses a Job Object) and SKIP the POSIX group-kill path below.
 - After `await waitTask` (normal exit path, `ProcessCapture.cs:109`), kill the
   stage's process group to reap any survivors:
   ```csharp
