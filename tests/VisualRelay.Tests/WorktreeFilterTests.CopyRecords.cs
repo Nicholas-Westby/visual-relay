@@ -43,17 +43,18 @@ public sealed partial class WorktreeFilterTests
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             // Intercept ONLY the staged name-status enumeration and return the
             // -z C record git emits for a copy (status\0old\0new\0).
             if (rootPath == myRoot
-                && args.Contains("--name-status")
-                && args.Contains("--cached"))
+                && argv.Contains("--name-status")
+                && argv.Contains("--cached"))
             {
                 return Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false));
             }
 
             return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
+                binary, ["-C", rootPath, .. argv], rootPath,
                 timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
         };
 
@@ -111,17 +112,18 @@ public sealed partial class WorktreeFilterTests
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             // Intercept ONLY the staged name-status enumeration; return the
             // -z C record git emits for `cp my.Tests.cs prod2.cs` (-M -C).
             if (rootPath == myRoot
-                && args.Contains("--name-status")
-                && args.Contains("--cached"))
+                && argv.Contains("--name-status")
+                && argv.Contains("--cached"))
             {
                 return Task.FromResult((0, "C100\0my.Tests.cs\0prod2.cs\0", false));
             }
 
             return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
+                binary, ["-C", rootPath, .. argv], rootPath,
                 timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
         };
 

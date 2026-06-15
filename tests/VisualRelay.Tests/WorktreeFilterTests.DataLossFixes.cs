@@ -220,12 +220,13 @@ public sealed partial class WorktreeFilterTests
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             // Guard: only intercept commands targeting this test's repo.
             if (rootPath != myRoot)
             {
                 return ProcessCapture.RunAsync(
                     binary,
-                    ["-C", rootPath, .. args],
+                    ["-C", rootPath, .. argv],
                     rootPath,
                     timeout ?? TimeSpan.FromSeconds(30),
                     ct,
@@ -234,13 +235,13 @@ public sealed partial class WorktreeFilterTests
             }
 
             // Fail checkout and rm commands to simulate an unrecoverable revert.
-            if (args.Any(a => a == "checkout" || a == "rm"))
+            if (argv.Any(a => a == "checkout" || a == "rm"))
                 return Task.FromResult((1, "simulated git failure", false));
 
             // Delegate enumeration commands to real git.
             return ProcessCapture.RunAsync(
                 binary,
-                ["-C", rootPath, .. args],
+                ["-C", rootPath, .. argv],
                 rootPath,
                 timeout ?? TimeSpan.FromSeconds(30),
                 ct,

@@ -186,22 +186,23 @@ public sealed partial class WorktreeFilterTests
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             if (rootPath != myRoot)
             {
                 return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. args], rootPath,
+                    binary, ["-C", rootPath, .. argv], rootPath,
                     timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
             }
 
             // Make `git checkout HEAD -- src/app.cs` fail with exit 1
             // even though the path IS in HEAD (simulates a transient
             // failure like an index.lock race or EIO).
-            if (args.Any(a => a == "checkout"))
+            if (argv.Any(a => a == "checkout"))
                 return Task.FromResult((1, "simulated transient checkout failure", false));
 
             // All other commands (diff, ls-files, etc.) run normally.
             return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
+                binary, ["-C", rootPath, .. argv], rootPath,
                 timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
         };
 

@@ -139,14 +139,15 @@ public sealed partial class WorktreeFilterTests
         var rmCalled = false;
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             if (rootPath != myRoot)
             {
                 return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. args], rootPath,
+                    binary, ["-C", rootPath, .. argv], rootPath,
                     timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
             }
 
-            if (args.Any(a => a == "rm"))
+            if (argv.Any(a => a == "rm"))
             {
                 rmCalled = true;
                 // --ignore-unmatch zeroes the absent-pathspec case in real git.
@@ -154,7 +155,7 @@ public sealed partial class WorktreeFilterTests
             }
 
             return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
+                binary, ["-C", rootPath, .. argv], rootPath,
                 timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
         };
 
@@ -218,32 +219,33 @@ public sealed partial class WorktreeFilterTests
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
         {
+            var argv = args as string[] ?? args.ToArray();
             if (rootPath != myRoot)
             {
                 return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. args], rootPath,
+                    binary, ["-C", rootPath, .. argv], rootPath,
                     timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
             }
 
-            if (args.Any(a => a == "checkout"))
+            if (argv.Any(a => a == "checkout"))
             {
-                var path = args.Last();
+                var path = argv.Last();
                 if (path == "src/app.cs")
                     return Task.FromResult((0, "", true)); // timeout
                 if (path == "src/lib.cs")
                     return Task.FromResult((1, "simulated failure", false));
                 return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. args], rootPath,
+                    binary, ["-C", rootPath, .. argv], rootPath,
                     timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
             }
 
             // Make src/lib.cs appear absent from HEAD for the rm+delete path.
-            if (args.Any(a => a == "cat-file") && args.Any(a => a.Contains("src/lib.cs")))
+            if (argv.Any(a => a == "cat-file") && argv.Any(a => a.Contains("src/lib.cs")))
                 return Task.FromResult((1, "", false));
 
             // All other commands run normally.
             return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
+                binary, ["-C", rootPath, .. argv], rootPath,
                 timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
         };
 

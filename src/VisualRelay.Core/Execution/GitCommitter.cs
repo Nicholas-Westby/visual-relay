@@ -170,13 +170,16 @@ internal static class GitCommitter
         IReadOnlyDictionary<string, string>? environment = null)
     {
         const int maxAttempts = 3;
+        // Materialize once: this retry loop enumerates 'arguments' on every attempt,
+        // so a deferred source would re-run side effects / risk inconsistent args.
+        var args = arguments as IReadOnlyList<string> ?? arguments.ToList();
         (int ExitCode, string Output, bool TimedOut) lastResult = default;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var result = RawGitRunner is not null
-                ? await RawGitRunner(rootPath, arguments, cancellationToken, timeout, environment)
-                : await RunGitCoreAsync(rootPath, arguments, cancellationToken, timeout, environment);
+                ? await RawGitRunner(rootPath, args, cancellationToken, timeout, environment)
+                : await GitInvoker.RunAsync(rootPath, args, cancellationToken, timeout, environment);
 
             if (result.ExitCode == 0 || attempt == maxAttempts)
                 return result;
@@ -188,19 +191,6 @@ internal static class GitCommitter
 
         return lastResult;
     }
-
-    private static Task<(int ExitCode, string Output, bool TimedOut)> RunGitCoreAsync(
-        string rootPath,
-        IEnumerable<string> arguments,
-        CancellationToken cancellationToken,
-        TimeSpan? timeout,
-        IReadOnlyDictionary<string, string>? environment) =>
-        GitInvoker.RunAsync(
-            rootPath,
-            arguments,
-            cancellationToken,
-            timeout,
-            environment);
 
     private static async Task<IReadOnlyList<string>> ResolveManifestFilesToStageAsync(
         string rootPath,
