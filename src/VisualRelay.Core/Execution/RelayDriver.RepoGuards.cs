@@ -39,6 +39,9 @@ public sealed partial class RelayDriver
             await testRunner.RunAsync(rootPath, formatCmd, ct);
 
         var workingResult = await testRunner.RunAsync(rootPath, guardCmd, ct);
+        // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
+        // Defensive guard: the non-null contract on TestRunResult.Output is not enforced
+        // at runtime (a third-party ITestRunner could still return null).
         var workingOutput = workingResult.Output ?? string.Empty;
 
         // Guard timed out — caller must flag, not enter fix-verify.
@@ -62,6 +65,8 @@ public sealed partial class RelayDriver
                 return (workingOutput, workingOutput, false); // can't baseline — treat all as new
 
             var baselineResult = await testRunner.RunAsync(rootPath, guardCmd, ct);
+            // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
+            // Defensive guard; TestRunResult.Output non-null contract not enforced at runtime.
             var baselineOutput = baselineResult.Output ?? string.Empty;
 
             if (baselineResult.TimedOut)

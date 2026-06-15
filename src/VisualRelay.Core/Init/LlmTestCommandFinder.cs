@@ -37,6 +37,8 @@ public sealed class LlmTestCommandFinder(Func<string, CancellationToken, Task<st
 
     public static string ExtractCommand(string raw)
     {
+        // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
+        // Defensive: tolerate a null LLM response even though the param is non-nullable.
         var text = (raw ?? string.Empty).Trim();
         var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var line in lines)

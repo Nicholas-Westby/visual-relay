@@ -205,7 +205,7 @@ public sealed class RelayQueueController
             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
             {
                 var tasksDir = configResult?.Config?.TasksDir
-                    ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config?.TasksDir;
+                    ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir;
                 await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", cancellationToken);
                 try { WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review"); }
                 catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }

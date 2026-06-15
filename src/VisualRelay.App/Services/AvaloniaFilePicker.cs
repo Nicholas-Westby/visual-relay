@@ -13,6 +13,8 @@ public sealed class AvaloniaFilePicker(Window owner) : IFilePicker
             AllowMultiple = true
         });
 
-        return files.Select(f => f.TryGetLocalPath()!).Where(p => p is not null).ToArray();
+        // TryGetLocalPath() can return null (non-file backings); OfType<string>
+        // drops those and narrows to string without an always-true null check.
+        return files.Select(f => f.TryGetLocalPath()).OfType<string>().ToArray();
     }
 }
