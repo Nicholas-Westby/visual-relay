@@ -55,10 +55,10 @@ public sealed partial class Installer5BackendShTests
         }
         catch (OperationCanceledException)
         {
-            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { }
+            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch (Exception) { /* best-effort kill */ }
             throw;
         }
-        finally { try { File.Delete(script); } catch { } }
+        finally { try { File.Delete(script); } catch (Exception) { /* best-effort temp cleanup */ } }
     }
 
     // ── 1. Unconditional XDG paths ───────────────────────────────────────

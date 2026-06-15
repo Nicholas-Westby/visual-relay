@@ -46,10 +46,10 @@ public sealed class Installer5Sandbox2LauncherTests
         }
         catch (OperationCanceledException)
         {
-            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch { }
+            try { if (process is { HasExited: false }) process.Kill(entireProcessTree: true); } catch (Exception) { /* best-effort kill */ }
             throw;
         }
-        finally { try { File.Delete(script); } catch { } }
+        finally { try { File.Delete(script); } catch (Exception) { /* best-effort temp cleanup */ } }
     }
 
     /// <summary>Generates bash snippet: sets up stubs + config, copies the

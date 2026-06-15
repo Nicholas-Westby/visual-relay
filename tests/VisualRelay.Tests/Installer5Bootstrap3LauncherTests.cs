@@ -22,7 +22,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await p.WaitForExitAsync(cts.Token);
         try { return (p.ExitCode, await p.StandardOutput.ReadToEndAsync(cts.Token), await p.StandardError.ReadToEndAsync(cts.Token)); }
-        finally { try { File.Delete(s); } catch { } }
+        finally { try { File.Delete(s); } catch (Exception) { /* best-effort temp cleanup */ } }
     }
     static string Stub(string name, string? body = null) =>
         $"cat>\"$S/{name}\"<<'X'&&chmod +x \"$S/{name}\"\n#!/bin/bash\n{body ?? "exit 0"}\nX";
