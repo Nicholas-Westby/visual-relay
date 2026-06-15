@@ -1,7 +1,6 @@
 using Avalonia;
 using Avalonia.Headless;
 using Avalonia.Media.Imaging;
-using Avalonia.Skia;
 using VisualRelay.App;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;

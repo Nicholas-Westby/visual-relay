@@ -34,7 +34,7 @@ if (candidates.Count > 0)
 }
 
 string path;
-string? summarySuffix = null;
+string? summarySuffix;
 
 if (validatedCommand is not null)
 {
@@ -49,7 +49,7 @@ else
 }
 
 var hookResult = await HookInstaller.InstallAsync(rootPath, CancellationToken.None);
-if (!hookResult.Installed && hookResult.Warning is not null)
+if (hookResult is { Installed: false, Warning: not null })
 {
     Console.Error.WriteLine(hookResult.Warning);
 }

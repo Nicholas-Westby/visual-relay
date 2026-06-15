@@ -30,12 +30,12 @@ var config = configResult.Config;
 var planTestRunner = new ShellTestRunner(
     TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
 
-Func<string, ISubagentRunner> planSubagentFactory = taskId =>
+ISubagentRunner PlanSubagentFactory(string taskId) =>
     new SwivalSubagentRunner(config, eventSink: new ConsoleRelayEventSink(taskId));
 
 // PlanPhaseRunner internally creates FileRelayEventSink for each planning task.
 // The ConsoleRelayEventSink gives attributable interleaved console output.
-Func<string, IRelayEventSink>? planSinkFactory = taskId =>
+IRelayEventSink PlanSinkFactory(string taskId) =>
     new ConsoleRelayEventSink(taskId);
 
 var phase2Runner = new ConsoleTaskRunner(rootPath, config,
@@ -44,9 +44,9 @@ var phase2Runner = new ConsoleTaskRunner(rootPath, config,
 var controller = new RelayQueueController(
     rootPath,
     phase2Runner,
-    planSubagentRunnerFactory: planSubagentFactory,
+    planSubagentRunnerFactory: PlanSubagentFactory,
     planTestRunner: planTestRunner,
-    planEventSinkFactory: planSinkFactory);
+    planEventSinkFactory: PlanSinkFactory);
 
 // ── Refresh and optionally enforce subset/order ──
 await controller.RefreshAsync();
