@@ -3,18 +3,11 @@ using Avalonia.Platform.Storage;
 
 namespace VisualRelay.App.Services;
 
-public sealed class AvaloniaFolderPicker : IFolderPicker
+public sealed class AvaloniaFolderPicker(Window owner) : IFolderPicker
 {
-    private readonly Window _owner;
-
-    public AvaloniaFolderPicker(Window owner)
-    {
-        _owner = owner;
-    }
-
     public async Task<string?> PickFolderAsync(CancellationToken cancellationToken = default)
     {
-        var folders = await _owner.StorageProvider.OpenFolderPickerAsync(new()
+        var folders = await owner.StorageProvider.OpenFolderPickerAsync(new()
         {
             Title = "Select Relay root",
             AllowMultiple = false

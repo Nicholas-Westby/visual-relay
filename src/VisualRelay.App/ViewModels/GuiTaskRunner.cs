@@ -10,28 +10,16 @@ namespace VisualRelay.App.ViewModels;
 /// wired to a <see cref="CompositeRelayEventSink"/> so both driver and
 /// subagent trace events land in run.log.
 /// </summary>
-internal sealed class GuiTaskRunner : IRelayTaskRunner
+internal sealed class GuiTaskRunner(
+    string mainRootPath, RelayConfig config,
+    IRelayEventSink sharedSink, ITestRunner testRunner) : IRelayTaskRunner
 {
-    private readonly string _mainRootPath;
-    private readonly RelayConfig _config;
-    private readonly IRelayEventSink _sharedSink;
-    private readonly ITestRunner _testRunner;
-
-    public GuiTaskRunner(string mainRootPath, RelayConfig config,
-        IRelayEventSink sharedSink, ITestRunner testRunner)
-    {
-        _mainRootPath = mainRootPath;
-        _config = config;
-        _sharedSink = sharedSink;
-        _testRunner = testRunner;
-    }
-
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
-        var fileSink = new FileRelayEventSink(Path.Combine(_mainRootPath, ".relay", taskId, "run.log"));
-        var sink = new CompositeRelayEventSink(_sharedSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(_config, eventSink: sink);
-        var deps = new RelayDriverDependencies(subagentRunner, _testRunner, sink);
+        var fileSink = new FileRelayEventSink(Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
+        var sink = new CompositeRelayEventSink(sharedSink, fileSink);
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
+        var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink);
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);
     }

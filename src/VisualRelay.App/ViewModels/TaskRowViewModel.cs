@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
-public sealed class TaskRowViewModel : ViewModelBase
+public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
 {
     private static readonly IBrush MutedBrush = Brush.Parse("#7F8794");
     private static readonly IBrush SelectedBrush = Brush.Parse("#3191FF");
@@ -28,12 +28,7 @@ public sealed class TaskRowViewModel : ViewModelBase
     private string? _planningLabel;
     private string _runningElapsedLabel = string.Empty;
 
-    public TaskRowViewModel(RelayTaskItem task)
-    {
-        Task = task;
-    }
-
-    public RelayTaskItem Task { get; internal set; }
+    public RelayTaskItem Task { get; internal set; } = task;
     public string Id => Task.Id;
     public string MarkdownPath => Task.MarkdownPath;
     public string ReviewReason => Task.ReviewReason ?? string.Empty;

@@ -3,17 +3,12 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Tasks;
 
-public sealed class RelayTaskRepository
+public sealed class RelayTaskRepository(string rootPath)
 {
     private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation"];
     // PerFileContextLimit and TotalContextLimit live in TaskContentHelper.
 
-    public RelayTaskRepository(string rootPath)
-    {
-        RootPath = rootPath;
-    }
-
-    private string RootPath { get; }
+    private string RootPath { get; } = rootPath;
 
     public async Task<IReadOnlyList<RelayTaskItem>> ListPendingAsync(CancellationToken cancellationToken = default)
     {

@@ -10,28 +10,18 @@ namespace VisualRelay.DrainQueue;
 /// <c>CreateGitCommit: true, Resume: true</c> and a per-task
 /// <see cref="FileRelayEventSink"/> writing to <c>.relay/{taskId}/run.log</c>.
 /// </summary>
-public sealed class ConsoleTaskRunner : IRelayTaskRunner
+public sealed class ConsoleTaskRunner(string mainRootPath, RelayConfig config, ITestRunner testRunner)
+    : IRelayTaskRunner
 {
-    private readonly string _mainRootPath;
-    private readonly RelayConfig _config;
-    private readonly ITestRunner _testRunner;
-
-    public ConsoleTaskRunner(string mainRootPath, RelayConfig config, ITestRunner testRunner)
-    {
-        _mainRootPath = mainRootPath;
-        _config = config;
-        _testRunner = testRunner;
-    }
-
     public Task<RelayTaskOutcome> RunTaskAsync(
         string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
         var consoleSink = new ConsoleRelayEventSink(taskId);
         var fileSink = new FileRelayEventSink(
-            Path.Combine(_mainRootPath, ".relay", taskId, "run.log"));
+            Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(consoleSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(_config, eventSink: sink);
-        var deps = new RelayDriverDependencies(subagentRunner, _testRunner, sink);
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
+        var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink);
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);
     }

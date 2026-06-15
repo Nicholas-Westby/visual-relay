@@ -3,18 +3,11 @@ using Avalonia.Platform.Storage;
 
 namespace VisualRelay.App.Services;
 
-public sealed class AvaloniaFilePicker : IFilePicker
+public sealed class AvaloniaFilePicker(Window owner) : IFilePicker
 {
-    private readonly Window _owner;
-
-    public AvaloniaFilePicker(Window owner)
-    {
-        _owner = owner;
-    }
-
     public async Task<IReadOnlyList<string>> PickFilesAsync(CancellationToken cancellationToken = default)
     {
-        var files = await _owner.StorageProvider.OpenFilePickerAsync(new()
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new()
         {
             Title = "Select attachment files",
             AllowMultiple = true

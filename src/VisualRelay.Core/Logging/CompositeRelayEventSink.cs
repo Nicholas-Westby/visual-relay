@@ -4,19 +4,12 @@ namespace VisualRelay.Core.Logging;
 
 // Fans a single RelayEvent out to several sinks (e.g. the in-memory UI sink and
 // the durable file sink) so the driver contract stays a single IRelayEventSink.
-public sealed class CompositeRelayEventSink : IRelayEventSink
+public sealed class CompositeRelayEventSink(params IRelayEventSink[] sinks) : IRelayEventSink
 {
-    private readonly IReadOnlyList<IRelayEventSink> _sinks;
-
-    public CompositeRelayEventSink(params IRelayEventSink[] sinks)
-    {
-        _sinks = sinks;
-    }
-
     public async Task PublishAsync(RelayEvent relayEvent, CancellationToken cancellationToken = default)
     {
         // One child failing must not stop the others from receiving the event.
-        var tasks = _sinks.Select(sink => PublishSafelyAsync(sink, relayEvent, cancellationToken));
+        var tasks = sinks.Select(sink => PublishSafelyAsync(sink, relayEvent, cancellationToken));
         await Task.WhenAll(tasks);
     }
 

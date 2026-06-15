@@ -7,15 +7,9 @@ namespace VisualRelay.DrainQueue;
 /// Thread-safe console sink that prefixes every event line with the task id
 /// so output stays attributable during parallel planning.
 /// </summary>
-public sealed class ConsoleRelayEventSink : IRelayEventSink
+public sealed class ConsoleRelayEventSink(string taskId) : IRelayEventSink
 {
-    private readonly string _taskId;
     private readonly object _gate = new();
-
-    public ConsoleRelayEventSink(string taskId)
-    {
-        _taskId = taskId;
-    }
 
     public Task PublishAsync(RelayEvent relayEvent, CancellationToken cancellationToken = default)
     {
@@ -25,7 +19,7 @@ public sealed class ConsoleRelayEventSink : IRelayEventSink
 
         lock (_gate)
         {
-            Console.WriteLine($"[{_taskId}] {relayEvent.Timestamp:HH:mm:ss} {relayEvent.DisplayLine}{detail}");
+            Console.WriteLine($"[{taskId}] {relayEvent.Timestamp:HH:mm:ss} {relayEvent.DisplayLine}{detail}");
         }
 
         return Task.CompletedTask;
