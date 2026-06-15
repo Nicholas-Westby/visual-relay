@@ -13,7 +13,7 @@ internal static class Hashing
         return Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
     }
 
-    public static string Canonicalize(string value) =>
+    private static string Canonicalize(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\r", "\n", StringComparison.Ordinal).Normalize();
 }
 

@@ -37,7 +37,7 @@ internal static class PlanCompletenessGate
             "complete JSON contract.";
     }
 
-    internal static IReadOnlyList<string> ExtractChecklist(string markdown)
+    private static IReadOnlyList<string> ExtractChecklist(string markdown)
     {
         var items = new List<string>();
         var inSection = false;
@@ -65,7 +65,7 @@ internal static class PlanCompletenessGate
         return items;
     }
 
-    internal static IEnumerable<string> KeyTokensOf(string item) =>
+    private static IEnumerable<string> KeyTokensOf(string item) =>
         item.Split([' ', '\t', '(', ')', ',', '.', ':', ';', '"', '\''],
                     StringSplitOptions.RemoveEmptyEntries)
             .Where(t => t.Length >= 5);

@@ -13,7 +13,7 @@ public sealed class RelayTaskRepository
         RootPath = rootPath;
     }
 
-    public string RootPath { get; }
+    private string RootPath { get; }
 
     public async Task<IReadOnlyList<RelayTaskItem>> ListPendingAsync(CancellationToken cancellationToken = default)
     {

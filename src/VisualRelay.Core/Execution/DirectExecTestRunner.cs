@@ -51,7 +51,7 @@ public sealed class DirectExecTestRunner : ITestRunner
     /// Splits a command string on whitespace, respecting simple quoting.
     /// The first token is the executable, the rest are arguments.
     /// </summary>
-    internal static IReadOnlyList<string> SplitCommand(string command)
+    private static IReadOnlyList<string> SplitCommand(string command)
     {
         if (string.IsNullOrWhiteSpace(command))
             return Array.Empty<string>();

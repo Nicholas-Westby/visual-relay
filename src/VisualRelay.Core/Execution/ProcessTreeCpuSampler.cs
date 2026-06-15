@@ -39,7 +39,7 @@ internal static class ProcessTreeCpuSampler
         }
     }
 
-    internal static long SumTreeCpuMs(int rootPid, string psOutput)
+    private static long SumTreeCpuMs(int rootPid, string psOutput)
     {
         var childrenByParent = new Dictionary<int, List<int>>();
         var cpuByPid = new Dictionary<int, long>();

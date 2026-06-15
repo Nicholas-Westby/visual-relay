@@ -247,7 +247,7 @@ public partial class MainWindowViewModel : ViewModelBase
     // Reusable seam: probes the model backend once and updates the VM state.
     // Safe to call from the UI thread (the probe never throws) and reusable by
     // the later persistent top-bar indicator.
-    public async Task RefreshBackendStatusAsync()
+    private async Task RefreshBackendStatusAsync()
     {
         var readiness = await BackendReadinessProbe.CheckAsync();
         IsBackendReachable = readiness.IsReady;

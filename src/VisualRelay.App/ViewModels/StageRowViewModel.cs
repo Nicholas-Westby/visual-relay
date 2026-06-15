@@ -158,7 +158,7 @@ public sealed class StageRowViewModel : ViewModelBase
     }
 
     public string? ReportPath { get; private set; }
-    public string? TraceDirectory { get; private set; }
+    private string? TraceDirectory { get; set; }
 
     // Prefer the report (always exists for a run); fall back to the trace dir.
     public string? RevealTarget => ReportPath ?? TraceDirectory;

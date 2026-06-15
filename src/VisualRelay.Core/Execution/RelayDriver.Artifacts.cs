@@ -58,7 +58,7 @@ public sealed partial class RelayDriver
     /// returns a descriptive error on any failure. Callers never throw on malformed
     /// or wrong-shaped contract output — they flag cleanly with the returned message.
     /// </summary>
-    internal static bool TryParseContractJson(string? json, out JsonElement element, out string? error)
+    private static bool TryParseContractJson(string? json, out JsonElement element, out string? error)
     {
         error = null;
         element = default;
@@ -109,7 +109,7 @@ public sealed partial class RelayDriver
         return chain;
     }
 
-    internal static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
     { ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv" };
 
     /// <summary>
@@ -118,7 +118,7 @@ public sealed partial class RelayDriver
     /// Files with no extension are treated as non-code (docs/config/data).
     /// Unknown extensions default to code (fail-safe toward requiring a test).
     /// </summary>
-    internal static bool IsImpl(string path) =>
+    private static bool IsImpl(string path) =>
         Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
 
     /// <summary>
@@ -127,7 +127,7 @@ public sealed partial class RelayDriver
     /// directory, filenames matching <c>*.tests.*</c>, <c>*_test.*</c>, or
     /// <c>*.spec.*</c>. Normalises backslashes so Windows paths match.
     /// </summary>
-    internal static bool IsTestFile(string path)
+    private static bool IsTestFile(string path)
     {
         var normalized = path.Replace('\\', '/');
         var fileName = Path.GetFileName(path);

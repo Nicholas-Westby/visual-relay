@@ -15,7 +15,7 @@ public static class PlanningWorktree
     /// Root directory for all ephemeral planning worktrees created by this
     /// process. Deleted on completion; pruned on next drain after crash.
     /// </summary>
-    public static string GetTempRoot(string repoRoot, string runId)
+    private static string GetTempRoot(string repoRoot, string runId)
     {
         var repoHash = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(repoRoot)))

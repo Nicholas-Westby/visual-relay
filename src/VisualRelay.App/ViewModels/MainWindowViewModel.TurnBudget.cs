@@ -58,7 +58,7 @@ public partial class MainWindowViewModel
     /// Hydrates the boost set and MaxTurns from config. Called from
     /// <see cref="ReloadTaskListAsync"/> after config is loaded.
     /// </summary>
-    internal void HydrateTurnBudget(RelayConfig config)
+    private void HydrateTurnBudget(RelayConfig config)
     {
         _boostedTaskIds = new HashSet<string>(config.BoostTurnsTaskIds ?? [], StringComparer.Ordinal);
         _maxTurns = config.MaxTurns;

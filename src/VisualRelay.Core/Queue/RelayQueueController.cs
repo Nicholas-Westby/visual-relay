@@ -36,7 +36,7 @@ public sealed class RelayQueueController
         _lifecycle = lifecycle;
     }
 
-    public string RootPath { get; }
+    private string RootPath { get; }
     public ObservableCollection<RelayTaskItem> Tasks { get; } = [];
     public RelayQueueState State { get; private set; } = RelayQueueState.Idle;
 

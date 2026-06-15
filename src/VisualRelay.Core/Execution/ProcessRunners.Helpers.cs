@@ -136,7 +136,7 @@ public sealed partial class SwivalSubagentRunner
         return string.Join('\n', parts);
     }
 
-    internal static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
+    private static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
     {
         var problem = shapeError is not null
             ? $"The previous completion had a valid fenced JSON block but it was rejected: {shapeError}. " +
@@ -162,7 +162,7 @@ public sealed partial class SwivalSubagentRunner
         return string.Join('\n', parts);
     }
 
-    internal static string? NextTier(string tier) => tier switch
+    private static string? NextTier(string tier) => tier switch
     {
         "cheap" => "balanced",
         "balanced" => "frontier",
@@ -174,7 +174,7 @@ public sealed partial class SwivalSubagentRunner
     /// every required key declared in <paramref name="contract"/>. Returns null on
     /// success or an error message describing the mismatch.
     /// </summary>
-    internal static string? ValidateContractShape(string json, string contract)
+    private static string? ValidateContractShape(string json, string contract)
     {
         try
         {
@@ -212,13 +212,13 @@ public sealed partial class SwivalSubagentRunner
     /// characters), prepended with "…" when truncated. Opposite of <see cref="TrimForError"/>
     /// which takes the head — the real error is usually at the tail after a sandbox banner.
     /// </summary>
-    internal static string TrimForTail(string value, int tailChars = 600)
+    private static string TrimForTail(string value, int tailChars = 600)
     {
         var text = value.Trim();
         return text.Length <= tailChars ? text : "…" + text[^tailChars..];
     }
 
-    internal static string TrimForTrace(string value)
+    private static string TrimForTrace(string value)
     {
         var text = value.Trim();
         return text.Length <= 1_500 ? text : string.Concat(text.AsSpan(0, 1_500), "...");

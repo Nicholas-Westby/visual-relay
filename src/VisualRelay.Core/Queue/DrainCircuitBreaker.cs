@@ -6,7 +6,7 @@ public sealed class DrainCircuitBreaker
 {
     private const int CommitRejectThreshold = 2;
     private const int ConsecutiveFlagThreshold = 3;
-    public const string HaltMarker = "DRAIN-HALTED";
+    private const string HaltMarker = "DRAIN-HALTED";
     private int _consecutiveCommitRejects;
     private int _consecutiveFlags;
 
