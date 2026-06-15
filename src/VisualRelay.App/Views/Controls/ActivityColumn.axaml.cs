@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel;
 using Avalonia.Controls;
 using VisualRelay.App.ViewModels;
@@ -55,23 +54,23 @@ public partial class ActivityColumn : UserControl
 
         if (runLogCollapsed && llmCommandsCollapsed)
         {
-            ActivityInnerGrid.RowDefinitions[0].Height = Avalonia.Controls.GridLength.Auto;
-            ActivityInnerGrid.RowDefinitions[1].Height = Avalonia.Controls.GridLength.Auto;
+            ActivityInnerGrid.RowDefinitions[0].Height = GridLength.Auto;
+            ActivityInnerGrid.RowDefinitions[1].Height = GridLength.Auto;
         }
         else if (runLogCollapsed)
         {
-            ActivityInnerGrid.RowDefinitions[0].Height = Avalonia.Controls.GridLength.Auto;
-            ActivityInnerGrid.RowDefinitions[1].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
+            ActivityInnerGrid.RowDefinitions[0].Height = GridLength.Auto;
+            ActivityInnerGrid.RowDefinitions[1].Height = new GridLength(1, GridUnitType.Star);
         }
         else if (llmCommandsCollapsed)
         {
-            ActivityInnerGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
-            ActivityInnerGrid.RowDefinitions[1].Height = Avalonia.Controls.GridLength.Auto;
+            ActivityInnerGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            ActivityInnerGrid.RowDefinitions[1].Height = GridLength.Auto;
         }
         else
         {
-            ActivityInnerGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
-            ActivityInnerGrid.RowDefinitions[1].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
+            ActivityInnerGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            ActivityInnerGrid.RowDefinitions[1].Height = new GridLength(1, GridUnitType.Star);
         }
     }
 }

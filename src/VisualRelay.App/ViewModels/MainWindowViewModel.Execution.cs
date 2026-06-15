@@ -73,13 +73,13 @@ public partial class MainWindowViewModel
 
             // Per-task event sink factory for planning: each planning task
             // gets its own ObservableRelayEventSink wired to HandleRelayEvent.
-            Func<string, IRelayEventSink> planSinkFactory = _ =>
+            IRelayEventSink PlanSinkFactory(string _) =>
                 new ObservableRelayEventSink(HandleRelayEvent);
 
             var executeSink = new ObservableRelayEventSink(HandleRelayEvent);
             var executeTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
 
-            Func<string, ISubagentRunner> planSubagentFactory = taskId =>
+            ISubagentRunner PlanSubagentFactory(string _) =>
                 new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent));
             var planTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
 
@@ -88,9 +88,9 @@ public partial class MainWindowViewModel
             var controller = new RelayQueueController(
                 RootPath,
                 new GuiTaskRunner(RootPath, config, executeSink, executeTestRunner),
-                planSubagentRunnerFactory: planSubagentFactory,
+                planSubagentRunnerFactory: PlanSubagentFactory,
                 planTestRunner: planTestRunner,
-                planEventSinkFactory: planSinkFactory,
+                planEventSinkFactory: PlanSinkFactory,
                 lifecycle: lifecycle);
 
             await controller.RefreshAsync();
@@ -168,7 +168,7 @@ public partial class MainWindowViewModel
 
         RelayConfigWriter.Write(RootPath, command);
         var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None);
-        if (!hookResult.Installed && hookResult.Warning is not null)
+        if (hookResult is { Installed: false, Warning: not null })
         {
             StatusText = hookResult.Warning;
         }

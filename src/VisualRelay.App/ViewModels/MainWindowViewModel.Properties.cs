@@ -1,5 +1,4 @@
 using Avalonia.Media;
-using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;

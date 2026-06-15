@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using System.Threading;
 
 namespace VisualRelay.Core.Configuration;
 

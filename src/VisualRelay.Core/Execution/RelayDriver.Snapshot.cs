@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;

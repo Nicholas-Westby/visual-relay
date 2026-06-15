@@ -18,11 +18,11 @@ public static class RelayTaskWriter
         }
 
         // Lowercase, replace any non-alphanumeric sequence with a single hyphen.
-        var slug = Regex.Replace(title.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-");
+        var slug = Regex.Replace(title.Trim().ToLowerInvariant(), "[^a-z0-9]+", "-");
         // Trim leading/trailing hyphens that might result from punctuation at edges.
         slug = slug.Trim('-');
         // Collapse runs of hyphens.
-        slug = Regex.Replace(slug, @"-{2,}", "-");
+        slug = Regex.Replace(slug, "-{2,}", "-");
         return slug;
     }
 
@@ -46,7 +46,7 @@ public static class RelayTaskWriter
         }
 
         // Must be only lowercase letters, digits, and hyphens.
-        if (!Regex.IsMatch(slug, @"^[a-z0-9]+(-[a-z0-9]+)*$"))
+        if (!Regex.IsMatch(slug, "^[a-z0-9]+(-[a-z0-9]+)*$"))
         {
             return $"Slug \"{slug}\" contains unsafe characters. Use lowercase letters, digits, and hyphens only.";
         }

@@ -17,10 +17,6 @@ public sealed class RelayQueueController
     private readonly DrainLifecycleCallbacks? _lifecycle;
     private bool _pauseRequested;
 
-    /// <summary>Legacy constructor: serial-only drain.</summary>
-    public RelayQueueController(string rootPath, IRelayTaskRunner runner)
-        : this(rootPath, runner, null, null, null, null) { }
-
     /// <summary>Two-phase constructor: when plan factories are non-null,
     /// DrainAsync runs planning in parallel worktrees before serial execute.</summary>
     public RelayQueueController(

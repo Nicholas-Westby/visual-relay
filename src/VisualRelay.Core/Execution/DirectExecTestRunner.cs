@@ -24,7 +24,7 @@ public sealed class DirectExecTestRunner : ITestRunner
         var parts = SplitCommand(command);
         if (parts.Count == 0)
         {
-            return new TestRunResult(127, string.Empty, false);
+            return new TestRunResult(127, string.Empty);
         }
 
         try
@@ -43,7 +43,7 @@ public sealed class DirectExecTestRunner : ITestRunner
         {
             // ENOENT — file not found. Map to exit 127 (shell convention for
             // command-not-found) with no output.
-            return new TestRunResult(127, string.Empty, false);
+            return new TestRunResult(127, string.Empty);
         }
     }
 

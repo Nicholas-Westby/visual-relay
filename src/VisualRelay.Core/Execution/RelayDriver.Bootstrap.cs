@@ -81,7 +81,7 @@ public sealed partial class RelayDriver
 
         var retryResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
 
-        if (retryResult.ExitCode == 0 && !retryResult.TimedOut)
+        if (retryResult is { ExitCode: 0, TimedOut: false })
         {
             // Fail→pass flip — emit info event
             await _dependencies.EventSink.PublishAsync(new RelayEvent(

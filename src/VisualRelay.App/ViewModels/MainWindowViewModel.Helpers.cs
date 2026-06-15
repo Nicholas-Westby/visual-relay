@@ -50,8 +50,7 @@ public partial class MainWindowViewModel
         if (relayEvent.StageNumber is { } stageNumber)
         {
             var stage = Stages.FirstOrDefault(s => s.Number == stageNumber);
-            if (relayEvent.EventName == "stage_start" &&
-                relayEvent.TaskId is { } taskId &&
+            if (relayEvent is { EventName: "stage_start", TaskId: { } taskId } &&
                 _runningTaskIds.Contains(taskId))
             {
                 var stageName = relayEvent.Data is not null && relayEvent.Data.TryGetValue("name", out var name)

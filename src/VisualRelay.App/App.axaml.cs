@@ -1,10 +1,6 @@
-using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
-using Avalonia.Data.Core;
-using Avalonia.Data.Core.Plugins;
-using Avalonia.Layout;
 using Avalonia.Markup.Xaml;
 using Avalonia.Media;
 using VisualRelay.App.Services;
@@ -54,14 +50,14 @@ public partial class App : Application
             Content = new Grid
             {
                 RowDefinitions = new RowDefinitions("*,Auto"),
-                Margin = new Avalonia.Thickness(20),
+                Margin = new Thickness(20),
                 RowSpacing = 16,
                 Children =
                 {
                     new TextBlock
                     {
                         Text = message,
-                        TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                        TextWrapping = TextWrapping.Wrap,
                         FontSize = 13,
                         Foreground = Brush.Parse("#DCE2EA"),
                         VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,

@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel;
 using Avalonia.Controls;
 using VisualRelay.App.ViewModels;
@@ -55,13 +54,13 @@ public partial class MainWindow : Window
         // When expanded: restore the 1.45:1 ratio (row 0 = 1.45*, row 1 = *).
         if (vm.IsStagesCollapsed)
         {
-            CenterGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
-            CenterGrid.RowDefinitions[1].Height = Avalonia.Controls.GridLength.Auto;
+            CenterGrid.RowDefinitions[0].Height = new GridLength(1, GridUnitType.Star);
+            CenterGrid.RowDefinitions[1].Height = GridLength.Auto;
         }
         else
         {
-            CenterGrid.RowDefinitions[0].Height = new Avalonia.Controls.GridLength(1.45, Avalonia.Controls.GridUnitType.Star);
-            CenterGrid.RowDefinitions[1].Height = new Avalonia.Controls.GridLength(1, Avalonia.Controls.GridUnitType.Star);
+            CenterGrid.RowDefinitions[0].Height = new GridLength(1.45, GridUnitType.Star);
+            CenterGrid.RowDefinitions[1].Height = new GridLength(1, GridUnitType.Star);
         }
     }
 

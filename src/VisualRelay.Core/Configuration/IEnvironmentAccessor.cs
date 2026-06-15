@@ -17,5 +17,5 @@ public interface IEnvironmentAccessor
     /// <summary>
     /// Returns all process environment variable name/value pairs.
     /// </summary>
-    System.Collections.Generic.IReadOnlyDictionary<string, string> GetEnvironmentVariables();
+    IReadOnlyDictionary<string, string> GetEnvironmentVariables();
 }

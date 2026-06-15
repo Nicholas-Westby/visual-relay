@@ -64,7 +64,7 @@ exit 1
             : ".git/hooks";
         var hooksDir = Path.GetFullPath(Path.Combine(rootPath, hooksDirRelative));
         Directory.CreateDirectory(hooksDir);
-        var hookPath = System.IO.Path.Combine(hooksDir, HookFileName);
+        var hookPath = Path.Combine(hooksDir, HookFileName);
 
         // Check for an existing pre-commit hook.
         if (File.Exists(hookPath))

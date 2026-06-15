@@ -1,6 +1,3 @@
-using System.Diagnostics;
-using System.Text.Json;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 

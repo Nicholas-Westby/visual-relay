@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 

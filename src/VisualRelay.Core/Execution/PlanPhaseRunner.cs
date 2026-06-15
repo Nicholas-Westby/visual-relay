@@ -127,7 +127,7 @@ public static class PlanPhaseRunner
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan",
                 outcome.Status == RelayTaskOutcomeStatus.Flagged
                     ? "flagged"
-                    : $"done(stage4)",
+                    : "done(stage4)",
                 outcome.Reason);
             return outcome;
         }

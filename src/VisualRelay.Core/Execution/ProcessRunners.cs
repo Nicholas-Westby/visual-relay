@@ -1,5 +1,3 @@
-using System.Diagnostics;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 

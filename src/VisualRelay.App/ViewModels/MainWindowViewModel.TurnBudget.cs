@@ -31,7 +31,7 @@ public partial class MainWindowViewModel
             if (changed)
             {
                 RelayConfigWriter.SetTurnBoost(RootPath, SelectedTask.Id, value);
-                OnPropertyChanged(nameof(SelectedTaskBoostsTurns));
+                OnPropertyChanged();
                 OnPropertyChanged(nameof(TurnBudgetLabel));
             }
         }

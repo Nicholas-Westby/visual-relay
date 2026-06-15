@@ -22,7 +22,7 @@ public static class RelayTraceParser
             }
             catch (JsonException)
             {
-                continue;
+                // Skip malformed trace lines.
             }
         }
 

@@ -30,42 +30,42 @@ public static class BackendConfigGenerator
     /// </summary>
     internal static readonly Dictionary<string, List<(string Model, string RequiredKey)>> Chains = new()
     {
-        ["cheap"] = new()
-        {
+        ["cheap"] =
+        [
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),
-        },
-        ["balanced"] = new()
-        {
+        ],
+        ["balanced"] =
+        [
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("deepseek-v4-flash", "DEEPSEEK_API_KEY"),
             ("fallback", "HF_TOKEN"),
-        },
-        ["frontier"] = new()
-        {
+        ],
+        ["frontier"] =
+        [
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("deepseek-v4-pro", "DEEPSEEK_API_KEY"),
             ("hf-qwen3-coder-next", "HF_TOKEN"),
             ("fallback", "HF_TOKEN"),
-        },
-        ["vision"] = new()
-        {
+        ],
+        ["vision"] =
+        [
             ("hf-qwen3-vl-235b", "HF_TOKEN"),
             ("hf-qwen3-vl-30b", "HF_TOKEN"),
             ("kimi-k2", "MOONSHOT_API_KEY"),
             ("fallback", "HF_TOKEN"),
-        },
-        ["claude"] = new()
-        {
+        ],
+        ["claude"] =
+        [
             ("claude-opus-1m", "ANTHROPIC_API_KEY"),
             ("claude-sonnet", "ANTHROPIC_API_KEY"),
-        },
-        ["fallback"] = new()
-        {
+        ],
+        ["fallback"] =
+        [
             ("hf-qwen3-coder-next", "HF_TOKEN"),
-        },
+        ],
     };
 
     /// <summary>
@@ -119,7 +119,7 @@ public static class BackendConfigGenerator
             {
                 if (tier == "claude") continue;
                 aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier;
-                fallbacks[tier] = new List<string> { FallbackTier };
+                fallbacks[tier] = [FallbackTier];
                 continue;
             }
 

@@ -1,6 +1,5 @@
 using System.Text;
 using System.Text.Json;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
@@ -43,7 +42,7 @@ public sealed partial class RelayDriver
             {
                 var testResult = await _dependencies.TestRunner.RunAsync(
                     rootPath, config.TestCommand, cancellationToken);
-                gatePassed = !testResult.TimedOut && testResult.ExitCode == 0;
+                gatePassed = testResult is { TimedOut: false, ExitCode: 0 };
             }
             catch
             {

@@ -114,7 +114,7 @@ public sealed partial class RelayDriver
     /// </summary>
     internal static string NormalizeForComparison(string line)
     {
-        return Regex.Replace(line, @"(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
+        return Regex.Replace(line, "(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
     }
 
     /// <summary>

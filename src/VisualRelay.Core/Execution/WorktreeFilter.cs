@@ -147,7 +147,7 @@ internal static partial class WorktreeFilter
         {
             cancellationToken.ThrowIfCancellationRequested();
             var checkoutResult = await GitAsync(rootPath, ["checkout", "HEAD", "--", rel], cancellationToken);
-            if (checkoutResult.ExitCode == 0 && !checkoutResult.TimedOut)
+            if (checkoutResult is { ExitCode: 0, TimedOut: false })
             { trackedDiscarded.Add(rel); continue; }
 
             // Defect B: checkout failed — probe whether path is in HEAD.

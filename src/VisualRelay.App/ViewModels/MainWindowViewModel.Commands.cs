@@ -184,7 +184,7 @@ public partial class MainWindowViewModel
 
         // Lazily promote active flat tasks to the nested subfolder layout
         // so the convention spreads incrementally without a bulk migration.
-        if (!task.Task.IsNested && !task.Task.IsArchived)
+        if (task.Task is { IsNested: false, IsArchived: false })
         {
             var newPath = await RelayTaskWriter.PromoteToNestedAsync(RootPath, task.Task);
             var newDir = Path.GetDirectoryName(newPath)!;
