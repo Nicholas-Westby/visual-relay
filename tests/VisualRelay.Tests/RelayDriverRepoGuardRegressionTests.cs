@@ -134,4 +134,46 @@ public sealed class RelayDriverRepoGuardRegressionTests
         Assert.Contains("brand-new.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
         Assert.DoesNotContain("big.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
     }
+
+    /// <summary>(h) Numbered sibling pre-existing, new numbered sibling still blocks.</summary>
+    [Fact]
+    public async Task GuardRed_NumberedSiblingPreExisting_NewNumberedSiblingStillBlocks()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), """
+            {
+              "testCmd": "dotnet test",
+              "testFileCmd": "dotnet test {files}",
+              "logSources": [],
+              "baselineVerify": true,
+              "maxVerifyLoops": 2,
+              "archiveOnDone": true,
+              "guardCmd": "tools/guards/check-file-size.sh"
+            }
+            """);
+        repo.WriteTask("numbered-sibling", "# Numbered sibling\n");
+        RelayDriverRepoGuardTests.InitGitRepo(repo.Root);
+
+        var subagent = new CapturingSubagentRunner();
+        subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        // Working: Page1 (pre-existing, same count) + Page2 (newly oversize)
+        var guardRunner = new ScriptedTestRunner(
+            new TestRunResult(1, "file too large: src/Page1.cs has 320 lines (limit 300)\nfile too large: src/Page2.cs has 999 lines (limit 300)"),
+            new TestRunResult(1, "file too large: src/Page1.cs has 320 lines (limit 300)"));
+        var testRunner = new ScriptedTestRunner(
+            new TestRunResult(1, "red"), new TestRunResult(0, "all green"),
+            new TestRunResult(0, "all green"));
+        var combined = new RelayDriverRepoGuardTests.CommandDispatchTestRunner(
+            ("check-file-size.sh", guardRunner), ("dotnet test", testRunner));
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "numbered-sibling");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var stage10 = subagent.Invocations.Single(i => i.Stage.Number == 10);
+        Assert.Contains("Page2.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Page1.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
+    }
 }

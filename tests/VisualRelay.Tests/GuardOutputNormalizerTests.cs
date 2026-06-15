@@ -48,4 +48,22 @@ public sealed class GuardOutputNormalizerTests
     {
         Assert.Equal("abc", RelayDriver.NormalizeForComparison("abc"));
     }
+
+    /// <summary>
+    /// Two lines whose file paths differ only by an embedded digit
+    /// (e.g. <c>Page1.cs</c> vs <c>Page2.cs</c>) must produce
+    /// DIFFERENT normalized keys.  The old whole-line <c>\d+</c>
+    /// pattern collapsed both to <c>Page#.cs</c>, masking genuinely
+    /// new violations as pre-existing.
+    /// </summary>
+    [Fact]
+    public void NormalizeForComparison_NumberedPaths_StayDistinct()
+    {
+        var a = RelayDriver.NormalizeForComparison(
+            "file too large: src/Page1.cs has 320 lines (limit 300)");
+        var b = RelayDriver.NormalizeForComparison(
+            "file too large: src/Page2.cs has 999 lines (limit 300)");
+
+        Assert.NotEqual(a, b);
+    }
 }

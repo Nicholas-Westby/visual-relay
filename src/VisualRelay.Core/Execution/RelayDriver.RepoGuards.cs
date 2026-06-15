@@ -102,16 +102,19 @@ public sealed partial class RelayDriver
 
     /// <summary>
     /// Normalizes a guard output line for baseline comparison by replacing
-    /// every run of digits with <c>#</c>.  This prevents the count-drift
-    /// footgun where <c>file too large: X has 332 lines (limit 300)</c> vs
+    /// every standalone run of digits (not adjacent to an ASCII letter)
+    /// with <c>#</c>.  This prevents the count-drift footgun where
+    /// <c>file too large: X has 332 lines (limit 300)</c> vs
     /// <c>... has 333 lines ...</c> would be classified as a NEW violation
-    /// just because a pre-existing oversize file was touched.  Only
+    /// just because a pre-existing oversize file was touched, while
+    /// preserving digits embedded in file paths and identifiers
+    /// (e.g. <c>Page1.cs</c> vs <c>Page2.cs</c> stay distinct).  Only
     /// genuinely-new violations (files with no baseline twin, or files
     /// pushed over the threshold) surface.
     /// </summary>
     internal static string NormalizeForComparison(string line)
     {
-        return Regex.Replace(line, @"\d+", "#");
+        return Regex.Replace(line, @"(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
     }
 
     /// <summary>
