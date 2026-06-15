@@ -17,21 +17,12 @@ public sealed class RelayQueueController
     private readonly DrainLifecycleCallbacks? _lifecycle;
     private bool _pauseRequested;
 
-    /// <summary>
-    /// Legacy constructor: serial-only drain (no parallel planning).
-    /// </summary>
+    /// <summary>Legacy constructor: serial-only drain.</summary>
     public RelayQueueController(string rootPath, IRelayTaskRunner runner)
-        : this(rootPath, runner, null, null, null, null)
-    {
-    }
+        : this(rootPath, runner, null, null, null, null) { }
 
-    /// <summary>
-    /// Two-phase constructor: when <paramref name="planSubagentRunnerFactory"/> and
-    /// <paramref name="planTestRunner"/> are non-null, DrainAsync runs planning
-    /// stages (1–4) in parallel worktrees before the serial execute phase.
-    /// The factory receives a task id so each task gets its own runner instance,
-    /// enabling per-task behavior (e.g. only one task flags).
-    /// </summary>
+    /// <summary>Two-phase constructor: when plan factories are non-null,
+    /// DrainAsync runs planning in parallel worktrees before serial execute.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
@@ -55,45 +46,30 @@ public sealed class RelayQueueController
 
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
     {
-        // Initialized-before-this-policy repos get the diagnostics gitignore
-        // on their next run; no-op when .relay is absent or the file exists.
         Init.RelayGitignoreWriter.EnsureWritten(RootPath);
-
         State = RelayQueueState.Refreshing;
         Tasks.Clear();
         foreach (var task in await _repository.ListPendingAsync(cancellationToken))
-        {
             Tasks.Add(task);
-        }
-
         State = RelayQueueState.Idle;
     }
 
     public void RequestPause()
     {
         _pauseRequested = true;
-        if (State == RelayQueueState.Running)
-        {
-            State = RelayQueueState.PauseRequested;
-        }
+        if (State == RelayQueueState.Running) State = RelayQueueState.PauseRequested;
     }
 
     public void MoveUp(string taskId)
     {
         var index = IndexOf(taskId);
-        if (index > 0)
-        {
-            Tasks.Move(index, index - 1);
-        }
+        if (index > 0) Tasks.Move(index, index - 1);
     }
 
     public void MoveDown(string taskId)
     {
         var index = IndexOf(taskId);
-        if (index >= 0 && index < Tasks.Count - 1)
-        {
-            Tasks.Move(index, index + 1);
-        }
+        if (index >= 0 && index < Tasks.Count - 1) Tasks.Move(index, index + 1);
     }
 
     public async Task<IReadOnlyList<RelayTaskOutcome>> DrainAsync(CancellationToken cancellationToken = default)
@@ -104,42 +80,37 @@ public sealed class RelayQueueController
         DrainCircuitBreaker.ClearHaltMarker(RootPath);
         State = RelayQueueState.Running;
 
-        // Per-drain CTS so pause/stop cancels in-flight planning tasks.
+        // Per-drain CTS; pause/stop cancels in-flight planning.
         using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var drainRunId = $"drain-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-
-        // Snapshot the queue at drain start (tasks added mid-drain are excluded).
         var queue = Tasks.Where(task => !task.NeedsReview).ToList();
 
-        // ── Phase 1: parallel planning (stages 1–4) ──
+        // Promote configResult so Phase 2 reads TasksDir without a second parse.
+        RelayConfigResult? configResult = null;
+
+        // ── Phase 1: parallel planning ──
         if (_planSubagentRunnerFactory is not null && _planTestRunner is not null)
         {
-            var configResult = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
+            configResult = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
             if (configResult.IsRunnable)
             {
-                // Determine which tasks still need planning (status 1–4 not all Done).
+                // Tasks needing planning (stages 1–4 not all Done).
                 var needsPlan = new List<(string TaskId, ISubagentRunner Runner)>();
                 foreach (var task in queue)
-                {
                     if (!StagesOneThroughFourAreDone(task.Id))
                         needsPlan.Add((task.Id, _planSubagentRunnerFactory!(task.Id)));
-                }
 
                 if (needsPlan.Count > 0)
                 {
-                    // Notify lifecycle: each task entering planning.
                     if (_lifecycle is not null)
-                    {
                         foreach (var (taskId, _) in needsPlan)
                             _lifecycle.OnPlanningStarted?.Invoke(taskId);
-                    }
 
                     foreach (var (taskId, _) in needsPlan)
                         DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "start");
 
                     var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
-                        RootPath, needsPlan, configResult.Config, _planTestRunner,
-                        drainCts.Token, _planEventSinkFactory);
+                        RootPath, needsPlan, configResult.Config, _planTestRunner, drainCts.Token, _planEventSinkFactory);
 
                     foreach (var (taskId, outcome) in planResults)
                     {
@@ -149,23 +120,19 @@ public sealed class RelayQueueController
                             results.Add(outcome);
 
                             var queueTask = queue.FirstOrDefault(t => t.Id == taskId);
-                            if (queueTask is not null)
-                                queue.Remove(queueTask);
+                            if (queueTask is not null) queue.Remove(queueTask);
 
                             DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan",
-                                outcome.Status == RelayTaskOutcomeStatus.Flagged
-                                    ? "flagged" : "failed", outcome.Reason);
+                                outcome.Status == RelayTaskOutcomeStatus.Flagged ? "flagged" : "failed", outcome.Reason);
                             _lifecycle?.OnPlanningCompleted?.Invoke(taskId, outcome.Status);
 
                             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                             {
+                                await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, "plan", drainCts.Token);
                                 WriteNeedsReviewMarker(taskId, outcome.Reason ?? "Needs review");
                                 var idx = IndexOf(taskId);
                                 if (idx >= 0 && queueTask is not null)
-                                {
-                                    Tasks.RemoveAt(idx);
-                                    Tasks.Add(queueTask with { ReviewReason = outcome.Reason ?? "Needs review" });
-                                }
+                                { Tasks.RemoveAt(idx); Tasks.Add(queueTask with { ReviewReason = outcome.Reason ?? "Needs review" }); }
                             }
 
                             if (circuitBreaker.ShouldHalt(RootPath, outcome))
@@ -188,8 +155,6 @@ public sealed class RelayQueueController
                     {
                         drainCts.Cancel();
                         State = RelayQueueState.Paused;
-                        // Add Planned outcomes for tasks that were planned but won't
-                        // proceed to Phase 2, so the GUI can report plannedCount.
                         foreach (var planned in queue)
                             results.Add(new RelayTaskOutcome(planned.Id, RelayTaskOutcomeStatus.Planned, null, null, null));
                         return results;
@@ -198,7 +163,7 @@ public sealed class RelayQueueController
             }
         }
 
-        // ── Phase 2: serial execute (stages 5–11) ──
+        // ── Phase 2: serial execute ──
         while (queue.Count > 0)
         {
             if (_pauseRequested)
@@ -214,26 +179,18 @@ public sealed class RelayQueueController
             DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "start");
 
             RelayTaskOutcome outcome;
-            try
-            {
-                outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken);
-            }
+            try { outcome = await _runner.RunTaskAsync(RootPath, task.Id, cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                State = RelayQueueState.Failed;
-                return results;
-            }
+            { State = RelayQueueState.Failed; return results; }
             catch (Exception ex)
             {
-                // Convert unhandled exception to a flagged outcome so the drain continues.
                 outcome = new RelayTaskOutcome(task.Id, RelayTaskOutcomeStatus.Flagged,
                     null, null, $"unhandled exception: {ex.GetType().Name}: {ex.Message}");
             }
             results.Add(outcome);
 
             var taskIdx = IndexOf(task.Id);
-            if (taskIdx >= 0)
-                Tasks.RemoveAt(taskIdx);
+            if (taskIdx >= 0) Tasks.RemoveAt(taskIdx);
 
             var milestone = outcome.Status switch
             {
@@ -248,6 +205,9 @@ public sealed class RelayQueueController
 
             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
             {
+                var tasksDir = configResult?.Config?.TasksDir
+                    ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config?.TasksDir;
+                await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", cancellationToken);
                 try { WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review"); }
                 catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }
                 Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
@@ -267,34 +227,29 @@ public sealed class RelayQueueController
         return results;
     }
 
-    /// <summary>
-    /// Returns true when all stages 1–4 are marked Done in the task's status.json.
-    /// </summary>
     private bool StagesOneThroughFourAreDone(string taskId)
     {
-        var taskDir = Path.Combine(RootPath, ".relay", taskId);
-        var status = StageStatusRecord.Read(taskDir);
-        return status.Count >= 4
-            && status.Take(4).All(e => e.Status == "Done");
+        var status = StageStatusRecord.Read(Path.Combine(RootPath, ".relay", taskId));
+        return status.Count >= 4 && status.Take(4).All(e => e.Status == "Done");
     }
 
     private void WriteNeedsReviewMarker(string taskId, string reason)
     {
-        var relayDirectory = Path.Combine(RootPath, ".relay", taskId);
-        Directory.CreateDirectory(relayDirectory);
-        File.WriteAllText(Path.Combine(relayDirectory, "NEEDS-REVIEW"), reason + Environment.NewLine);
+        var dir = Path.Combine(RootPath, ".relay", taskId);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "NEEDS-REVIEW"), reason + Environment.NewLine);
+    }
+
+    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)
+    {
+        try { await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct); }
+        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, "reset-failed", ex.Message); }
     }
 
     private int IndexOf(string taskId)
     {
         for (var i = 0; i < Tasks.Count; i++)
-        {
-            if (string.Equals(Tasks[i].Id, taskId, StringComparison.Ordinal))
-            {
-                return i;
-            }
-        }
-
+            if (string.Equals(Tasks[i].Id, taskId, StringComparison.Ordinal)) return i;
         return -1;
     }
 }
