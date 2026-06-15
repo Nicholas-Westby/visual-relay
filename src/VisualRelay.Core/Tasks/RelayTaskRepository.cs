@@ -40,7 +40,7 @@ public sealed class RelayTaskRepository
         }
 
         var tasks = new List<RelayTaskItem>();
-        Walk(tasksRoot, tasksRoot, tasks);
+        Walk(tasksRoot, tasks);
         return tasks
             .Select(AttachReviewState)
             .Select(AttachRunMetrics)
@@ -129,7 +129,7 @@ public sealed class RelayTaskRepository
             {
                 var canonical = FindCanonicalArchivedPath(directory!, files);
                 if (canonical is not null)
-                    tasks.Add(ArchivedTaskFromPath(completedRoot, canonical, files));
+                    tasks.Add(ArchivedTaskFromPath(completedRoot, canonical));
             }
         }
 
@@ -162,7 +162,7 @@ public sealed class RelayTaskRepository
         return new RelayTaskInput(markdown, TaskContentHelper.BuildContext(task.SiblingPaths));
     }
 
-    private static void Walk(string tasksRoot, string directory, List<RelayTaskItem> tasks)
+    private static void Walk(string directory, List<RelayTaskItem> tasks)
     {
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
@@ -176,7 +176,7 @@ public sealed class RelayTaskRepository
             {
                 if (!SkippedDirectories.Contains(name))
                 {
-                    EmitSingleTaskFromFolder(tasksRoot, path, tasks);
+                    EmitSingleTaskFromFolder(path, tasks);
                 }
 
                 continue;
@@ -196,7 +196,7 @@ public sealed class RelayTaskRepository
     /// folder-named .md; fallback is the first .md in the folder. All other
     /// entries (including other .md files) become siblings.
     /// </summary>
-    private static void EmitSingleTaskFromFolder(string tasksRoot, string folderPath, List<RelayTaskItem> tasks)
+    private static void EmitSingleTaskFromFolder(string folderPath, List<RelayTaskItem> tasks)
     {
         var folderName = Path.GetFileName(folderPath);
         var entries = Directory.EnumerateFiles(folderPath).ToArray();
@@ -256,7 +256,7 @@ public sealed class RelayTaskRepository
         };
     }
 
-    private static RelayTaskItem ArchivedTaskFromPath(string completedRoot, string markdownPath, string[] allDoneFilesInDir)
+    private static RelayTaskItem ArchivedTaskFromPath(string completedRoot, string markdownPath)
     {
         var directory = Path.GetDirectoryName(markdownPath)!;
         var fileName = Path.GetFileNameWithoutExtension(markdownPath);

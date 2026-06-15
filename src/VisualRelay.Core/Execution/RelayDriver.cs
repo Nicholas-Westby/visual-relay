@@ -41,7 +41,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var unknownCostStageCount = 0;
             var firstStageToRun = 1;
             if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
-            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, taskId, config, ledger, seals, manifest, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
+            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, config, ledger, seals, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
             var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];

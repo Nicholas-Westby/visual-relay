@@ -15,11 +15,9 @@ public sealed partial class RelayDriver
     private async Task<(string previousSeal, string taskHash, int firstStageToRun)> ValidateCommitGateResumeAsync(
         string rootPath,
         string taskDirectory,
-        string taskId,
         RelayConfig config,
         StringBuilder ledger,
         List<string> seals,
-        List<string> manifest,
         string previousSeal,
         string taskHash,
         int firstStageToRun,

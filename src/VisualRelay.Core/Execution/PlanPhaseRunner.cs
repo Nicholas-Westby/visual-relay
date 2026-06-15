@@ -48,7 +48,7 @@ public static class PlanPhaseRunner
 
         // Fire all planning tasks concurrently, gated by the semaphore.
         await Task.WhenAll(taskList.Select(t => PlanOneAsync(
-            mainRootPath, t.TaskId, t.Runner, config, testRunner, runId,
+            mainRootPath, t.TaskId, t.Runner, testRunner, runId,
             semaphore, results, eventSinkFactory, cancellationToken)));
 
         // Return in input order.
@@ -61,7 +61,6 @@ public static class PlanPhaseRunner
         string mainRootPath,
         string taskId,
         ISubagentRunner runner,
-        RelayConfig config,
         ITestRunner testRunner,
         string runId,
         SemaphoreSlim semaphore,
