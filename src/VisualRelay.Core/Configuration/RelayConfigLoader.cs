@@ -148,6 +148,7 @@ public static class RelayConfigLoader
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
+                FormatCommand = OptionalStringOrNull(root, "formatCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds")
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);

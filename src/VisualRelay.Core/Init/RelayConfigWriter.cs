@@ -31,6 +31,13 @@ public static class RelayConfigWriter
             json["guardCmd"] = JsonValue.Create(guardCmd);
         }
 
+        // Auto-detect format command for the detected toolchain.
+        var formatCmd = FormatCommandDetector.Detect(rootPath);
+        if (formatCmd is not null)
+        {
+            json["formatCmd"] = JsonValue.Create(formatCmd);
+        }
+
         var path = Path.Combine(relayDir, "config.json");
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         return path;

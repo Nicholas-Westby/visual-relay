@@ -53,6 +53,16 @@ public sealed record RelayConfig(
     // Command that runs repo policy guards (file-size, format, etc.) alongside
     // the test command in the stage-9 gate. Absent → skipped with zero overhead.
     string? GuardCommand = null,
+    // Optional whole-project formatter run unconditionally before each guard
+    // check. When set, the harness auto-formats the working tree so format-only
+    // guard failures never trigger a Fix-verify loop. Absent (null) → no-op;
+    // the existing guard behavior is unchanged. Takes no filename arguments —
+    // the formatter must accept whole-project invocation (e.g. "dotnet format
+    // VisualRelay.slnx", "prettier --write .", "gofmt -w .", "cargo fmt").
+    // Because formatCmd only reformats the task's own changed files (when the
+    // upstream repo is correctly formatted), the formatted output lands in the
+    // manifest and is automatically included in the commit.
+    string? FormatCommand = null,
     // Per-tier inactivity timeout (ms). A stage with no liveness pulse
     // (stdout/stderr bytes, trace-dir entry, or trace-file growth) within
     // this window is killed and retried (up to MaxStallRetries).

@@ -28,10 +28,16 @@ public sealed partial class RelayDriver
         string taskId,
         string runId,
         ITestRunner testRunner,
+        string? formatCmd,
         string guardCmd,
         bool baselineVerify,
         CancellationToken ct)
     {
+        // Auto-format the working tree before the guard check so format-only
+        // violations never cause a Fix-verify loop.
+        if (!string.IsNullOrWhiteSpace(formatCmd))
+            await testRunner.RunAsync(rootPath, formatCmd, ct);
+
         var workingResult = await testRunner.RunAsync(rootPath, guardCmd, ct);
         var workingOutput = workingResult.Output ?? string.Empty;
 
@@ -116,7 +122,7 @@ public sealed partial class RelayDriver
 
         var (newViolations, fullOutput, timedOut) = await RunGuardCheckAsync(
             rootPath, taskId, runId, _dependencies.TestRunner,
-            config.GuardCommand, config.BaselineVerify, ct);
+            config.FormatCommand, config.GuardCommand, config.BaselineVerify, ct);
 
         if (timedOut)
             return (false, newViolations, true);

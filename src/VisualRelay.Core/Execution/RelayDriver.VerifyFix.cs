@@ -137,7 +137,7 @@ public sealed partial class RelayDriver
             {
                 var (newViolations, _, timedOut) = await RunGuardCheckAsync(
                     rootPath, taskId, runId, _dependencies.TestRunner,
-                    guardCmd, config.BaselineVerify, cancellationToken);
+                    config.FormatCommand, guardCmd, config.BaselineVerify, cancellationToken);
 
                 if (timedOut)
                 {
