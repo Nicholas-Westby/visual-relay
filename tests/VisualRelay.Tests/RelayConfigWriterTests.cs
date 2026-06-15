@@ -76,6 +76,31 @@ public sealed class RelayConfigWriterTests
         Assert.Equal(original, result.Config.TestCommand);
     }
 
+    // ── Swift guard detection ───────────────────────────────────────────
+
+    [Fact]
+    public async Task Write_SwiftPackage_ProducesSwiftBuildGuard()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
+
+        RelayConfigWriter.Write(repo.Root, "swift test");
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal("swift test", result.Config.TestCommand);
+        Assert.Equal("swift build", result.Config.GuardCommand);
+    }
+
+    [Fact]
+    public async Task Write_NoGuardsNoToolchainMarker_GuardCommandIsNull()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "echo test");
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Null(result.Config.GuardCommand);
+    }
+
     // ── UpsertBypassSandbox (existing, preserved) ───────────────────────
 
     [Fact]

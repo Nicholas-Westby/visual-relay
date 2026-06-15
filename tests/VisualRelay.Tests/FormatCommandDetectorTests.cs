@@ -92,4 +92,15 @@ public sealed class FormatCommandDetectorTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public void Detect_SwiftPackage_ReturnsSwiftformat()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
+
+        var result = FormatCommandDetector.Detect(repo.Root);
+
+        Assert.Equal("swiftformat .", result);
+    }
 }

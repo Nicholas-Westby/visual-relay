@@ -132,6 +132,16 @@ public sealed class TestCommandDetectorTests
         Assert.Equal("pytest", TestCommandDetector.Detect(repo.Root));
     }
 
+    // ── New marker: Swift / SwiftPM ─────────────────────────────────────
+
+    [Fact]
+    public void Detect_SwiftPackage_ReturnsSwiftTest()
+    {
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
+        Assert.Equal("swift test", TestCommandDetector.Detect(repo.Root));
+    }
+
     // ── DetectCandidates (priority-ordered list) ───────────────────────
 
     [Fact]
@@ -162,6 +172,18 @@ public sealed class TestCommandDetectorTests
     }
 
     [Fact]
+    public void DetectCandidates_PackageSwiftAndPackageJson_SwiftBeforeNode()
+    {
+        // A Swift repo that also carries a package.json (docs tooling, etc.)
+        // must be detected as Swift, not Node.
+        using var repo = TestRepository.Create();
+        File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
+        File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");
+        var candidates = TestCommandDetector.DetectCandidates(repo.Root);
+        Assert.Equal(["swift test", "npm test"], candidates);
+    }
+
+    [Fact]
     public void DetectCandidates_AllMarkers_ReturnsFullPriorityOrder()
     {
         using var repo = TestRepository.Create();
@@ -170,6 +192,7 @@ public sealed class TestCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "pyproject.toml"), "");    // python
         File.WriteAllText(Path.Combine(repo.Root, "Cargo.toml"), "");        // rust
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "");            // go
+        File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "");     // swift
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");    // node
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));         // weak python
 
@@ -181,6 +204,7 @@ public sealed class TestCommandDetectorTests
             "pytest",
             "cargo test",
             "go test ./...",
+            "swift test",
             "npm test",
             "pytest"   // tests/ dir weak signal, last
         ], candidates);

@@ -13,8 +13,9 @@ namespace VisualRelay.Core.Init;
 //   3. Python        (pyproject.toml / setup.py / pytest.ini) → "pytest"
 //   4. Rust          (Cargo.toml)                 → "cargo test"
 //   5. Go            (go.mod)                     → "go test ./..."
-//   6. Node          (package.json)              → scripts.test value or "npm test"
-//   7. Python (weak) (tests/ directory only)     → "pytest"  ← LAST, weakest signal
+//   6. Swift         (Package.swift)              → "swift test"
+//   7. Node          (package.json)              → scripts.test value or "npm test"
+//   8. Python (weak) (tests/ directory only)     → "pytest"  ← LAST, weakest signal
 public static class TestCommandDetector
 {
     /// <summary>
@@ -64,14 +65,20 @@ public static class TestCommandDetector
             candidates.Add("go test ./...");
         }
 
-        // 6. Node — parse scripts.test when available, otherwise fall back to "npm test"
+        // 6. Swift (SwiftPM)
+        if (File.Exists(Path.Combine(rootPath, "Package.swift")))
+        {
+            candidates.Add("swift test");
+        }
+
+        // 7. Node — parse scripts.test when available, otherwise fall back to "npm test"
         if (File.Exists(Path.Combine(rootPath, "package.json")))
         {
             var script = ReadPackageJsonScriptsTest(rootPath);
             candidates.Add(script ?? "npm test");
         }
 
-        // 7. Python (weak) — tests/ directory is a last-resort signal
+        // 8. Python (weak) — tests/ directory is a last-resort signal
         if (Directory.Exists(Path.Combine(rootPath, "tests")))
         {
             candidates.Add("pytest");
@@ -113,33 +120,35 @@ public static class TestCommandDetector
 /// Detects repo policy guard commands by enumerating <c>tools/guards/*.sh</c>
 /// and chaining them with <c> &amp;&amp; </c>. When a .NET solution file
 /// (<c>*.slnx</c> or <c>*.sln</c>) exists in the repo root, appends
-/// <c>dotnet format &lt;solution&gt; --verify-no-changes</c>.
-/// Returns <c>null</c> when no guards are found — guard detection never
-/// blocks init.
+/// <c>dotnet format &lt;solution&gt; --verify-no-changes</c>. When a
+/// SwiftPM manifest (<c>Package.swift</c>) exists, appends
+/// <c>swift build</c>. Toolchain checks are appended even when no guard
+/// scripts exist. Returns <c>null</c> when neither guards nor a recognized
+/// toolchain marker is found — guard detection never blocks init.
 /// </summary>
 public static class GuardCommandDetector
 {
     /// <summary>
-    /// Detects the guard command or returns <c>null</c> when no guards exist.
+    /// Detects the guard command or returns <c>null</c> when no guards or
+    /// toolchain markers exist.
     /// </summary>
     public static string? Detect(string rootPath)
     {
-        var guardsDir = Path.Combine(rootPath, "tools", "guards");
-        if (!Directory.Exists(guardsDir))
-            return null;
-
-        var scripts = Directory.EnumerateFiles(guardsDir, "*.sh")
-            .OrderBy(f => f, StringComparer.Ordinal)
-            .Select(Path.GetFileName)
-            .ToList();
-
-        if (scripts.Count == 0)
-            return null;
-
         var parts = new List<string>();
-        foreach (var script in scripts)
+
+        // Collect guard scripts when tools/guards/ exists.
+        var guardsDir = Path.Combine(rootPath, "tools", "guards");
+        if (Directory.Exists(guardsDir))
         {
-            parts.Add($"tools/guards/{script}");
+            var scripts = Directory.EnumerateFiles(guardsDir, "*.sh")
+                .OrderBy(f => f, StringComparer.Ordinal)
+                .Select(Path.GetFileName)
+                .ToList();
+
+            foreach (var script in scripts)
+            {
+                parts.Add($"tools/guards/{script}");
+            }
         }
 
         // Append dotnet format when a .NET solution file exists.
@@ -150,6 +159,15 @@ public static class GuardCommandDetector
         {
             parts.Add($"dotnet format {Path.GetFileName(solution)} --verify-no-changes");
         }
+
+        // Append "swift build" when a SwiftPM manifest exists.
+        if (File.Exists(Path.Combine(rootPath, "Package.swift")))
+        {
+            parts.Add("swift build");
+        }
+
+        if (parts.Count == 0)
+            return null;
 
         return string.Join(" && ", parts);
     }
@@ -191,6 +209,10 @@ public static class FormatCommandDetector
         // Rust
         if (File.Exists(Path.Combine(rootPath, "Cargo.toml")))
             return "cargo fmt";
+
+        // SwiftPM — swiftformat is the de-facto formatter.
+        if (File.Exists(Path.Combine(rootPath, "Package.swift")))
+            return "swiftformat .";
 
         return null;
     }
