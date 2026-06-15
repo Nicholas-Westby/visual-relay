@@ -7,16 +7,17 @@ namespace VisualRelay.Core.Init;
 /// Smoke-runs a test command candidate to prove it can start on this machine
 /// before the command is persisted to config.
 /// </summary>
-public sealed class TestCommandValidator
+/// <remarks>
+/// The validation timeout is owned by the supplied <see cref="ITestRunner"/>
+/// (e.g. <see cref="DirectExecTestRunner"/>'s constructor timeout), which
+/// time-boxes the process and surfaces <see cref="TestRunResult.TimedOut"/> for
+/// <see cref="Classify"/> to reject. The validator therefore holds no timeout of
+/// its own — adding one here would double-enforce and throw instead of producing
+/// the TimedOut result the classification contract expects.
+/// </remarks>
+public sealed class TestCommandValidator(ITestRunner runner)
 {
-    private readonly ITestRunner _runner;
-    private readonly TimeSpan _timeout;
-
-    public TestCommandValidator(ITestRunner runner, TimeSpan? timeout = null)
-    {
-        _runner = runner;
-        _timeout = timeout ?? TimeSpan.FromSeconds(5);
-    }
+    private readonly ITestRunner _runner = runner;
 
     /// <summary>
     /// Runs <paramref name="command"/> in <paramref name="rootPath"/> and
