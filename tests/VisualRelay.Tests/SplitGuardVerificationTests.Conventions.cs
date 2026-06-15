@@ -177,10 +177,8 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Contains("WriteExecutableAsync", content, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// TransientGitShim must be moved from a private inner class in
-    /// GitCommitterTests.cs to its own file (TransientGitShim.cs).
-    /// </summary>
+    // TransientGitShim must live in its own file (TransientGitShim.cs), not as
+    // a private inner class in GitCommitterTests.cs.
     [Fact]
     public void TransientGitShim_IsInOwnFile()
     {
@@ -227,10 +225,10 @@ public sealed partial class SplitGuardVerificationTests
     // ── GitInvoker architecture guard ──────────────────────────────────
 
     /// <summary>
-    /// GitInvokerTests must carry [Collection("GitInvoker")] so tests
-    /// that manipulate the static GitInvoker.Override seam are serialized
-    /// and cannot race with each other or with any other test that touches
-    /// GitInvoker static state.
+    /// GitInvokerTests AND WorktreeFilterTests must carry
+    /// [Collection("GitInvoker")] so every test that touches the static
+    /// GitInvoker.Override seam (set it, or rely on it being null) is
+    /// serialized and cannot race across collections.
     /// </summary>
     [Fact]
     public void GitInvokerTests_HasCollectionAttribute()
@@ -240,15 +238,22 @@ public sealed partial class SplitGuardVerificationTests
         var content = File.ReadAllText(path);
         Assert.Contains("[Collection(\"GitInvoker\")]", content, StringComparison.Ordinal);
         Assert.Contains("public sealed class GitInvokerTests", content, StringComparison.Ordinal);
+
+        // WorktreeFilterTests must SHARE the collection (its real-git tests rely
+        // on Override == null) — serialize it against GitInvokerTests. Attribute
+        // on the MAIN partial only; companions inherit it.
+        var wfPath = Path.Combine(TestsDir, "WorktreeFilterTests.cs");
+        Assert.True(File.Exists(wfPath), "WorktreeFilterTests.cs must exist");
+        var wfContent = File.ReadAllText(wfPath);
+        Assert.Contains("[Collection(\"GitInvoker\")]", wfContent, StringComparison.Ordinal);
+        Assert.Contains("public sealed partial class WorktreeFilterTests", wfContent, StringComparison.Ordinal);
     }
 
     /// <summary>
     /// Every production git call site must route through
-    /// <see cref="VisualRelay.Core.Execution.GitInvoker"/>.  Bare
-    /// <c>"git"</c> in <c>ProcessCapture.RunAsync</c> or
-    /// <c>new ProcessStartInfo("git")</c> is forbidden in production
-    /// source — those are the exact patterns that fail under nix-shell
-    /// environment rot on macOS.
+    /// <see cref="VisualRelay.Core.Execution.GitInvoker"/>. Bare <c>"git"</c> in
+    /// <c>ProcessCapture.RunAsync</c> or <c>new ProcessStartInfo("git")</c> is
+    /// forbidden — those fail under nix-shell environment rot on macOS.
     /// </summary>
     [Fact]
     public void NoBareGitString_InProductionCallSites()

@@ -3,21 +3,13 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Red-first tests for the four residual correctness leaks in
+/// Red-first tests for the residual correctness leaks in
 /// <see cref="WorktreeFilter.DiscardNonTestEditsAsync"/> — each lets a
-/// non-test edit survive into stage 6:
-/// <list type="number">
-/// <item>TAB/newline in a path is C-quoted by git and never dequoted →
-///   the real file is missed (leak).</item>
-/// <item>Trailing/leading whitespace in a filename is mangled by the
-///   <c>line.Trim()</c> in enumeration parsing → the real file is missed.</item>
-/// <item>A COPY (<c>C</c>) record's destination is dropped because the
-///   parser keys rename detection on <c>R</c> only.</item>
-/// <item>A prod→test rename leaves the staged deletion of the old
-///   production path surviving into stage 6 (over-exclude).</item>
-/// </list>
-/// Fixes 1 and 2 are addressed together by switching all enumerations to
-/// NUL-delimited (<c>-z</c>) parsing.
+/// non-test edit survive into stage 6: (1) TAB/newline in a path C-quoted and
+/// never dequoted; (2) leading/trailing whitespace mangled by a <c>Trim()</c>;
+/// (3) a COPY (<c>C</c>) record's destination dropped or mis-protected;
+/// (4) a prod→test rename leaving a stray staged deletion (over-exclude).
+/// Leaks 1/2 are fixed together by NUL-delimited (<c>-z</c>) parsing.
 /// </summary>
 public sealed partial class WorktreeFilterTests
 {
@@ -114,78 +106,9 @@ public sealed partial class WorktreeFilterTests
         Assert.Contains(relPath, result.TrackedDiscarded, StringComparer.Ordinal);
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // Leak 3: COPY record's destination is reverted/deleted
-    // ═══════════════════════════════════════════════════════════════
-
-    /// <summary>
-    /// When the target repo enables copy detection, a staged copy emits a
-    /// <c>C</c> name-status record (<c>C100\0old\0new\0</c>) — the same
-    /// three-part shape as a rename but with a <c>C</c> status.  The parser
-    /// must capture the copy DESTINATION so the new (non-test) production
-    /// file does not leak into stage 6.
-    /// <para>
-    /// The hardcoded <c>-M</c> on the staged-diff command suppresses copy
-    /// detection, so a real <c>C</c> record only reaches the parser once the
-    /// command also passes <c>-C</c>.  To exercise the parser directly we
-    /// inject a NUL-delimited <c>C</c> record via <see cref="GitInvoker.Override"/>
-    /// (the exact <c>-z</c> shape the fixed command requests) and delegate
-    /// every other git call to the real repo.  The copy destination is a new
-    /// staged file absent from HEAD, so the filter unstages and deletes it.
-    /// </para>
-    /// </summary>
-    [Fact]
-    public async Task CopyRecordDestination_IsRevertedOrDeleted()
-    {
-        using var repo = TestRepository.Create();
-        await InitRepoWithTrackedFile(repo.Root, "source.cs", "source-content");
-
-        // The copy destination: a new (non-test) production file staged into
-        // the index.  Create it on disk and stage it so it is a real staged
-        // addition that the filter can unstage + delete.
-        var copyPath = Path.Combine(repo.Root, "copy.cs");
-        await File.WriteAllTextAsync(copyPath, "source-content");
-        TestGit.Run(repo.Root, "add", "copy.cs");
-
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            // Intercept ONLY the staged name-status enumeration for this repo
-            // and return a NUL-delimited C record (the -z shape git emits for
-            // a copy: status\0old\0new\0).  This is what the fixed command
-            // requests; current code requests non-z output and mis-parses it,
-            // dropping copy.cs entirely → leak (red).
-            if (rootPath == myRoot
-                && args.Contains("--name-status")
-                && args.Contains("--cached"))
-            {
-                return Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false));
-            }
-
-            return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. args], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-        };
-
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None);
-
-            Assert.Null(result.Error);
-            // ── CRITICAL: the copy destination (a new production file) must
-            // NOT survive into stage 6 ──
-            Assert.False(File.Exists(copyPath),
-                "copy destination copy.cs must be unstaged and removed");
-            Assert.Contains("copy.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
-    }
+    // Leak 3 (COPY record's destination, both the non-test and the dangerous
+    // copy-from-testFile-to-prod variants) lives in the companion file
+    // WorktreeFilterTests.CopyRecords.cs (kept under the file-size guard).
 
     // ═══════════════════════════════════════════════════════════════
     // Leak 4: prod→test rename leaves no stray staged deletion

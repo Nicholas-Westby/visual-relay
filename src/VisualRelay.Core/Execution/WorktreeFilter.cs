@@ -75,10 +75,15 @@ internal static partial class WorktreeFilter
         // --name-status -M -C -z so staged renames AND copies expose both old
         // and new names.  -M forces rename detection ON even when the target
         // repo sets diff.renames=false (preserving the Defect-A rename-pair
-        // guard); -C additionally surfaces copies as C records (leak 3) when
-        // the repo opts into copy detection.  -z makes the stream a flat
-        // sequence of NUL-separated tokens (status\0path\0, or status\0old\0new\0
-        // for R/C — no embedded TAB).
+        // guard); -C additionally SURFACES copies as C records (review
+        // confirmed -M alone suppresses copy detection).  Renames and copies
+        // are then treated DIFFERENTLY in AddNameStatusNul: a rename's source
+        // is deleted so its destination is rename-protected (renamePairs); a
+        // copy leaves its source intact so its destination is a plain staged
+        // addition reverted/deleted like any other (NOT protected — B-1).  -z
+        // makes the stream a flat sequence of NUL-separated tokens
+        // (status\0path\0, or status\0old\0new\0 for R/C — no embedded TAB; see
+        // the CR/CRLF limitation noted on SplitNulRecords / AddNameStatusNul).
         var stagedDiff = await GitAsync(rootPath,
             ["diff", "--cached", "--name-status", "-M", "-C", "-z"], cancellationToken);
         if (stagedDiff.ExitCode != 0 || stagedDiff.TimedOut)
