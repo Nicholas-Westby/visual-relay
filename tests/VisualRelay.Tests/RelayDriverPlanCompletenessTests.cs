@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -49,7 +48,7 @@ public sealed class RelayDriverPlanCompletenessTests
         var o = await d.RunTaskAsync(repo.Root, "t");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, o.Status);
         Assert.Equal(1, r.Invocations.Count(i => i.Stage.Number == 4));
-        Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 5);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 5 });
     }
 
     [Fact]
@@ -70,7 +69,7 @@ public sealed class RelayDriverPlanCompletenessTests
         var s4 = r.Invocations.Where(i => i.Stage.Number == 4).ToList();
         Assert.Equal(2, s4.Count);
         Assert.Contains("integration tests", s4[1].LastTestOutput, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 5);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 5 });
     }
 
     [Fact]

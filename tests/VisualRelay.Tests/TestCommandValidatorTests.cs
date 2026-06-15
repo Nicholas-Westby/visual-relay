@@ -1,4 +1,3 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
@@ -11,7 +10,7 @@ public sealed class TestCommandValidatorTests
     [Fact]
     public void Classify_ExitZero_Accepts()
     {
-        var result = TestCommandValidator.Classify(new TestRunResult(0, "322 tests passed", false));
+        var result = TestCommandValidator.Classify(new TestRunResult(0, "322 tests passed"));
 
         Assert.True(result.Accepted);
         Assert.Null(result.RejectionReason);
@@ -24,7 +23,7 @@ public sealed class TestCommandValidatorTests
     {
         // Runner is proven because it produced test output — tests may
         // legitimately fail, but the command itself is real.
-        var result = TestCommandValidator.Classify(new TestRunResult(1, "FAIL: 3 tests failed\n  1) add works", false));
+        var result = TestCommandValidator.Classify(new TestRunResult(1, "FAIL: 3 tests failed\n  1) add works"));
 
         Assert.True(result.Accepted);
         Assert.Null(result.RejectionReason);
@@ -57,7 +56,7 @@ public sealed class TestCommandValidatorTests
     public void Classify_Exit127NoOutput_RejectsAsCommandNotFound()
     {
         // Exit code 127 is the shell convention for "command not found".
-        var result = TestCommandValidator.Classify(new TestRunResult(127, "", false));
+        var result = TestCommandValidator.Classify(new TestRunResult(127, ""));
 
         Assert.False(result.Accepted);
         Assert.NotNull(result.RejectionReason);
@@ -71,7 +70,7 @@ public sealed class TestCommandValidatorTests
         // printed a usage/help message to a stream we didn't capture, or
         // the binary failed its own arg validation before producing
         // test-style output.
-        var result = TestCommandValidator.Classify(new TestRunResult(2, "", false));
+        var result = TestCommandValidator.Classify(new TestRunResult(2, ""));
 
         Assert.False(result.Accepted);
         Assert.NotNull(result.RejectionReason);
@@ -82,7 +81,7 @@ public sealed class TestCommandValidatorTests
     {
         // Whitespace-only output is treated the same as empty — usage error.
         var result = TestCommandValidator.Classify(
-            new TestRunResult(1, "   \n  \n ", false));
+            new TestRunResult(1, "   \n  \n "));
 
         Assert.False(result.Accepted);
     }
@@ -92,7 +91,7 @@ public sealed class TestCommandValidatorTests
     [Fact]
     public async Task ValidateAsync_ExitZero_Accepts()
     {
-        var runner = new ScriptedTestRunner(new TestRunResult(0, "all green", false));
+        var runner = new ScriptedTestRunner(new TestRunResult(0, "all green"));
         var validator = new TestCommandValidator(runner);
 
         var result = await validator.ValidateAsync("/tmp/repo", "cargo test");
@@ -107,7 +106,7 @@ public sealed class TestCommandValidatorTests
         // (b) A runner that exits non-zero WITH test output proves the
         // command is real — tests may fail, but the runner is validated.
         var runner = new ScriptedTestRunner(
-            new TestRunResult(1, "2 passed, 1 failed\n  × add(1,2)", false));
+            new TestRunResult(1, "2 passed, 1 failed\n  × add(1,2)"));
         var validator = new TestCommandValidator(runner);
 
         var result = await validator.ValidateAsync("/tmp/repo", "bun test");
@@ -120,7 +119,7 @@ public sealed class TestCommandValidatorTests
     {
         // (a) Simulates pytest not being installed — command-not-found
         // should reject so the next candidate is tried.
-        var runner = new ScriptedTestRunner(new TestRunResult(127, "", false));
+        var runner = new ScriptedTestRunner(new TestRunResult(127, ""));
         var validator = new TestCommandValidator(runner);
 
         var result = await validator.ValidateAsync("/tmp/repo", "pytest");
@@ -145,7 +144,7 @@ public sealed class TestCommandValidatorTests
     public async Task ValidateAsync_NonZeroExitNoOutput_Rejects()
     {
         // Usage error: the command exists but wasn't called correctly.
-        var runner = new ScriptedTestRunner(new TestRunResult(2, "", false));
+        var runner = new ScriptedTestRunner(new TestRunResult(2, ""));
         var validator = new TestCommandValidator(runner);
 
         var result = await validator.ValidateAsync("/tmp/repo", "pytest --typo");
@@ -162,8 +161,8 @@ public sealed class TestCommandValidatorTests
         // (exit 0 with output) → accepted.  This is the fix for the JobFinder
         // bug: pytest must NOT be persisted when it can't even start.
         var runner = new ScriptedTestRunner(
-            new TestRunResult(127, "", false), // pytest: command not found
-            new TestRunResult(0, "322 tests, 0.2s", false)); // bun test: real runner
+            new TestRunResult(127, ""), // pytest: command not found
+            new TestRunResult(0, "322 tests, 0.2s")); // bun test: real runner
 
         var validator = new TestCommandValidator(runner);
 
@@ -182,9 +181,9 @@ public sealed class TestCommandValidatorTests
         // (c) When every candidate fails validation, the caller must write
         // null and surface a message — never persist an unproven guess.
         var runner = new ScriptedTestRunner(
-            new TestRunResult(127, "", false),  // pytest not found
-            new TestRunResult(127, "", false),  // bun test not found
-            new TestRunResult(2, "", false));    // npm test: usage error
+            new TestRunResult(127, ""),  // pytest not found
+            new TestRunResult(127, ""),  // bun test not found
+            new TestRunResult(2, ""));    // npm test: usage error
 
         var validator = new TestCommandValidator(runner);
 
@@ -206,7 +205,7 @@ public sealed class TestCommandValidatorTests
         // can surface a summary like "testCmd validated: bun test (322 tests, 0.2s)".
         var expectedOutput = "322 tests passed in 0.2s\n";
         var runner = new ScriptedTestRunner(
-            new TestRunResult(0, expectedOutput, false));
+            new TestRunResult(0, expectedOutput));
         var validator = new TestCommandValidator(runner);
 
         var result = await validator.ValidateAsync("/tmp/repo", "bun test");
@@ -224,7 +223,7 @@ public sealed class TestCommandValidatorTests
     {
         // The cancellation token is forwarded to ITestRunner so a hung
         // validation can be aborted from the outside.
-        var runner = new ScriptedTestRunner(new TestRunResult(0, "ok", false));
+        var runner = new ScriptedTestRunner(new TestRunResult(0, "ok"));
         var validator = new TestCommandValidator(runner);
         using var cts = new CancellationTokenSource();
         cts.Cancel();
@@ -240,7 +239,7 @@ public sealed class TestCommandValidatorTests
     {
         // (d) The command string must reach the runner verbatim — no
         // trimming, shell-wrapping, or transformation by the validator.
-        var runner = new RecordingTestRunner(new TestRunResult(0, "ok", false));
+        var runner = new RecordingTestRunner(new TestRunResult(0, "ok"));
         var validator = new TestCommandValidator(runner);
 
         await validator.ValidateAsync("/path/to/repo", "dotnet test --filter Category=Unit");

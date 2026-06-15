@@ -23,7 +23,7 @@ public sealed class TraceParserTests
             [TraceEntryKind.AssistantText, TraceEntryKind.ToolCall, TraceEntryKind.Thinking, TraceEntryKind.ToolResult],
             entries.Select(e => e.Kind));
         Assert.Contains(entries, e => e.Title == "shell" && e.Content.Contains("\"cmd\":\"ls\"", StringComparison.Ordinal));
-        Assert.Contains(entries, e => e.Kind == TraceEntryKind.Thinking && e.Content == "checking assumptions");
+        Assert.Contains(entries, e => e is { Kind: TraceEntryKind.Thinking, Content: "checking assumptions" });
         Assert.Contains(entries, e => e.Content == "README.md");
     }
 }

@@ -64,8 +64,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         // "bad-plan" flags at stage 3, "good" goes through planning + execute.
         Assert.Equal(2, results.Count);
-        Assert.Contains(results, r => r.TaskId == "bad-plan" && r.Status == RelayTaskOutcomeStatus.Flagged);
-        Assert.Contains(results, r => r.TaskId == "good" && r.Status == RelayTaskOutcomeStatus.Committed);
+        Assert.Contains(results, r => r is { TaskId: "bad-plan", Status: RelayTaskOutcomeStatus.Flagged });
+        Assert.Contains(results, r => r is { TaskId: "good", Status: RelayTaskOutcomeStatus.Committed });
 
         // Phase 2 must only have run "good", not "bad-plan".
         Assert.Single(phase2Runner.TasksRun);
@@ -165,9 +165,9 @@ public sealed class RelayQueueControllerTwoPhaseTests
 
         var lifecycle = new DrainLifecycleCallbacks
         {
-            OnPlanningStarted = id => planningStarted.Add(id),
+            OnPlanningStarted = planningStarted.Add,
             OnPlanningCompleted = (id, _) => planningCompleted.Add(id),
-            OnExecuteStarted = id => executeStarted.Add(id),
+            OnExecuteStarted = executeStarted.Add,
             OnExecuteCompleted = (id, _) => executeCompleted.Add(id)
         };
 

@@ -266,14 +266,14 @@ public sealed partial class RelayDriverGitCommitTests
         Directory.CreateDirectory(hooksDir);
         var hookPath = Path.Combine(hooksDir, "commit-msg");
         File.WriteAllText(hookPath,
-            $"#!/usr/bin/env bash{System.Environment.NewLine}" +
-            $"set -euo pipefail{System.Environment.NewLine}" +
-            $"subject=\"$(head -n 1 \"$1\")\"{System.Environment.NewLine}" +
-            $"if echo \"$subject\" | grep -qE '{rejectPattern}'; then{System.Environment.NewLine}" +
-            $"  echo \"hook: subject matches rejected pattern\" >&2{System.Environment.NewLine}" +
-            $"  exit 1{System.Environment.NewLine}" +
-            $"fi{System.Environment.NewLine}" +
-            $"exit 0{System.Environment.NewLine}");
+            $"#!/usr/bin/env bash{Environment.NewLine}" +
+            $"set -euo pipefail{Environment.NewLine}" +
+            $"subject=\"$(head -n 1 \"$1\")\"{Environment.NewLine}" +
+            $"if echo \"$subject\" | grep -qE '{rejectPattern}'; then{Environment.NewLine}" +
+            $"  echo \"hook: subject matches rejected pattern\" >&2{Environment.NewLine}" +
+            $"  exit 1{Environment.NewLine}" +
+            $"fi{Environment.NewLine}" +
+            $"exit 0{Environment.NewLine}");
         if (!OperatingSystem.IsWindows())
         {
             File.SetUnixFileMode(hookPath,

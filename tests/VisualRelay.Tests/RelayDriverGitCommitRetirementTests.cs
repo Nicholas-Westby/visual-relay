@@ -33,8 +33,8 @@ public sealed class RelayDriverGitCommitRetirementTests
         // addition of the DONE- file in the same commit as the work.
         // --no-renames keeps git from merging the delete+add into a single R100 line.
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
-        Assert.Contains($"D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
         // Filesystem: original gone, DONE- present.
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "DONE-ship-status.md")));
@@ -71,8 +71,8 @@ public sealed class RelayDriverGitCommitRetirementTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
-        Assert.Contains($"D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/completed/batch-2/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/completed/batch-2/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
         // Filesystem checks.
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
@@ -108,8 +108,8 @@ public sealed class RelayDriverGitCommitRetirementTests
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
         // The nested task's canonical markdown is deleted and a DONE- version added
         // in the same directory. Siblings are untouched.
-        Assert.Contains($"D\tllm-tasks/ship-status/ship-status.md", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/ship-status/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status/ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/ship-status/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
         // Sibling files must NOT appear as additions or deletions (they were untouched).
         Assert.DoesNotContain("notes.txt", nameStatus, StringComparison.Ordinal);
         Assert.DoesNotContain("diagram.png", nameStatus, StringComparison.Ordinal);
@@ -149,12 +149,12 @@ public sealed class RelayDriverGitCommitRetirementTests
         // the index against the working tree; it doesn't know about the
         // intermediate MarkDone rename).  Additions are for the post-rename
         // files now living under completed/.
-        Assert.Contains($"D\tllm-tasks/ship-status/ship-status.md", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"D\tllm-tasks/ship-status/notes.txt", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"D\tllm-tasks/ship-status/diagram.png", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/completed/batch-2/ship-status/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/completed/batch-2/ship-status/notes.txt", nameStatus, StringComparison.Ordinal);
-        Assert.Contains($"A\tllm-tasks/completed/batch-2/ship-status/diagram.png", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status/ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status/notes.txt", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status/diagram.png", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/completed/batch-2/ship-status/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/completed/batch-2/ship-status/notes.txt", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/completed/batch-2/ship-status/diagram.png", nameStatus, StringComparison.Ordinal);
         // Filesystem: old directory gone, archived directory present.
         Assert.False(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status")));
         Assert.True(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "ship-status")));

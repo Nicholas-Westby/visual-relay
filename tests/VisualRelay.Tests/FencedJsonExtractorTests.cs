@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using Xunit;
 
 namespace VisualRelay.Tests;
 

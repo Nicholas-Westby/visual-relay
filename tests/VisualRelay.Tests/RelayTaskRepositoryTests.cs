@@ -93,7 +93,7 @@ public sealed class RelayTaskRepositoryTests
 
         Assert.Equal(["flat", "nested-task"], tasks.Select(task => task.Id).Order());
         Assert.All(tasks, task => Assert.True(task.IsArchived));
-        Assert.Contains(tasks, task => task.Id == "nested-task" && task.IsNested && task.SiblingPaths.Count == 1);
+        Assert.Contains(tasks, task => task is { Id: "nested-task", IsNested: true, SiblingPaths.Count: 1 });
         Assert.All(tasks, task => Assert.Equal("Completed", task.StateLabel));
     }
 

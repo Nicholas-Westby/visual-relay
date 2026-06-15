@@ -1,5 +1,3 @@
-using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -17,7 +15,7 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
-        runner.AfterRun = () => controller.RequestPause();
+        runner.AfterRun = controller.RequestPause;
 
         await controller.RefreshAsync();
         controller.MoveDown("alpha");
@@ -45,9 +43,9 @@ public sealed class RelayQueueControllerTests
         Assert.Equal(["alpha", "beta"], results.Select(r => r.TaskId));
         Assert.Equal(RelayQueueState.Failed, controller.State);
         // Alpha and beta were both flagged and set aside for review; gamma is un-run.
-        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "beta" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && !t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "beta", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: false });
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
     }
 
@@ -151,12 +149,12 @@ public sealed class RelayQueueControllerTests
         Assert.Equal(["alpha", "beta", "delta"], results.Select(r => r.TaskId));
 
         // Gamma remains un-run.
-        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && !t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: false });
 
         // The three flagged tasks are set aside for review.
-        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "beta" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "delta" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "beta", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "delta", NeedsReview: true });
 
         // DRAIN-HALTED marker was written.
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
@@ -204,9 +202,9 @@ public sealed class RelayQueueControllerTests
 
         // The flagged tasks are set aside for review (alpha, delta, gamma in
         // alphabetical run order received the three Flagged outcomes).
-        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "delta" && t.NeedsReview);
-        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "delta", NeedsReview: true });
+        Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: true });
 
         // Committed tasks are removed.
         Assert.DoesNotContain(controller.Tasks, t => t.Id == "beta");

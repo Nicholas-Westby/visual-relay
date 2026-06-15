@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Headless;
-using VisualRelay.App;
 
 [assembly: AvaloniaTestApplication(typeof(VisualRelay.Tests.HeadlessTestApp))]
 

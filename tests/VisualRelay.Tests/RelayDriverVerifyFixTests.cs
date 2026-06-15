@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -34,8 +33,8 @@ public sealed class RelayDriverVerifyFixTests
         // Stage 10 seal should show green (fix succeeded)
         Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
         // Verify the fix-verify stage ran (stage_start/done events for stage 10)
-        Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 10);
-        Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 10);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 10 });
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 10 });
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "fixable-verify", "NEEDS-REVIEW")));
     }
 
@@ -174,7 +173,7 @@ public sealed class RelayDriverVerifyFixTests
             l.Contains("\"check\":\"green\"", StringComparison.Ordinal));
 
         // (4) stage_done event for stage 10 was still published (UI parity).
-        Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 10);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 10 });
     }
 
     // ── 10× turn-budget multiplier ──────────────────────────────────────

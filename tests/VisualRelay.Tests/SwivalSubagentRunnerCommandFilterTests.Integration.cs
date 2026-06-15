@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -18,7 +17,7 @@ public sealed partial class SwivalSubagentRunnerCommandFilterTests
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
             "fake-swival-filter",
-            $$"""
+            """
             #!/usr/bin/env bash
             while [[ $# -gt 0 ]]; do
               if [[ "$1" == "--commands" ]]; then
@@ -51,8 +50,7 @@ public sealed partial class SwivalSubagentRunnerCommandFilterTests
 
         // A command_dropped event was emitted.
         Assert.Contains(sink.Events, e =>
-            e.EventName == "command_dropped" &&
-            e.Data is not null &&
+            e is { EventName: "command_dropped", Data: not null } &&
             e.Data.TryGetValue("name", out var name) &&
             name == bogus);
     }

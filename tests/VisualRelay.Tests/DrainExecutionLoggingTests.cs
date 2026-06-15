@@ -92,9 +92,9 @@ public sealed class DrainExecutionLoggingTests
         Assert.Equal(RelayQueueState.Paused, ctrl.State);
         Assert.Empty(phase2Runner.TasksRun);
         Assert.Equal(2, results.Count);
-        Assert.Contains(results, r => r.TaskId == "bad-plan" && r.Status == RelayTaskOutcomeStatus.Flagged);
+        Assert.Contains(results, r => r is { TaskId: "bad-plan", Status: RelayTaskOutcomeStatus.Flagged });
         // FAILS today — Planned outcomes excluded.
-        Assert.Contains(results, r => r.TaskId == "good" && r.Status == RelayTaskOutcomeStatus.Planned);
+        Assert.Contains(results, r => r is { TaskId: "good", Status: RelayTaskOutcomeStatus.Planned });
     }
 
     [Fact]
@@ -271,8 +271,7 @@ public sealed class DrainExecutionLoggingTests
 
         // Trace events ARE delivered because traceSink is non-null.
         Assert.Contains(captured.Events, e =>
-            e.EventName == "trace_entry"
-            && e.Data is not null
+            e is { EventName: "trace_entry", Data: not null }
             && e.Data.TryGetValue("content", out var c)
             && c.Contains("trace for trace-me", StringComparison.Ordinal));
     }

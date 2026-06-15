@@ -1,5 +1,4 @@
 using System.Reflection;
-using Avalonia.Headless.XUnit;
 
 namespace VisualRelay.Tests;
 

@@ -29,8 +29,8 @@ public sealed partial class SplitGuardVerificationTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
+            Environment = { ["VISUAL_RELAY_FILE_LINE_LIMIT"] = "300" },
         };
-        startInfo.Environment["VISUAL_RELAY_FILE_LINE_LIMIT"] = "300";
 
         using var process = Process.Start(startInfo)!;
         var stdout = process.StandardOutput.ReadToEnd();

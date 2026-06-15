@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -45,9 +44,9 @@ public sealed class RelayDriverPlanOnlyTests
             Assert.Equal("Waiting", status[i].Status);
 
         // Stage 5 must NOT have been invoked (no test runner call).
-        Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 1);
-        Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 4);
-        Assert.DoesNotContain(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 5);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 1 });
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 4 });
+        Assert.DoesNotContain(sink.Events, e => e is { EventName: "stage_start", StageNumber: 5 });
 
         // Seals file should exist for stages 1–4 (no commit seal though).
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "plan-me", "plan-me.seals")));

@@ -1,5 +1,3 @@
-using VisualRelay.Core.Configuration;
-
 namespace VisualRelay.Tests;
 
 public sealed partial class BackendConfigGeneratorTests

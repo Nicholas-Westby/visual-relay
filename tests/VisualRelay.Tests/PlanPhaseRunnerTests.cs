@@ -66,7 +66,7 @@ public sealed partial class PlanPhaseRunnerTests
         // Git repo required for worktree creation.
         PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
-        var tasks = new (string, ISubagentRunner)[]
+        var tasks = new[]
         {
             ("alpha", MakeRunner("src/alpha.cs", "tests/alpha.tests.cs")),
             ("beta",  MakeRunner("src/beta.cs", "tests/beta.tests.cs")),

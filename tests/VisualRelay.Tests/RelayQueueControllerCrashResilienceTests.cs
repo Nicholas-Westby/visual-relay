@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -65,7 +64,7 @@ public sealed class RelayQueueControllerCrashResilienceTests
         // Gamma is un-run (remains as a pending task, not NeedsReview).
         // Tasks sort alphabetically: alpha, beta, delta, gamma — delta is 3rd
         // and triggers the circuit breaker; gamma is the 4th, never started.
-        Assert.Contains(controller.Tasks, t => t.Id == "gamma" && !t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: false });
 
         // DRAIN-HALTED marker was written.
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));

@@ -1,7 +1,6 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -38,7 +37,7 @@ public sealed class StageRowViewModelTests
     [Fact]
     public void SelectCommand_CanBeNull()
     {
-        var stage = new StageRowViewModel(RelayStages.All[0], null);
+        var stage = new StageRowViewModel(RelayStages.All[0]);
 
         Assert.Null(stage.SelectCommand);
     }

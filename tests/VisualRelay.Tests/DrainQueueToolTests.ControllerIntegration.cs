@@ -1,4 +1,3 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 using VisualRelay.DrainQueue;

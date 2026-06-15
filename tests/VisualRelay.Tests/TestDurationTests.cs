@@ -1,7 +1,6 @@
 using System.Text.Json;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -64,28 +63,34 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_MetricLabel_IncludesTestDuration()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
-        stage.DurationLabel = "12s";
-        stage.CostLabel = "$0.05";
-        stage.TestDurationLabel = "5s";
+        var stage = new StageRowViewModel(RelayStages.All[8])
+        {
+            DurationLabel = "12s",
+            CostLabel = "$0.05",
+            TestDurationLabel = "5s",
+        };
         Assert.Contains("test 5s", stage.MetricLabel);
     }
 
     [Fact]
     public void StageRowViewModel_MetricLabel_OmitsWhenTestDurationEmpty()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
-        stage.DurationLabel = "12s";
-        stage.CostLabel = "$0.05";
-        stage.TestDurationLabel = string.Empty;
+        var stage = new StageRowViewModel(RelayStages.All[8])
+        {
+            DurationLabel = "12s",
+            CostLabel = "$0.05",
+            TestDurationLabel = string.Empty,
+        };
         Assert.DoesNotContain("test", stage.MetricLabel);
     }
 
     [Fact]
     public void StageRowViewModel_ClearMetric_ResetsTestDuration()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
-        stage.TestDurationLabel = "5s";
+        var stage = new StageRowViewModel(RelayStages.All[8])
+        {
+            TestDurationLabel = "5s",
+        };
         stage.ClearMetric();
         Assert.Equal(string.Empty, stage.TestDurationLabel);
     }
@@ -187,7 +192,7 @@ public sealed class TestDurationTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
         var stage9Done = sink.Events.FirstOrDefault(
-            e => e.EventName == "stage_done" && e.StageNumber == 9);
+            e => e is { EventName: "stage_done", StageNumber: 9 });
         Assert.NotNull(stage9Done);
         Assert.NotNull(stage9Done!.Data);
         Assert.True(stage9Done.Data!.ContainsKey("testTime"));
@@ -214,7 +219,7 @@ public sealed class TestDurationTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
         var stage1Done = sink.Events.FirstOrDefault(
-            e => e.EventName == "stage_done" && e.StageNumber == 1);
+            e => e is { EventName: "stage_done", StageNumber: 1 });
         Assert.NotNull(stage1Done);
         if (stage1Done!.Data is not null)
             Assert.False(stage1Done.Data.ContainsKey("testTime"));
@@ -223,8 +228,10 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_ApplyMetric_DoesNotSetTestDurationLabel()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
-        stage.TestDurationLabel = "should-survive";
+        var stage = new StageRowViewModel(RelayStages.All[8])
+        {
+            TestDurationLabel = "should-survive",
+        };
         var metric = new StageRunMetric(
             StageNumber: 9, StageName: "Verify", Tier: "cheap", Model: "claude",
             Timestamp: DateTimeOffset.UtcNow, DurationSeconds: 30.0, CostUsd: 0.10,
@@ -237,8 +244,10 @@ public sealed class TestDurationTests
     [Fact]
     public void SetTestDurationSeconds_Null_ClearsLabel()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
-        stage.TestDurationLabel = "5s";
+        var stage = new StageRowViewModel(RelayStages.All[8])
+        {
+            TestDurationLabel = "5s",
+        };
         stage.SetTestDurationSeconds(null);
         Assert.Equal(string.Empty, stage.TestDurationLabel);
     }

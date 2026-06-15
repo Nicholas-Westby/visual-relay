@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -154,7 +153,7 @@ public sealed partial class SwivalSubagentRunnerCommandFilterTests
     public void BuildArguments_WithoutResolvedCommands_UsesStageCommands()
     {
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
         var invocation = SwivalTestHelpers.Invocation(Path.GetTempPath());
 
         var args = runner.BuildArguments(invocation);
@@ -168,7 +167,7 @@ public sealed partial class SwivalSubagentRunnerCommandFilterTests
     public void BuildArguments_WithResolvedCommands_OverridesStageCommands()
     {
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, "swival", backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
         var invocation = SwivalTestHelpers.Invocation(Path.GetTempPath());
 
         var args = runner.BuildArguments(invocation, "git,ls");

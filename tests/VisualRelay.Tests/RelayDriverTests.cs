@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
@@ -34,11 +33,11 @@ public sealed partial class RelayDriverTests
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "add-status", "add-status.seals"));
         Assert.Contains(seals, line => line.Contains("\"n\":5", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
         Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
-        Assert.Contains(sink.Events, e => e.EventName == "stage_start" && e.StageNumber == 1);
-        Assert.Contains(sink.Events, e => e.EventName == "stage_done" && e.StageNumber == 11);
-        var stage11Done = sink.Events.Single(e => e.EventName == "stage_done" && e.StageNumber == 11);
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 1 });
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 11 });
+        var stage11Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 11 });
         Assert.False(stage11Done.Data?.ContainsKey("turns"));
-        Assert.Contains(sink.Events, e => e.EventName == "run_start" && e.Data is not null && e.Data["base_url"] == ModelBackend.BaseUrl);
+        Assert.Contains(sink.Events, e => e is { EventName: "run_start", Data: not null } && e.Data["base_url"] == ModelBackend.BaseUrl);
     }
 
     [Fact]
@@ -144,11 +143,11 @@ public sealed partial class RelayDriverTests
         var outcome = await driver.RunTaskAsync(repo.Root, "turns-task");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage1Done = sink.Events.Single(e => e.EventName == "stage_done" && e.StageNumber == 1);
+        var stage1Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 1 });
         Assert.NotNull(stage1Done.Data);
         Assert.True(stage1Done.Data!.ContainsKey("turns"));
         Assert.Equal("3", stage1Done.Data["turns"]);
-        var stage11Done = sink.Events.Single(e => e.EventName == "stage_done" && e.StageNumber == 11);
+        var stage11Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 11 });
         Assert.False(stage11Done.Data?.ContainsKey("turns"));
     }
 

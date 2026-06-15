@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace VisualRelay.Tests;
 
 public sealed partial class Installer5LauncherTests

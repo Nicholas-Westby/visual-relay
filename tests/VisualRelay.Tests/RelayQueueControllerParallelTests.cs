@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -85,14 +84,14 @@ public sealed class RelayQueueControllerParallelTests
         var results = await controller.DrainAsync();
 
         // "bad" should appear in results as Flagged.
-        Assert.Contains(results, r => r.TaskId == "bad" && r.Status == RelayTaskOutcomeStatus.Flagged);
+        Assert.Contains(results, r => r is { TaskId: "bad", Status: RelayTaskOutcomeStatus.Flagged });
 
         // "bad" must be set aside as NeedsReview.
-        Assert.Contains(controller.Tasks, t => t.Id == "bad" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "bad", NeedsReview: true });
 
         // "good" and "also-good" should have committed.
-        Assert.Contains(results, r => r.TaskId == "good" && r.Status == RelayTaskOutcomeStatus.Committed);
-        Assert.Contains(results, r => r.TaskId == "also-good" && r.Status == RelayTaskOutcomeStatus.Committed);
+        Assert.Contains(results, r => r is { TaskId: "good", Status: RelayTaskOutcomeStatus.Committed });
+        Assert.Contains(results, r => r is { TaskId: "also-good", Status: RelayTaskOutcomeStatus.Committed });
 
         // Only 1 flag — circuit breaker should NOT halt.
         Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
@@ -169,7 +168,7 @@ public sealed class RelayQueueControllerParallelTests
         var controller = new RelayQueueController(repo.Root, runner);
 
         // Request pause after the first task completes.
-        runner.AfterRun = () => controller.RequestPause();
+        runner.AfterRun = controller.RequestPause;
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();

@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -50,7 +49,7 @@ public sealed class RelayQueueControllerDrainTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW")));
 
         // Alpha must be set aside for review in the queue.
-        Assert.Contains(controller.Tasks, t => t.Id == "alpha" && t.NeedsReview);
+        Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
 
         // Beta must have run (drain continued past alpha into Phase 2).
         var betaResult = results.SingleOrDefault(r => r.TaskId == "beta");

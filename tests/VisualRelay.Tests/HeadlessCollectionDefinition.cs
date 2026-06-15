@@ -7,4 +7,4 @@ namespace VisualRelay.Tests;
 /// race on the shared dispatcher. Non-headless collections continue to run in parallel with this one.
 /// </summary>
 [CollectionDefinition("Headless")]
-public sealed class HeadlessCollection { }
+public sealed class HeadlessCollection;

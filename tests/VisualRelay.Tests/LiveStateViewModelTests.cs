@@ -198,7 +198,7 @@ public sealed class LiveStateViewModelTests
     [Fact]
     public void StageRow_RunningStyleTakesPrecedenceOverLogFilterSelection()
     {
-        var stage = new StageRowViewModel(new RelayStageDefinition(6, "Implement", "balanced", "llm", "all", "all", "system", "{}"), null)
+        var stage = new StageRowViewModel(new RelayStageDefinition(6, "Implement", "balanced", "llm", "all", "all", "system", "{}"))
         {
             Status = "Running",
             IsSelected = true

@@ -1,5 +1,4 @@
 using VisualRelay.Core.Execution;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -57,8 +56,7 @@ public sealed partial class SwivalSubagentRunnerTests
 
         Assert.True(result.IsValid);
         Assert.Contains(sink.Events, e =>
-            e.EventName == "trace" &&
-            e.Data is not null &&
+            e is { EventName: "trace", Data: not null } &&
             e.Data.TryGetValue("content", out var content) &&
             content == "live insight");
     }

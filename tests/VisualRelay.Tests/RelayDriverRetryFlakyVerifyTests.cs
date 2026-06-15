@@ -33,9 +33,9 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "transient", "NEEDS-REVIEW")));
 
         // Retry event must have fired.
-        Assert.Contains(sink.Events, e => e.EventName == "verify_retry" && e.Level == "warn");
+        Assert.Contains(sink.Events, e => e is { EventName: "verify_retry", Level: "warn" });
         // Fail→pass flip event must exist.
-        Assert.Contains(sink.Events, e => e.EventName == "verify_retry_pass" && e.Level == "info");
+        Assert.Contains(sink.Events, e => e is { EventName: "verify_retry_pass", Level: "info" });
 
         // No stage-10 LLM invocation (green verify skips the fix-verify loop).
         Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 10);
@@ -69,7 +69,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "persistent", "NEEDS-REVIEW")));
 
         // Retry event must have fired.
-        Assert.Contains(sink.Events, e => e.EventName == "verify_retry" && e.Level == "warn");
+        Assert.Contains(sink.Events, e => e is { EventName: "verify_retry", Level: "warn" });
         // No fail→pass flip — the retry also failed.
         Assert.DoesNotContain(sink.Events, e => e.EventName == "verify_retry_pass");
     }

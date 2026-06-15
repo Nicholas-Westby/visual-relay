@@ -2,7 +2,6 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Configuration;
-using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
