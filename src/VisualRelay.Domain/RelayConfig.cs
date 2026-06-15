@@ -87,4 +87,13 @@ public sealed record RelayConfig(
     // the redundant Implement narration stage runs on the cheapest tier with a
     // "confirm/amend only" prompt instead of full freight. Set false to always run
     // every stage on its declared tier. No effect on non-git roots.
-    bool DownshiftOnEarlyImplementation = true);
+    bool DownshiftOnEarlyImplementation = true)
+{
+    // Glob patterns (relative to targetRoot) that identify guard/gate scripts.
+    // When a manifest entry matches any pattern, the harness executes it once
+    // unsandboxed after Fix (stage 8), before accepting Verify.  A non-zero exit
+    // feeds output into the Fix-verify loop instead of letting an unverified guard
+    // through.  Default: ["tools/guards/**/*.sh"] — repos that store guards
+    // elsewhere should override.  Set to [] to disable.
+    public IReadOnlyList<string> NewGuardPatterns { get; init; } = ["tools/guards/**/*.sh"];
+}

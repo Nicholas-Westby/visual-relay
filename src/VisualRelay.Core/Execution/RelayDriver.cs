@@ -13,7 +13,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 {
     private readonly RelayDriverDependencies _dependencies;
     private readonly RelayDriverOptions _options;
-
     public RelayDriver(RelayDriverDependencies dependencies, RelayDriverOptions? options = null)
     {
         _dependencies = dependencies;
@@ -187,34 +186,43 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             var bootstrapResult = await _dependencies.TestRunner.RunAsync(rootPath, bootstrapCmd, cancellationToken);
                             if (bootstrapResult.TimedOut)
                             {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(bootstrapResult.Output), null, statusEntries, cancellationToken);
+                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                    ErrorHintClassifier.WithHint(bootstrapResult.Output),
+                                    null, statusEntries, cancellationToken);
                             }
-
                             if (bootstrapResult.ExitCode != 0)
                             {
                                 bootstrapFailed = true;
                                 bootstrapFailureOutput = bootstrapResult.Output;
                             }
                         }
-
+                        // ── New-guard probe: run any guard scripts the task itself added ──
+                        var (newGuardOutput, probeTimedOut) = await NewGuardProbeAsync(
+                            rootPath, manifest, config.NewGuardPatterns, cancellationToken);
+                        if (probeTimedOut)
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                ErrorHintClassifier.WithHint(newGuardOutput ?? "new guard timed out"),
+                                null, statusEntries, cancellationToken);
                         // ── Repo guard check ──
                         var (guardFailed, guardOutput, guardTimedOut) = await IntegrateGuardAsync(
                             rootPath, taskId, runId, config, ledger, cancellationToken);
                         if (guardTimedOut)
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"), null, statusEntries, cancellationToken);
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"),
+                                null, statusEntries, cancellationToken);
                         }
 
                         var testResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, cancellationToken);
                         if (testResult.TimedOut)
                         {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                ErrorHintClassifier.WithHint(testResult.Output),
+                                null, statusEntries, cancellationToken);
                         }
-
                         check = testResult.ExitCode == 0 ? "green" : "red";
-                        if (bootstrapFailed || guardFailed)
+                        if (bootstrapFailed || guardFailed || newGuardOutput is not null)
                             check = "red";
-
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
                         {
@@ -227,15 +235,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            // Build the failure output for fix-verify (or flagging).
-                            var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput);
-
-                            // Baseline verify is skipped when the bootstrap or guard is broken —
-                            // those failures are definitely new (caused by the manifest change).
-                            var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed)
+                            var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
+                            // Skip baseline diff when bootstrap, guard, or new-guard-probe is the source.
+                            var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed && newGuardOutput is null)
                                 ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, cancellationToken)
                                 : null;
-                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed || guardFailed)
+                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed || guardFailed || newGuardOutput is not null)
                             {
                                 if (config.MaxVerifyLoops <= 0)
                                 {
@@ -259,17 +264,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         }
                         if (check == "green" && !stage10Handled)
                         {
-                            // Record stage 9 (green) explicitly — the bottom-of-loop recorder is
-                            // suppressed once stage10Handled is set, mirroring the red path.
+                            // Record stage 9 green explicitly.
                             (previousSeal, taskHash) = await RecordStageAsync(
                                 rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                                 stopwatch, ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                                 cancellationToken);
-
-                            // Stage 10 (Fix-verify) has nothing to fix on a green Verify — skip
-                            // its LLM call, record it as green so status stays all-Done and the
-                            // seal chain reaches 10 entries for the commit-gate resume fast path.
+                            // Skip stage 10: nothing to fix.
                             var stage10 = RelayStages.All[9];
                             (previousSeal, taskHash) = await RecordStageAsync(
                                 rootPath, runId, taskId, taskDirectory, stage10,
@@ -278,7 +279,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                                 cancellationToken);
-
                             stage10Handled = true;
                         }
                     }

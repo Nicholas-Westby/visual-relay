@@ -172,20 +172,116 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// Detects manifest entries that match the configured new-guard patterns, runs
+    /// each once unsandboxed on the host, and returns a combined failure output
+    /// string (non-null) when any guard exits non-zero or times out, or null when
+    /// all pass.  <paramref name="timedOut"/> is true when any guard timed out.
+    /// </summary>
+    private async Task<(string? FailureOutput, bool TimedOut)> NewGuardProbeAsync(
+        string rootPath,
+        IReadOnlyList<string> manifest,
+        IReadOnlyList<string> patterns,
+        CancellationToken ct)
+    {
+        if (patterns.Count == 0)
+            return (null, false);
+
+        var candidates = manifest
+            .Where(entry => patterns.Any(p => MatchesGuardGlob(entry, p)))
+            .Select(entry => Path.Combine(rootPath, entry))
+            .Where(File.Exists)
+            .ToList();
+
+        if (candidates.Count == 0)
+            return (null, false);
+
+        var failures = new List<string>();
+        var anyTimedOut = false;
+        foreach (var scriptPath in candidates)
+        {
+            var result = await _dependencies.TestRunner.RunAsync(rootPath, scriptPath, ct);
+            if (result.TimedOut)
+            {
+                anyTimedOut = true;
+                failures.Add($"--- New guard failed: {scriptPath} (exit {result.ExitCode}) ---\n{result.Output}");
+            }
+            else if (result.ExitCode != 0)
+            {
+                failures.Add($"--- New guard failed: {scriptPath} (exit {result.ExitCode}) ---\n{result.Output}");
+            }
+        }
+
+        var output = failures.Count > 0 ? string.Join("\n\n", failures) : null;
+        return (output, anyTimedOut);
+    }
+
+    /// <summary>
+    /// Tests whether <paramref name="relativePath"/> matches the glob
+    /// <paramref name="pattern"/>. <c>**</c> matches zero or more directory
+    /// segments; <c>*</c> matches any characters within a single segment.
+    /// Comparison is case-insensitive.
+    /// </summary>
+    private static bool MatchesGuardGlob(string relativePath, string pattern)
+    {
+        relativePath = relativePath.Replace('\\', '/');
+        pattern = pattern.Replace('\\', '/');
+        var parts = pattern.Split("**");
+        if (parts.Length == 1)
+            return SegmentListMatch(relativePath, parts[0]);
+        var prefix = parts[0];
+        var suffix = parts[^1];
+        if (prefix.Length > 0 && !relativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (suffix.Length > 0)
+        {
+            var pp = relativePath.Split('/');
+            var sp = suffix.TrimStart('/').Split('/');
+            if (sp.Length > pp.Length) return false;
+            for (var i = 0; i < sp.Length; i++)
+                if (!SegmentMatch(pp[pp.Length - sp.Length + i], sp[i])) return false;
+        }
+        return true;
+    }
+
+    private static bool SegmentListMatch(string path, string pattern)
+    {
+        var pp = path.Split('/');
+        var gp = pattern.Trim('/').Split('/');
+        if (pp.Length != gp.Length) return false;
+        for (var i = 0; i < gp.Length; i++)
+            if (!SegmentMatch(pp[i], gp[i])) return false;
+        return true;
+    }
+
+    private static bool SegmentMatch(string segment, string glob)
+    {
+        if (glob == "*") return true;
+        var si = glob.IndexOf('*');
+        if (si < 0) return string.Equals(segment, glob, StringComparison.OrdinalIgnoreCase);
+        var pre = glob[..si]; var post = glob[(si + 1)..];
+        return segment.StartsWith(pre, StringComparison.OrdinalIgnoreCase)
+            && segment.EndsWith(post, StringComparison.OrdinalIgnoreCase)
+            && segment.Length >= pre.Length + post.Length;
+    }
+
+    /// <summary>
     /// Builds the combined failure output string for the fix-verify loop
-    /// from test, guard, and bootstrap failures.
+    /// from test, guard, new-guard-probe, and bootstrap failures.
     /// </summary>
     private static string BuildFailureOutput(
         TestRunResult testResult,
         string? guardOutput,
         bool bootstrapFailed,
-        string? bootstrapFailureOutput)
+        string? bootstrapFailureOutput,
+        string? newGuardOutput = null)
     {
         var parts = new List<string>();
         if (testResult.ExitCode != 0)
             parts.Add(testResult.Output);
         if (guardOutput is not null)
             parts.Add("--- Guard check output ---\n" + guardOutput);
+        if (newGuardOutput is not null)
+            parts.Add("--- New guard probe ---\n" + newGuardOutput);
         if (bootstrapFailed && bootstrapFailureOutput is not null)
         {
             if (testResult.ExitCode != 0)

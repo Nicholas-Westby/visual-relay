@@ -42,7 +42,10 @@ public static class RelayConfigLoader
             InactivityTimeoutMs: 600_000,
             CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
-            DownshiftOnEarlyImplementation: true);
+            DownshiftOnEarlyImplementation: true)
+        {
+            NewGuardPatterns = ["tools/guards/**/*.sh"]
+        };
 
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -151,6 +154,7 @@ public static class RelayConfigLoader
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
+                NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation)
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
@@ -208,6 +212,14 @@ public static class RelayConfigLoader
     {
         if (!root.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.Array)
             return [];
+        return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
+    }
+
+    // Absent or non-array → fallback; present array → string values.
+    private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name, IReadOnlyList<string> fallback)
+    {
+        if (!root.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.Array)
+            return fallback;
         return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
     }
 
