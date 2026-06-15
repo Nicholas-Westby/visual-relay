@@ -53,7 +53,9 @@ public static class RelayStages
             "Verify your changes using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, or format gate (e.g. `./visual-relay check`) during " +
-            "implementation — the harness runs the full gate at the Verify stage.",
+            "implementation — the harness runs the full gate at the Verify stage. " +
+            "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
+            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Review" =>
             "Review the actual diff and classify issues. " +
             "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
@@ -65,7 +67,9 @@ public static class RelayStages
             "Verify your changes using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, or format gate during implementation — the harness runs the " +
-            "full gate at the Verify stage.",
+            "full gate at the Verify stage. " +
+            "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
+            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
         "Fix-verify" =>
             "Fix failures from the pinned suite. Verify by running ONLY the command shown " +
@@ -73,7 +77,9 @@ public static class RelayStages
             "and nothing else — and confirm it passes (exit 0) before returning success. " +
             "Do NOT run the project's full check, lint, format, build, or screenshot gate " +
             "(e.g. `./visual-relay check`), and do NOT broaden the command to a fuller " +
-            "gate — the harness runs the full gate at its own stage.",
+            "gate — the harness runs the full gate at its own stage. " +
+            "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
+            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         _ => string.Empty
     };
 }

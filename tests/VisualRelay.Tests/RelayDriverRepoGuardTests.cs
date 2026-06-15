@@ -220,7 +220,7 @@ public sealed class RelayDriverRepoGuardTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    private static void InitGitRepo(string root)
+    internal static void InitGitRepo(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));
         File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
@@ -240,7 +240,7 @@ public sealed class RelayDriverRepoGuardTests
     /// Each inner runner is typically a <see cref="ScriptedTestRunner"/>
     /// with its own independent queue.
     /// </summary>
-    private sealed class CommandDispatchTestRunner : ITestRunner
+    internal sealed class CommandDispatchTestRunner : ITestRunner
     {
         private readonly List<(string Sentinel, ITestRunner Runner)> _routes;
 

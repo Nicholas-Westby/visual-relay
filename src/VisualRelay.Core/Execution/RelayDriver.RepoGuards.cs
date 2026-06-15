@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -67,13 +68,26 @@ public sealed partial class RelayDriver
             if (baselineResult.TimedOut)
                 return (workingOutput, workingOutput, false); // can't baseline — treat all as new
 
-            var newLines = OutputLineSet(workingOutput);
-            newLines.ExceptWith(OutputLineSet(baselineOutput));
+            // Diff working vs baseline using count-normalized keys so that
+            // pre-existing oversize files the task merely touched (shifting
+            // their line count, e.g. 332→333) are NOT classified as new
+            // violations.  Only genuinely-new violations (files with no
+            // baseline twin, or files pushed over the threshold) surface.
+            var baselineKeys = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var line in OutputLineSet(baselineOutput))
+                baselineKeys.Add(NormalizeForComparison(line));
 
-            if (newLines.Count == 0)
+            var newRawLines = new List<string>();
+            foreach (var line in OutputLineSet(workingOutput))
+            {
+                if (!baselineKeys.Contains(NormalizeForComparison(line)))
+                    newRawLines.Add(line);
+            }
+
+            if (newRawLines.Count == 0)
                 return (null, workingOutput, false); // all pre-existing
 
-            return (string.Join('\n', newLines.Order(StringComparer.Ordinal)), workingOutput, false);
+            return (string.Join('\n', newRawLines.Order(StringComparer.Ordinal)), workingOutput, false);
         }
         finally
         {
@@ -84,6 +98,20 @@ public sealed partial class RelayDriver
                 // treat all violations as new.
             }
         }
+    }
+
+    /// <summary>
+    /// Normalizes a guard output line for baseline comparison by replacing
+    /// every run of digits with <c>#</c>.  This prevents the count-drift
+    /// footgun where <c>file too large: X has 332 lines (limit 300)</c> vs
+    /// <c>... has 333 lines ...</c> would be classified as a NEW violation
+    /// just because a pre-existing oversize file was touched.  Only
+    /// genuinely-new violations (files with no baseline twin, or files
+    /// pushed over the threshold) surface.
+    /// </summary>
+    internal static string NormalizeForComparison(string line)
+    {
+        return Regex.Replace(line, @"\d+", "#");
     }
 
     /// <summary>

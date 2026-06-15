@@ -57,4 +57,14 @@ public sealed class CodingStageSystemPromptTests
         var stage = RelayStages.All.Single(s => s.Name == stageName);
         Assert.Contains("harness", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Theory]
+    [InlineData("Implement")]
+    [InlineData("Fix")]
+    [InlineData("Fix-verify")]
+    public void CodingStageSystemPrompt_ContainsMinimalEditInstruction(string stageName)
+    {
+        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        Assert.Contains("diff-scoped", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
 }
