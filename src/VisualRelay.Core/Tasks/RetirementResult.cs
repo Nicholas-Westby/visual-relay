@@ -16,5 +16,8 @@ namespace VisualRelay.Core.Tasks;
 internal sealed record RetirementResult(
     IReadOnlyList<string> Additions,
     Action? Rollback,
+    // ReSharper disable once NotAccessedPositionalProperty.Global — part of the
+    // result contract (idempotent no-op vs. real move); set at both construction
+    // sites for callers even though no current consumer branches on it.
     bool WasRetired,
     string DestinationPath);

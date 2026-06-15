@@ -2,6 +2,9 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Core.Init;
 
+// ReSharper disable once NotAccessedPositionalProperty.Global — 'Path' is part of
+// the result contract (the installed hook's path); populated at every construction
+// site for callers/diagnostics even though no current consumer reads it.
 public sealed record HookInstallResult(bool Installed, string Path, string? Warning);
 
 public static class HookInstaller

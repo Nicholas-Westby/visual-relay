@@ -5,10 +5,15 @@ public sealed record RelayEvent(
     string Level,
     string EventName,
     string RunId,
+    // ReSharper disable once NotAccessedPositionalProperty.Global — structured
+    // event-payload field, populated at every emit site as part of the RelayEvent
+    // contract; the current text sink doesn't render it but it's intentional metadata.
     string RootPath,
     string? TaskId = null,
     int? StageNumber = null,
     string? Tier = null,
+    // ReSharper disable once NotAccessedPositionalProperty.Global — see RootPath:
+    // structured per-attempt metadata carried on the event payload by design.
     int? Attempt = null,
     IReadOnlyDictionary<string, string>? Data = null)
 {

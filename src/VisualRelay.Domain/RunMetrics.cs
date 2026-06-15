@@ -34,6 +34,9 @@ public sealed record StageRunMetric(
 }
 
 public sealed record TaskRunMetric(
+    // ReSharper disable once NotAccessedPositionalProperty.Global — identifies which
+    // task this metric belongs to; part of the record's shape and set at both
+    // construction sites, though current consumers read only Stages.
     string TaskId,
     IReadOnlyList<StageRunMetric> Stages)
 {
