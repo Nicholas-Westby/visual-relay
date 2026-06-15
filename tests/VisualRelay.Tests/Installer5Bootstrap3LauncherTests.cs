@@ -21,7 +21,7 @@ public sealed class Installer5Bootstrap3LauncherTests
         p.Start();
         using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await p.WaitForExitAsync(cts.Token);
-        try { return (p.ExitCode, await p.StandardOutput.ReadToEndAsync(), await p.StandardError.ReadToEndAsync()); }
+        try { return (p.ExitCode, await p.StandardOutput.ReadToEndAsync(cts.Token), await p.StandardError.ReadToEndAsync(cts.Token)); }
         finally { try { File.Delete(s); } catch { } }
     }
     static string Stub(string name, string? body = null) =>

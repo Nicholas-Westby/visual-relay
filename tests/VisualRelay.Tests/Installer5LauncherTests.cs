@@ -46,8 +46,8 @@ public sealed partial class Installer5LauncherTests
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             await process.WaitForExitAsync(cts.Token);
             return (process.ExitCode,
-                await process.StandardOutput.ReadToEndAsync(),
-                await process.StandardError.ReadToEndAsync());
+                await process.StandardOutput.ReadToEndAsync(cts.Token),
+                await process.StandardError.ReadToEndAsync(cts.Token));
         }
         catch (OperationCanceledException)
         {
