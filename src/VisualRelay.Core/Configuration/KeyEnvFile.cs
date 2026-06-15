@@ -27,7 +27,7 @@ public static class KeyEnvFile
 
     /// <summary>
     /// When set, all environment reads route through this accessor instead of
-    /// the real process environment. Tests set a <see cref="DictionaryEnvironmentAccessor"/>
+    /// the real process environment. Tests set a <c>DictionaryEnvironmentAccessor</c>
     /// to eliminate process-global mutation races under parallel execution.
     /// Reset to <c>null</c> in test dispose to restore real-env behaviour.
     /// </summary>

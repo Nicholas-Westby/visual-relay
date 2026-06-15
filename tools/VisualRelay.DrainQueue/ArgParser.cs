@@ -16,8 +16,8 @@ public static class ArgParser
 
     /// <summary>
     /// Parses <c>args</c> into an <see cref="Args"/> record.
-    /// Returns <c>null</c> for <see cref="Result"/> when the arguments
-    /// are malformed and <see cref="ErrorMessage"/> describes why.
+    /// Returns <c>null</c> for <c>Result</c> when the arguments
+    /// are malformed and <c>ErrorMessage</c> describes why.
     /// </summary>
     public static (Args? Result, string? ErrorMessage) Parse(string[] args)
     {

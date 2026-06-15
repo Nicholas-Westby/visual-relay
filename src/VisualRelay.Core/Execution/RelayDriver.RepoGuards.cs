@@ -16,12 +16,11 @@ public sealed partial class RelayDriver
     /// is treated as new.
     /// </summary>
     /// <returns>
-    /// (<paramref name="newViolations"/>, <paramref name="fullOutput"/>,
-    ///  <paramref name="timedOut"/>).
-    /// <paramref name="newViolations"/> is null when there are no new
+    /// (<c>NewViolations</c>, <c>FullOutput</c>, <c>TimedOut</c>).
+    /// <c>NewViolations</c> is null when there are no new
     /// violations (guard passed or only pre-existing debt).
-    /// <paramref name="fullOutput"/> is the complete guard stdout/stderr.
-    /// <paramref name="timedOut"/> is true when the guard command timed out
+    /// <c>FullOutput</c> is the complete guard stdout/stderr.
+    /// <c>TimedOut</c> is true when the guard command timed out
     /// — callers must flag, not enter fix-verify.
     /// </returns>
     private static async Task<(string? NewViolations, string? FullOutput, bool TimedOut)> RunGuardCheckAsync(
@@ -175,7 +174,7 @@ public sealed partial class RelayDriver
     /// Detects manifest entries that match the configured new-guard patterns, runs
     /// each once unsandboxed on the host, and returns a combined failure output
     /// string (non-null) when any guard exits non-zero or times out, or null when
-    /// all pass.  <paramref name="timedOut"/> is true when any guard timed out.
+    /// all pass.  <c>TimedOut</c> is true when any guard timed out.
     /// </summary>
     private async Task<(string? FailureOutput, bool TimedOut)> NewGuardProbeAsync(
         string rootPath,

@@ -60,7 +60,7 @@ public sealed class FdLeakTests
     // ── Detached-child reaping test ────────────────────────────────────
 
     /// <summary>
-    /// Spawns a stage process via <see cref="ProcessCapture.RunAsync"/> that
+    /// Spawns a stage process via <c>ProcessCapture.RunAsync</c> that
     /// forks a detached background child (sleep 0.5).  After RunAsync returns
     /// normally, asserts that the detached child is no longer alive.
     ///

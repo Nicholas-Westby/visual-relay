@@ -16,6 +16,11 @@ public static class PlanPhaseRunner
     /// <paramref name="config"/>.MaxPlanConcurrency. Artifacts are copied back
     /// to <paramref name="mainRootPath"/>.
     /// </summary>
+    /// <param name="mainRootPath">Main repo root that artifacts are copied back to.</param>
+    /// <param name="tasks">Task ids paired with the subagent runner that drives each.</param>
+    /// <param name="config">Drive configuration; <c>MaxPlanConcurrency</c> bounds parallelism.</param>
+    /// <param name="testRunner">Test runner used by the planning stages.</param>
+    /// <param name="cancellationToken">Cancels all in-flight planning work.</param>
     /// <param name="eventSinkFactory">
     /// Optional factory that creates an observable <see cref="IRelayEventSink"/>
     /// per task so live progress reaches the GUI. When null, a

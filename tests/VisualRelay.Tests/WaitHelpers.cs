@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Shared condition-polling helpers for tests.  Uses 50×20ms polling (up to
-/// 1 s total wait) driven by <see cref="Task.Delay"/> — no fixed sleeps.
+/// 1 s total wait) driven by <c>Task.Delay</c> — no fixed sleeps.
 /// Call sites that need the Avalonia dispatcher flushed between checks use
 /// <see cref="WaitUntilWithDispatcherAsync"/>; plain async tests use
 /// <see cref="WaitUntilAsync"/>.
@@ -33,7 +33,7 @@ public static class WaitHelpers
 
     /// <summary>
     /// Like <see cref="WaitUntilAsync"/> but calls
-    /// <see cref="Dispatcher.UIThread.RunJobs()"/> before each condition
+    /// <c>Dispatcher.UIThread.RunJobs()</c> before each condition
     /// evaluation and after the final check, so Avalonia-bound state
     /// (bindings, layout, command can-execute) has a chance to settle.
     /// </summary>

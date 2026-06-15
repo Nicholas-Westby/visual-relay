@@ -252,7 +252,7 @@ internal sealed class PhaseTrackingTaskRunner : IRelayTaskRunner
 /// Wraps an inner <see cref="ScriptedSubagentRunner"/> and publishes trace-level
 /// events to an optional <see cref="IRelayEventSink"/> — simulating what
 /// SwivalSubagentRunner's trace tailer does when its eventSink is non-null.
-/// When <paramref name="traceSink"/> is null, trace events are silently dropped
+/// When <c>traceSink</c> is null, trace events are silently dropped
 /// (mirroring the GUI gap where planSubagentFactory doesn't pass an eventSink).
 /// </summary>
 internal sealed class TraceEmittingSubagentRunner : ISubagentRunner

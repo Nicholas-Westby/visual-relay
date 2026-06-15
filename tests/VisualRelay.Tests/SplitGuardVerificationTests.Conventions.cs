@@ -131,7 +131,7 @@ public sealed partial class SplitGuardVerificationTests
     /// <summary>
     /// After env-mutation isolation, NO test file may call
     /// <c>Environment.SetEnvironmentVariable</c> directly — all env
-    /// mutation routes through <see cref="KeyEnvFile.EnvironmentAccessorOverride"/>.
+    /// mutation routes through <c>KeyEnvFile.EnvironmentAccessorOverride</c>.
     /// </summary>
     [Fact]
     public void NoTestFile_CallsEnvironmentSetEnvironmentVariable()

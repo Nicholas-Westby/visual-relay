@@ -114,7 +114,7 @@ internal sealed class ArrayRootSubagentRunner : ISubagentRunner
 
 /// <summary>
 /// Wraps an inner <see cref="ISubagentRunner"/> (defaults to <see cref="ScriptedSubagentRunner"/>)
-/// and returns an invalid result for stages at or after <paramref name="flagAtStage"/>,
+/// and returns an invalid result for stages at or after <c>flagAtStage</c>,
 /// simulating a flagged run that stops partway through the stage loop.
 /// </summary>
 internal sealed class FlagAtStageSubagentRunner : ISubagentRunner

@@ -29,8 +29,8 @@ public static class PlanningWorktree
     }
 
     /// <summary>
-    /// Creates a detached git worktree at <paramref name="worktreePath"/>
-    /// checked out at HEAD. Throws on failure.
+    /// Creates a detached git worktree for the task under the per-run temp
+    /// root, checked out at HEAD. Throws on failure.
     /// </summary>
     public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct)
     {
