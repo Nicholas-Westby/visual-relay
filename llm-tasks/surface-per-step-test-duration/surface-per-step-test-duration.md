@@ -234,3 +234,11 @@ the spec accepts either, provided the metric is visible without expanding the ca
 - **No file exceeds 300 lines** added or modified.
 - **Conventional Commit subject**, e.g.
   `feat(metrics): surface harness test-command duration per pipeline stage`.
+
+## PITFALL — keep the new timing test FAST (this task previously FLAGGED on a 10-min suite timeout)
+The prior attempt's `TestRunnerElapsedTests` ran a real long/blocking subprocess to measure elapsed time and
+hung the full `dotnet test` suite past the 10-min `testTimeoutMs`. The new test(s) MUST:
+- Use a MOCK/fake `ITestRunner` (e.g. `ScriptedTestRunner`/`RecordingTestRunner`) or at most a tiny bounded
+  sleep (<=0.3s) to exercise the duration-capture logic — NEVER a real multi-second/blocking subprocess.
+- Bound every wait; the whole suite must stay well under 10 min (it normally runs ~2 min).
+- After writing, run ONLY the new test class and confirm it finishes in SECONDS.
