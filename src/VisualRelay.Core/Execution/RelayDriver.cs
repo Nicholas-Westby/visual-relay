@@ -134,45 +134,22 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 5)
                     {
-                        var testFiles = ReadStringArray(json, "testFiles");
-                        var hasImpl = manifest.Any(f => !testFiles.Contains(f, StringComparer.Ordinal) && IsImpl(f));
+                        var stage5Result = await HandleStage5Async(
+                            rootPath, runId, taskId, taskDirectory, config, manifest, ledger,
+                            statusEntries, json, cancellationToken);
+                        if (stage5Result.Outcome is { } o)
+                            return o;
+                        check = stage5Result.Check;
+                        testDurationSeconds = stage5Result.TestDurationSeconds;
 
-                        if (hasImpl)
-                        {
-                            var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-                            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, cancellationToken);
-                            if (gateResult.Error is not null)
-                            {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken);
-                            }
-
-                            if (gateResult.RestoreResult == RedGateRestoreResult.Conflict)
-                            {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, "red gate stash restore conflict", null, statusEntries, cancellationToken);
-                            }
-
-                            var testResult = gateResult.TestResult;
-                            testDurationSeconds = testResult.Elapsed.TotalSeconds;
-                            if (testResult.TimedOut)
-                            {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                                    ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken);
-                            }
-
-                            check = testResult.ExitCode == 0 ? "green" : "red";
-                            if (check != "red")
-                            {
-                                if (gateResult.StashedImplementation)
-                                {
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
-                                        "author-tests passed after implementation files were stripped", null, statusEntries, cancellationToken);
-                                }
-
-                                check = "green"; // already-resolved: no impl delta
-                                ledger.AppendLine("> **Already-resolved**: no implementation delta to strip; accepted green regression coverage.");
-                                ledger.AppendLine();
-                            }
-                        }
+                        // Re-check early implementation: WorktreeFilter inside
+                        // HandleStage5Async may have reverted premature non-test
+                        // edits back to HEAD, so the implementation is no longer
+                        // in the working tree. Stage 6 should use the normal
+                        // Implement prompt, not ConfirmImplementationSystemPrompt.
+                        if (config.DownshiftOnEarlyImplementation)
+                            implementationFrontLoaded = await EarlyImplementationDetector
+                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: IsTestFile);
                     }
 
                     if (stage.Number == 9)

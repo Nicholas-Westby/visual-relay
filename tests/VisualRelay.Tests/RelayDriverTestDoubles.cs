@@ -7,13 +7,24 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
 {
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
+        // Stage 4: premature implementation — written early, then reverted
+        // by the WorktreeFilter at stage 5 so the red-gate sees a clean
+        // production file and tests fail red.
         if (invocation.Stage.Number == 4)
             File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new\n");
+
+        // Stage 5: author the test file on disk. The WorktreeFilter keeps
+        // this (it's in testFiles) and reverts the stage-4 production edit.
         if (invocation.Stage.Number == 5)
         {
             Directory.CreateDirectory(Path.Combine(invocation.TargetRoot, "tests"));
             File.WriteAllText(Path.Combine(invocation.TargetRoot, "tests", "status.test"), "expects new status");
         }
+
+        // Stage 6: the real implementation — after WorktreeFilter at stage 5
+        // reverted the production file to HEAD, the agent re-implements it.
+        if (invocation.Stage.Number == 6)
+            File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new\n");
 
         var json = invocation.Stage.Number switch
         {
@@ -22,7 +33,7 @@ internal sealed class PrematureImplementationRunner : ISubagentRunner
             3 => """{"evidence":"none","excerpts":[],"repro":"none"}""",
             4 => """{"plan":"edit status","manifest":["src/status.cs","tests/status.test","src/ghost.cs"]}""",
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
-            6 => """{"summary":"implementation already present"}""",
+            6 => """{"summary":"implement status.cs"}""",
             7 => """{"verdict":"pass","issues":[]}""",
             8 => """{"summary":"no changes"}""",
             9 => """{"summary":"verified"}""",

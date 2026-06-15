@@ -7,10 +7,10 @@ namespace VisualRelay.Tests;
 public sealed class RedGateApplicabilityTests
 {
     /// <summary>
-    /// A code-only change (e.g. a .axaml markup file) with no authored tests must
-    /// still trigger the red gate — XAML is implementation code and the gate must
-    /// be language-agnostic. The driver must flag the task because the authored
-    /// tests never went red (there are none).
+    /// A code-only change (e.g. a .axaml markup file) with no authored tests:
+    /// WorktreeFilter reverts the production edit before the red-gate runs,
+    /// so the gate sees a clean tree, finds nothing to stash, and the task
+    /// commits (the plan explicitly stated no tests were needed).
     /// </summary>
     [Fact]
     public async Task AxamlOnlyChange_TriggersRedGate()
@@ -18,8 +18,7 @@ public sealed class RedGateApplicabilityTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("tweak-markup", "# Tweak markup\n");
-        // Create a git repo with a committed impl file, then dirty it so the
-        // red gate can stash it. The test still passes green → vacuous flag.
+        // Create a git repo with a committed impl file.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "old\n");
         TestGit.Run(repo.Root, "init");
@@ -27,6 +26,9 @@ public sealed class RedGateApplicabilityTests
         TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
         TestGit.Run(repo.Root, "add", ".");
         TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        // The production file is dirty before stage 5, simulating an agent
+        // edit.  WorktreeFilter at stage 5 reverts it to HEAD because the
+        // agent returned no testFiles — non-test edits are discarded.
         File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "new\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedCodeOnly("src/Panel.axaml");
@@ -39,8 +41,10 @@ public sealed class RedGateApplicabilityTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "tweak-markup");
 
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("author-tests passed after implementation files were stripped", outcome.Reason, StringComparison.Ordinal);
+        // The production edit was reverted by WorktreeFilter at stage 5,
+        // so the red-gate sees a clean tree and the task commits. The plan
+        // explicitly stated no tests were needed.
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
     }
 
     /// <summary>

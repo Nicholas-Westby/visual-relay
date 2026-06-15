@@ -44,6 +44,11 @@ public sealed partial class RelayDriverTests
     [Fact]
     public async Task RunTaskAsync_StripsPrematureImplementationBeforeAuthorTestGate()
     {
+        // WorktreeFilter discards non-testFiles edits after stage 5, so the
+        // production file stays at HEAD through the red-gate. The red-gate
+        // sees a clean implementation file (no stash needed), tests fail red
+        // (compile-red is still red), and stage 6 (Implement) starts from a
+        // clean base — correct TDD flow.
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", []);
         repo.WriteTask("repair-status", "# Repair status\n");
@@ -55,7 +60,10 @@ public sealed partial class RelayDriverTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "repair-status");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        // Stage 5 snapshot: red-gate reads reverted production file = "old" → red.
+        // Stage 9 snapshot: after stage 6 implements, status = "new" → green.
         Assert.Equal(["old", "new"], testRunner.StatusSnapshots);
+        // Production file was implemented correctly at stage 6.
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.cs")));
         Assert.DoesNotContain("relay-redgate:repair-status:", TestGit.Run(repo.Root, "stash", "list"));
     }

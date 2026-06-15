@@ -31,10 +31,13 @@ public sealed class RelayDriverEarlyImplementationTests
         var outcome = await driver.RunTaskAsync(repo.Root, "front-loaded");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        // Stage 6 (Implement) should be down-shifted to "cheap".
+        // Stage 5's WorktreeFilter reverts the stage-3 front-loaded production
+        // edit back to HEAD, so the implementation is no longer in the working
+        // tree at stage 6.  Stage 6 therefore uses the normal "balanced" tier
+        // and Implement prompt (not the down-shifted ConfirmImplementation).
         var stage6Invocation = capturer.Invocations.Single(i => i.Stage.Number == 6);
-        Assert.Equal("cheap", stage6Invocation.Tier);
-        Assert.Contains("do NOT re-narrate", stage6Invocation.Stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("balanced", stage6Invocation.Tier);
+        Assert.DoesNotContain("do NOT re-narrate", stage6Invocation.Stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
 
         // Stage 7 (Review) must still run on frontier.
         var stage7Invocation = capturer.Invocations.Single(i => i.Stage.Number == 7);
