@@ -15,7 +15,7 @@ internal sealed record WorktreeFilterResult(
 /// catches production edits to files outside the manifest and removes
 /// untracked files not listed in testFiles.
 /// </summary>
-internal static class WorktreeFilter
+internal static partial class WorktreeFilter
 {
     private static readonly string[] InternalArtifactPrefixes =
         [".relay/", ".relay-scratch/", ".swival/"];
@@ -75,8 +75,11 @@ internal static class WorktreeFilter
             return new WorktreeFilterResult([], [], "git diff --cached --name-status failed");
 
         var dirtyTracked = new List<string>();
-        // Defect A: track rename pairs so both endpoints are excluded when either is a testFile.
-        var renamePairs = new Dictionary<string, string>(pathComparer);
+        // Defect A: track rename pairs so both endpoints are excluded when either
+        // is a testFile.  A flat list (not a host-gated dictionary) so a case-only
+        // rename (Foo.cs ↔ foo.cs) does not collapse into one self-referential
+        // entry under OrdinalIgnoreCase — see ComputeRenameExclusions (Hole 1).
+        var renamePairs = new List<(string Old, string New)>();
 
         void AddLines(string output, List<string> target)
         {
@@ -104,7 +107,7 @@ internal static class WorktreeFilter
                     if (oldName.Length > 0) target.Add(oldName);
                     if (newName.Length > 0) target.Add(newName);
                     if (oldName.Length > 0 && newName.Length > 0)
-                    { renamePairs[oldName] = newName; renamePairs[newName] = oldName; }
+                        renamePairs.Add((oldName, newName));
                 }
                 else
                 {
@@ -135,15 +138,7 @@ internal static class WorktreeFilter
         // Defect A: exclude rename-pair endpoints when either touches a testFile.
         if (renamePairs.Count > 0)
         {
-            var exclude = new HashSet<string>(pathComparer);
-            foreach (var kvp in renamePairs)
-            {
-                // Each pair appears twice; only process old→new (key < value lexicographically).
-                if (string.CompareOrdinal(kvp.Key, kvp.Value) >= 0) continue;
-                if (testSet.Contains(NormalizeRepoRelativePath(kvp.Key))
-                    || testSet.Contains(NormalizeRepoRelativePath(kvp.Value)))
-                { exclude.Add(kvp.Key); exclude.Add(kvp.Value); }
-            }
+            var exclude = ComputeRenameExclusions(renamePairs, testSet, pathComparer);
             if (exclude.Count > 0)
                 dirtyTracked = dirtyTracked.Where(p => !exclude.Contains(p)).ToList();
         }
@@ -190,11 +185,22 @@ internal static class WorktreeFilter
             }
 
             // Path genuinely absent from HEAD (staged rename destination, new staged file).
-            // Defect E: --ignore-unmatch so exit-128 on absent index entry is benign.
+            // Defect E: --ignore-unmatch so exit-128 on an absent index entry is benign (exit 0).
+            // Hole 2: -f forces the unstage of an `AM` entry (a new file staged then
+            // edited again — "staged content different ... use -f", exit 1 WITHOUT -f),
+            // which --ignore-unmatch does NOT mask.  Without -f that exit-1 was swallowed
+            // and File.Delete ran anyway, leaving the index staging a missing blob.
             var rmResult = await GitAsync(rootPath,
-                ["rm", "--cached", "--ignore-unmatch", "--", rel], cancellationToken);
+                ["rm", "-f", "--cached", "--ignore-unmatch", "--", rel], cancellationToken);
             if (rmResult.TimedOut)
             { allErrors.Add($"{rel}: rm --cached timed out"); continue; }
+
+            // Hole 2: a non-zero exit here is a genuine unstage failure (the benign
+            // absent-pathspec case is already zeroed by --ignore-unmatch).  Do NOT
+            // delete the worktree file — that would leave the index inconsistent
+            // (staging a blob for a now-missing file) with no signal.  Flag instead.
+            if (rmResult.ExitCode != 0)
+            { allErrors.Add($"{rel}: rm -f --cached failed (exit {rmResult.ExitCode}) — not deleted to avoid inconsistent index"); continue; }
 
             // Defect F: wrap File.Delete in try/catch.
             var fullPath = Path.Combine(rootPath, rel);

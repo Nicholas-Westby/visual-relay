@@ -108,9 +108,12 @@ public sealed partial class WorktreeFilterTests
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// When <c>git rm --cached</c> is called on a path that is not in
-    /// the index (exit 128), the filter must treat this as benign and
-    /// NOT surface a spurious error flag.
+    /// When <c>git rm --cached --ignore-unmatch</c> is called on a path that is
+    /// not in the index, <c>--ignore-unmatch</c> makes real git exit 0 (the
+    /// benign absent-pathspec case), so the filter must NOT surface a spurious
+    /// error flag.  (Hole 2 restored the <c>ExitCode != 0</c> guard so a
+    /// genuinely failing unstage IS flagged; this case must therefore stay at
+    /// exit 0 to remain benign — which matches real git's behaviour.)
     /// </summary>
     [Fact]
     public async Task GitRmCachedOnAbsentPath_NoSpuriousFlag()
@@ -127,9 +130,9 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(newFilePath, "new");
         TestGit.Run(repo.Root, "add", "src/new-file.cs");
 
-        // We use an override to make rm --cached return 128 to
-        // simulate the edge case where the path somehow isn't in
-        // the index.  Before the fix this produces a spurious flag.
+        // Override rm to return the realistic benign result: with
+        // --ignore-unmatch, real git exits 0 on an absent pathspec.  The new
+        // ExitCode != 0 guard (Hole 2) must NOT flag this exit-0 case.
         GitInvoker.ResetForTests();
         var myRoot = repo.Root;
         var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
@@ -146,7 +149,8 @@ public sealed partial class WorktreeFilterTests
             if (args.Any(a => a == "rm"))
             {
                 rmCalled = true;
-                return Task.FromResult((128, "fatal: pathspec did not match any files", false));
+                // --ignore-unmatch zeroes the absent-pathspec case in real git.
+                return Task.FromResult((0, "", false));
             }
 
             return ProcessCapture.RunAsync(
