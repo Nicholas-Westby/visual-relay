@@ -10,14 +10,14 @@ namespace VisualRelay.Core.Queue;
 public sealed class DrainLifecycleCallbacks
 {
     /// <summary>Called when a task enters the planning phase (Phase 1).</summary>
-    public Action<string>? OnPlanningStarted { get; set; }
+    public Action<string>? OnPlanningStarted { get; init; }
 
     /// <summary>Called when a task finishes planning (Planned or Flagged).</summary>
-    public Action<string, RelayTaskOutcomeStatus>? OnPlanningCompleted { get; set; }
+    public Action<string, RelayTaskOutcomeStatus>? OnPlanningCompleted { get; init; }
 
     /// <summary>Called when a task enters the serial execute phase (Phase 2).</summary>
-    public Action<string>? OnExecuteStarted { get; set; }
+    public Action<string>? OnExecuteStarted { get; init; }
 
     /// <summary>Called when a task finishes execution (Committed, Flagged, or Failed).</summary>
-    public Action<string, RelayTaskOutcomeStatus>? OnExecuteCompleted { get; set; }
+    public Action<string, RelayTaskOutcomeStatus>? OnExecuteCompleted { get; init; }
 }
