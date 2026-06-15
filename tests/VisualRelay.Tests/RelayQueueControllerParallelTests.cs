@@ -114,8 +114,7 @@ public sealed class RelayQueueControllerParallelTests
 
         // Start drain in background, cancel after a short delay.
         using var cts = new CancellationTokenSource();
-        Task<IReadOnlyList<RelayTaskOutcome>> drainTask;
-        drainTask = controller.DrainAsync(cts.Token);
+        var drainTask = controller.DrainAsync(cts.Token);
         await Task.Delay(100, CancellationToken.None);
         cts.Cancel();
 

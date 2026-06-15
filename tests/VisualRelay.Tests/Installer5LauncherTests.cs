@@ -209,8 +209,7 @@ public sealed partial class Installer5LauncherTests
         var lines = ReadLauncher().Split('\n');
         var lastNonBlank = lines
             .Select(l => l.Trim())
-            .Where(l => l.Length > 0)
-            .LastOrDefault();
+            .LastOrDefault(l => l.Length > 0);
         Assert.NotNull(lastNonBlank);
         Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
     }
@@ -222,8 +221,7 @@ public sealed partial class Installer5LauncherTests
         var lines = ReadBackendSh().Split('\n');
         var lastNonBlank = lines
             .Select(l => l.Trim())
-            .Where(l => l.Length > 0)
-            .LastOrDefault();
+            .LastOrDefault(l => l.Length > 0);
         Assert.NotNull(lastNonBlank);
         Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
     }

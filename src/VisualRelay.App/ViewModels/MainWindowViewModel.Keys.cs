@@ -132,7 +132,7 @@ public partial class MainWindowViewModel
         foreach (var row in AllProviderKeys)
         {
             var processVal = KeyEnvFile.GetEnv(row.EnvVarName);
-            var fileVal = fileEnv.TryGetValue(row.EnvVarName, out var fv) ? fv : null;
+            var fileVal = fileEnv.GetValueOrDefault(row.EnvVarName);
             var isSet = !string.IsNullOrWhiteSpace(processVal) || !string.IsNullOrWhiteSpace(fileVal);
             var displayValue = isSet ? MaskValue(processVal ?? fileVal!) : "(not set)";
             KeyStates.Add(new ProviderKeyState(row, isSet, displayValue));

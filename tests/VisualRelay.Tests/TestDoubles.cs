@@ -16,7 +16,7 @@ internal sealed class DictionaryEnvironmentAccessor : IEnvironmentAccessor
 
     public string? this[string name]
     {
-        get => _vars.TryGetValue(name, out var v) ? v : null;
+        get => _vars.GetValueOrDefault(name);
         set { if (value is null) _vars.TryRemove(name, out _); else _vars[name] = value; }
     }
 
