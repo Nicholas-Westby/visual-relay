@@ -71,15 +71,4 @@ public sealed record RelayConfig(
     bool CommitProofArtifacts = true,
     // Task ids whose per-stage turn budget is multiplied by 10 (for unusually
     // large tasks).
-    IReadOnlyList<string>? BoostTurnsTaskIds = null,
-    // When true, stage 7 (Review) runs on the `balanced` tier first; a second
-    // frontier-tier Review runs only when the balanced verdict is non-pass,
-    // issues are found, or a diff-complexity heuristic trips.  Default true.
-    bool ReviewEscalationEnabled = true,
-    // Heuristic thresholds for auto-escalation after a passing balanced Review.
-    // ReviewEscalationManifestFileThreshold: escalate if manifest has more than
-    // this many files. 0 = disabled.  Default 10.
-    int ReviewEscalationManifestFileThreshold = 10,
-    // ReviewEscalationManifestLineThreshold: escalate if total lines across
-    // manifest files exceeds this. 0 = disabled.  Default 500.
-    int ReviewEscalationManifestLineThreshold = 500);
+    IReadOnlyList<string>? BoostTurnsTaskIds = null);

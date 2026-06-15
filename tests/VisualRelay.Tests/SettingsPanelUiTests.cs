@@ -22,7 +22,6 @@ public sealed class SettingsPanelUiTests : IDisposable
 
     public SettingsPanelUiTests()
     {
-        _env["HOME"] = Path.GetTempPath();
         KeyEnvFile.EnvironmentAccessorOverride = _env;
     }
 
