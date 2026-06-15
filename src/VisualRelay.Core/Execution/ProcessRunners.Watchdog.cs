@@ -150,9 +150,9 @@ internal sealed class ActivityWatchdog
                     deadlineMs = ceilingRemaining;
             }
 
+            // Math.Max(1L, …) already floors the delay at 1 ms, so the value is
+            // never <= 0 — no further clamp needed.
             var delay = Math.Min(200L, Math.Max(1L, deadlineMs));
-            if (delay <= 0)
-                delay = 1;
 
             var delayTask = Task.Delay(TimeSpan.FromMilliseconds(delay), ct);
             try

@@ -45,9 +45,9 @@ public sealed partial class RelayDriver
         if (mismatch)
         {
             ArchivePriorRunState(rootPath, taskId, taskDirectory, runId,
-                ledger, manifest, seals, ref previousSeal, ref taskHash,
-                ref sessionCostUsd, ref unknownCostStageCount,
-                statusEntries, ref firstStageToRun);
+                ledger, manifest, seals, out previousSeal, out taskHash,
+                out sessionCostUsd, out unknownCostStageCount,
+                statusEntries, out firstStageToRun);
         }
 
         StampTaskInputHash(statusEntries, currentTaskInputHash);
@@ -84,12 +84,12 @@ public sealed partial class RelayDriver
         StringBuilder ledger,
         List<string> manifest,
         List<string> seals,
-        ref string previousSeal,
-        ref string taskHash,
-        ref double sessionCostUsd,
-        ref int unknownCostStageCount,
+        out string previousSeal,
+        out string taskHash,
+        out double sessionCostUsd,
+        out int unknownCostStageCount,
         List<StageStatusEntry> statusEntries,
-        ref int firstStageToRun)
+        out int firstStageToRun)
     {
         // Resolve a unique archive name so repeated re-adds within the same
         // runId second never collide.

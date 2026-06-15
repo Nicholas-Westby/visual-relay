@@ -18,7 +18,7 @@ internal static class AuthorTestGate
         var stripSet = RedGate.ComputeStripSet(manifest, testFiles);
         var stashed = false;
         var restore = RedGateRestoreResult.Absent;
-        TestRunResult? result = null;
+        TestRunResult? result;
         string? error = null;
 
         try

@@ -118,6 +118,8 @@ public sealed class ProcessTreeCpuSamplerTests
         // Exercises the exact production pulse-decision algorithm
         // (ProcessCapture.TryDecideCpuPulse) so a revert of the baseline
         // invalidation fix would be caught by this test.
+        // ReSharper disable once RedundantAssignment — documentary seed mirroring
+        // the production algorithm's initial baseline (0 = "process just started").
         long? baseline = 0;
         int pulseCount = 0;
         long cumulativeCpu = 0;
@@ -125,6 +127,8 @@ public sealed class ProcessTreeCpuSamplerTests
 
         // Preamble: two normal samples establish a recent baseline.
         cumulativeCpu += 4;
+        // ReSharper disable once RedundantAssignment — documentary step; the
+        // intermediate baseline (4) is intentionally walked to mirror real sampling.
         baseline = cumulativeCpu; // baseline = 4
 
         cumulativeCpu += 4;

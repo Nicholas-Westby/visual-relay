@@ -17,8 +17,6 @@ namespace VisualRelay.Core.Init;
 /// </remarks>
 public sealed class TestCommandValidator(ITestRunner runner)
 {
-    private readonly ITestRunner _runner = runner;
-
     /// <summary>
     /// Runs <paramref name="command"/> in <paramref name="rootPath"/> and
     /// classifies the result. Cancellation is forwarded to the runner.
@@ -29,7 +27,7 @@ public sealed class TestCommandValidator(ITestRunner runner)
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var runResult = await _runner.RunAsync(rootPath, command, cancellationToken);
+        var runResult = await runner.RunAsync(rootPath, command, cancellationToken);
         return Classify(runResult);
     }
 
