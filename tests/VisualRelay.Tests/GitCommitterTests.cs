@@ -263,6 +263,7 @@ public sealed partial class GitCommitterTests
 
     // ── helpers ──────────────────────────────────────────────────────
 
+    // ReSharper disable once AsyncMethodWithoutAwait — async kept so awaiting sites surface sync git failures via the awaited task.
     private static async Task InitGitRepo(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));
@@ -271,6 +272,7 @@ public sealed partial class GitCommitterTests
         RunGit(root, "config user.name \"Test\"");
     }
 
+    // ReSharper disable once AsyncMethodWithoutAwait — see InitGitRepo above.
     private static async Task StageAndCommitSeed(string root, string message)
     {
         RunGit(root, "add .");
@@ -285,8 +287,7 @@ public sealed partial class GitCommitterTests
             RedirectStandardError = true,
             UseShellExecute = false
         };
-        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
-        // nix-store path inherited from the shell environment.
+        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale nix-store path inherited from the shell.
         startInfo.Environment.Remove("DEVELOPER_DIR");
         startInfo.Environment.Remove("SDKROOT");
         using var process = Process.Start(startInfo)!;

@@ -23,6 +23,9 @@ public static class KeyEnvFile
     /// other's fake accessor — eliminating the cross-test race that a
     /// plain static property would reintroduce.
     /// </summary>
+    // ReSharper disable once InconsistentNaming — '_'-prefixed backing field that
+    // intentionally mirrors the public EnvironmentAccessorOverride property; the
+    // PascalCase the rule wants would collide with that property name.
     private static readonly AsyncLocal<IEnvironmentAccessor?> _environmentAccessorOverride = new();
 
     /// <summary>

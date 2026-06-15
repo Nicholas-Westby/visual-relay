@@ -203,6 +203,8 @@ internal static class ProcessCapture
     [DllImport("libc", SetLastError = true)]
     private static extern int kill(int pgid, int sig);
 
+    // ReSharper disable once InconsistentNaming — POSIX signal name from <signal.h>;
+    // kept uppercase to match the C constant it mirrors.
     private const int SIGKILL = 9;
 
     private static void SetProcessGroup(int pid, int pgid)

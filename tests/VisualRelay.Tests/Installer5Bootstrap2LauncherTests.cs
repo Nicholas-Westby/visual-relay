@@ -59,16 +59,16 @@ public sealed class Installer5Bootstrap2LauncherTests
         bool bypass, bool stubNono, bool stubNix, bool stubUv,
         string? marker, string assertions)
     {
-        var no = stubNono ? stub("nono") : "# nono absent";
-        var nx = stubNix ? stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
-        var uv = stubUv ? stub("uv") : "# uv absent";
+        var no = stubNono ? Stub("nono") : "# nono absent";
+        var nx = stubNix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
+        var uv = stubUv ? Stub("uv") : "# uv absent";
         var by = bypass ? "true" : "false";
         var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "VISUAL_RELAY_NIX_REENTRY=";
         return $$"""
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-*' EXIT
             rm -f /tmp/.vr-b2-nix-argv /tmp/.vr-b2-backend-ran
             mkdir -p "$S" "$T/.relay" "$T/tools/backend"
-            {{stub("dotnet")}}
+            {{Stub("dotnet")}}
             {{no}}
             {{nx}}
             {{uv}}
@@ -86,7 +86,7 @@ public sealed class Installer5Bootstrap2LauncherTests
             {{assertions}}
             """;
 
-        static string stub(string name, string? body = null) =>
+        static string Stub(string name, string? body = null) =>
             $"cat>\"$S/{name}\"<<'X'&&chmod +x \"$S/{name}\"\n#!/bin/bash\n{body ?? "exit 0"}\nX";
     }
 

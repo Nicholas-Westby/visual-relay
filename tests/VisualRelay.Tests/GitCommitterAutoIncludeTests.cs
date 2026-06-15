@@ -267,6 +267,7 @@ public sealed partial class GitCommitterAutoIncludeTests
 
     // ── helpers ──────────────────────────────────────────────────────
 
+    // ReSharper disable once AsyncMethodWithoutAwait — async kept so awaiting sites surface sync git failures via the awaited task.
     private static async Task InitGitRepo(string root)
     {
         Directory.CreateDirectory(root);
@@ -275,6 +276,7 @@ public sealed partial class GitCommitterAutoIncludeTests
         TestGit.Run(root, "config", "user.name", "Test");
     }
 
+    // ReSharper disable once AsyncMethodWithoutAwait — see InitGitRepo above.
     private static async Task StageAndCommitSeed(string root, string message)
     {
         TestGit.Run(root, "add", ".");
