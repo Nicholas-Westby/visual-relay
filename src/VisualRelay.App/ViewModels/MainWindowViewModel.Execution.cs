@@ -213,7 +213,7 @@ public partial class MainWindowViewModel
         return true;
     }
 
-    private async Task<RelayTaskOutcome> RunOneAsync(TaskRowViewModel task, bool resume = false)
+    private async Task RunOneAsync(TaskRowViewModel task, bool resume = false)
     {
         ResetStages(task.Id);
         ClearLogState();
@@ -237,8 +237,6 @@ public partial class MainWindowViewModel
             {
                 StatusText = "Paused at task boundary";
             }
-
-            return outcome;
         }
         finally
         {

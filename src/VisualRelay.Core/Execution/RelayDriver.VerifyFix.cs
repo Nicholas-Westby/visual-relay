@@ -274,6 +274,10 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         IReadOnlyList<string> manifest,
         string previousSeal,
+        // ReSharper disable once UnusedParameter.Local — the running task hash is
+        // recomputed as the new seal (returned in .TaskHash); the prior value is
+        // intentionally not read here. Kept for call-site tuple symmetry across the
+        // 4 record sites: (previousSeal, taskHash) = await RecordStageAsync(…).
         string taskHash,
         double sessionCostUsd,
         int unknownCostStageCount,

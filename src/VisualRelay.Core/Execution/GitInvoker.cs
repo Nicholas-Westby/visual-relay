@@ -22,9 +22,6 @@ internal static class GitInvoker
     /// </summary>
     internal static Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>>? Override { get; set; }
 
-    /// <summary>The resolved git binary path.  Null until first resolution.</summary>
-    internal static string? GitBinary => EnsureResolved();
-
     /// <summary>
     /// Test seam: resets all lazy state so tests can control resolution
     /// deterministically.  Must be called before <see cref="SetResolvedBinaryForTests"/>
