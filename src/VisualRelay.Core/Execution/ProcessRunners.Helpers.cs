@@ -201,16 +201,10 @@ public sealed partial class SwivalSubagentRunner
     [GeneratedRegex("\"(\\w+)\"(?!\\s*\\?)\\s*:")]
     private static partial Regex ContractKeyRegex();
 
-    internal static string TrimForError(string value)
-    {
-        var text = value.Trim();
-        return text.Length <= 600 ? text : string.Concat(text.AsSpan(0, 600), "...");
-    }
-
     /// <summary>
     /// Returns the TAIL of <paramref name="value"/> (last <paramref name="tailChars"/>
-    /// characters), prepended with "…" when truncated. Opposite of <see cref="TrimForError"/>
-    /// which takes the head — the real error is usually at the tail after a sandbox banner.
+    /// characters), prepended with "…" when truncated. The real error is usually
+    /// at the tail after a sandbox banner, so we keep the end rather than the head.
     /// </summary>
     private static string TrimForTail(string value, int tailChars = 600)
     {

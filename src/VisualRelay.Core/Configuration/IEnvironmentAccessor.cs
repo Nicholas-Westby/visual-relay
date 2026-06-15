@@ -13,9 +13,4 @@ public interface IEnvironmentAccessor
     /// or <c>null</c> when it is not set.
     /// </summary>
     string? GetEnvironmentVariable(string name);
-
-    /// <summary>
-    /// Returns all process environment variable name/value pairs.
-    /// </summary>
-    IReadOnlyDictionary<string, string> GetEnvironmentVariables();
 }

@@ -139,13 +139,10 @@ public sealed class RelayQueueControllerParallelTests
     /// </summary>
     private sealed class CancellableRecordingTaskRunner : IRelayTaskRunner
     {
-        public List<string> TasksRun { get; } = [];
-
         public async Task<RelayTaskOutcome> RunTaskAsync(
             string rootPath, string taskId, CancellationToken cancellationToken = default)
         {
             await Task.Delay(200, cancellationToken);
-            TasksRun.Add(taskId);
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "sha", null);
         }
     }

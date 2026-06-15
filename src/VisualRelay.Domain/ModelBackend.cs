@@ -7,5 +7,4 @@ public static class ModelBackend
 {
     public const string BaseUrl = "http://127.0.0.1:4000";
     public const string ReadinessPath = "/health/readiness";
-    public const string ReadinessUrl = BaseUrl + ReadinessPath;
 }

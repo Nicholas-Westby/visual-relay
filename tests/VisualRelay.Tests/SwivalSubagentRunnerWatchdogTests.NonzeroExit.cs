@@ -87,8 +87,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             "fake-swival-always-exit1",
             """
             #!/usr/bin/env bash
-            # Simulate nono startup banner — the head content that TrimForError
-            # would capture, hiding the real error at the tail.
+            # Simulate nono startup banner — head content that a head-truncation
+            # would capture, hiding the real error at the tail (see TrimForTail).
             echo "nono v0.62.0 — sandbox active" >&2
             echo "profile: vr-guard" >&2
             echo "allow-cwd: enabled" >&2

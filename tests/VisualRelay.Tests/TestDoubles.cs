@@ -22,17 +22,6 @@ internal sealed class DictionaryEnvironmentAccessor : IEnvironmentAccessor
 
     public string? GetEnvironmentVariable(string name) => this[name];
 
-    public IReadOnlyDictionary<string, string> GetEnvironmentVariables()
-    {
-        var dict = new Dictionary<string, string>();
-        foreach (var (k, v) in _vars)
-        {
-            if (v is not null)
-                dict[k] = v;
-        }
-        return dict;
-    }
-
     public void Clear() => _vars.Clear();
 }
 
@@ -181,13 +170,9 @@ internal sealed class CommandAwareTestRunner(string bootstrapSentinel = "nix dev
 {
     private int _nonBootstrapCallCount;
     private int _bootstrapCallCount;
-    private readonly List<(string RootPath, string Command)> _calls = [];
-
-    public IReadOnlyList<(string RootPath, string Command)> Calls => _calls;
 
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        _calls.Add((rootPath, command));
         if (command.Contains(bootstrapSentinel))
         {
             _bootstrapCallCount++;
@@ -230,12 +215,6 @@ internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner
 {
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
         Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, "commit rejected: empty commit"));
-}
-
-internal sealed class FlaggingTaskRunner(string reason) : IRelayTaskRunner
-{
-    public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
-        Task.FromResult(new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason));
 }
 
 /// <summary>

@@ -22,13 +22,6 @@ public sealed class Installer5ReleaseWorkflowTests
         return File.ReadAllText(WorkflowPath);
     }
 
-    private static string[] ReadWorkflowLines()
-    {
-        Assert.True(File.Exists(WorkflowPath),
-            $"Workflow file not found at {WorkflowPath}.");
-        return File.ReadAllLines(WorkflowPath);
-    }
-
     // ── 1. File exists ───────────────────────────────────────────────────
 
     [Fact]

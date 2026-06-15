@@ -209,6 +209,8 @@ public static class KeyEnvFile
     /// implements the "only-if-unset" guard so the process environment always
     /// wins over file values.
     /// </summary>
+    // ReSharper disable once UnusedMember.Global — public-API default-path overload,
+    // symmetric with Read()/Upsert(); the path-taking core is exercised by tests.
     public static Dictionary<string, string> GetUnsetKeys() => GetUnsetKeys(ResolvePath());
 
     /// <summary>

@@ -42,12 +42,7 @@ public partial class MainWindowViewModel : ViewModelBase
     {
     }
 
-    public MainWindowViewModel(IFolderPicker folderPicker)
-        : this(folderPicker, new NullFilePicker())
-    {
-    }
-
-    public MainWindowViewModel(IFolderPicker folderPicker, IFilePicker filePicker)
+    private MainWindowViewModel(IFolderPicker folderPicker, IFilePicker filePicker)
     {
         _folderPicker = folderPicker;
         _filePicker = filePicker;

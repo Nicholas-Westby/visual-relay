@@ -262,13 +262,4 @@ public sealed class Installer5Bootstrap2LauncherTests
             Assert.Fail(err);
         Assert.Equal(0, ec);
     }
-
-    private static string ExtractCaseBody(string content, string caseLabel)
-    {
-        var si = content.IndexOf(caseLabel, StringComparison.Ordinal);
-        if (si < 0) return string.Empty;
-        var bs = content.IndexOf('\n', si) + 1;
-        var te = content.IndexOf(";;", bs, StringComparison.Ordinal);
-        return te >= 0 ? content[bs..te] : content[bs..];
-    }
 }

@@ -19,7 +19,6 @@ public sealed record StageRunMetric(
 {
     public string CostLabel => Priced ? MoneyFormatter.Dollars(CostUsd) : "?";
     public string DurationLabel => FormatDuration(DurationSeconds);
-    public string DetailLabel => $"{DurationLabel}  {CostLabel}";
 
     private static string FormatDuration(double seconds)
     {

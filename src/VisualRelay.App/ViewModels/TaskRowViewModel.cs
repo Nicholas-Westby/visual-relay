@@ -6,7 +6,6 @@ namespace VisualRelay.App.ViewModels;
 
 public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
 {
-    private static readonly IBrush MutedBrush = Brush.Parse("#7F8794");
     private static readonly IBrush SelectedBrush = Brush.Parse("#3191FF");
     private static readonly IBrush RunningBrush = Brush.Parse("#5AD47D");
     private static readonly IBrush ReviewBrush = Brush.Parse("#F2C66D");
@@ -61,7 +60,6 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public IBrush BorderBrush => IsRunning ? RunningBorderBrush : IsSelected ? SelectedBorderBrush : WaitingBorderBrush;
     public Thickness CardBorderThickness => IsRunning || IsSelected ? new Thickness(2) : new Thickness(1);
     public BoxShadows CardShadow => IsRunning ? RunningShadow : IsSelected ? SelectedShadow : NoShadow;
-    public string ProgressText => Task.CompletedStageCount == 0 ? "0 / 11" : $"{Task.CompletedStageCount} / 11";
     public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 11.0, 0, 1);
 
     public bool IsSelected

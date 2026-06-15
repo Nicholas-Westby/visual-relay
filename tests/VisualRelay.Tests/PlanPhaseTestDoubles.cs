@@ -57,6 +57,9 @@ internal sealed class CountingConcurrencySubagentRunner : ISubagentRunner
     private int _inFlight;
     private int _peak;
 
+    // ReSharper disable once InconsistentlySynchronizedField — _peak is written
+    // under lock during the run; this getter is only read AFTER the awaited plan
+    // phase fully completes (all writers joined), so no concurrent access occurs.
     public int PeakConcurrency => _peak;
 
     public void SeedHappyPath(string codeFile, string testFile) =>
@@ -159,71 +162,6 @@ internal sealed class DualTaskSubagentRunner(string taskId, string codeFile, str
 }
 
 /// <summary>
-/// An <see cref="IRelayTaskRunner"/> that routes RunTaskAsync to per-task
-/// <see cref="RelayDriver"/> instances. Used in queue-controller parallel
-/// tests where each planning task needs its own driver with its own
-/// worktree root and own event sink.
-/// </summary>
-internal sealed class PerTaskDriverFactory : IRelayTaskRunner
-{
-    private readonly string _mainRootPath;
-    private readonly Func<string, string, ISubagentRunner> _subagentFactory;
-    private readonly ITestRunner _testRunner;
-    private readonly RelayDriverOptions _options;
-
-    public PerTaskDriverFactory(
-        string mainRootPath,
-        Func<string, string, ISubagentRunner> subagentFactory,
-        ITestRunner testRunner,
-        RelayDriverOptions options)
-    {
-        _mainRootPath = mainRootPath;
-        _subagentFactory = subagentFactory;
-        _testRunner = testRunner;
-        _options = options;
-    }
-
-    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
-    {
-        // The controller passes rootPath which may differ from _mainRootPath
-        // (e.g. a worktree path during planning). Use it as-is.
-        var subagent = _subagentFactory(taskId, rootPath);
-        var sink = new InMemoryRelayEventSink();
-        var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, _testRunner, sink),
-            _options);
-        return await driver.RunTaskAsync(rootPath, taskId, cancellationToken);
-    }
-}
-
-/// <summary>
-/// Tracks which task ids were planned vs executed, and records the root
-/// path used for each — enabling assertions that planning happened in
-/// worktree paths and execution in the main repo path.
-/// </summary>
-internal sealed class PhaseTrackingTaskRunner(
-    string mainRootPath, ISubagentRunner subagent, ITestRunner testRunner) : IRelayTaskRunner
-{
-
-    public List<(string TaskId, string RootPath, RelayDriverOptions Options)> Runs { get; } = [];
-
-    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
-    {
-        var options = rootPath == mainRootPath
-            ? new RelayDriverOptions(CreateGitCommit: true, Resume: true) // serial execute phase
-            : new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4); // parallel plan phase
-
-        Runs.Add((taskId, rootPath, options));
-
-        var sink = new InMemoryRelayEventSink();
-        var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, sink),
-            options);
-        return await driver.RunTaskAsync(rootPath, taskId, cancellationToken);
-    }
-}
-
-/// <summary>
 /// Wraps an inner <see cref="ScriptedSubagentRunner"/> and publishes trace-level
 /// events to an optional <see cref="IRelayEventSink"/> — simulating what
 /// SwivalSubagentRunner's trace tailer does when its eventSink is non-null.
@@ -233,9 +171,6 @@ internal sealed class PhaseTrackingTaskRunner(
 internal sealed class TraceEmittingSubagentRunner(
     ScriptedSubagentRunner inner, IRelayEventSink? traceSink = null) : ISubagentRunner
 {
-    public void SeedHappyPath(string codeFile, string testFile) =>
-        inner.SeedHappyPath(codeFile, testFile);
-
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         if (traceSink is not null)

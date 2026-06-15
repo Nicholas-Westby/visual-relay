@@ -56,6 +56,8 @@ public sealed class RelayQueueController
         if (State == RelayQueueState.Running) State = RelayQueueState.PauseRequested;
     }
 
+    // ReSharper disable once UnusedMember.Global — public symmetric reorder API;
+    // the counterpart MoveDown is exercised by RelayQueueControllerTests.
     public void MoveUp(string taskId)
     {
         var index = IndexOf(taskId);

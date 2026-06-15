@@ -193,19 +193,4 @@ public sealed class RelayQueueControllerTwoPhaseTests
         Assert.Equal(2, executeCompleted.Count);
     }
 
-    /// <summary>
-    /// Subagent runner that introduces a deliberate delay so cancellation
-    /// tests have a window to interrupt.
-    /// </summary>
-    private sealed class SlowSubagentRunner(int delayMs) : ISubagentRunner
-    {
-
-        public async Task<SubagentResult> RunAsync(
-            StageInvocation invocation, CancellationToken cancellationToken = default)
-        {
-            await Task.Delay(delayMs, cancellationToken);
-            var json = """{"summary":"ok"}""";
-            return new SubagentResult(json, json, true, null);
-        }
-    }
 }

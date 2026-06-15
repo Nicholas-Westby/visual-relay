@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Tasks;
@@ -164,51 +163,6 @@ internal static partial class TaskCompletionArchive
                 File.Move(capturedDonePath, capturedMarkdownPath);
             }
         }, true, currentPath);
-    }
-
-    /// <summary>Legacy combined retire+publish path; new code should call
-    /// <see cref="RetireAsync"/> before the commit and publish events after.</summary>
-    public static async Task CompleteAsync(
-        string rootPath,
-        RelayConfig config,
-        string taskId,
-        RelayTaskItem? task,
-        IRelayEventSink eventSink,
-        string runId,
-        CancellationToken cancellationToken)
-    {
-        if (task is null)
-            return;
-
-        try
-        {
-            var retirement = RetireAsync(rootPath, config, taskId, task);
-            if (retirement is not null)
-            {
-                var eventName = config.ArchiveOnDone ? "task_archived" : "task_done";
-                await eventSink.PublishAsync(new RelayEvent(
-                    DateTimeOffset.UtcNow,
-                    "info",
-                    eventName,
-                    runId,
-                    rootPath,
-                    taskId,
-                    11,
-                    Data: new Dictionary<string, string> { ["path"] = retirement.DestinationPath }), cancellationToken);
-            }
-        }
-        catch (Exception ex)
-        {
-            await eventSink.PublishAsync(new RelayEvent(
-                DateTimeOffset.UtcNow,
-                "warn",
-                "done_rename_failed",
-                runId,
-                rootPath,
-                taskId,
-                11,
-                Data: new Dictionary<string, string> { ["message"] = ex.Message }), cancellationToken);
-        }
     }
 
     private static string? FindExistingArchivedPath(string rootPath, string tasksDir, RelayTaskItem task)
