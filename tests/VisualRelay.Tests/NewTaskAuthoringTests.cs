@@ -117,6 +117,9 @@ public sealed class NewTaskAuthoringTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
 
+        // ReSharper disable once UseObjectOrCollectionInitializer — NewTaskTitle is set
+        // in separate statements on purpose: the test drives the SETTER repeatedly to
+        // re-evaluate CreateNewTaskCommand.CanExecute across several values.
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         // Empty title → disabled.

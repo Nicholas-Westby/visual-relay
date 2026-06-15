@@ -13,6 +13,9 @@ var width = args.Length > 1 ? double.Parse(args[1]) : 1440;
 var height = args.Length > 2 ? double.Parse(args[2]) : 900;
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
+// ReSharper disable once UseAwaitUsing — one-shot screenshot tool; the headless
+// Avalonia session is torn down synchronously at process exit. Sync dispose keeps
+// the dispatcher-shutdown ordering simple and avoids async-teardown surprises.
 using var session = HeadlessUnitTestSession.StartNew(typeof(ScreenshotAppBuilder));
 await session.Dispatch(async () =>
 {

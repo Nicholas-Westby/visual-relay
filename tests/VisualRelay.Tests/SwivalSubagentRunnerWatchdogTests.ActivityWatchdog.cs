@@ -190,6 +190,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         // Simulate early output burst (representing the first ~2 min of real
         // activity: stdout lines, trace-file creation).
         watchdog.Pulse("stdout");
+        // ReSharper disable once MethodSupportsCancellation — fixed-timing simulation:
+        // this models a real ~50ms gap between pulses and must not be cancellable.
         await Task.Delay(50);
         watchdog.Pulse("trace");
 

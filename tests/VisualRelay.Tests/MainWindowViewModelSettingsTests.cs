@@ -20,6 +20,9 @@ public sealed class MainWindowViewModelSettingsTests
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
+        // ReSharper disable once UseObjectOrCollectionInitializer — BypassSandbox is set
+        // as a separate statement on purpose: the test exercises the SETTER's persist
+        // side effect, which folding into the initializer would bypass.
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         viewModel.BypassSandbox = true;
@@ -79,6 +82,9 @@ public sealed class MainWindowViewModelSettingsTests
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
+        // ReSharper disable once UseObjectOrCollectionInitializer — CommitProofArtifacts
+        // is set separately on purpose: the test exercises the SETTER's persist side
+        // effect, which folding into the initializer would bypass.
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         viewModel.CommitProofArtifacts = false;
