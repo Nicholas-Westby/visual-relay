@@ -155,3 +155,15 @@ Test file: `tests/VisualRelay.Tests/FdLeakTests.cs`; must stay under 300 lines.
   - `fix(sampler): drain ps pipe on all exit paths to bound FD count`
   - `fix(git-invoker): dispose resolution Process objects (startup-only hygiene)`
   - `fix(capture): reap stage's detached child-process group on normal exit`
+
+## PITFALL — keep new tests FAST (this task previously FLAGGED on a 10-min suite timeout)
+The new ProcessCapture FD/reap tests spawn real subprocesses and MUST keep the WHOLE `dotnet test`
+suite well under the 10-min `testTimeoutMs`. The prior attempt timed out because a test used ~40
+iterations each blocking on a multi-second `WaitForExit` timeout. Therefore:
+- Use the SHORTEST sleeps/timeouts that still reproduce the bug (spawn `sleep 0.3`; bound every wait
+  to <=1s); never block on a default/long per-iteration timeout.
+- Use as FEW iterations as needed for a detectable FD delta (a handful, NOT 40).
+- Redirect ALL spawned-child stdio away from the captured pipes so no descendant inherits the pipe
+  write-end (the macOS WaitForExitAsync hang); bound every wait — no unbounded waits.
+- After writing, run ONLY the new test class and confirm it finishes in SECONDS; the full suite must
+  stay well under 10 min.
