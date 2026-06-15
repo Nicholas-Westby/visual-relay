@@ -102,8 +102,12 @@ internal static class ProcessCapture
 
         try
         {
+            // ReSharper disable once AccessToDisposedClosure — killRegistration is
+            // disposed (end of this try) strictly before 'process' (end of method),
+            // and CancellationTokenRegistration.Dispose() waits for any in-flight
+            // callback, so the Kill closure can never run against a disposed process.
             using var killRegistration = killToken.CanBeCanceled
-                ? killToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch { /* already exited */ } })
+                ? killToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already exited */ } })
                 : default;
 
             var waitTask = process.WaitForExitAsync(cancellationToken);

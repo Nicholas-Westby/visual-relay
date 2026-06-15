@@ -239,6 +239,9 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
+        // ReSharper disable once AccessToDisposedClosure — the callback fires only
+        // during the awaited DrainAsync below, while 'repo' (using var) is still alive;
+        // disposal happens at method exit, after the drain completes.
         runner.AfterRun = () =>
         {
             if (runner.TasksRun.Count == 1)
@@ -269,6 +272,8 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
+        // ReSharper disable once AccessToDisposedClosure — fires only during the
+        // awaited DrainAsync below; 'repo' (using var) stays alive until method exit.
         runner.AfterRunAsync = async () =>
         {
             if (runner.TasksRun.Count == 1)

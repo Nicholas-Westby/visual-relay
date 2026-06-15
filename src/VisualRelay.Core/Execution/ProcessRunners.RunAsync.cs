@@ -71,6 +71,9 @@ public sealed partial class SwivalSubagentRunner
             using var watchdogCts = new CancellationTokenSource();
             using var watchdogLinkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, watchdogCts.Token);
 
+            // ReSharper disable once AccessToModifiedClosure — fresh watchdog+heartbeat
+            // closure per iteration, fully drained (Cancel + await) before 'attempt' is
+            // incremented, so the capture always sees this iteration's attempt value.
             var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts,
                 onHeartbeat: _eventSink is null ? null : msg => _ = _eventSink.PublishAsync(new RelayEvent(
                     DateTimeOffset.UtcNow, "debug", "watchdog_heartbeat",

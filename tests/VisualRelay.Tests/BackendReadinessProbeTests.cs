@@ -21,6 +21,9 @@ public sealed class BackendReadinessProbeTests
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        // ReSharper disable once AccessToDisposedClosure — the finally block stops the
+        // listener and 'await serve' joins this task before 'listener' (using var) is
+        // disposed at method exit; the catch handles any stop-while-serving race.
         var serve = Task.Run(async () =>
         {
             try

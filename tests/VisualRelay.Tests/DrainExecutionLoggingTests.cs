@@ -39,13 +39,13 @@ public sealed class DrainExecutionLoggingTests
         {
             OnPlanningCompleted = (_, _) =>
             {
+                // ReSharper disable once AccessToModifiedClosure — ctrl set below before DrainAsync fires this; ?. guards the impossible pre-assignment.
                 if (Interlocked.Increment(ref count) == 1) ctrl?.RequestPause();
             }
         };
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle);
+            planSubagentRunnerFactory: _ => planRunner, planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -78,6 +78,7 @@ public sealed class DrainExecutionLoggingTests
         {
             OnPlanningCompleted = (_, _) =>
             {
+                // ReSharper disable once AccessToModifiedClosure — ctrl set below before DrainAsync fires this; ?. guards the impossible pre-assignment.
                 if (Interlocked.Increment(ref count) == 1) ctrl?.RequestPause();
             }
         };
@@ -114,6 +115,7 @@ public sealed class DrainExecutionLoggingTests
         RelayQueueController? ctrl = null;
         var lifecycle = new DrainLifecycleCallbacks
         {
+            // ReSharper disable once AccessToModifiedClosure — ctrl set below before DrainAsync fires this; ?. guards the impossible pre-assignment.
             OnPlanningCompleted = (_, _) => ctrl?.RequestPause()
         };
 
