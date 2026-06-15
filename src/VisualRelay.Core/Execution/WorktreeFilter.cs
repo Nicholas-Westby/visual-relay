@@ -62,15 +62,25 @@ internal static partial class WorktreeFilter
             return new WorktreeFilterResult([], []);
 
         // 1. Enumerate dirty tracked files (combine unstaged + staged diffs).
-        //    -c core.quotePath=false disables octal quoting of non-ASCII paths (Defect C).
+        //    -z emits NUL-delimited paths that are NEVER C-quoted (so a TAB or
+        //    newline in a path stays literal — leak 1) and NEVER whitespace-
+        //    trimmed (so a leading/trailing space survives — leak 2).  This
+        //    supersedes -c core.quotePath=false (Defect C): with -z there is no
+        //    quoting to disable.
         var unstagedDiff = await GitAsync(rootPath,
-            ["-c", "core.quotePath=false", "diff", "--name-only"], cancellationToken);
+            ["diff", "--name-only", "-z"], cancellationToken);
         if (unstagedDiff.ExitCode != 0 || unstagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --name-only failed");
 
-        // --name-status -M so staged renames expose both old and new names.
+        // --name-status -M -C -z so staged renames AND copies expose both old
+        // and new names.  -M forces rename detection ON even when the target
+        // repo sets diff.renames=false (preserving the Defect-A rename-pair
+        // guard); -C additionally surfaces copies as C records (leak 3) when
+        // the repo opts into copy detection.  -z makes the stream a flat
+        // sequence of NUL-separated tokens (status\0path\0, or status\0old\0new\0
+        // for R/C — no embedded TAB).
         var stagedDiff = await GitAsync(rootPath,
-            ["-c", "core.quotePath=false", "diff", "--cached", "--name-status", "-M"], cancellationToken);
+            ["diff", "--cached", "--name-status", "-M", "-C", "-z"], cancellationToken);
         if (stagedDiff.ExitCode != 0 || stagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --cached --name-status failed");
 
@@ -81,59 +91,26 @@ internal static partial class WorktreeFilter
         // entry under OrdinalIgnoreCase — see ComputeRenameExclusions (Hole 1).
         var renamePairs = new List<(string Old, string New)>();
 
-        void AddLines(string output, List<string> target)
-        {
-            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var t = line.Trim();
-                if (t.Length > 0) target.Add(t);
-            }
-        }
+        // NUL-delimited parsing (AddNulPaths / AddNameStatusNul) lives in the
+        // WorktreeFilter.Parsing.cs partial — it splits on \0 and never trims,
+        // fixing the quoted-path (leak 1) and whitespace-path (leak 2) misses.
+        AddNulPaths(unstagedDiff.Output, dirtyTracked);
+        AddNameStatusNul(stagedDiff.Output, dirtyTracked, renamePairs);
 
-        void AddNameStatusLines(string output, List<string> target)
-        {
-            // Parses `git diff --cached --name-status -M` output.
-            // Format: <status>\t<path>  or  <status>\t<old>\t<new> (rename).
-            foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            {
-                var trimmed = line.Trim();
-                if (trimmed.Length == 0) continue;
-                var parts = trimmed.Split('\t');
-                if (parts.Length < 2) continue;
-                if (parts[0].Length > 0 && parts[0][0] == 'R' && parts.Length >= 3)
-                {
-                    var oldName = parts[1].Trim();
-                    var newName = parts[2].Trim();
-                    if (oldName.Length > 0) target.Add(oldName);
-                    if (newName.Length > 0) target.Add(newName);
-                    if (oldName.Length > 0 && newName.Length > 0)
-                        renamePairs.Add((oldName, newName));
-                }
-                else
-                {
-                    var path = parts[1].Trim();
-                    if (path.Length > 0) target.Add(path);
-                }
-            }
-        }
-
-        AddLines(unstagedDiff.Output, dirtyTracked);
-        AddNameStatusLines(stagedDiff.Output, dirtyTracked);
-
-        // Also include deleted tracked files.
+        // Also include deleted tracked files (-z: NUL-delimited, never quoted).
         var deletedResult = await GitAsync(rootPath,
-            ["-c", "core.quotePath=false", "ls-files", "--deleted"], cancellationToken);
+            ["ls-files", "--deleted", "-z"], cancellationToken);
         if (deletedResult.ExitCode != 0 || deletedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --deleted failed");
-        AddLines(deletedResult.Output, dirtyTracked);
+        AddNulPaths(deletedResult.Output, dirtyTracked);
 
-        // 1b. Untracked files.
+        // 1b. Untracked files (-z: NUL-delimited, never quoted).
         var untrackedResult = await GitAsync(rootPath,
-            ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cancellationToken);
+            ["ls-files", "--others", "--exclude-standard", "-z"], cancellationToken);
         if (untrackedResult.ExitCode != 0 || untrackedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --others failed");
         var dirtyUntracked = new List<string>();
-        AddLines(untrackedResult.Output, dirtyUntracked);
+        AddNulPaths(untrackedResult.Output, dirtyUntracked);
 
         // Defect A: exclude rename-pair endpoints when either touches a testFile.
         if (renamePairs.Count > 0)

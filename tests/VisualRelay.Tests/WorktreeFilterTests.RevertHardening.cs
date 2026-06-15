@@ -65,16 +65,27 @@ public sealed partial class WorktreeFilterTests
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Defect A (mirror): rename dest is a testFile → index pollution
+    // Defect A (mirror) + Leak 4: prod→test rename restores the prod
+    //   source (no stray staged deletion) and keeps the test destination
     // ═══════════════════════════════════════════════════════════════
 
     /// <summary>
-    /// When a staged rename's NEW name is a declared testFile, the
-    /// filter must leave the rename intact — it must NOT restore the
-    /// old name alongside the new one (dirty/duplicate index pollution).
+    /// When a staged rename's NEW name is a declared testFile and its OLD
+    /// name is a PRODUCTION file (prod→test), the filter keeps the test
+    /// destination intact AND restores the production source from HEAD.
+    /// <para>
+    /// Restoring the source reverts its staged DELETION — leak 4: the old
+    /// behaviour excluded BOTH endpoints, leaving the staged deletion of the
+    /// production source surviving into stage 6 (a production change leaking
+    /// past the filter).  Restoring <c>prod.cs</c> via
+    /// <c>git checkout HEAD -- prod.cs</c> touches a distinct path, so the
+    /// test destination <c>my.Tests.cs</c> (which holds the only surviving
+    /// copy of the content) is NOT disturbed: no test-content loss, no stray
+    /// staged deletion.
+    /// </para>
     /// </summary>
     [Fact]
-    public async Task RenameDestIsTestFile_LeavesRenameIntact()
+    public async Task ProdToTestRename_RestoresProdSource_KeepsTestDest()
     {
         using var repo = TestRepository.Create();
 
@@ -88,16 +99,22 @@ public sealed partial class WorktreeFilterTests
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, ["my.Tests.cs"], tasksDir: null, CancellationToken.None);
 
-        // ── CRITICAL assertion ──────────────────────────────────
-        // The rename must be left intact: only my.Tests.cs exists.
+        Assert.Null(result.Error);
+
+        // ── The test destination must survive — it holds the content. ──
         var destPath = Path.Combine(repo.Root, "my.Tests.cs");
         Assert.True(File.Exists(destPath),
             "rename destination my.Tests.cs must exist");
         Assert.Equal("prod-content", await File.ReadAllTextAsync(destPath));
 
-        // prod.cs must NOT be restored — the rename is intact.
-        Assert.False(File.Exists(prodPath),
-            "prod.cs must NOT be restored — rename is left intact, no index pollution");
+        // ── Leak 4: the production source must be restored (its staged
+        // deletion reverted) so no stray staged deletion reaches stage 6. ──
+        Assert.True(File.Exists(prodPath),
+            "production source prod.cs must be restored — staged deletion reverted");
+        Assert.Equal("prod-content", await File.ReadAllTextAsync(prodPath));
+
+        var stagedStatus = TestGit.Run(repo.Root, "diff", "--cached", "--name-status", "-M");
+        Assert.DoesNotContain("prod.cs", stagedStatus, StringComparison.Ordinal);
     }
 
     // ═══════════════════════════════════════════════════════════════
