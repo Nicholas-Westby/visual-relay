@@ -68,6 +68,20 @@ public sealed class NonoWhyOracleTests
         AssertAllowed(Path.Combine(Home, ".npm"));
     }
 
+    [Fact]
+    public void NonoWhy_NixCache_AllowedReadWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".cache", "nix"));
+    }
+
+    [Fact]
+    public void NonoWhy_NixState_AllowedReadWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".local", "state", "nix"));
+    }
+
     // ── Denied paths (destructive surface stays denied) ─────────────────
 
     [Fact]
@@ -89,6 +103,15 @@ public sealed class NonoWhyOracleTests
     {
         if (!NonoAvailable) Assert.Skip("nono is not on PATH");
         AssertDenied(Path.Combine(Home, ".ssh"), "write");
+    }
+
+    [Fact]
+    public void NonoWhy_NixStore_DeniedWrite()
+    {
+        // The store stays read-only (read+exec via read:["/"]); the daemon
+        // performs the privileged store writes. A direct write must be DENIED.
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertDenied(Path.Combine("/nix", "store", "x"), "write");
     }
 
     // ── OS-specific cache paths ────────────────────────────────────────

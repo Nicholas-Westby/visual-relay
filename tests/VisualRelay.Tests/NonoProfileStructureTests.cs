@@ -83,6 +83,22 @@ public sealed class NonoProfileStructureTests
     }
 
     [Fact]
+    public void VrGuardProfile_HasNixEntries()
+    {
+        // nix-managed target projects install deps in-sandbox via the daemon;
+        // the blocker was the nix cache/state writes (~/.cache/nix readonly-db
+        // + lock files), NOT the daemon socket and NOT a writable /nix/store.
+        var profilePath = ResolveProfilePath();
+        using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
+
+        Assert.True(doc.RootElement.TryGetProperty("filesystem", out var fs));
+        Assert.True(fs.TryGetProperty("allow", out var allow));
+        var paths = CollectPaths(allow);
+        Assert.Contains(paths, p => p == "$HOME/.cache/nix");
+        Assert.Contains(paths, p => p == "$HOME/.local/state/nix");
+    }
+
+    [Fact]
     public void VrGuardProfile_HasWhenPredicatesForOsSpecificPaths()
     {
         var profilePath = ResolveProfilePath();
