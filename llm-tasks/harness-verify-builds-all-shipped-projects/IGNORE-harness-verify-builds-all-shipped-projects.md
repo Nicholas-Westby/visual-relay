@@ -1,3 +1,17 @@
+> **IGNORE (2026-06-16) — deferred, not abandoned.** The concrete build break this task generalizes
+> was already **hotfixed out-of-band** (`b51eec3` added the missing `GitInvoker` arg), so the blind
+> spot is mitigated today. This task was then driven and **flagged on Fix-verify non-determinism**
+> (not a real defect): with the sandbox on, `app-launch-failed` did not recur (the `-c` fix held), a
+> whole-solution `dotnet build VisualRelay.slnx` **succeeds under nono** (verified directly), and the
+> suite passes standalone (1046/0/11). The implementation it produced runs the whole-solution build on
+> **every** fix-verify iteration, which lengthens verify and amplifies the intermittent flakiness —
+> shipping that is net-negative.
+>
+> **Refined design for a future revive:** run the whole-solution compile-check **once at the commit
+> gate** (stage 11, before the commit), NOT inside the per-iteration fix-verify loop — that catches a
+> `tools/` build break before commit without making routine verify heavier or flakier. Un-IGNORE and
+> drive with that design if desired. Original spec below.
+
 # Harness: verify must compile every shipped project, not just the test project
 
 A refactor that breaks a project **outside the test project's build graph** passes Verify and the guard,
