@@ -27,8 +27,8 @@ if (!configResult.IsRunnable)
 var config = configResult.Config;
 
 // ── Build two-phase controller ──
-var planTestRunner = new ShellTestRunner(
-    TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
+var planTestRunner = new SandboxedTestRunner(
+    new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
 
 ISubagentRunner PlanSubagentFactory(string taskId) =>
     new SwivalSubagentRunner(config, eventSink: new ConsoleRelayEventSink(taskId));
@@ -39,7 +39,7 @@ IRelayEventSink PlanSinkFactory(string taskId) =>
     new ConsoleRelayEventSink(taskId);
 
 var phase2Runner = new ConsoleTaskRunner(rootPath, config,
-    new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)));
+    new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config));
 
 var controller = new RelayQueueController(
     rootPath,

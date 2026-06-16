@@ -101,4 +101,16 @@ public sealed class DirectExecTestRunner(TimeSpan? timeout = null) : ITestRunner
 
         return parts;
     }
+
+    /// <summary>
+    /// Resolves a command string into (FileName, Arguments) suitable for
+    /// direct exec.  Exposed for <see cref="SandboxedTestRunner"/>.
+    /// </summary>
+    internal static (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command)
+    {
+        var parts = SplitCommand(command);
+        if (parts.Count == 0)
+            return (string.Empty, Array.Empty<string>());
+        return (parts[0], parts.Skip(1).ToList());
+    }
 }

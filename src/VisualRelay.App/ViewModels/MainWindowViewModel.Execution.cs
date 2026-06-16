@@ -77,11 +77,13 @@ public partial class MainWindowViewModel
                 new ObservableRelayEventSink(HandleRelayEvent);
 
             var executeSink = new ObservableRelayEventSink(HandleRelayEvent);
-            var executeTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
+            var executeTestRunner = new SandboxedTestRunner(
+                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
 
             ISubagentRunner PlanSubagentFactory(string _) =>
                 new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent));
-            var planTestRunner = new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds));
+            var planTestRunner = new SandboxedTestRunner(
+                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
 
             var lifecycle = CreateDrainLifecycleCallbacks();
 
@@ -226,7 +228,7 @@ public partial class MainWindowViewModel
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
         var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
-        var dependencies = new RelayDriverDependencies(subagentRunner, new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), sink);
+        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config), sink);
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
         {

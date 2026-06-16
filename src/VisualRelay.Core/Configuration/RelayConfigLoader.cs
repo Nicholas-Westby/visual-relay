@@ -129,6 +129,63 @@ public static class RelayConfigLoader
                 }
             }
 
+            // Read and validate sandboxExtraAllowPaths.
+            IReadOnlyList<string>? sandboxExtraAllowPaths = null;
+            if (root.TryGetProperty("sandboxExtraAllowPaths", out var extraPathsElement))
+            {
+                if (extraPathsElement.ValueKind == JsonValueKind.Array)
+                {
+                    var rawPaths = extraPathsElement.EnumerateArray()
+                        .Select(e => e.GetString())
+                        .Where(s => !string.IsNullOrWhiteSpace(s))
+                        .Select(s => s!.Trim())
+                        .ToList();
+
+                    var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                    var validated = new List<string>(rawPaths.Count);
+                    foreach (var raw in rawPaths)
+                    {
+                        // Expand ~ and $HOME.
+                        var expanded = raw.StartsWith("~/") || raw == "~"
+                            ? Path.Combine(home, raw.Length > 2 ? raw[2..].TrimStart('/') : string.Empty)
+                            : raw.Replace("$HOME", home, StringComparison.Ordinal);
+
+                        // Reject .. traversal.
+                        if (expanded.Contains(".."))
+                        {
+                            return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
+                                $"relay config: sandboxExtraAllowPaths entry contains '..' (path traversal rejected): \"{raw}\" in {configPath}");
+                        }
+
+                        // Normalize to absolute path.
+                        var normalized = Path.GetFullPath(expanded);
+
+                        // Require resolution under $HOME or workspace root.
+                        var normalizedHome = Path.GetFullPath(home);
+                        var normalizedRoot = Path.GetFullPath(rootPath);
+                        var underHome = normalized.StartsWith(normalizedHome + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                                        || normalized == normalizedHome;
+                        var underRoot = normalized.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                                        || normalized == normalizedRoot;
+
+                        if (!underHome && !underRoot)
+                        {
+                            return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
+                                $"relay config: sandboxExtraAllowPaths entry must resolve under $HOME or workspace root, got: \"{raw}\" → \"{normalized}\" in {configPath}");
+                        }
+
+                        validated.Add(normalized);
+                    }
+
+                    sandboxExtraAllowPaths = validated;
+                }
+                else
+                {
+                    return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
+                        $"relay config: sandboxExtraAllowPaths must be an array in {configPath}");
+                }
+            }
+
             var config = defaults with
             {
                 TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
@@ -157,7 +214,8 @@ public static class RelayConfigLoader
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
-                RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify)
+                RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify),
+                SandboxExtraAllowPaths = sandboxExtraAllowPaths
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

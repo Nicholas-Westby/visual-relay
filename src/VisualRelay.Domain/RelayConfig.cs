@@ -88,7 +88,19 @@ public sealed record RelayConfig(
     // "confirm/amend only" prompt instead of full freight. Set false to always run
     // every stage on its declared tier. No effect on non-git roots.
     bool DownshiftOnEarlyImplementation = true,
-    bool RetryFlakyVerify = true)
+    bool RetryFlakyVerify = true,
+    // Per-repo escape hatch for exotic toolchain cache paths the vr-guard profile
+    // baseline does not cover.  Each entry is appended as `-a <path>` to BOTH the
+    // Swival nono run invocation and the verification nono run invocation, so the
+    // effective allowlist is the UNION of the profile grants and these extras.
+    // Entries are validated during config load: `..` (path traversal) is rejected
+    // with a load error; `~` and `$HOME` are expanded; and each normalized absolute
+    // path must resolve under $HOME or under the workspace root — paths pointing at
+    // /etc, /System, other users' homes, or credential trees are rejected so the
+    // escape hatch cannot re-open the destructive surface the deny groups protect.
+    // Default null/empty (no extra grants).  The field is additive-only (it never
+    // removes a profile grant) and grants read+write.
+    IReadOnlyList<string>? SandboxExtraAllowPaths = null)
 {
     // Glob patterns (relative to targetRoot) that identify guard/gate scripts.
     // When a manifest entry matches any pattern, the harness executes it once

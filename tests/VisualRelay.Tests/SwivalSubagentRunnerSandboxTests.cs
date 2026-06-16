@@ -98,6 +98,160 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         Assert.Equal(Path.Combine(home, ".config", "swival", "uv-cache"), env["UV_CACHE_DIR"]);
     }
 
+    // ════════════════════════════════════════════════════════════════════
+    // Shared nono-prefix builder (BuildNonoPrefix)
+    // ════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
+    {
+        // Swival path: rollback=true → run -p vr-guard --allow-cwd --rollback --no-rollback-prompt --
+        var config = TestConfig() with { BypassSandbox = false };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+
+        Assert.Equal(
+            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
+            prefix);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
+    {
+        // Verification path: rollback=false → run -p vr-guard --allow-cwd --
+        var config = TestConfig() with { BypassSandbox = false };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+
+        Assert.Equal(
+            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--" },
+            prefix);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_TwoCallerPreamblesDifferOnlyInRollbackFlags()
+    {
+        // Pin that the Swival and verification prefixes differ in exactly one
+        // flag pair (--rollback --no-rollback-prompt) and nothing else.
+        var config = TestConfig() with { BypassSandbox = false };
+
+        var swivalPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+
+        // Both start with: run -p vr-guard --allow-cwd
+        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" },
+            swivalPrefix.Take(4));
+        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" },
+            verifyPrefix.Take(4));
+
+        // Swival has --rollback --no-rollback-prompt at positions 4,5 then -- at 6.
+        Assert.Equal("--rollback", swivalPrefix[4]);
+        Assert.Equal("--no-rollback-prompt", swivalPrefix[5]);
+        Assert.Equal("--", swivalPrefix[6]);
+
+        // Verify jumps straight to -- at position 4.
+        Assert.Equal("--", verifyPrefix[4]);
+
+        // Length difference is exactly 2 (the rollback flags).
+        Assert.Equal(swivalPrefix.Count - 2, verifyPrefix.Count);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_BypassEnabled_ReturnsEmptyPrefix()
+    {
+        // When the sandbox is bypassed, BuildNonoPrefix returns an empty list
+        // so callers skip wrapping entirely.
+        var config = TestConfig() with { BypassSandbox = true };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+
+        Assert.Empty(prefix);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_WithExtraAllowPaths_AppendsAFlagsBeforeSeparator()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var extraPath = Path.Combine(home, ".cache", "exotic-tool");
+        var config = TestConfig() with
+        {
+            BypassSandbox = false,
+            SandboxExtraAllowPaths = [extraPath]
+        };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+
+        // Prefix: run -p vr-guard --allow-cwd -a <path> --
+        Assert.Equal("run", prefix[0]);
+        Assert.Equal("-a", prefix[4]);
+        Assert.Equal(extraPath, prefix[5]);
+        Assert.Equal("--", prefix[6]);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_WithExtraAllowPathsAndRollback_FlagsAppearBeforeRollback()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var extraPath = Path.Combine(home, ".cache", "exotic-tool");
+        var config = TestConfig() with
+        {
+            BypassSandbox = false,
+            SandboxExtraAllowPaths = [extraPath]
+        };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+
+        // Prefix: run -p vr-guard --allow-cwd -a <path> --rollback --no-rollback-prompt --
+        // The -a flags come BEFORE --rollback.
+        Assert.Equal("run", prefix[0]);
+        Assert.Equal("-a", prefix[4]);
+        Assert.Equal(extraPath, prefix[5]);
+        Assert.Equal("--rollback", prefix[6]);
+        Assert.Equal("--no-rollback-prompt", prefix[7]);
+        Assert.Equal("--", prefix[8]);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_DoesNotBlockNetwork()
+    {
+        // The nono wrapper must never add --block-net — the relay must reach
+        // the model backend (and package managers need network for restore).
+        var config = TestConfig() with { BypassSandbox = false };
+
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        Assert.DoesNotContain("--block-net", prefix);
+
+        prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        Assert.DoesNotContain("--block-net", prefix);
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    // BuildLaunchTarget still produces identical shape after refactor
+    // (internally uses BuildNonoPrefix with rollback:true)
+    // ════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void BuildLaunchTarget_UsesBuildNonoPrefixWithRollback()
+    {
+        // After the refactor, BuildLaunchTarget must produce the same args it
+        // always did — the shared builder just means the prefix isn't inlined.
+        var config = TestConfig() with { BypassSandbox = false };
+        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
+
+        var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
+
+        Assert.Equal("nono", fileName);
+        Assert.Equal(
+            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
+            args.Take(8));
+
+        // Swival args follow after -- swival
+        var separatorIdx = ((IList<string>)args).IndexOf("--");
+        Assert.Equal("swival", args[separatorIdx + 1]);
+        Assert.Equal(swivalArgs, args.Skip(separatorIdx + 2));
+    }
+
     private static RelayConfig TestConfig() =>
         new(
             "llm-tasks",

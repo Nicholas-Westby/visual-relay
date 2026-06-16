@@ -176,10 +176,9 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Detects manifest entries that match the configured new-guard patterns, runs
-    /// each once unsandboxed on the host, and returns a combined failure output
-    /// string (non-null) when any guard exits non-zero or times out, or null when
-    /// all pass.  <c>TimedOut</c> is true when any guard timed out.
+    /// Runs new-guard probe scripts under the sandbox.  Drops entries that escape
+    /// the guards directory via <c>..</c> traversal.  Returns non-null failure
+    /// output when any guard exits non-zero or times out.
     /// </summary>
     private async Task<(string? FailureOutput, bool TimedOut)> NewGuardProbeAsync(
         string rootPath,
@@ -190,11 +189,7 @@ public sealed partial class RelayDriver
         if (patterns.Count == 0)
             return (null, false);
 
-        var candidates = manifest
-            .Where(entry => patterns.Any(p => MatchesGuardGlob(entry, p)))
-            .Select(entry => Path.Combine(rootPath, entry))
-            .Where(File.Exists)
-            .ToList();
+        var candidates = await ResolveGuardCandidatesAsync(manifest, patterns, rootPath, ct);
 
         if (candidates.Count == 0)
             return (null, false);

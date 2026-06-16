@@ -61,4 +61,29 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
             "--max-turns", invocation.MaxTurns.ToString()
         ];
     }
+
+    /// <summary>
+    /// Shared nono-prefix builder: Swival and verification callers produce
+    /// identical prefixes except for <c>--rollback</c> / <c>--no-rollback-prompt</c>
+    /// (controlled by <paramref name="rollback"/>).  Returns empty when
+    /// <see cref="RelayConfig.BypassSandbox"/> is true.  Appends
+    /// <see cref="RelayConfig.SandboxExtraAllowPaths"/> as <c>-a &lt;path&gt;</c>
+    /// before <c>--</c> (and before <c>--rollback</c> when enabled).
+    /// </summary>
+    internal static IReadOnlyList<string> BuildNonoPrefix(RelayConfig config, bool rollback)
+    {
+        if (config.BypassSandbox)
+            return [];
+
+        var args = new List<string> { "run", "-p", NonoProfile, "--allow-cwd" };
+
+        if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)
+        {
+            foreach (var path in paths) { args.Add("-a"); args.Add(path); }
+        }
+
+        if (rollback) { args.Add("--rollback"); args.Add("--no-rollback-prompt"); }
+        args.Add("--");
+        return args;
+    }
 }

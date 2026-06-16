@@ -83,16 +83,8 @@ public sealed partial class SwivalSubagentRunner
             return (_swivalBinary, swivalArguments);
         }
 
-        var nonoArguments = new List<string>
-        {
-            "run",
-            "-p", NonoProfile,
-            "--allow-cwd",
-            "--rollback",
-            "--no-rollback-prompt",
-            "--",
-            _swivalBinary
-        };
+        var prefix = BuildNonoPrefix(_config, rollback: true);
+        var nonoArguments = new List<string>(prefix) { _swivalBinary };
         nonoArguments.AddRange(swivalArguments);
         return (NonoBinary, nonoArguments);
     }

@@ -131,6 +131,24 @@ The sandbox is controlled by the `bypassSandbox` key in `.relay/config.json`:
 
 The `vr-guard` profile ships with Visual Relay and is installed automatically to
 `${XDG_CONFIG_HOME:-$HOME/.config}/nono/profiles/`. A missing nono binary is a hard error.
+The profile grants per-ecosystem toolchain cache paths (.NET, Swift, Node, Python, Go, Rust)
+so package-manager writes (`dotnet restore`, `swift build`, `npm install`, `pip install`,
+`go build`, `cargo build`) succeed inside the sandbox.  The destructive surface — Documents,
+Desktop, Pictures, credentials, shell history, browser data — stays denied.
+
+For exotic toolchains whose cache paths the baseline profile does not cover, add a
+`sandboxExtraAllowPaths` array to `.relay/config.json`:
+
+```json
+{
+  "testCmd": "dotnet test",
+  "sandboxExtraAllowPaths": ["~/.cache/exotic-tool"]
+}
+```
+
+Each entry is appended as `-a <path>` to both the Swival and verification nono invocations.
+Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
+are expanded; and each path must resolve under `$HOME` or the workspace root.
 
 ## What It Does
 
