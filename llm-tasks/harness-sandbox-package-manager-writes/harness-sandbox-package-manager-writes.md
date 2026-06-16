@@ -236,29 +236,45 @@ de-duplicated on inherit), so the profile is self-documenting and survives a bas
 drops a group. **Verify each entry with `nono why -p vr-guard --op readwrite --path <p>` after
 editing** — the profile is the source of truth, not this list.
 
-Concrete groups to cover (recursive dir grants unless noted):
+Concrete groups to cover (recursive dir grants unless noted). **Every per-ecosystem cache is
+specified for BOTH platforms**: paths with no `when` apply everywhere; `{ "path": …, "when": "macos" }`
+and `{ "path": …, "when": "linux" }` carry the OS-specific cache locations. Seatbelt and Landlock
+differ in path granularity, so the Linux set is enumerated explicitly here (not "the macOS paths
+minus `~/Library`") and is a hard validation target — see §Done when.
 
-- **.NET** — `$HOME/.nuget/packages`, the NuGet http-cache (`$HOME/.local/share/NuGet`; also honor
-  `$NUGET_PACKAGES` if the env-redirect route is taken — see B), `$HOME/.dotnet`,
-  `$HOME/.templateengine`, the `DOTNET_CLI_HOME` root, plus `$TMPDIR` (macOS `/var/folders`) / `/tmp`.
-  Workspace `obj/` and `bin/` are already covered by the `readwrite` workdir grant.
-- **Swift / SwiftPM** — `$HOME/.swiftpm`, `{ "$HOME/Library/Caches/org.swift.swiftpm", "when": "macos" }`,
+- **.NET** — shared: `$HOME/.nuget/packages`, `$HOME/.dotnet`, `$HOME/.templateengine`, the
+  `DOTNET_CLI_HOME` root. The NuGet http-cache differs by OS:
+  `{ "$HOME/Library/Caches/NuGet/v3-cache", "when": "macos" }` (and `$HOME/.local/share/NuGet`),
+  `{ "$HOME/.local/share/NuGet", "when": "linux" }` + `{ "$XDG_CACHE_HOME/NuGet", "when": "linux" }`.
+  Plus `$TMPDIR` (macOS `/var/folders`) / `/tmp`. (Also honor `$NUGET_PACKAGES` if the env-redirect
+  route of B is taken.) Workspace `obj/` and `bin/` are already covered by the `readwrite` workdir grant.
+- **Swift / SwiftPM** — shared: `$HOME/.swiftpm`. macOS-only:
+  `{ "$HOME/Library/Caches/org.swift.swiftpm", "when": "macos" }`,
   `{ "$HOME/Library/org.swift.swiftpm", "when": "macos" }`, the module/derived-data cache
-  (`{ "$HOME/Library/Developer", "when": "macos" }` or the `CLANG_MODULE_CACHE_PATH` root),
-  `DEVELOPER_DIR` as **read-only**, `$TMPDIR`; workspace `.build/` covered by workdir.
-- **Node / npm / pnpm / yarn / Bun / Deno** — `$HOME/.npm`, `$HOME/.cache` (npm/yarn/deno; note this
-  is `$XDG_CACHE_HOME`, already largely covered by `user_caches_*` — confirm), `$HOME/.bun`,
-  `$HOME/.deno`, `$HOME/.pnpm-store`, `$HOME/.yarn`, `$HOME/.config` *selectively* (some tools write
-  here — grant the specific subdir, NOT all of `~/.config`, to avoid re-opening denied trees), the
-  `COREPACK_HOME` root, `$TMPDIR`; workspace `node_modules/` covered by workdir.
-- **Python / pip / venv / uv / pyenv** — `$HOME/.cache/pip`, `{ "$HOME/Library/Caches/pip", "when": "macos" }`,
-  `$HOME/.local`, `$HOME/.pyenv`, `$HOME/.cache/uv`, `$TMPDIR`; workspace `.venv/` covered by workdir.
+  `{ "$HOME/Library/Developer", "when": "macos" }` (or the `CLANG_MODULE_CACHE_PATH` root), and
+  `DEVELOPER_DIR` as **read-only**. Linux-only (no `~/Library` exists):
+  `{ "$HOME/.cache/org.swift.swiftpm", "when": "linux" }` and
+  `{ "$XDG_CACHE_HOME/org.swift.swiftpm", "when": "linux" }` (both forms, since `$XDG_CACHE_HOME`
+  may be unset and default to `~/.cache`). Plus `$TMPDIR` / `/tmp`; workspace `.build/` covered by workdir.
+- **Node / npm / pnpm / yarn / Bun / Deno** — shared: `$HOME/.npm`, `$HOME/.bun`, `$HOME/.deno`,
+  `$HOME/.pnpm-store`, `$HOME/.yarn`, the `COREPACK_HOME` root. Caches:
+  `{ "$HOME/Library/Caches/node-gyp", "when": "macos" }` /
+  `{ "$XDG_CACHE_HOME", "when": "linux" }` (`~/.cache`, npm/yarn/deno — already largely covered by
+  `user_caches_linux`; confirm). Grant `$HOME/.config` *selectively* (some tools write a specific
+  subdir — grant that subdir, NOT all of `~/.config`, to avoid re-opening denied trees). Plus
+  `$TMPDIR`; workspace `node_modules/` covered by workdir.
+- **Python / pip / venv / uv / pyenv** — shared: `$HOME/.local`, `$HOME/.pyenv`. Caches:
+  `{ "$HOME/Library/Caches/pip", "when": "macos" }` + `{ "$HOME/Library/Caches/uv", "when": "macos" }`,
+  `{ "$HOME/.cache/pip", "when": "linux" }` + `{ "$HOME/.cache/uv", "when": "linux" }`
+  (and the `$XDG_CACHE_HOME/{pip,uv}` forms). Plus `$TMPDIR`; workspace `.venv/` covered by workdir.
   (`python_runtime` covers pyenv/uv already — confirm and keep the explicit entries as belt-and-braces.)
-- **Go / Rust (gaps the base omits)** — Go: `$HOME/go/pkg/mod` (+ `GOCACHE`, default
-  `$HOME/Library/Caches/go-build` on macOS / `$XDG_CACHE_HOME/go-build` on Linux); Rust:
-  `$HOME/.cargo/registry`, `$HOME/.cargo/git`, workspace `target/` (workdir). Or include the
+- **Go / Rust (gaps the base omits)** — Go: shared `$HOME/go/pkg/mod`, plus `GOCACHE`
+  (`{ "$HOME/Library/Caches/go-build", "when": "macos" }` /
+  `{ "$HOME/.cache/go-build", "when": "linux" }`, also `$XDG_CACHE_HOME/go-build`). Rust: shared
+  `$HOME/.cargo/registry`, `$HOME/.cargo/git`; workspace `target/` (workdir). Or include the
   `go_runtime` / `rust_runtime` groups via `groups.include` instead of listing paths — **prefer the
-  group** when it exists and matches, since it is maintained upstream.
+  group** when it exists and matches, since it is maintained upstream; the explicit per-OS paths above
+  are the fallback when the base pack has no such group.
 - **General** — toolchain install roots are already readable via `read:["/"]`; if Nix is used,
   `/nix/store` is read-only and already readable. `$HOME/.gitconfig` read (covered by `git_config`).
   The system trust store and read-only system paths come from `system_read_*`.
@@ -270,21 +286,42 @@ the profile did not accidentally open them, and so the test in §Tests can asser
 `/System`, `/Applications`, `/etc` (writes), `/usr` (writes), and the credential/keychain/browser/
 shell-history/shell-config trees held by the `deny_*` groups.
 
-**Make the set configurable/extensible.** Two acceptable mechanisms — pick one and state which in
-the PR:
-1. **Profile groups + a documented "extra grants" block in `vr-guard.json`.** The profile is the
-   knob: operators (or VR's own per-repo init) can add `filesystem.allow` entries / `groups.include`
-   for an ecosystem the default set misses. Keep `vr-guard.json` the shipped baseline.
-2. **A config field** (e.g. `RelayConfig.SandboxExtraAllowPaths: IReadOnlyList<string>?`) that, when
-   the sandbox is enabled, appends `-a <path>` flags to BOTH the Swival `nono run` invocation
-   (`BuildLaunchTarget`) and the verification `nono run` invocation (B). This keeps per-repo grants
-   in `.relay/config.json` next to `testCmd`. If you add it: default `null` (no extra grants),
-   merge it in `RelayConfigLoader` like the other optional lists, expand `$HOME`/`~` in C#, and add
-   the env var to `RelayConfig.cs` doc-comment. (The profile route is simpler and is the
-   recommended default; the config field is the escape hatch for repos with exotic cache dirs.)
+**Make the set configurable/extensible — use BOTH mechanisms, with distinct roles** (settled; see
+Decisions). They are not alternatives; they sit at different layers and compose by union:
 
-Either way, keep the **env-redirect** option (B) in mind: redirecting a toolchain's cache into the
-already-granted workspace or `~/.config/swival` (via `NUGET_PACKAGES`, `GOCACHE`, `CARGO_HOME`,
+1. **The profile (`vr-guard.json`) carries the per-ecosystem baseline** (.NET / Swift / Node /
+   Python / Go / Rust, the lists above). This is the shipped default so the common toolchains work
+   out-of-the-box, and it is **declarative and readable by any nono user** (`nono profile show vr-guard`),
+   reviewable, and version-controlled. Operators editing the baseline add `filesystem.allow` entries
+   / `groups.include` here. The profile is the source of truth for the common case.
+2. **`RelayConfig.SandboxExtraAllowPaths: IReadOnlyList<string>?` is the per-repo escape hatch** for
+   exotic toolchains the baseline does not cover. It travels in `.relay/config.json` next to
+   `testCmd`, so a repo with an unusual cache dir is self-describing without forking the shipped
+   profile. When the sandbox is enabled, each entry is appended as an `-a <path>` flag to BOTH the
+   Swival `nono run` invocation (`BuildLaunchTarget`) and the verification `nono run` invocation (B),
+   so Swival and verification see an identical grant set.
+
+   **Precedence / merge:** the effective allowlist is the **union** of the profile's grants and the
+   config field's `-a` flags (nono de-duplicates; order is irrelevant). Both layers grant **read+write**
+   — there is no read-only or write-only convention on the config field in this iteration (if a
+   read-only escape hatch is ever needed, add a separate `SandboxExtraReadPaths` later rather than
+   overloading this one). The config field never *removes* a grant; like nono's inheritance, it is
+   additive only.
+
+   **Validation / normalization** (do this in `RelayConfigLoader`: read the array like
+   `OptionalStringArray(root, "sandboxExtraAllowPaths")`, but route validation failures through the
+   error-returning path used by `TryReadStringArray`/`RelayConfigStatus` so a bad entry surfaces as a
+   config load error, not a silent drop): default `null`/empty (no extra grants); reject any entry
+   containing `..` (path traversal) with a load error; expand a leading `~` and `$HOME` to the user profile
+   in C# before passing to nono (nono expands `$HOME` itself, but normalize defensively); and require
+   each normalized path to resolve **under `$HOME` or under the workspace root** — an absolute path
+   pointing at `/etc`, `/System`, another user's home, or the credential trees is rejected, so the
+   escape hatch cannot be used to re-open the destructive surface the deny groups protect. Add the
+   field with a doc-comment to `RelayConfig.cs` (positional record; follow the `BoostTurnsTaskIds` /
+   `NewGuardPatterns` precedent) and document the `sandboxExtraAllowPaths` key in README §Sandbox.
+
+Keep the **env-redirect** option (B) in mind as a third, narrowest tool: redirecting a toolchain's
+cache into the already-granted workspace or `~/.config/swival` (via `NUGET_PACKAGES`, `GOCACHE`, `CARGO_HOME`,
 `npm_config_cache`, `UV_CACHE_DIR`, …) is an equally valid way to satisfy a write without widening
 the profile, and it keeps caches scoped per-run. Prefer the **narrowest** approach that lets
 `restore`/`build`/`test` pass: profile grant for shared immutable caches (NuGet packages), env-
@@ -297,26 +334,38 @@ extended allowlist applies to `restore`/`build`/`test`/guard/bootstrap/new-guard
 
 - Introduce a **sandbox-aware `ITestRunner`** — e.g. `SandboxedTestRunner` — that wraps an inner
   runner and, when the sandbox is enabled, transforms the command into a nono-wrapped invocation
-  before exec, applying the same `BuildSandboxEnvironment` redirects. Reuse the existing nono prefix
-  (factor `BuildLaunchTarget`'s `run -p vr-guard --allow-cwd --rollback --no-rollback-prompt --`
-  builder into a shared helper so the Swival path and the verification path can't drift). For a
-  shell command (`ShellTestRunner` semantics) the wrapped form is
-  `nono run -p vr-guard --allow-cwd --rollback --no-rollback-prompt -- /bin/sh -lc "<cmd>"`; for a
-  direct exec (`DirectExecTestRunner`, single script path) it is
-  `nono run ... -- <script> <args>`. The runner takes `RelayConfig` (for `BypassSandbox` and any
-  `SandboxExtraAllowPaths`) so it decides per-run.
+  before exec, applying the same `BuildSandboxEnvironment` redirects. **Factor the nono prefix into a
+  shared helper** so the Swival path and the verification path can't drift — extract
+  `BuildLaunchTarget`'s `run -p vr-guard --allow-cwd … --` builder, with **`rollback` as a parameter**
+  (the one deliberate difference: Swival passes `rollback: true` → emits `--rollback
+  --no-rollback-prompt`; verification passes `rollback: false` → omits them, per Decisions) and the
+  `SandboxExtraAllowPaths` entries appended as `-a <path>` flags. For a shell command (`ShellTestRunner`
+  semantics) the verification wrapped form is
+  `nono run -p vr-guard --allow-cwd [-a <extra> …] -- /bin/sh -lc "<cmd>"` (note: **no `--rollback`**);
+  for a direct exec (`DirectExecTestRunner`, single script path) it is
+  `nono run -p vr-guard --allow-cwd [-a <extra> …] -- <script> <args>`. The Swival form
+  (`BuildLaunchTarget`, unchanged) keeps `--rollback --no-rollback-prompt` between `--allow-cwd` and
+  `--`. The runner takes `RelayConfig` (for `BypassSandbox` and any `SandboxExtraAllowPaths`) so it
+  decides per-run.
 - **Wire it in production** at every site that currently constructs `ShellTestRunner` /
   `DirectExecTestRunner` for execution: `MainWindowViewModel.Execution.cs`,
   `tools/VisualRelay.RunTask/Program.cs`, `tools/VisualRelay.DrainQueue/Program.cs`. When
   `BypassSandbox == true`, the wrapper is a pass-through to the inner host runner (so the bypass
   checkbox still disables sandboxing for verification too — keeping ONE escape).
-- **Rollback consideration.** Swival's run uses `--rollback`; a verification run that only restores
-  packages and builds generally should not need rollback snapshots, and snapshotting every test run
-  could be slow. Decide deliberately: either drop `--rollback`/`--no-rollback-prompt` for the
-  verification wrapper (verification shouldn't be destroying workspace files — and if it does, that's
-  a bug to surface, not silently roll back), or keep it for symmetry. **State the choice and reasoning
-  in the PR.** (Recommendation: omit rollback for verification; keep `--allow-cwd` so the workspace
-  is writable for `obj/`/`.build/`/`node_modules/`.)
+- **Rollback — OMITTED for verification** (settled; see Decisions). The verification wrapper uses
+  `nono run -p vr-guard --allow-cwd --` **without** `--rollback` / `--no-rollback-prompt`. Rollback
+  exists to undo the *agent's* exploratory edits during the Swival run; a verification command
+  (test/guard/bootstrap/new-guard) that mutates the tree outside the workspace is **a bug to surface,
+  not silent state to undo** — rolling it back would hide a misconfigured `testCmd`/guard that writes
+  where it shouldn't. So verification does **not** snapshot/restore: if a verify command somehow
+  mutates a granted path it should not, that surfaces as a real effect (and the deny groups still
+  block the destructive surface regardless). This also avoids snapshotting on every test loop, which
+  would be slow. Keep `--rollback`/`--no-rollback-prompt` on the **Swival run only** (unchanged in
+  `BuildLaunchTarget`). Keep `--allow-cwd` on the verification wrapper so the workspace stays writable
+  for `obj/`/`.build/`/`node_modules/`. The shared nono-prefix builder (below) must therefore expose
+  rollback as a parameter (on for Swival, off for verification) — that is the *one* deliberate flag
+  difference between the two callers, and the shared-prefix test (§Tests) pins both shapes so they
+  cannot drift accidentally.
 - **Planning-phase runners** (`PlanPhaseRunner` / `RelayQueueController` `planTestRunner`) run in
   isolated worktrees and are read-only-ish; apply the same wrapping for consistency, or document why
   they stay on the host. (Plan stages 1–4 are read-only, so the risk is low, but the test/guard they
@@ -349,14 +398,18 @@ tests gate).
 ### Unit (always run)
 
 - **Sandboxed runner argument shape.** With `BypassSandbox == false`, `SandboxedTestRunner`
-  transforms `bun test` into an exec of `nono` with args beginning
-  `run -p vr-guard --allow-cwd … -- /bin/sh -lc "bun test"` (assert the exact nono prefix via the
-  shared builder, the `--` separator, and that the inner command/script is unchanged). With
+  transforms `bun test` into an exec of `nono` whose args are exactly
+  `run -p vr-guard --allow-cwd -- /bin/sh -lc "bun test"` — assert the prefix via the shared builder,
+  the `--` separator, that the inner command/script is unchanged, **and that `--rollback` /
+  `--no-rollback-prompt` are ABSENT** (the verification path omits rollback per Decisions). With
   `BypassSandbox == true`, it execs the inner host runner unchanged (no `nono`, no `run`). Mirror the
   existing assertions in `tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs`
   (`BuildLaunchTarget_*`).
-- **Shared nono-prefix builder.** A single test pins the prefix so the Swival path and verification
-  path provably use the same flags (guard against drift).
+- **Shared nono-prefix builder pins BOTH shapes.** One test pins the shared builder so the two
+  callers provably differ in exactly one flag and nothing else: with `rollback: true` (Swival) it
+  emits `run -p vr-guard --allow-cwd --rollback --no-rollback-prompt --`; with `rollback: false`
+  (verification) it emits `run -p vr-guard --allow-cwd --` — identical but for the rollback pair.
+  Also assert that `SandboxExtraAllowPaths` entries are appended as `-a <path>` flags in both shapes.
 - **Profile JSON is valid and well-formed.** Parse `packaging/nono/vr-guard.json`; assert it
   `extends: "swival"`, contains the new `.NET`/`Swift` allow entries, and uses `$HOME`/`when`
   expansion (not hardcoded `/Users/...`). Optionally shell out to `nono profile validate
@@ -364,66 +417,113 @@ tests gate).
 - **New-guard containment.** A manifest entry `tools/guards/../../evil.sh` is dropped (not executed)
   by `NewGuardProbeAsync`; a legitimate `tools/guards/check.sh` is still selected. Assert via the
   candidate-selection seam (extract it if not already testable) without executing anything.
-- **Config field (if mechanism #2 chosen).** `RelayConfigLoader` reads `sandboxExtraAllowPaths`
-  from `.relay/config.json` and defaults it to empty/null; the runner appends `-a <expanded path>`
-  for each.
+- **Config field `sandboxExtraAllowPaths` (always present — both mechanisms ship).**
+  `RelayConfigLoader` reads `sandboxExtraAllowPaths` from `.relay/config.json` and defaults it to
+  empty/null; the runner appends `-a <expanded path>` for each, in BOTH the Swival and verification
+  invocations. **Validation/normalization asserts:** a leading `~`/`$HOME` expands to the user
+  profile; an entry containing `..` produces a config **load error** (not a silent drop); an absolute
+  path outside `$HOME` and outside the workspace root (e.g. `/etc/x`, another user's home) is
+  **rejected**; a legitimate `$HOME/.cache/exotic-tool` is accepted and forwarded as `-a`.
 
 ### Integration (opt-in; skip when `nono` not on PATH — prove the escape is closed)
 
 Use the `nono why` oracle for cheap, deterministic allow/deny assertions (no real build needed for
 the path checks), plus at least one real in-sandbox build for .NET and Swift:
 
-- **Allowed paths resolve r+w under vr-guard.** For each new grant
-  (`~/.nuget/packages`, `~/.dotnet`, `~/.swiftpm`, `~/Library/Caches/org.swift.swiftpm`,
-  `~/.cache/pip`, `~/.npm`), assert `nono why -p vr-guard --op readwrite --path <p>` reports
-  **allowed** (parse for `ALLOWED` / absence of `DENIED`). These are the regression tests for §A —
-  they FAIL today (all currently `DENIED`) and pass after the grants land.
-- **Denied paths stay denied.** `nono why -p vr-guard --op write --path ~/Documents/x` (and
-  `~/Pictures`, `~/Desktop`, a credential path like `~/.ssh`) reports **DENIED**. This proves the
-  widened allowlist did not open the destructive surface.
-- **Real .NET build in-sandbox.** In a scratch .NET repo, run the configured test/guard command
-  through `SandboxedTestRunner` (sandbox enabled) and assert `dotnet restore` + `dotnet build` +
-  `dotnet test` exit 0 — i.e. NuGet restore writes succeed under nono. (This is the real-run smoke
-  the memory `pipeline-mocks-process-layer-blindspot` warns is needed — a mocked test can pass while
-  the real nono-wrapped exec breaks.)
-- **Real Swift build in-sandbox.** In a scratch `Package.swift` repo, `swift build` + `swift test`
-  exit 0 under the sandbox (SwiftPM cache + `.build/` writes succeed).
+- **Allowed paths resolve r+w under vr-guard — per OS.** Assert `nono why -p vr-guard --op readwrite
+  --path <p>` reports **allowed** (parse for `ALLOWED` / absence of `DENIED`) for the platform's
+  cache set. On **macOS**: `~/.nuget/packages`, `~/.dotnet`, `~/.swiftpm`,
+  `~/Library/Caches/org.swift.swiftpm`, `~/Library/Caches/pip`, `~/.npm`. On **Linux**:
+  `~/.nuget/packages`, `~/.dotnet`, `~/.swiftpm`, `~/.cache/org.swift.swiftpm`, `~/.cache/pip`,
+  `~/.npm`, `~/go/pkg/mod`, `~/.cache/go-build`. These are the regression tests for §A — they FAIL
+  today (all currently `DENIED`) and pass after the grants land. Because the `when` predicates gate
+  the OS-specific paths, this test gives Landlock-vs-Seatbelt path granularity real coverage rather
+  than assuming the macOS grants carry over.
+- **Denied paths stay denied (both OS).** `nono why -p vr-guard --op write --path ~/Documents/x`
+  (and `~/Pictures`, `~/Desktop`, a credential path like `~/.ssh`) reports **DENIED**. This proves the
+  widened allowlist did not open the destructive surface. (`~/Pictures`/`~/Movies` are macOS-shaped;
+  on Linux substitute the XDG user dirs, e.g. `~/.ssh` and `~/.gnupg`, which must stay denied.)
+- **Real .NET build in-sandbox — macOS AND Linux.** In a scratch .NET repo, run the configured
+  test/guard command through `SandboxedTestRunner` (sandbox enabled) and assert `dotnet restore` +
+  `dotnet build` + `dotnet test` exit 0 — i.e. NuGet restore writes succeed under nono. **This must
+  pass on both macOS (Seatbelt) and Linux (Landlock)** so the per-OS `.NET` grants are validated, not
+  assumed. (This is the real-run smoke the memory `pipeline-mocks-process-layer-blindspot` warns is
+  needed — a mocked test can pass while the real nono-wrapped exec breaks.)
+- **Real non-.NET build in-sandbox — macOS AND Linux.** At least one non-.NET ecosystem must also pass
+  a real in-sandbox restore+build+test on both platforms (so a non-`~/Library` cache layout is
+  exercised on Linux). Swift is the canonical choice (scratch `Package.swift`: `swift build` + `swift
+  test` exit 0 under the sandbox — SwiftPM cache + `.build/` writes succeed) **where SwiftPM is
+  available on the Linux runner**; if Swift-on-Linux is not provisioned in CI, substitute Node
+  (`npm ci` + `npm test`) or Go (`go build` + `go test ./...`) as the cross-platform non-.NET smoke.
+  The requirement is: .NET + one other ecosystem, each green in-sandbox on macOS and Linux.
 - **Bypass still escapes.** With `bypassSandbox: true`, the same commands run on the host (no nono in
   the process tree) — assert the runner did not wrap.
 
 ## Done when
 
 - The four verification surfaces — test command, guard (`IntegrateGuardAsync`/`RunGuardCheckAsync`),
-  bootstrap smoke-check, and `NewGuardProbeAsync` — execute under `nono run -p vr-guard` when the
-  sandbox is enabled (the default), at every production wiring site
-  (`MainWindowViewModel.Execution.cs`, `RunTask`, `DrainQueue`). No verification command runs on the
-  host while the sandbox is on, except the deliberately-bypassed path.
+  bootstrap smoke-check, and `NewGuardProbeAsync` — execute under `nono run -p vr-guard --allow-cwd`
+  **without `--rollback`** when the sandbox is enabled (the default), at every production wiring site
+  (`MainWindowViewModel.Execution.cs`, `RunTask`, `DrainQueue`). The Swival run keeps `--rollback
+  --no-rollback-prompt`; the two callers share one prefix builder differing only in that flag pair.
+  No verification command runs on the host while the sandbox is on, except the deliberately-bypassed
+  path.
 - `packaging/nono/vr-guard.json` grants the per-ecosystem read/write paths (≥ .NET and Swift fully;
-  Node/Python/Go/Rust covered by group-or-grant), expressed with `$HOME`/`$XDG_*`/`when` expansion,
-  and `nono why` confirms each new path is r+w-allowed while `~/Documents`/`~/Pictures`/`~/.ssh`
-  remain denied.
-- A real `dotnet restore`/`build`/`test` and a real `swift build`/`test` complete **in-sandbox**
-  (scratch repos), proving package-manager writes succeed under nono.
+  Node/Python/Go/Rust covered by group-or-grant), with **explicit macOS and Linux cache entries**
+  expressed via `$HOME`/`$XDG_*`/`when` predicates, and `nono why` confirms each new path is
+  r+w-allowed **on its platform** while `~/Documents`/`~/Pictures`/`~/.ssh` remain denied on both.
+- A real `dotnet restore`/`build`/`test` **and** a real build+test for at least one non-.NET ecosystem
+  (Swift, or Node/Go where Swift-on-Linux is unavailable) complete **in-sandbox on BOTH macOS and
+  Linux** (scratch repos), proving package-manager writes succeed under both Seatbelt and Landlock —
+  the path-granularity difference is validated, not assumed.
 - The `bypassSandbox` checkbox remains the **only** no-sandbox path — both Swival and verification
   honor it, and there is no other host escape.
 - `NewGuardProbeAsync` rejects manifest entries that resolve outside the guards directory.
-- The allowlist is extensible (documented profile grants and/or a config field) so VR can drive a
-  codebase whose toolchain the default set does not cover.
+- The allowlist is extensible via **both** layers: the `vr-guard.json` per-ecosystem baseline (the
+  declarative default any nono user can read) **and** `RelayConfig.SandboxExtraAllowPaths` in
+  `.relay/config.json` (the per-repo escape hatch, validated to reject `..` and out-of-`$HOME`/
+  -workspace paths, appended as `-a` flags to both nono invocations).
 - `./visual-relay check` is green; all touched files stay under 300 lines; Conventional Commit
   subjects.
 
-## Notes / open questions for the author
+## Decisions
 
-- **Profile-grant vs env-redirect vs config-field.** The spec leaves the *mechanism* of
-  extensibility (profile block vs `SandboxExtraAllowPaths` config field) and the *narrowness* choice
-  (shared profile grant vs per-run env-redirect into the workspace) to the implementer, with
-  recommendations. If the user has a preference (declarative profile that any nono user can read, vs
-  config-in-`.relay/` that travels with the repo), that should be settled before building.
-- **`--rollback` on the verification wrapper.** Recommended OMITTED (verification shouldn't be
-  rolling back workspace state; a destructive verify command is a bug to surface). Confirm.
-- **Linux/Landlock path granularity.** Seatbelt and Landlock differ; the profile's `when` predicates
-  cover the macOS-only `~/Library/...` paths and Linux-only `~/.cache/...` equivalents, but the
-  Swift-on-Linux and Go/Rust-on-Linux cache layouts should be validated on Linux separately (the
-  `swival` base's `*_linux` groups + explicit `$XDG_CACHE_HOME` grants are the starting point).
+These three design questions are **settled** — the body above is written to them; an implementer
+needs no further design input.
+
+1. **How to express the extra allow-paths → BOTH, with distinct roles** (profile baseline + config
+   escape hatch). The `vr-guard.json` profile carries the per-ecosystem baseline (.NET/Swift/Node/
+   Python/Go/Rust) so the common toolchains work out-of-the-box and the grant set is declarative and
+   readable by any nono user; `RelayConfig.SandboxExtraAllowPaths` (a `string[]` in `.relay/config.json`)
+   is the per-repo escape hatch for exotic toolchains, appended as `-a` flags to both the Swival and
+   verification `nono run` invocations. The effective allowlist is their **union** (nono de-dups),
+   both layers read+write, additive-only. *Why:* the two needs are different layers — a readable,
+   shared, version-controlled default that benefits every repo, and a repo-local override that travels
+   with the codebase that needs it — so forcing a single mechanism would either bloat the shipped
+   profile with one-off paths or hide the common grants behind per-repo config. The config field is
+   validated (reject `..`; expand `~`/`$HOME`; require resolution under `$HOME` or workspace) so the
+   escape hatch cannot re-open the destructive surface the deny groups protect.
+
+2. **`--rollback` on the verification wrapper → OMIT it** (verification runs `nono … --allow-cwd --`
+   with no rollback). Rollback stays on the Swival run only. *Why:* rollback exists to undo the
+   *agent's* exploratory edits during a Swival run. A verification command (test/guard/bootstrap/
+   new-guard) that mutates the tree outside the workspace is a **bug to surface** — a misconfigured
+   `testCmd`/guard writing where it shouldn't — not silent state to undo; rolling it back would mask
+   the misconfiguration. Omitting it also avoids snapshotting on every verify loop (slower). The deny
+   groups still block the destructive surface regardless, so omitting rollback does not widen risk.
+
+3. **Linux/Landlock → enumerate the Linux cache set explicitly and validate on Linux.** The profile
+   carries macOS paths (`~/Library/...`) and their Linux equivalents under `when: linux` predicates:
+   .NET `~/.nuget/packages` + `~/.dotnet` (shared) with Linux http-cache `~/.local/share/NuGet` +
+   `$XDG_CACHE_HOME/NuGet`; Swift `~/.swiftpm` (shared) + `~/.cache/org.swift.swiftpm` /
+   `$XDG_CACHE_HOME/org.swift.swiftpm` (Linux, no `~/Library`); Node `~/.npm` + `~/.cache`; Python
+   `~/.cache/{pip,uv}` + `~/.local`; Go `~/go/pkg/mod` + `~/.cache/go-build`; Rust `~/.cargo/registry`
+   + `target/`. **Done-when requires** an in-sandbox restore+build+test to pass on **both macOS and
+   Linux** for .NET and at least one non-.NET ecosystem. *Why:* Seatbelt and Landlock differ in path
+   granularity, so the Linux layout is specified (not derived as "macOS minus `~/Library`") and proven
+   by a real cross-platform build rather than assumed from the macOS result.
+
+## Notes
+
 - **Pre-config `init` validation** is intentionally left host-side (it runs before a repo is set up
-  and before Swival is involved); flagged here so it is not mistaken for a missed escape.
+  and before Swival is involved); noted here so it is not mistaken for a missed escape.
