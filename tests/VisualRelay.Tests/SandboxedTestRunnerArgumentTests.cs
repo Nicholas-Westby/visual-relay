@@ -10,8 +10,10 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
     {
-        // "bun test" → nono run -p vr-guard --allow-cwd -- /bin/sh -lc "bun test"
-        // --rollback / --no-rollback-prompt are ABSENT (verification path).
+        // "bun test" → nono run -p vr-guard --allow-cwd -- /bin/sh -c "bun test"
+        // Non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
+        // rather than re-resolving a different dotnet/PATH from a login profile (which caused
+        // runtime-mismatch launch failures under nono). --rollback/--no-rollback-prompt ABSENT.
         var config = TestConfig() with { BypassSandbox = false };
         var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
 
@@ -22,7 +24,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
         Assert.Equal("/bin/sh", args[5]);
-        Assert.Equal("-lc \"bun test\"", args[6]);
+        Assert.Equal("-c \"bun test\"", args[6]);
     }
 
     [Fact]

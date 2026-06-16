@@ -68,10 +68,15 @@ public sealed class SandboxedTestRunner : ITestRunner
 
         if (_inner is ShellTestRunner)
         {
+            // Non-login shell (-c, not -lc): the sandboxed verify must use the SAME toolchain the
+            // harness/agent built with (inherited from the harness's environment), not whatever a
+            // login shell re-resolves from the user's profile/PATH. A login shell here re-sourced a
+            // different dotnet (e.g. ~/.dotnet) than the build's, causing runtime-mismatch launch
+            // failures under nono. Inheriting the harness env keeps build and verify on one toolchain.
             var args = new List<string>(prefix)
             {
                 "/bin/sh",
-                $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+                $"-c \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
             };
             return ("nono", args);
         }
