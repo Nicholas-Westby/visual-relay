@@ -64,9 +64,7 @@ public sealed class MainWindowViewModelLayoutTests
     public void ToggleFocus_FromDefaultState_CollapsesAllFourAndSetsIsFocused()
     {
         var vm = new MainWindowViewModel();
-
         vm.ToggleFocusCommand.Execute(null);
-
         Assert.True(vm.IsQueueCollapsed);
         Assert.True(vm.IsStagesCollapsed);
         Assert.True(vm.IsRunLogCollapsed);
@@ -79,12 +77,9 @@ public sealed class MainWindowViewModelLayoutTests
     public void ToggleFocus_Twice_RestoresExactPreFocusFlags()
     {
         var vm = new MainWindowViewModel();
-
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
-
         vm.ToggleFocusCommand.Execute(null);
-
         Assert.False(vm.IsFocused);
         Assert.False(vm.IsQueueCollapsed);
         Assert.False(vm.IsStagesCollapsed);
@@ -96,22 +91,18 @@ public sealed class MainWindowViewModelLayoutTests
     public void ToggleFocus_AfterIndividualCollapse_RestoresThatOneCollapsed()
     {
         var vm = new MainWindowViewModel();
-
         // Pre-collapse just the Queue, then focus.
         vm.ToggleQueueCommand.Execute(null);
         Assert.True(vm.IsQueueCollapsed);
         Assert.False(vm.IsFocused);
-
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
         Assert.True(vm.IsQueueCollapsed);
         Assert.True(vm.IsStagesCollapsed);
         Assert.True(vm.IsRunLogCollapsed);
         Assert.True(vm.IsLlmCommandsCollapsed);
-
         // Unfocus — only Queue should still be collapsed.
         vm.ToggleFocusCommand.Execute(null);
-
         Assert.False(vm.IsFocused);
         Assert.True(vm.IsQueueCollapsed);
         Assert.False(vm.IsStagesCollapsed);
@@ -123,16 +114,13 @@ public sealed class MainWindowViewModelLayoutTests
     public void FocusSnapshot_HandlesManualChangesWhileFocused()
     {
         var vm = new MainWindowViewModel();
-
         // Focus from default.
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
-
         // Manually expand Queue while focused.
         vm.ToggleQueueCommand.Execute(null);
         Assert.False(vm.IsQueueCollapsed);
-        Assert.False(vm.IsFocused); // not all collapsed
-
+        Assert.False(vm.IsFocused);
         // Focus again — snapshot is now {Queue=false, rest=true}.
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
@@ -140,7 +128,6 @@ public sealed class MainWindowViewModelLayoutTests
         Assert.True(vm.IsStagesCollapsed);
         Assert.True(vm.IsRunLogCollapsed);
         Assert.True(vm.IsLlmCommandsCollapsed);
-
         // Unfocus restores: Queue was NOT collapsed before focus.
         vm.ToggleFocusCommand.Execute(null);
         Assert.False(vm.IsFocused);
@@ -154,18 +141,14 @@ public sealed class MainWindowViewModelLayoutTests
     public void IsActivityColumnCollapsed_TrueOnlyWhenBothRightFlagsSet()
     {
         var vm = new MainWindowViewModel();
-
         Assert.False(vm.IsActivityColumnCollapsed);
-
         // Only run log collapsed.
         vm.ToggleRunLogCommand.Execute(null);
         Assert.False(vm.IsActivityColumnCollapsed);
-
         // Only LLM commands collapsed.
         vm.ToggleRunLogCommand.Execute(null);
         vm.ToggleLlmCommandsCommand.Execute(null);
         Assert.False(vm.IsActivityColumnCollapsed);
-
         // Both collapsed.
         vm.ToggleRunLogCommand.Execute(null);
         Assert.True(vm.IsActivityColumnCollapsed);
@@ -175,7 +158,6 @@ public sealed class MainWindowViewModelLayoutTests
     public void IsFocused_TrueOnlyWhenAllFourFlagsSet()
     {
         var vm = new MainWindowViewModel();
-
         Assert.False(vm.IsFocused);
         vm.IsQueueCollapsed = true;
         Assert.False(vm.IsFocused);
@@ -193,46 +175,109 @@ public sealed class MainWindowViewModelLayoutTests
     public void FocusButtonLabels_ReflectFocusedState()
     {
         var vm = new MainWindowViewModel();
-
         Assert.Equal("Focus task", vm.FocusButtonLabel);
-        Assert.Equal("⤢", vm.FocusButtonIcon);
+        Assert.Equal("\u2922", vm.FocusButtonIcon);
         Assert.Equal("Collapse all surrounding panels to maximize the task detail", vm.FocusButtonTooltip);
-
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
         Assert.Equal("Restore panels", vm.FocusButtonLabel);
-        Assert.Equal("⤡", vm.FocusButtonIcon);
+        Assert.Equal("\u2921", vm.FocusButtonIcon);
         Assert.Equal("Restore all panels to their previous layout", vm.FocusButtonTooltip);
-
         // Partial collapse: still shows "Focus task".
         vm.ToggleFocusCommand.Execute(null);
         vm.ToggleQueueCommand.Execute(null);
         Assert.False(vm.IsFocused);
         Assert.Equal("Focus task", vm.FocusButtonLabel);
-        Assert.Equal("⤢", vm.FocusButtonIcon);
+        Assert.Equal("\u2922", vm.FocusButtonIcon);
     }
 
     [Fact]
-    public void PerPanelChevrons_ReflectCollapsedState()
+    public void Chevrons_FollowDirectionAndAxisScheme()
     {
         var vm = new MainWindowViewModel();
+        // Queue (left edge): header ◀ expanded (collapse left), ▶ collapsed.
+        Assert.Equal("\u25C0", vm.QueueChevron);
+        Assert.Equal("\u25B6", vm.QueueRailChevron);
+        vm.IsQueueCollapsed = true;
+        Assert.Equal("\u25B6", vm.QueueChevron);
+        Assert.Equal("\u25B6", vm.QueueRailChevron);
+        vm.IsQueueCollapsed = false;
+        // Stages (vertical fold): ▾ expanded, ▸ collapsed.
+        Assert.Equal("\u25BE", vm.StagesChevron);
+        vm.IsStagesCollapsed = true;
+        Assert.Equal("\u25B8", vm.StagesChevron);
+        vm.IsStagesCollapsed = false;
+        Assert.Equal("\u25BE", vm.StagesChevron);
+        // Run Log: sibling open → vertical ▾/▸; both collapsed → ▶.
+        Assert.Equal("\u25BE", vm.RunLogChevron);
+        vm.IsRunLogCollapsed = true;
+        Assert.Equal("\u25B8", vm.RunLogChevron);
+        vm.IsRunLogCollapsed = false;
+        vm.IsLlmCommandsCollapsed = true;
+        Assert.Equal("\u25BE", vm.RunLogChevron); // sibling collapsed, column NOT collapsed → fold in place
+        vm.IsRunLogCollapsed = true;
+        Assert.Equal("\u25B6", vm.RunLogChevron); // both collapsed → column-to-rail slide
+        vm.IsLlmCommandsCollapsed = false;
+        vm.IsRunLogCollapsed = false;
+        // LLM Commands: same dual-mode pattern.
+        Assert.Equal("\u25BE", vm.LlmCommandsChevron);
+        vm.IsLlmCommandsCollapsed = true;
+        Assert.Equal("\u25B8", vm.LlmCommandsChevron);
+        vm.IsLlmCommandsCollapsed = false;
+        vm.IsRunLogCollapsed = true;
+        Assert.Equal("\u25BE", vm.LlmCommandsChevron); // sibling collapsed, column NOT collapsed → fold in place
+        vm.IsLlmCommandsCollapsed = true;
+        Assert.Equal("\u25B6", vm.LlmCommandsChevron); // both collapsed → column-to-rail slide
+        vm.IsRunLogCollapsed = false;
+        vm.IsLlmCommandsCollapsed = false;
+        // Activity rail: always ◀ (expand left from right edge).
+        Assert.Equal("\u25C0", vm.ActivityRailChevron);
+        // Header tooltips flip.
+        Assert.Equal("Collapse Queue", vm.QueueHeaderTooltip);
+        vm.IsQueueCollapsed = true;
+        Assert.Equal("Expand Queue", vm.QueueHeaderTooltip);
+        vm.IsQueueCollapsed = false;
+        Assert.Equal("Collapse Stages", vm.StagesHeaderTooltip);
+        vm.IsStagesCollapsed = true;
+        Assert.Equal("Expand Stages", vm.StagesHeaderTooltip);
+        vm.IsStagesCollapsed = false;
+        Assert.Equal("Collapse Run Log", vm.RunLogHeaderTooltip);
+        vm.IsRunLogCollapsed = true;
+        Assert.Equal("Expand Run Log", vm.RunLogHeaderTooltip);
+        vm.IsRunLogCollapsed = false;
+        Assert.Equal("Collapse LLM Commands", vm.LlmCommandsHeaderTooltip);
+        vm.IsLlmCommandsCollapsed = true;
+        Assert.Equal("Expand LLM Commands", vm.LlmCommandsHeaderTooltip);
+    }
 
-        Assert.Equal("◀", vm.QueueChevron);
-        Assert.Equal("◀", vm.StagesChevron);
-        Assert.Equal("◀", vm.RunLogChevron);
-        Assert.Equal("◀", vm.LlmCommandsChevron);
+    [Fact]
+    public void ChevronPropertyChanged_FiresOnFlagChange()
+    {
+        var vm = new MainWindowViewModel();
+        var received = new List<string>();
+        vm.PropertyChanged += (_, e) => received.Add(e.PropertyName!);
 
-        vm.ToggleQueueCommand.Execute(null);
-        Assert.Equal("▶", vm.QueueChevron);
-        Assert.Equal("◀", vm.StagesChevron);
+        received.Clear();
+        vm.IsQueueCollapsed = true;
+        Assert.Contains(nameof(MainWindowViewModel.QueueChevron), received);
+        Assert.Contains(nameof(MainWindowViewModel.QueueRailChevron), received);
+        Assert.Contains(nameof(MainWindowViewModel.QueueHeaderTooltip), received);
 
-        vm.ToggleStagesCommand.Execute(null);
-        Assert.Equal("▶", vm.StagesChevron);
+        received.Clear();
+        vm.IsStagesCollapsed = true;
+        Assert.Contains(nameof(MainWindowViewModel.StagesChevron), received);
+        Assert.Contains(nameof(MainWindowViewModel.StagesHeaderTooltip), received);
 
-        vm.ToggleRunLogCommand.Execute(null);
-        Assert.Equal("▶", vm.RunLogChevron);
+        received.Clear();
+        vm.IsRunLogCollapsed = true;
+        Assert.Contains(nameof(MainWindowViewModel.RunLogChevron), received);
+        Assert.Contains(nameof(MainWindowViewModel.RunLogHeaderTooltip), received);
+        Assert.Contains(nameof(MainWindowViewModel.LlmCommandsChevron), received);
 
-        vm.ToggleLlmCommandsCommand.Execute(null);
-        Assert.Equal("▶", vm.LlmCommandsChevron);
+        received.Clear();
+        vm.IsLlmCommandsCollapsed = true;
+        Assert.Contains(nameof(MainWindowViewModel.LlmCommandsChevron), received);
+        Assert.Contains(nameof(MainWindowViewModel.LlmCommandsHeaderTooltip), received);
+        Assert.Contains(nameof(MainWindowViewModel.RunLogChevron), received);
     }
 }
