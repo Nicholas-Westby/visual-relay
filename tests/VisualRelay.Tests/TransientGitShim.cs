@@ -3,12 +3,13 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Implements the <see cref="GitCommitter.RawGitRunner"/> signature.
+/// Implements <see cref="IGitInvoker"/> for tests that need to simulate
+/// transient git failures within the <see cref="GitCommitter"/> retry loop.
 /// Intercepts git calls whose argument list contains a configured substring
 /// and returns synthetic failures for a specified count before falling
 /// through to the real git process.
 /// </summary>
-internal sealed class TransientGitShim
+internal sealed class TransientGitShim : IGitInvoker
 {
     private readonly Dictionary<string, int> _failureCounts = new();
     private int _exitCode = 128;
@@ -28,7 +29,8 @@ internal sealed class TransientGitShim
 
     public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath, IEnumerable<string> arguments, CancellationToken ct,
-        TimeSpan? timeout, IReadOnlyDictionary<string, string>? environment)
+        TimeSpan? timeout, IReadOnlyDictionary<string, string>? environment,
+        CancellationToken killToken = default, Action<string>? onActivity = null)
     {
         var argsList = arguments.ToList();
         var argsStr = string.Join(' ', argsList);
@@ -41,11 +43,9 @@ internal sealed class TransientGitShim
             }
         }
 
-        // Fall through to real git.  Using ProcessCapture directly avoids
-        // coupling to GitInvoker.Override, eliminating cross-collection
-        // races with GitInvokerTests that also manipulate the static Override.
-        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale
-        // nix-store path inherited from the shell environment.
+        // Fall through to real git. Strip DEVELOPER_DIR/SDKROOT so xcrun
+        // shim cannot resurrect a stale nix-store path inherited from the
+        // shell environment.
         return await ProcessCapture.RunAsync("git", argsList,
             rootPath, timeout ?? TimeSpan.FromSeconds(30), ct, environment,
             envRemove: new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" });

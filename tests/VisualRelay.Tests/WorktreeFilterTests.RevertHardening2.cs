@@ -133,44 +133,21 @@ public sealed partial class WorktreeFilterTests
         // Override rm to return the realistic benign result: with
         // --ignore-unmatch, real git exits 0 on an absent pathspec.  The new
         // ExitCode != 0 guard (Hole 2) must NOT flag this exit-0 case.
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
         var rmCalled = false;
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            var argv = args as string[] ?? args.ToArray();
-            if (rootPath != myRoot)
-            {
-                return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. argv], rootPath,
-                    timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-            }
-
-            if (argv.Any(a => a == "rm"))
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Any(a => a == "rm"),
+            _ =>
             {
                 rmCalled = true;
-                // --ignore-unmatch zeroes the absent-pathspec case in real git.
                 return Task.FromResult((0, "", false));
-            }
+            });
 
-            return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. argv], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-        };
+        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None);
-
-            Assert.True(rmCalled, "rm --cached should have been called");
-            Assert.Null(result.Error);
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
+        Assert.True(rmCalled, "rm --cached should have been called");
+        Assert.Null(result.Error);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -182,7 +159,7 @@ public sealed partial class WorktreeFilterTests
     /// the untracked-delete phase from running (no half-mutation).  Errors
     /// from both phases must be folded into <c>WorktreeFilterResult.Error</c>,
     /// and <c>TrackedDiscarded</c> must list only paths actually processed.
-    /// Uses <see cref="GitInvoker.Override"/> (checkout timeout + absent-from-HEAD
+    /// Uses intercepted <see cref="IGitInvoker"/> (checkout timeout + absent-from-HEAD
     /// probe) — no OS-specific filesystem manipulation.
     /// </summary>
     [Fact]
@@ -191,8 +168,6 @@ public sealed partial class WorktreeFilterTests
         using var repo = TestRepository.Create();
 
         // ── Set up two tracked files committed to HEAD ─────────────
-        // Both are created and committed in a single setup so there is
-        // no ambiguity about what git sees.
         var dir = Path.Combine(repo.Root, "src");
         Directory.CreateDirectory(dir);
         var prodPathA = Path.Combine(repo.Root, "src", "app.cs");
@@ -214,69 +189,46 @@ public sealed partial class WorktreeFilterTests
         var untrackedPath = Path.Combine(repo.Root, "src", "junk.cs");
         await File.WriteAllTextAsync(untrackedPath, "junk");
 
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            var argv = args as string[] ?? args.ToArray();
-            if (rootPath != myRoot)
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Any(a => a == "checkout" || a == "cat-file"),
+            argv =>
             {
-                return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. argv], rootPath,
-                    timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-            }
+                if (argv.Any(a => a == "checkout"))
+                {
+                    var path = argv.Last();
+                    if (path == "src/app.cs")
+                        return Task.FromResult((0, "", true)); // timeout
+                    if (path == "src/lib.cs")
+                        return Task.FromResult((1, "simulated failure", false));
+                    return Task.FromResult((0, "", false));
+                }
+                if (argv.Any(a => a.Contains("src/lib.cs")))
+                    return Task.FromResult((1, "", false));
+                return Task.FromResult((0, "", false));
+            });
 
-            if (argv.Any(a => a == "checkout"))
-            {
-                var path = argv.Last();
-                if (path == "src/app.cs")
-                    return Task.FromResult((0, "", true)); // timeout
-                if (path == "src/lib.cs")
-                    return Task.FromResult((1, "simulated failure", false));
-                return ProcessCapture.RunAsync(
-                    binary, ["-C", rootPath, .. argv], rootPath,
-                    timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-            }
+        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
-            // Make src/lib.cs appear absent from HEAD for the rm+delete path.
-            if (argv.Any(a => a == "cat-file") && argv.Any(a => a.Contains("src/lib.cs")))
-                return Task.FromResult((1, "", false));
+        // Error must be non-null — checkout timeout produces an error.
+        Assert.NotNull(result.Error);
+        Assert.Contains("src/app.cs", result.Error, StringComparison.Ordinal);
 
-            // All other commands run normally.
-            return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. argv], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-        };
+        // No half-mutation: phase 4 (untracked delete) completed.
+        Assert.False(File.Exists(untrackedPath),
+            "untracked file must be deleted — phase 4 completed despite tracked-phase errors");
 
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None);
+        // Tracked file A survived (checkout timed out → not deleted).
+        Assert.True(File.Exists(prodPathA), "tracked file A must survive timed-out checkout");
+        Assert.Equal("modified-A", await File.ReadAllTextAsync(prodPathA));
 
-            // Error must be non-null — checkout timeout produces an error.
-            Assert.NotNull(result.Error);
-            Assert.Contains("src/app.cs", result.Error, StringComparison.Ordinal);
+        // Tracked file B was deleted (absent-from-HEAD path).
+        Assert.False(File.Exists(prodPathB), "absent-from-HEAD tracked file B must be deleted");
 
-            // No half-mutation: phase 4 (untracked delete) completed.
-            Assert.False(File.Exists(untrackedPath),
-                "untracked file must be deleted — phase 4 completed despite tracked-phase errors");
-
-            // Tracked file A survived (checkout timed out → not deleted).
-            Assert.True(File.Exists(prodPathA), "tracked file A must survive timed-out checkout");
-            Assert.Equal("modified-A", await File.ReadAllTextAsync(prodPathA));
-
-            // Tracked file B was deleted (absent-from-HEAD path).
-            Assert.False(File.Exists(prodPathB), "absent-from-HEAD tracked file B must be deleted");
-
-            // TrackedDiscarded lists only paths actually processed.
-            Assert.DoesNotContain("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-            Assert.Contains("src/lib.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-            Assert.Contains("src/junk.cs", result.UntrackedDeleted, StringComparer.Ordinal);
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
+        // TrackedDiscarded lists only paths actually processed.
+        Assert.DoesNotContain("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
+        Assert.Contains("src/lib.cs", result.TrackedDiscarded, StringComparer.Ordinal);
+        Assert.Contains("src/junk.cs", result.UntrackedDeleted, StringComparer.Ordinal);
     }
 }

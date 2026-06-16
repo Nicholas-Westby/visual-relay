@@ -21,7 +21,7 @@ public sealed class ConsoleTaskRunner(string mainRootPath, RelayConfig config, I
             Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(consoleSink, fileSink);
         var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
-        var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink);
+        var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink, new GitInvoker());
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);
     }

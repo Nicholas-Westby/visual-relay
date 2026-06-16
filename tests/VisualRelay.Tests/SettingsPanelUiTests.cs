@@ -16,20 +16,9 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 [Collection("Headless")]
-public sealed class SettingsPanelUiTests : IDisposable
+public sealed class SettingsPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
-
-    public SettingsPanelUiTests()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = _env;
-    }
-
-    public void Dispose()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = null;
-        _env.Clear();
-    }
 
     private void EnsureNoUserEnv() =>
         _env["XDG_CONFIG_HOME"] = null;
@@ -104,7 +93,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -123,7 +112,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -167,7 +156,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -191,7 +180,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -224,7 +213,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         WriteCommitConfig(repo, commitProofArtifacts: true);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-from-env-file\nDEEPSEEK_API_KEY=sk-deepseek-999\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
 
         // Before toggling settings, key states should already be populated
@@ -250,7 +239,7 @@ public sealed class SettingsPanelUiTests : IDisposable
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();

@@ -14,8 +14,9 @@ public sealed partial class SwivalSubagentRunner
     /// git error / unparseable JSON).
     /// </summary>
     internal static async Task<string?> CheckManifestAgainstGitignoreAsync(
-        string json, int stageNumber, string targetRoot, CancellationToken cancellationToken)
+        string json, int stageNumber, string targetRoot, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
         var key = stageNumber == 4 ? "manifest" : "amendManifest";
         List<string> paths;
         try
@@ -68,7 +69,7 @@ public sealed partial class SwivalSubagentRunner
         var args = new List<string> { "check-ignore", "--" };
         args.AddRange(existingEntries);
 
-        var result = await GitInvoker.RunAsync(targetRoot, args, cancellationToken);
+        var result = await gi.RunAsync(targetRoot, args, cancellationToken);
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
             return null;
 

@@ -9,6 +9,11 @@ namespace VisualRelay.Core.Configuration;
 ///
 /// Resolution precedence: <b>process env &gt; user-level .env &gt; repo .env</b>
 /// (the repo .env is a dev-only fallback and is handled in backend.sh, not here).
+///
+/// Environment accessor seam: every env-dependent method accepts an optional
+/// <see cref="IEnvironmentAccessor"/> parameter. When null (default), the real
+/// process environment is used. Tests inject a <see cref="DictionaryEnvironmentAccessor"/>
+/// by passing it directly — no process-global static.
 /// </summary>
 public static class KeyEnvFile
 {
@@ -18,44 +23,21 @@ public static class KeyEnvFile
     // ── Environment accessor seam (testability) ──────────────────────────
 
     /// <summary>
-    /// Scoped to the current async execution context so tests running in
-    /// parallel under xUnit class-level parallelism never observe each
-    /// other's fake accessor — eliminating the cross-test race that a
-    /// plain static property would reintroduce.
+    /// Reads an environment variable through <paramref name="accessor"/> when
+    /// non-null, falling back to the real process environment.
     /// </summary>
-    // ReSharper disable once InconsistentNaming — '_'-prefixed backing field that
-    // intentionally mirrors the public EnvironmentAccessorOverride property; the
-    // PascalCase the rule wants would collide with that property name.
-    private static readonly AsyncLocal<IEnvironmentAccessor?> _environmentAccessorOverride = new();
-
-    /// <summary>
-    /// When set, all environment reads route through this accessor instead of
-    /// the real process environment. Tests set a <c>DictionaryEnvironmentAccessor</c>
-    /// to eliminate process-global mutation races under parallel execution.
-    /// Reset to <c>null</c> in test dispose to restore real-env behaviour.
-    /// </summary>
-    public static IEnvironmentAccessor? EnvironmentAccessorOverride
-    {
-        get => _environmentAccessorOverride.Value;
-        set => _environmentAccessorOverride.Value = value;
-    }
-
-    /// <summary>
-    /// Reads an environment variable through <see cref="EnvironmentAccessorOverride"/>
-    /// when set, falling back to the real process environment.
-    /// </summary>
-    public static string? GetEnv(string name) =>
-        EnvironmentAccessorOverride?.GetEnvironmentVariable(name)
+    public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>
+        accessor?.GetEnvironmentVariable(name)
         ?? Environment.GetEnvironmentVariable(name);
 
     // ── Path resolution ──────────────────────────────────────────────────
 
     /// <summary>
     /// Returns the user-level dotenv path, reading <c>XDG_CONFIG_HOME</c> and
-    /// <c>HOME</c> from the environment accessor seam.
+    /// <c>HOME</c> from <paramref name="accessor"/> (or the real process env).
     /// </summary>
-    private static string ResolvePath() =>
-        ResolvePath(GetEnv("XDG_CONFIG_HOME"), GetEnv("HOME"));
+    public static string ResolvePath(IEnvironmentAccessor? accessor = null) =>
+        ResolvePath(GetEnv("XDG_CONFIG_HOME", accessor), GetEnv("HOME", accessor));
 
     /// <summary>
     /// Resolves the user-level dotenv path given explicit directory overrides
@@ -80,7 +62,8 @@ public static class KeyEnvFile
     /// skipping blank lines and <c>#</c> comments. Returns an empty dictionary
     /// when the file does not exist.
     /// </summary>
-    public static Dictionary<string, string> Read() => Read(ResolvePath());
+    public static Dictionary<string, string> Read(IEnvironmentAccessor? accessor = null) =>
+        Read(ResolvePath(accessor));
 
     /// <summary>
     /// Parses <c>KEY=VALUE</c> lines from <paramref name="filePath"/>,
@@ -132,7 +115,8 @@ public static class KeyEnvFile
     /// preserving all other lines byte-for-byte. Creates the parent directory
     /// with <c>0700</c> and the file with <c>0600</c> when they do not exist.
     /// </summary>
-    public static void Upsert(string key, string value) => Upsert(ResolvePath(), key, value);
+    public static void Upsert(string key, string value, IEnvironmentAccessor? accessor = null) =>
+        Upsert(ResolvePath(accessor), key, value);
 
     /// <summary>
     /// Sets or replaces a single key in the dotenv file at
@@ -212,9 +196,8 @@ public static class KeyEnvFile
     /// implements the "only-if-unset" guard so the process environment always
     /// wins over file values.
     /// </summary>
-    // ReSharper disable once UnusedMember.Global — public-API default-path overload,
-    // symmetric with Read()/Upsert(); the path-taking core is exercised by tests.
-    public static Dictionary<string, string> GetUnsetKeys() => GetUnsetKeys(ResolvePath());
+    public static Dictionary<string, string> GetUnsetKeys(IEnvironmentAccessor? accessor = null) =>
+        GetUnsetKeys(ResolvePath(accessor), accessor);
 
     /// <summary>
     /// Returns keys and values from <paramref name="filePath"/> whose keys are
@@ -222,13 +205,13 @@ public static class KeyEnvFile
     /// implements the "only-if-unset" guard so the process environment always
     /// wins over file values.
     /// </summary>
-    internal static Dictionary<string, string> GetUnsetKeys(string filePath)
+    internal static Dictionary<string, string> GetUnsetKeys(string filePath, IEnvironmentAccessor? accessor = null)
     {
         var all = Read(filePath);
         var result = new Dictionary<string, string>();
         foreach (var (key, value) in all)
         {
-            if (GetEnv(key) is null)
+            if (GetEnv(key, accessor) is null)
                 result[key] = value;
         }
 

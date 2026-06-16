@@ -36,41 +36,16 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>GitCommitter-collection files must carry [Collection("GitCommitter")] on the main partial declaration.</summary>
-    [Fact]
-    public void GitCommitterCollectionFiles_HaveCollectionAttribute()
-    {
-        string[] expected =
-        [
-            "GitCommitterAutoIncludeTests.cs",
-            "GitCommitterTests.cs",
-            "NoCommitContaminationTests.cs",
-            "RelayDriverGitCommitTests.cs",
-        ];
+    // ─────────────────────────────────────────────────────────────
+    // (GitCommitterCollectionFiles_HaveCollectionAttribute removed —
+    //  the static GitCommitter.RawGitRunner seam has been replaced by
+    //  an injected IGitInvoker; no collection serialization needed.)
+    // ─────────────────────────────────────────────────────────────
 
-        foreach (var fileName in expected)
-        {
-            var fullPath = Path.Combine(TestsDir, fileName);
-            Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
-            var content = File.ReadAllText(fullPath);
-            Assert.Contains("[Collection(\"GitCommitter\")]", content, StringComparison.Ordinal);
-            Assert.Contains("public sealed partial class", content, StringComparison.Ordinal);
-        }
-    }
-
-    // Only KeyEnvFileTests.cs remains in "Environment" — the two UI classes moved to "Headless".
-    [Fact]
-    public void EnvironmentCollectionFiles_HaveCollectionAttribute()
-    {
-        foreach (var fileName in new[] { "KeyEnvFileTests.cs" })
-        {
-            var fullPath = Path.Combine(TestsDir, fileName);
-            Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
-            var content = File.ReadAllText(fullPath);
-            Assert.Contains("[Collection(\"Environment\")]", content, StringComparison.Ordinal);
-            Assert.Contains("public sealed", content, StringComparison.Ordinal);
-        }
-    }
+    // (EnvironmentCollectionFiles_HaveCollectionAttribute removed —
+    //  the static KeyEnvFile.EnvironmentAccessorOverride seam has been
+    //  replaced by an injected IEnvironmentAccessor parameter.)
+    // ─────────────────────────────────────────────────────────────
 
     // All six Avalonia headless classes must be in "Headless" — serializes them on the
     // single process-global dispatcher; non-headless collections run in parallel.
@@ -116,7 +91,7 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>No test file may call Environment.SetEnvironmentVariable directly; all env mutation routes through KeyEnvFile.EnvironmentAccessorOverride.</summary>
+    /// <summary>No test file may call Environment.SetEnvironmentVariable directly; all env mutation routes through the injected IEnvironmentAccessor.</summary>
     [Fact]
     public void NoTestFile_CallsEnvironmentSetEnvironmentVariable()
     {
@@ -200,25 +175,9 @@ public sealed partial class SplitGuardVerificationTests
 
     // ── GitInvoker architecture guard ──────────────────────────────────
 
-    /// <summary>GitInvokerTests and WorktreeFilterTests must share [Collection("GitInvoker")] to serialize static Override access.</summary>
-    [Fact]
-    public void GitInvokerTests_HasCollectionAttribute()
-    {
-        var path = Path.Combine(TestsDir, "GitInvokerTests.cs");
-        Assert.True(File.Exists(path), "GitInvokerTests.cs must exist");
-        var content = File.ReadAllText(path);
-        Assert.Contains("[Collection(\"GitInvoker\")]", content, StringComparison.Ordinal);
-        Assert.Contains("public sealed class GitInvokerTests", content, StringComparison.Ordinal);
-
-        // WorktreeFilterTests must SHARE the collection (its real-git tests rely
-        // on Override == null) — serialize it against GitInvokerTests. Attribute
-        // on the MAIN partial only; companions inherit it.
-        var wfPath = Path.Combine(TestsDir, "WorktreeFilterTests.cs");
-        Assert.True(File.Exists(wfPath), "WorktreeFilterTests.cs must exist");
-        var wfContent = File.ReadAllText(wfPath);
-        Assert.Contains("[Collection(\"GitInvoker\")]", wfContent, StringComparison.Ordinal);
-        Assert.Contains("public sealed partial class WorktreeFilterTests", wfContent, StringComparison.Ordinal);
-    }
+    // (GitInvokerTests_HasCollectionAttribute removed — the static
+    //  GitInvoker.Override seam has been replaced by an injected
+    //  IGitInvoker; no collection serialization is needed.)
 
     /// <summary>Every production git call site must route through GitInvoker; bare "git" strings in ProcessCapture/ProcessStartInfo are forbidden.</summary>
     [Fact]

@@ -237,7 +237,7 @@ public sealed partial class SwivalSubagentRunner
             if (json is not null && (attemptInvocation.Stage.Number == 4 || attemptInvocation.Stage.Number == 10))
             {
                 correctiveShapeError = await CheckManifestAgainstGitignoreAsync(
-                    json, attemptInvocation.Stage.Number, attemptInvocation.TargetRoot, cancellationToken);
+                    json, attemptInvocation.Stage.Number, attemptInvocation.TargetRoot, cancellationToken, _gitInvoker);
                 if (correctiveShapeError is not null)
                     json = null;
             }

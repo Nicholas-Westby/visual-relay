@@ -169,7 +169,8 @@ public partial class MainWindowViewModel
         }
 
         RelayConfigWriter.Write(RootPath, command);
-        var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None);
+        var gitInvoker = new GitInvoker();
+        var hookResult = await HookInstaller.InstallAsync(RootPath, CancellationToken.None, gitInvoker);
         if (hookResult is { Installed: false, Warning: not null })
         {
             StatusText = hookResult.Warning;
@@ -228,7 +229,7 @@ public partial class MainWindowViewModel
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
         var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
-        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config), sink);
+        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config), sink, new GitInvoker());
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
         {

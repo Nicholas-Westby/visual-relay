@@ -42,7 +42,7 @@ public sealed partial class RelayDriver
         // (compile failures count as red), and restores them. Stage 6
         // starts with a clean base: only test edits present.
         var filterResult = await WorktreeFilter.DiscardNonTestEditsAsync(
-            rootPath, testFiles, config.TasksDir, cancellationToken);
+            rootPath, testFiles, config.TasksDir, cancellationToken, _dependencies.GitInvoker);
 
         // Record the ledger note BEFORE the error check so the discarded
         // inventory is captured even when an Error causes a flag.
@@ -96,7 +96,7 @@ public sealed partial class RelayDriver
         if (hasImpl)
         {
             var command = config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles), StringComparison.Ordinal);
-            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, cancellationToken);
+            var gateResult = await AuthorTestGate.RunAsync(rootPath, taskId, runId, manifest, testFiles, command, _dependencies.TestRunner, _dependencies.GitInvoker, cancellationToken);
             if (gateResult.Error is not null)
                 return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5, gateResult.Error, null, statusEntries, cancellationToken), null, null);
 

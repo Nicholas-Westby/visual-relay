@@ -3,7 +3,6 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-[Collection("GitCommitter")]
 public sealed class RelayDriverGitCommitProofOptOutTests
 {
     // ── Commit proof artifacts opt-out ──────────────────────────────────

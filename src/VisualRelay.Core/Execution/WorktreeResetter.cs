@@ -17,11 +17,14 @@ internal static class WorktreeResetter
         string rootPath,
         string taskId,
         string? tasksDir,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
+
         // 1. Reset index + working tree to HEAD so no tracked changes survive.
-        _ = await GitAsync(rootPath, ["reset", "-q", "HEAD"], cancellationToken);
-        _ = await GitAsync(rootPath, ["checkout", "--", "."], cancellationToken);
+        _ = await GitAsync(gi, rootPath, ["reset", "-q", "HEAD"], cancellationToken);
+        _ = await GitAsync(gi, rootPath, ["checkout", "--", "."], cancellationToken);
 
         // 2. Remove untracked files authored by this task (not pre-existing ones).
         var snapshotPath = Path.Combine(rootPath, ".relay", taskId, "pre-run-untracked.txt");
@@ -29,7 +32,7 @@ internal static class WorktreeResetter
             ? await ReadSnapshotAsync(snapshotPath, cancellationToken)
             : new HashSet<string>(StringComparer.Ordinal);
 
-        var currentUntracked = await CaptureUntrackedAsync(rootPath, cancellationToken);
+        var currentUntracked = await CaptureUntrackedAsync(gi, rootPath, cancellationToken);
         var toDelete = new List<string>();
         foreach (var path in currentUntracked)
         {
@@ -76,9 +79,9 @@ internal static class WorktreeResetter
     }
 
     private static async Task<IReadOnlySet<string>> CaptureUntrackedAsync(
-        string rootPath, CancellationToken ct)
+        IGitInvoker gitInvoker, string rootPath, CancellationToken ct)
     {
-        var result = await GitAsync(rootPath, ["ls-files", "--others", "--exclude-standard"], ct);
+        var result = await GitAsync(gitInvoker, rootPath, ["ls-files", "--others", "--exclude-standard"], ct);
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
             return new HashSet<string>(StringComparer.Ordinal);
         var set = new HashSet<string>(StringComparer.Ordinal);
@@ -111,8 +114,9 @@ internal static class WorktreeResetter
     }
 
     private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
+        IGitInvoker gitInvoker,
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken ct) =>
-        GitInvoker.RunAsync(rootPath, arguments, ct);
+        gitInvoker.RunAsync(rootPath, arguments, ct);
 }

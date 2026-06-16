@@ -2,16 +2,6 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-// [Collection("GitInvoker")] serializes WorktreeFilterTests against
-// GitInvokerTests (the only other class that mutates the process-global
-// GitInvoker.Override).  Several WorktreeFilter tests rely on Override == null
-// to reach REAL git; without a shared collection they could run concurrently
-// with GitInvokerTests' Override-setting tests and have their git calls
-// hijacked (timing-dependent flake).  Attribute lives only on this main
-// partial — the companion *Tests.*.cs files inherit it (enforced by
-// SplitGuardVerificationTests.CompanionFiles_DeclareSealedPartialClass, which
-// forbids a redundant [Collection( on companions).
-[Collection("GitInvoker")]
 public sealed partial class WorktreeFilterTests
 {
     /// <summary>

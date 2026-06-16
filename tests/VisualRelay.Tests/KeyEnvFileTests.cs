@@ -3,21 +3,10 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-[Collection("Environment")]
-public sealed class KeyEnvFileTests : IDisposable
+public sealed class KeyEnvFileTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
 
-    public KeyEnvFileTests()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = _env;
-    }
-
-    public void Dispose()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = null;
-        _env.Clear();
-    }
     // ── Path resolution ────────────────────────────────────────────────
 
     [Fact]
@@ -240,7 +229,7 @@ public sealed class KeyEnvFileTests : IDisposable
         File.WriteAllText(envPath, "MOONSHOT_API_KEY=sk-abc\nDEEPSEEK_API_KEY=sk-def\n");
 
         // Neither key is set in the fake accessor — both should be returned.
-        var result = KeyEnvFile.GetUnsetKeys(envPath);
+        var result = KeyEnvFile.GetUnsetKeys(envPath, _env);
 
         Assert.Equal(2, result.Count);
         Assert.Equal("sk-abc", result["MOONSHOT_API_KEY"]);
@@ -257,7 +246,7 @@ public sealed class KeyEnvFileTests : IDisposable
         // MOONSHOT_API_KEY is set in the fake accessor — it must be excluded.
         _env["MOONSHOT_API_KEY"] = "sk-env";
 
-        var result = KeyEnvFile.GetUnsetKeys(envPath);
+        var result = KeyEnvFile.GetUnsetKeys(envPath, _env);
 
         Assert.False(result.ContainsKey("MOONSHOT_API_KEY"));
         Assert.True(result.ContainsKey("DEEPSEEK_API_KEY"));
@@ -272,11 +261,11 @@ public sealed class KeyEnvFileTests : IDisposable
 
         // Empty file.
         File.WriteAllText(envPath, "");
-        Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath));
+        Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath, _env));
 
         // All keys are already set in the fake accessor — nothing to return.
         File.WriteAllText(envPath, "MOONSHOT_API_KEY=sk-file\n");
         _env["MOONSHOT_API_KEY"] = "sk-env";
-        Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath));
+        Assert.Empty(KeyEnvFile.GetUnsetKeys(envPath, _env));
     }
 }

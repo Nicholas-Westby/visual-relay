@@ -211,60 +211,20 @@ public sealed partial class WorktreeFilterTests
         // Modify the tracked production file.
         await File.WriteAllTextAsync(prodFile, "modified");
 
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        // envRemove must match what GitInvoker sets after resolution so
-        // the delegated ProcessCapture call strips DEVELOPER_DIR / SDKROOT
-        // from the child process — otherwise a stale nix-store value in the
-        // inherited environment breaks git on macOS.
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            var argv = args as string[] ?? args.ToArray();
-            // Guard: only intercept commands targeting this test's repo.
-            if (rootPath != myRoot)
-            {
-                return ProcessCapture.RunAsync(
-                    binary,
-                    ["-C", rootPath, .. argv],
-                    rootPath,
-                    timeout ?? TimeSpan.FromSeconds(30),
-                    ct,
-                    env,
-                    envRemove: envRemove);
-            }
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Any(a => a == "checkout" || a == "rm"),
+            _ => Task.FromResult((1, "simulated git failure", false)));
 
-            // Fail checkout and rm commands to simulate an unrecoverable revert.
-            if (argv.Any(a => a == "checkout" || a == "rm"))
-                return Task.FromResult((1, "simulated git failure", false));
+        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
-            // Delegate enumeration commands to real git.
-            return ProcessCapture.RunAsync(
-                binary,
-                ["-C", rootPath, .. argv],
-                rootPath,
-                timeout ?? TimeSpan.FromSeconds(30),
-                ct,
-                env,
-                envRemove: envRemove);
-        };
-
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None);
-
-            Assert.NotNull(result.Error);
-            Assert.Contains("revert/delete failures", result.Error, StringComparison.Ordinal);
-            Assert.Contains("src/app.cs", result.Error, StringComparison.Ordinal);
-            // With the cat-file -e probe, an in-HEAD path that fails checkout
-            // transiently is NOT deleted and NOT added to TrackedDiscarded.
-            Assert.DoesNotContain("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-            Assert.True(File.Exists(prodFile), "in-HEAD file must survive transient checkout failure");
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
+        Assert.NotNull(result.Error);
+        Assert.Contains("revert/delete failures", result.Error, StringComparison.Ordinal);
+        Assert.Contains("src/app.cs", result.Error, StringComparison.Ordinal);
+        // With the cat-file -e probe, an in-HEAD path that fails checkout
+        // transiently is NOT deleted and NOT added to TrackedDiscarded.
+        Assert.DoesNotContain("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
+        Assert.True(File.Exists(prodFile), "in-HEAD file must survive transient checkout failure");
     }
 }

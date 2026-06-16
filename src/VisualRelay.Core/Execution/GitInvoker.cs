@@ -6,47 +6,27 @@ namespace VisualRelay.Core.Execution;
 /// <summary>
 /// Centralized git process factory that pins a stable git binary at first use
 /// and sanitizes the environment so nix-store churn on macOS cannot rot git
-/// invocations mid-run.
+/// invocations mid-run. Each instance caches resolution independently;
+/// production creates one instance and injects it everywhere git is called.
 /// </summary>
-internal static class GitInvoker
+public sealed class GitInvoker : IGitInvoker
 {
-    private static readonly object Lock = new();
-    private static string? _gitBinary;
-    private static IReadOnlySet<string>? _envRemove;
+    private readonly object _lock = new();
+    private string? _gitBinary;
+    private IReadOnlySet<string>? _envRemove;
 
     /// <summary>
-    /// Test seam: when set, every <see cref="RunAsync"/> call delegates to
-    /// this override instead of executing a real process.  Receives the
-    /// resolved git binary path, arguments, root path, cancellation token,
-    /// timeout, and sanitized environment.
+    /// Creates an invoker that will auto-resolve the git binary on first call.
     /// </summary>
-    internal static Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>>? Override { get; set; }
+    public GitInvoker() { }
 
     /// <summary>
-    /// Test seam: resets all lazy state so tests can control resolution
-    /// deterministically.  Must be called before <see cref="SetResolvedBinaryForTests"/>
-    /// if the test wants a clean slate.
+    /// Creates an invoker pre-pinned to <paramref name="binaryPath"/>
+    /// (test constructor). The env-sanitize set is computed from the binary path.
     /// </summary>
-    internal static void ResetForTests()
+    public GitInvoker(string binaryPath)
     {
-        lock (Lock)
-        {
-            _gitBinary = null;
-            _envRemove = null;
-        }
-
-        Override = null;
-    }
-
-    /// <summary>
-    /// Test seam: pins the resolved binary path and computes
-    /// <see cref="_envRemove"/> as though resolution had completed
-    /// normally.  Call <see cref="ResetForTests"/> first to clear any
-    /// cached state from a previous resolution.
-    /// </summary>
-    internal static void SetResolvedBinaryForTests(string binaryPath)
-    {
-        lock (Lock)
+        lock (_lock)
         {
             _gitBinary = binaryPath;
             _envRemove = binaryPath.Contains("/nix/store/", StringComparison.Ordinal)
@@ -55,7 +35,7 @@ internal static class GitInvoker
         }
     }
 
-    public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+    public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
@@ -64,17 +44,8 @@ internal static class GitInvoker
         CancellationToken killToken = default,
         Action<string>? onActivity = null)
     {
-        // Capture both the resolved binary and the Override delegate into
-        // locals before any await so that a parallel ResetForTests() call
-        // cannot null them between the check and the use (TOCTOU race).
         var gitBinary = EnsureResolved();
-        var overrideFn = Override;
         var sanitizedEnv = SanitizeEnvironment(environment);
-
-        if (overrideFn is not null)
-        {
-            return await overrideFn(gitBinary, arguments, rootPath, cancellationToken, timeout, sanitizedEnv);
-        }
 
         return await ProcessCapture.RunAsync(
             gitBinary,
@@ -94,7 +65,7 @@ internal static class GitInvoker
     /// SDKROOT are stripped so the xcrun shim cannot resurrect a stale
     /// nix store path.  Caller-supplied vars override inherited ones.
     /// </summary>
-    private static IReadOnlyDictionary<string, string> SanitizeEnvironment(
+    private IReadOnlyDictionary<string, string> SanitizeEnvironment(
         IReadOnlyDictionary<string, string>? callerEnv)
     {
         var sanitized = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -130,13 +101,13 @@ internal static class GitInvoker
         return sanitized;
     }
 
-    private static string EnsureResolved()
+    private string EnsureResolved()
     {
         var binary = _gitBinary;
         if (binary is not null)
             return binary;
 
-        lock (Lock)
+        lock (_lock)
         {
             if (_gitBinary is not null)
                 return _gitBinary;

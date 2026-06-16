@@ -92,7 +92,7 @@ public partial class MainWindowViewModel
         if (string.IsNullOrWhiteSpace(state.PendingValue))
             return;
 
-        KeyEnvFile.Upsert(state.Row.EnvVarName, state.PendingValue.Trim());
+        KeyEnvFile.Upsert(state.Row.EnvVarName, state.PendingValue.Trim(), EnvironmentAccessor);
         state.PendingValue = string.Empty;
         await RefreshKeyStatesAsync();
 
@@ -127,11 +127,11 @@ public partial class MainWindowViewModel
     /// </summary>
     public async Task RefreshKeyStatesAsync()
     {
-        var fileEnv = KeyEnvFile.Read();
+        var fileEnv = KeyEnvFile.Read(EnvironmentAccessor);
         KeyStates.Clear();
         foreach (var row in AllProviderKeys)
         {
-            var processVal = KeyEnvFile.GetEnv(row.EnvVarName);
+            var processVal = KeyEnvFile.GetEnv(row.EnvVarName, EnvironmentAccessor);
             var fileVal = fileEnv.GetValueOrDefault(row.EnvVarName);
             var isSet = !string.IsNullOrWhiteSpace(processVal) || !string.IsNullOrWhiteSpace(fileVal);
             var displayValue = isSet ? MaskValue(processVal ?? fileVal!) : "(not set)";

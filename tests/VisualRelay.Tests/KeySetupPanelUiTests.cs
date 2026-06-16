@@ -12,20 +12,9 @@ using VisualRelay.Core.Configuration;
 namespace VisualRelay.Tests;
 
 [Collection("Headless")]
-public sealed class KeySetupPanelUiTests : IDisposable
+public sealed class KeySetupPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
-
-    public KeySetupPanelUiTests()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = _env;
-    }
-
-    public void Dispose()
-    {
-        KeyEnvFile.EnvironmentAccessorOverride = null;
-        _env.Clear();
-    }
 
     /// <summary>
     /// Seeds the fake environment accessor with XDG_CONFIG_HOME pointing to
@@ -77,7 +66,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc123xyz\nDEEPSEEK_API_KEY=sk-deepseek-456\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -119,7 +108,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteTask("beta", "# Beta\n");
         using var r = SeedUserEnv(repo, "DEEPSEEK_API_KEY=sk-deepseek-456\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
 
         Assert.Equal(2, vm.Tasks.Count);
@@ -158,7 +147,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -206,7 +195,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         Assert.True(vm.IsHuggingFaceConfigured);
         Assert.Contains("fallback", vm.LitTiersSummary!, StringComparison.Ordinal);
@@ -228,7 +217,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         Assert.False(vm.IsHuggingFaceConfigured);
         Assert.Equal("Set a free Hugging Face token to run tasks — open Settings.", vm.HfGateMessage);
@@ -255,7 +244,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "# comment\nDEEPSEEK_API_KEY=sk-existing\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         var ms = vm.KeyStates.First(s => s.Row.EnvVarName == "MOONSHOT_API_KEY");
         Assert.False(ms.IsSet);
@@ -283,7 +272,7 @@ public sealed class KeySetupPanelUiTests : IDisposable
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         vm.SelectedTask = vm.Tasks[0];
         var before = vm.StatusText;

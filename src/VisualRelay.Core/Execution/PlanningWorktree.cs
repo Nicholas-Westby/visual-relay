@@ -32,13 +32,14 @@ public static class PlanningWorktree
     /// Creates a detached git worktree for the task under the per-run temp
     /// root, checked out at HEAD. Throws on failure.
     /// </summary>
-    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct)
+    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
         var worktreePath = Path.Combine(GetTempRoot(repoRoot, runId), taskId);
         if (Directory.Exists(worktreePath))
             Directory.Delete(worktreePath, recursive: true);
 
-        await RunGitAsync(repoRoot,
+        await RunGitAsync(gi, repoRoot,
             ["worktree", "add", "--detach", "--quiet", worktreePath, "HEAD"],
             ct);
 
@@ -69,12 +70,13 @@ public static class PlanningWorktree
     /// Removes the git worktree entry and the on-disk directory.
     /// Best-effort — never throws.
     /// </summary>
-    public static async Task RemoveAsync(string repoRoot, string worktreePath, CancellationToken ct)
+    public static async Task RemoveAsync(string repoRoot, string worktreePath, CancellationToken ct, IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
         try
         {
             if (Directory.Exists(worktreePath))
-                await RunGitAsync(repoRoot, ["worktree", "remove", "--force", worktreePath], ct);
+                await RunGitAsync(gi, repoRoot, ["worktree", "remove", "--force", worktreePath], ct);
         }
         catch
         {
@@ -88,11 +90,12 @@ public static class PlanningWorktree
     /// Cleans ALL leftover directories under the repo-hash namespace, not
     /// just the current runId, so crashes from prior drains are recovered.
     /// </summary>
-    public static async Task PruneLeftoversAsync(string repoRoot, string runId, CancellationToken ct)
+    public static async Task PruneLeftoversAsync(string repoRoot, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
         try
         {
-            await RunGitAsync(repoRoot, ["worktree", "prune"], ct);
+            await RunGitAsync(gi, repoRoot, ["worktree", "prune"], ct);
         }
         catch
         {
@@ -112,7 +115,7 @@ public static class PlanningWorktree
         }
     }
 
-    private static async Task RunGitAsync(string repoRoot, string[] args, CancellationToken ct)
+    private static async Task RunGitAsync(IGitInvoker gitInvoker, string repoRoot, string[] args, CancellationToken ct)
     {
         const int maxAttempts = 3;
 
@@ -120,7 +123,7 @@ public static class PlanningWorktree
         {
             try
             {
-                var result = await GitInvoker.RunAsync(repoRoot, args, ct);
+                var result = await gitInvoker.RunAsync(repoRoot, args, ct);
 
                 if (result.ExitCode == 0)
                     return;

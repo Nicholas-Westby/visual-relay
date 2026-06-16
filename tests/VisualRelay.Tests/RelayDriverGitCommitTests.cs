@@ -3,7 +3,6 @@ using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
-[Collection("GitCommitter")]
 public sealed partial class RelayDriverGitCommitTests
 {
     [Fact]

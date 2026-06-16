@@ -216,7 +216,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
                             // Skip baseline diff when bootstrap, guard, or new-guard-probe is the source.
                             var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed && newGuardOutput is null)
-                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, cancellationToken)
+                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, _dependencies.GitInvoker, cancellationToken)
                                 : null;
                             if (!config.BaselineVerify || newFailures is not null || bootstrapFailed || guardFailed || newGuardOutput is not null)
                             {

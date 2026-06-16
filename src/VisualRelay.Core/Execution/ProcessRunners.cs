@@ -23,16 +23,19 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
+    private readonly IGitInvoker? _gitInvoker;
     public SwivalSubagentRunner(
         RelayConfig config,
         string swivalBinary = "swival",
         IRelayEventSink? eventSink = null,
-        Func<CancellationToken, Task<BackendReadiness>>? backendProbe = null)
+        Func<CancellationToken, Task<BackendReadiness>>? backendProbe = null,
+        IGitInvoker? gitInvoker = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
         _eventSink = eventSink;
         _probe = backendProbe ?? (token => BackendReadinessProbe.CheckWithRetryAsync(ModelBackend.BaseUrl, ProbeTimeout, cancellationToken: token));
+        _gitInvoker = gitInvoker;
     }
 
     // Pure swival arguments — no sandbox flags. swival 1.0.25+ does support

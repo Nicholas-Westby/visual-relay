@@ -2,7 +2,6 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-[Collection("GitCommitter")]
 public sealed partial class GitCommitterAutoIncludeTests
 {
     [Fact]

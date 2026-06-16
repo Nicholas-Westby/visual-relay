@@ -3,7 +3,6 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-[Collection("GitCommitter")]
 public sealed partial class GitCommitterTests
 {
     // ── Resilience: transient git failure tests (a–d) ───────────────────
@@ -19,23 +18,15 @@ public sealed partial class GitCommitterTests
 
         var shim = new TransientGitShim();
         shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: not a git repository");
-        GitCommitter.RawGitRunner = shim.RunAsync;
-        try
-        {
-            var result = await GitCommitter.CommitAsync(
-                repo.Root, "my-task", "abc123",
-                ["feat: add widget"], ["src/app.cs"], [],
-                commitToken: null, preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123",
+            ["feat: add widget"], ["src/app.cs"], [],
+            commitToken: null, preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, shim);
 
-            Assert.True(result.Success, $"Expected success, got: {result.Error}");
-            Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
-        }
-        finally
-        {
-            GitCommitter.RawGitRunner = null;
-        }
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
+        Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
     }
 
     [Fact]
@@ -50,25 +41,17 @@ public sealed partial class GitCommitterTests
         var shim = new TransientGitShim();
         // 99 failures: effectively persistent for the 3-attempt retry window.
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        GitCommitter.RawGitRunner = shim.RunAsync;
-        try
-        {
-            var result = await GitCommitter.CommitAsync(
-                repo.Root, "my-task", "abc123",
-                ["feat: add widget"], ["src/app.cs"], [],
-                commitToken: null, preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123",
+            ["feat: add widget"], ["src/app.cs"], [],
+            commitToken: null, preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, shim);
 
-            Assert.False(result.Success);
-            Assert.NotNull(result.Error);
-            Assert.Contains("git exit 128", result.Error, StringComparison.Ordinal);
-            Assert.Contains("fatal: not a git repository", result.Error, StringComparison.Ordinal);
-        }
-        finally
-        {
-            GitCommitter.RawGitRunner = null;
-        }
+        Assert.False(result.Success);
+        Assert.NotNull(result.Error);
+        Assert.Contains("git exit 128", result.Error, StringComparison.Ordinal);
+        Assert.Contains("fatal: not a git repository", result.Error, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -82,22 +65,14 @@ public sealed partial class GitCommitterTests
 
         var shim = new TransientGitShim();
         shim.FailNext("add", failureCount: 1, exitCode: 128, stderr: "fatal: index file open failed");
-        GitCommitter.RawGitRunner = shim.RunAsync;
-        try
-        {
-            var result = await GitCommitter.CommitAsync(
-                repo.Root, "my-task", "abc123",
-                ["feat: add widget"], ["src/app.cs"], [],
-                commitToken: null, preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123",
+            ["feat: add widget"], ["src/app.cs"], [],
+            commitToken: null, preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, shim);
 
-            Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
-        }
-        finally
-        {
-            GitCommitter.RawGitRunner = null;
-        }
+        Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
     }
 
     [Fact]
@@ -110,28 +85,20 @@ public sealed partial class GitCommitterTests
 
         var shim = new TransientGitShim();
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        GitCommitter.RawGitRunner = shim.RunAsync;
-        try
-        {
-            var sw = Stopwatch.StartNew();
-            var result = await GitCommitter.CommitAsync(
-                repo.Root, "my-task", "abc123",
-                ["feat: test"], [], [],
-                commitToken: null, preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
-            sw.Stop();
+        var sw = Stopwatch.StartNew();
+        var result = await GitCommitter.CommitAsync(
+            repo.Root, "my-task", "abc123",
+            ["feat: test"], [], [],
+            commitToken: null, preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, shim);
+        sw.Stop();
 
-            Assert.False(result.Success);
-            // 3 attempts with 250ms + 1s backoff = 1.25s max added latency.
-            // Allow generous headroom for process spawn + OS scheduling.
-            Assert.True(sw.Elapsed.TotalSeconds < 10,
-                $"Persistent failure took {sw.Elapsed.TotalSeconds:F1}s, expected < 10s");
-        }
-        finally
-        {
-            GitCommitter.RawGitRunner = null;
-        }
+        Assert.False(result.Success);
+        // 3 attempts with 250ms + 1s backoff = 1.25s max added latency.
+        // Allow generous headroom for process spawn + OS scheduling.
+        Assert.True(sw.Elapsed.TotalSeconds < 10,
+            $"Persistent failure took {sw.Elapsed.TotalSeconds:F1}s, expected < 10s");
     }
 
     [Fact]
@@ -154,9 +121,9 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-                preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+            preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, new GitInvoker());
 
         Assert.True(result.Success);
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
@@ -191,9 +158,9 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-                preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+            preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, new GitInvoker());
 
         Assert.True(result.Success);
         var subject = RunGit(repo.Root, "log -1 --pretty=%s");
@@ -222,9 +189,9 @@ public sealed partial class GitCommitterTests
             ["src/app.cs"],
             [],
             commitToken: null,
-                preRunUntracked: null,
-                tasksDir: null,
-                CancellationToken.None);
+            preRunUntracked: null,
+            tasksDir: null,
+            CancellationToken.None, new GitInvoker());
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
@@ -252,7 +219,7 @@ public sealed partial class GitCommitterTests
             ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, new GitInvoker());
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);

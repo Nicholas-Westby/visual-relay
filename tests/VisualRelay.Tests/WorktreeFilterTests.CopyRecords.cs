@@ -10,18 +10,55 @@ namespace VisualRelay.Tests;
 /// source.  So a copy's destination is a plain staged addition that must be
 /// reverted/deleted — never rename-protected — whereas a true rename's
 /// destination is protected because it may hold the only surviving copy of the
-/// (deleted) source.  Companion to WorktreeFilterTests.ResidualLeaks.cs;
-/// inherits the GitInvoker collection membership of the main partial.
+/// (deleted) source.  Companion to WorktreeFilterTests.ResidualLeaks.cs.
 /// </summary>
 public sealed partial class WorktreeFilterTests
 {
     /// <summary>
+    /// An <see cref="IGitInvoker"/> that intercepts specific git calls
+    /// (matching a rootPath and argument substring) and returns synthetic
+    /// results, falling through to real git for everything else.
+    /// </summary>
+    private sealed class InterceptedGitInvoker : IGitInvoker
+    {
+        private readonly string _rootPath;
+        private readonly Func<string[], bool> _interceptPredicate;
+        private readonly Func<string[], Task<(int, string, bool)>> _fakeResult;
+        private static readonly HashSet<string> EnvRemove = new(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
+
+        public InterceptedGitInvoker(
+            string rootPath,
+            Func<string[], bool> interceptPredicate,
+            Func<string[], Task<(int, string, bool)>> fakeResult)
+        {
+            _rootPath = rootPath;
+            _interceptPredicate = interceptPredicate;
+            _fakeResult = fakeResult;
+        }
+
+        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+            string rootPath, IEnumerable<string> arguments, CancellationToken ct,
+            TimeSpan? timeout, IReadOnlyDictionary<string, string>? environment,
+            CancellationToken killToken = default, Action<string>? onActivity = null)
+        {
+            var argv = arguments as string[] ?? arguments.ToArray();
+            if (rootPath == _rootPath && _interceptPredicate(argv))
+                return await _fakeResult(argv);
+
+            return await ProcessCapture.RunAsync(
+                "git", ["-C", rootPath, .. argv], rootPath,
+                timeout ?? TimeSpan.FromSeconds(30), ct, environment,
+                envRemove: EnvRemove);
+        }
+    }
+
+    /// <summary>
     /// Leak 3: a staged copy emits a <c>C</c> name-status record. The parser
     /// must capture the copy DESTINATION so the new (non-test) production file
-    /// does not leak into stage 6. <c>-M</c> alone suppresses copy detection,
+    /// does not leak into stage 6.  <c>-M</c> alone suppresses copy detection,
     /// so a real <c>C</c> record only reaches the parser once the command also
-    /// passes <c>-C</c>; we inject the NUL-delimited <c>C</c> record via
-    /// <see cref="GitInvoker.Override"/> (the exact <c>-z</c> shape the command
+    /// passes <c>-C</c>; we inject the NUL-delimited <c>C</c> record via the
+    /// injected <see cref="IGitInvoker"/> (the exact <c>-z</c> shape the command
     /// requests) and delegate every other git call to the real repo. The copy
     /// destination is a new staged file absent from HEAD, so the filter
     /// unstages and deletes it. (Non-test source → already worked pre-fix.)
@@ -38,42 +75,18 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(copyPath, "source-content");
         TestGit.Run(repo.Root, "add", "copy.cs");
 
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            var argv = args as string[] ?? args.ToArray();
-            // Intercept ONLY the staged name-status enumeration and return the
-            // -z C record git emits for a copy (status\0old\0new\0).
-            if (rootPath == myRoot
-                && argv.Contains("--name-status")
-                && argv.Contains("--cached"))
-            {
-                return Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false));
-            }
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false)));
 
-            return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. argv], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-        };
+        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, [], tasksDir: null, CancellationToken.None);
-
-            Assert.Null(result.Error);
-            // CRITICAL: the copy destination (a new production file) must NOT
-            // survive into stage 6.
-            Assert.False(File.Exists(copyPath),
-                "copy destination copy.cs must be unstaged and removed");
-            Assert.Contains("copy.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
+        Assert.Null(result.Error);
+        Assert.False(File.Exists(copyPath),
+            "copy destination copy.cs must be unstaged and removed");
+        Assert.Contains("copy.cs", result.TrackedDiscarded, StringComparer.Ordinal);
     }
 
     /// <summary>
@@ -88,7 +101,7 @@ public sealed partial class WorktreeFilterTests
     /// destination (the source is a testFile) → <c>prod2.cs</c> leaks into
     /// stage 6 (RED). After the fix it is unstaged + deleted and the test
     /// source is untouched. The NUL-delimited <c>C</c> record is injected via
-    /// <see cref="GitInvoker.Override"/> (the <c>-z</c> shape git emits for
+    /// <see cref="IGitInvoker"/> (the <c>-z</c> shape git emits for
     /// <c>cp my.Tests.cs prod2.cs</c> under <c>-M -C</c>); other git calls hit
     /// the real repo.
     /// </summary>
@@ -96,58 +109,30 @@ public sealed partial class WorktreeFilterTests
     public async Task CopyFromTestFileToProd_ProdDestinationIsRevertedOrDeleted_SourceUntouched()
     {
         using var repo = TestRepository.Create();
-        // Source = a declared testFile committed to HEAD (assert it survives).
         var testSourcePath = await InitRepoWithTrackedFile(
             repo.Root, "my.Tests.cs", "test-content");
 
-        // Destination = a NEW prod file staged into the index — a real staged
-        // addition the filter must unstage + delete (a copy does not delete
-        // its source, so this prod path is NOT rename-protected).
         var prodDestPath = Path.Combine(repo.Root, "prod2.cs");
         await File.WriteAllTextAsync(prodDestPath, "test-content");
         TestGit.Run(repo.Root, "add", "prod2.cs");
 
-        GitInvoker.ResetForTests();
-        var myRoot = repo.Root;
-        var envRemove = new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-        GitInvoker.Override = (binary, args, rootPath, ct, timeout, env) =>
-        {
-            var argv = args as string[] ?? args.ToArray();
-            // Intercept ONLY the staged name-status enumeration; return the
-            // -z C record git emits for `cp my.Tests.cs prod2.cs` (-M -C).
-            if (rootPath == myRoot
-                && argv.Contains("--name-status")
-                && argv.Contains("--cached"))
-            {
-                return Task.FromResult((0, "C100\0my.Tests.cs\0prod2.cs\0", false));
-            }
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "C100\0my.Tests.cs\0prod2.cs\0", false)));
 
-            return ProcessCapture.RunAsync(
-                binary, ["-C", rootPath, .. argv], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, env, envRemove: envRemove);
-        };
+        var result = await WorktreeFilter.DiscardNonTestEditsAsync(
+            repo.Root, ["my.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
-        try
-        {
-            var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-                repo.Root, ["my.Tests.cs"], tasksDir: null, CancellationToken.None);
+        Assert.Null(result.Error);
 
-            Assert.Null(result.Error);
+        Assert.False(File.Exists(prodDestPath),
+            "copy destination prod2.cs (a production addition) must be unstaged and removed, not rename-protected");
+        Assert.Contains("prod2.cs", result.TrackedDiscarded, StringComparer.Ordinal);
 
-            // CRITICAL: the prod copy destination must NOT survive into stage 6.
-            Assert.False(File.Exists(prodDestPath),
-                "copy destination prod2.cs (a production addition) must be unstaged and removed, not rename-protected");
-            Assert.Contains("prod2.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-
-            // The test SOURCE must be untouched — the copy left it in place.
-            Assert.True(File.Exists(testSourcePath),
-                "the copy source my.Tests.cs (a testFile) must be left untouched");
-            Assert.Equal("test-content", await File.ReadAllTextAsync(testSourcePath));
-            Assert.DoesNotContain("my.Tests.cs", result.TrackedDiscarded, StringComparer.Ordinal);
-        }
-        finally
-        {
-            GitInvoker.ResetForTests();
-        }
+        Assert.True(File.Exists(testSourcePath),
+            "the copy source my.Tests.cs (a testFile) must be left untouched");
+        Assert.Equal("test-content", await File.ReadAllTextAsync(testSourcePath));
+        Assert.DoesNotContain("my.Tests.cs", result.TrackedDiscarded, StringComparer.Ordinal);
     }
 }

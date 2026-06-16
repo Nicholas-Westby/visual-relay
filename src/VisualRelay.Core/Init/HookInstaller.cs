@@ -56,10 +56,11 @@ exit 1
     /// Preserves a foreign pre-commit hook (no VR marker) and returns a warning.
     /// Respects an existing git config core.hooksPath.
     /// </summary>
-    public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken)
+    public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
     {
+        var gi = gitInvoker ?? new GitInvoker();
         // Resolve the active hooks directory.
-        var hooksDirResult = await GitInvoker.RunAsync(
+        var hooksDirResult = await gi.RunAsync(
             rootPath, ["config", "--default", ".git/hooks", "core.hooksPath"],
             cancellationToken);
         var hooksDirRelative = hooksDirResult.ExitCode == 0

@@ -5,12 +5,14 @@ namespace VisualRelay.Core.Execution;
 public sealed record RelayDriverDependencies(
     ISubagentRunner SubagentRunner,
     ITestRunner TestRunner,
-    IRelayEventSink EventSink)
+    IRelayEventSink EventSink,
+    IGitInvoker GitInvoker)
 {
     public static RelayDriverDependencies ForTests(
         ISubagentRunner subagentRunner,
         ITestRunner testRunner,
-        IRelayEventSink eventSink) =>
-        new(subagentRunner, testRunner, eventSink);
+        IRelayEventSink eventSink,
+        IGitInvoker? gitInvoker = null) =>
+        new(subagentRunner, testRunner, eventSink, gitInvoker ?? new GitInvoker());
 }
 

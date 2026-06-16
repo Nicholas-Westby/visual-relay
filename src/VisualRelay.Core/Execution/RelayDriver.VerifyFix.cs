@@ -23,10 +23,10 @@ public sealed partial class RelayDriver
     private static async Task<string?> GetNewFailuresAsync(
         string rootPath, string taskId, string runId,
         ITestRunner testRunner, string testCommand,
-        TestRunResult workingResult, CancellationToken ct)
+        TestRunResult workingResult, IGitInvoker gitInvoker, CancellationToken ct)
     {
         var tag = RedGate.StashTag(taskId, runId);
-        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct);
+        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct, gitInvoker);
         try
         {
             if (!stashed) return "verify failed";
@@ -41,7 +41,7 @@ public sealed partial class RelayDriver
         }
         finally
         {
-            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct)
+            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct, gitInvoker)
                 == RedGateRestoreResult.Conflict)
             {
                 throw new InvalidOperationException(
@@ -135,7 +135,7 @@ public sealed partial class RelayDriver
             if (guardCmd is not null)
             {
                 var (newViolations, _, timedOut) = await RunGuardCheckAsync(
-                    rootPath, taskId, runId, _dependencies.TestRunner,
+                    rootPath, taskId, runId, _dependencies.TestRunner, _dependencies.GitInvoker,
                     config.FormatCommand, guardCmd, config.BaselineVerify, cancellationToken);
 
                 if (timedOut)

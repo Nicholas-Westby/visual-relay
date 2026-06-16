@@ -12,6 +12,7 @@ internal static class AuthorTestGate
         IReadOnlyList<string> testFiles,
         string command,
         ITestRunner testRunner,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken)
     {
         var tag = RedGate.StashTag(taskId, runId);
@@ -23,7 +24,7 @@ internal static class AuthorTestGate
 
         try
         {
-            stashed = await RedGate.StripToRedAsync(rootPath, stripSet, tag, cancellationToken);
+            stashed = await RedGate.StripToRedAsync(rootPath, stripSet, tag, cancellationToken, gitInvoker);
             result = await testRunner.RunAsync(rootPath, command, cancellationToken);
         }
         catch (InvalidOperationException ex)
@@ -35,7 +36,7 @@ internal static class AuthorTestGate
         {
             if (stashed)
             {
-                restore = await RedGate.RestoreStashAsync(rootPath, tag, cancellationToken);
+                restore = await RedGate.RestoreStashAsync(rootPath, tag, cancellationToken, gitInvoker);
             }
         }
 

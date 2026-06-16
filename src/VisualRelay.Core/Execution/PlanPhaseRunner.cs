@@ -105,10 +105,11 @@ public static class PlanPhaseRunner
         CancellationToken ct)
     {
         string? worktreePath = null;
+        var gitInvoker = new GitInvoker();
         try
         {
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan", "start");
-            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, ct);
+            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, ct, gitInvoker);
 
             // Each planning task gets its OWN event sink to avoid log interleaving.
             // When an observable factory is provided (GUI drain), live progress
@@ -118,7 +119,7 @@ public static class PlanPhaseRunner
             var fileSink = new FileRelayEventSink(
                 Path.Combine(worktreePath, ".relay", taskId, "run.log"));
             var sink = new CompositeRelayEventSink(observableSink, fileSink);
-            var dependencies = new RelayDriverDependencies(runner, testRunner, sink);
+            var dependencies = new RelayDriverDependencies(runner, testRunner, sink, gitInvoker);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
 
@@ -138,7 +139,7 @@ public static class PlanPhaseRunner
         finally
         {
             if (worktreePath is not null)
-                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, ct);
+                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, ct, gitInvoker);
         }
     }
 }

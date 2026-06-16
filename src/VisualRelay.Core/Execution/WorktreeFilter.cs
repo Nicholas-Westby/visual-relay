@@ -44,9 +44,10 @@ internal static partial class WorktreeFilter
         string rootPath,
         IReadOnlyList<string> testFiles,
         string? tasksDir,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default,
+        IGitInvoker? gitInvoker = null)
     {
-        // Host-gated path comparer (Defect D): OrdinalIgnoreCase on macOS/Windows.
+        var gi = gitInvoker ?? new GitInvoker();        // Host-gated path comparer (Defect D): OrdinalIgnoreCase on macOS/Windows.
         var pathComparer = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;
@@ -56,7 +57,7 @@ internal static partial class WorktreeFilter
             pathComparer);
 
         // 0. Pre-check: inside a git worktree?
-        var insideResult = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
+        var insideResult = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (insideResult.ExitCode != 0 || insideResult.TimedOut
             || !string.Equals(insideResult.Output.Trim(), "true", StringComparison.Ordinal))
             return new WorktreeFilterResult([], []);
@@ -67,7 +68,7 @@ internal static partial class WorktreeFilter
         //    trimmed (so a leading/trailing space survives — leak 2).  This
         //    supersedes -c core.quotePath=false (Defect C): with -z there is no
         //    quoting to disable.
-        var unstagedDiff = await GitAsync(rootPath,
+        var unstagedDiff = await GitAsync(gi, rootPath,
             ["diff", "--name-only", "-z"], cancellationToken);
         if (unstagedDiff.ExitCode != 0 || unstagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --name-only failed");
@@ -84,7 +85,7 @@ internal static partial class WorktreeFilter
         // makes the stream a flat sequence of NUL-separated tokens
         // (status\0path\0, or status\0old\0new\0 for R/C — no embedded TAB; see
         // the CR/CRLF limitation noted on SplitNulRecords / AddNameStatusNul).
-        var stagedDiff = await GitAsync(rootPath,
+        var stagedDiff = await GitAsync(gi, rootPath,
             ["diff", "--cached", "--name-status", "-M", "-C", "-z"], cancellationToken);
         if (stagedDiff.ExitCode != 0 || stagedDiff.TimedOut)
             return new WorktreeFilterResult([], [], "git diff --cached --name-status failed");
@@ -103,14 +104,14 @@ internal static partial class WorktreeFilter
         AddNameStatusNul(stagedDiff.Output, dirtyTracked, renamePairs);
 
         // Also include deleted tracked files (-z: NUL-delimited, never quoted).
-        var deletedResult = await GitAsync(rootPath,
+        var deletedResult = await GitAsync(gi, rootPath,
             ["ls-files", "--deleted", "-z"], cancellationToken);
         if (deletedResult.ExitCode != 0 || deletedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --deleted failed");
         AddNulPaths(deletedResult.Output, dirtyTracked);
 
         // 1b. Untracked files (-z: NUL-delimited, never quoted).
-        var untrackedResult = await GitAsync(rootPath,
+        var untrackedResult = await GitAsync(gi, rootPath,
             ["ls-files", "--others", "--exclude-standard", "-z"], cancellationToken);
         if (untrackedResult.ExitCode != 0 || untrackedResult.TimedOut)
             return new WorktreeFilterResult([], [], "git ls-files --others failed");
@@ -146,7 +147,7 @@ internal static partial class WorktreeFilter
         foreach (var rel in nonTestTracked)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var checkoutResult = await GitAsync(rootPath, ["checkout", "HEAD", "--", rel], cancellationToken);
+            var checkoutResult = await GitAsync(gi, rootPath, ["checkout", "HEAD", "--", rel], cancellationToken);
             if (checkoutResult is { ExitCode: 0, TimedOut: false })
             { trackedDiscarded.Add(rel); continue; }
 
@@ -155,7 +156,7 @@ internal static partial class WorktreeFilter
             if (checkoutResult.TimedOut)
             { allErrors.Add($"{rel}: checkout timed out"); continue; }
 
-            var probeResult = await GitAsync(rootPath, ["cat-file", "-e", $"HEAD:{rel}"], cancellationToken);
+            var probeResult = await GitAsync(gi, rootPath, ["cat-file", "-e", $"HEAD:{rel}"], cancellationToken);
             if (probeResult.TimedOut)
             { allErrors.Add($"{rel}: cat-file -e probe timed out"); continue; }
 
@@ -172,7 +173,7 @@ internal static partial class WorktreeFilter
             // edited again — "staged content different ... use -f", exit 1 WITHOUT -f),
             // which --ignore-unmatch does NOT mask.  Without -f that exit-1 was swallowed
             // and File.Delete ran anyway, leaving the index staging a missing blob.
-            var rmResult = await GitAsync(rootPath,
+            var rmResult = await GitAsync(gi, rootPath,
                 ["rm", "-f", "--cached", "--ignore-unmatch", "--", rel], cancellationToken);
             if (rmResult.TimedOut)
             { allErrors.Add($"{rel}: rm --cached timed out"); continue; }
@@ -246,8 +247,9 @@ internal static partial class WorktreeFilter
     }
 
     private static Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
+        IGitInvoker gitInvoker,
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken) =>
-        GitInvoker.RunAsync(rootPath, arguments, cancellationToken);
+        gitInvoker.RunAsync(rootPath, arguments, cancellationToken);
 }

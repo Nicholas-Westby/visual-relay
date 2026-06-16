@@ -289,4 +289,11 @@ public partial class MainWindowViewModel : ViewModelBase
         _elapsedTimer.Start();
     }
 
+    /// <summary>
+    /// Injectable environment accessor. When null (default), all env reads route
+    /// through the real process environment. Set only by tests to inject a
+    /// <c>DictionaryEnvironmentAccessor</c> without touching any process-global static.
+    /// </summary>
+    public VisualRelay.Core.Configuration.IEnvironmentAccessor? EnvironmentAccessor { get; set; }
+
 }

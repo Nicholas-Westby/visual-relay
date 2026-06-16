@@ -8,13 +8,6 @@ internal static class GitCommitter
     // assume a src/tests/tools layout, since Visual Relay runs on any repo.
     private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
 
-    /// <summary>
-    /// Test seam: when set, GitAsync calls this instead of the real git process.
-    /// Receives (rootPath, arguments, cancellationToken, timeout, environment).
-    /// When null (production), the retry-wrapped real git runner is used.
-    /// </summary>
-    internal static Func<string, IEnumerable<string>, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>>? RawGitRunner { get; set; }
-
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
         string taskId,
@@ -25,15 +18,17 @@ internal static class GitCommitter
         string? commitToken,
         IReadOnlySet<string>? preRunUntracked,
         string? tasksDir,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default,
+        IGitInvoker? gitInvoker = null)
     {
-        var inside = await GitAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
+        var gi = gitInvoker ?? new GitInvoker();
+        var inside = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (inside.ExitCode != 0)
         {
             return GitCommitResult.Failed($"target root is not a git repository (git exit {inside.ExitCode}): {inside.Output.Trim()}");
         }
 
-        var reset = await GitAsync(rootPath, ["reset", "-q"], cancellationToken);
+        var reset = await GitAsync(gi, rootPath, ["reset", "-q"], cancellationToken);
         if (reset.ExitCode != 0)
         {
             return GitCommitResult.Failed($"git reset failed (git exit {reset.ExitCode}): {reset.Output.Trim()}");
@@ -41,7 +36,7 @@ internal static class GitCommitter
         IReadOnlyList<string> manifestFilesToStage;
         try
         {
-            manifestFilesToStage = await ResolveManifestFilesToStageAsync(rootPath, manifest, cancellationToken);
+            manifestFilesToStage = await ResolveManifestFilesToStageAsync(gi, rootPath, manifest, cancellationToken);
         }
         catch (InvalidOperationException ex)
         {
@@ -54,7 +49,7 @@ internal static class GitCommitter
         {
             var checkArgs = new List<string> { "check-ignore", "--" };
             checkArgs.AddRange(manifest);
-            var ci = await GitAsync(rootPath, checkArgs, cancellationToken);
+            var ci = await GitAsync(gi, rootPath, checkArgs, cancellationToken);
             if (ci.ExitCode == 0 && !string.IsNullOrWhiteSpace(ci.Output))
             {
                 var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
@@ -68,7 +63,7 @@ internal static class GitCommitter
 
         if (manifestFilesToStage.Count > 0)
         {
-            var add = await GitAsync(rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
+            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
             if (add.ExitCode != 0)
             {
                 return GitCommitResult.Failed($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
@@ -80,7 +75,7 @@ internal static class GitCommitter
         // double, a csproj — without declaring them). Stage 9 verifies the working
         // tree, so the commit must match it or committed code could reference an
         // uncommitted change and fail to build from a clean checkout.
-        var addTracked = await GitAsync(rootPath, ["add", "-u"], cancellationToken);
+        var addTracked = await GitAsync(gi, rootPath, ["add", "-u"], cancellationToken);
         if (addTracked.ExitCode != 0)
         {
             return GitCommitResult.Failed($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
@@ -92,7 +87,7 @@ internal static class GitCommitter
         // a genuinely ignored source path still surfaces as an error.
         if (proofFiles.Count > 0)
         {
-            var addProof = await GitAsync(rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
+            var addProof = await GitAsync(gi, rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
             if (addProof.ExitCode != 0)
             {
                 return GitCommitResult.Failed($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
@@ -110,7 +105,7 @@ internal static class GitCommitter
         // outside src/tests/tools must not be silently dropped either.
         if (preRunUntracked is not null)
         {
-            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
+            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi);
             var newAuthored = new List<string>();
             foreach (var path in currentUntracked)
             {
@@ -122,7 +117,7 @@ internal static class GitCommitter
 
             if (newAuthored.Count > 0)
             {
-                var addNew = await GitAsync(rootPath, ["add", "--", .. newAuthored], cancellationToken);
+                var addNew = await GitAsync(gi, rootPath, ["add", "--", .. newAuthored], cancellationToken);
                 if (addNew.ExitCode != 0)
                 {
                     return GitCommitResult.Failed($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
@@ -147,10 +142,10 @@ internal static class GitCommitter
                     ["RELAY_NONCE"] = commitToken,
                 }
                 : null;
-            var attempt = await GitAsync(rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv);
+            var attempt = await GitAsync(gi, rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv);
             if (attempt.ExitCode == 0)
             {
-                var sha = await GitAsync(rootPath, ["rev-parse", "HEAD"], cancellationToken);
+                var sha = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken);
                 return sha.ExitCode == 0
                     ? GitCommitResult.Committed(sha.Output.Trim())
                     : GitCommitResult.Failed($"git rev-parse failed after commit (git exit {sha.ExitCode}): {sha.Output.Trim()}");
@@ -163,6 +158,7 @@ internal static class GitCommitter
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
+        IGitInvoker gitInvoker,
         string rootPath,
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
@@ -177,9 +173,7 @@ internal static class GitCommitter
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            var result = RawGitRunner is not null
-                ? await RawGitRunner(rootPath, args, cancellationToken, timeout, environment)
-                : await GitInvoker.RunAsync(rootPath, args, cancellationToken, timeout, environment);
+            var result = await gitInvoker.RunAsync(rootPath, args, cancellationToken, timeout, environment);
 
             if (result.ExitCode == 0 || attempt == maxAttempts)
                 return result;
@@ -193,6 +187,7 @@ internal static class GitCommitter
     }
 
     private static async Task<IReadOnlyList<string>> ResolveManifestFilesToStageAsync(
+        IGitInvoker gitInvoker,
         string rootPath,
         IReadOnlyList<string> manifest,
         CancellationToken cancellationToken)
@@ -207,7 +202,7 @@ internal static class GitCommitter
                 continue;
             }
 
-            var tracked = await GitAsync(rootPath, ["ls-files", "--", relative], cancellationToken);
+            var tracked = await GitAsync(gitInvoker, rootPath, ["ls-files", "--", relative], cancellationToken);
             if (!string.IsNullOrWhiteSpace(tracked.Output))
             {
                 files.Add(relative);
@@ -224,9 +219,11 @@ internal static class GitCommitter
     /// </summary>
     public static async Task<IReadOnlySet<string>> CaptureUntrackedSnapshotAsync(
         string rootPath,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default,
+        IGitInvoker? gitInvoker = null)
     {
-        var result = await GitAsync(rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
+        var gi = gitInvoker ?? new GitInvoker();
+        var result = await GitAsync(gi, rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"git ls-files failed: {result.Output.Trim()}");
@@ -273,9 +270,11 @@ internal static class GitCommitter
         string rootPath,
         IReadOnlySet<string> preRunUntracked,
         string? tasksDir,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken = default,
+        IGitInvoker? gitInvoker = null)
     {
-        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken);
+        var gi = gitInvoker ?? new GitInvoker();
+        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi);
         var missed = new List<string>();
         foreach (var path in currentUntracked)
         {
