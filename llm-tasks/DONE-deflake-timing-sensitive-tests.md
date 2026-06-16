@@ -38,8 +38,16 @@ on wall-clock generosity to survive parallel siblings. No blanket serialization 
 the whole suite and no deleted/skipped tests — each flaky test gets a root-cause fix:
 fake/injectable clocks or pulse sources instead of real sleeps where the subject
 allows it; explicit xUnit collections to isolate genuinely CPU-heavy tests (the
-cpu-pulse burn tests) from timing-assertion tests; generous-but-bounded waits driven
-by condition polling rather than fixed sleeps.
+cpu-pulse burn tests) from timing-assertion tests; **await the real operation `Task`
+— do not poll for its side effects.**  A `Func<bool>` poll on a wall-clock budget
+(e.g. 50×20 ms = 1 000 ms cap) is itself a flake source under parallel CPU load:
+the scheduler-starvation watchdog tests can push the awaited I/O past the cap and
+the poll false-fails.  Await the operation Task directly (e.g. `await viewModel.
+LastSelectionLoad`, `await viewModel.SelectTaskAsync(task)`, or `await command.
+ExecuteAsync(null)` for an `IAsyncRelayCommand`).  Condition-polling helpers are
+**banned** — see `harness-await-not-poll-async-tests` and `BannedSymbols.txt`.
+For `[AvaloniaFact]` binding settle after an await, a single non-looping
+`Dispatcher.UIThread.RunJobs()` flush is the only sanctioned "settle".
 
 ## Approach (suggested)
 

@@ -7,11 +7,7 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed partial class SplitGuardVerificationTests
 {
-    /// <summary>
-    /// Every companion file (named <c>*Tests.*.cs</c>) must declare
-    /// <c>public sealed partial class</c> matching the repo convention
-    /// (GitCommitterAutoIncludeTests.Snapshot.cs, MainWindowViewModelTests.Status.cs).
-    /// </summary>
+    /// <summary>Companion files must declare public sealed partial class matching the repo convention.</summary>
     [Fact]
     public void CompanionFiles_DeclareSealedPartialClass()
     {
@@ -40,10 +36,7 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>
-    /// Files in the GitCommitter collection must carry [Collection("GitCommitter")]
-    /// on the main partial declaration. Companions inherit collection membership.
-    /// </summary>
+    /// <summary>GitCommitter-collection files must carry [Collection("GitCommitter")] on the main partial declaration.</summary>
     [Fact]
     public void GitCommitterCollectionFiles_HaveCollectionAttribute()
     {
@@ -104,11 +97,7 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>
-    /// Watchdog tests that launch real CPU-burning or long-sleeping
-    /// subprocesses must carry [Collection("Watchdog")] so they do not
-    /// starve parallel timing-assertion tests.
-    /// </summary>
+    /// <summary>Watchdog tests that launch real CPU-burning subprocesses must carry [Collection("Watchdog")].</summary>
     [Fact]
     public void WatchdogCollectionFiles_HaveCollectionAttribute()
     {
@@ -127,11 +116,7 @@ public sealed partial class SplitGuardVerificationTests
         }
     }
 
-    /// <summary>
-    /// After env-mutation isolation, NO test file may call
-    /// <c>Environment.SetEnvironmentVariable</c> directly — all env
-    /// mutation routes through <c>KeyEnvFile.EnvironmentAccessorOverride</c>.
-    /// </summary>
+    /// <summary>No test file may call Environment.SetEnvironmentVariable directly; all env mutation routes through KeyEnvFile.EnvironmentAccessorOverride.</summary>
     [Fact]
     public void NoTestFile_CallsEnvironmentSetEnvironmentVariable()
     {
@@ -157,11 +142,7 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Empty(violations);
     }
 
-    /// <summary>
-    /// After the split the duplicated AlwaysReady, Invocation, and
-    /// WriteExecutableAsync helpers must live in SwivalTestHelpers.cs
-    /// so they are not repeated verbatim across six Swival* test files.
-    /// </summary>
+    /// <summary>After the split the shared helpers must live in SwivalTestHelpers.cs, not duplicated across Swival* test files.</summary>
     [Fact]
     public void SwivalTestHelpers_ExistsAndContainsSharedMethods()
     {
@@ -189,11 +170,7 @@ public sealed partial class SplitGuardVerificationTests
         Assert.DoesNotContain("class TransientGitShim", File.ReadAllText(gitPath), StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// After consolidation, the three duplicated private helpers must NOT
-    /// appear as private method definitions in individual Swival* files.
-    /// Check for the exact signature patterns that define these methods.
-    /// </summary>
+    /// <summary>After consolidation, private helpers must not appear as method definitions in individual Swival* files.</summary>
     [Fact]
     public void SwivalTestFiles_DoNotContainDuplicatedPrivateHelpers()
     {
@@ -223,12 +200,7 @@ public sealed partial class SplitGuardVerificationTests
 
     // ── GitInvoker architecture guard ──────────────────────────────────
 
-    /// <summary>
-    /// GitInvokerTests AND WorktreeFilterTests must carry
-    /// [Collection("GitInvoker")] so every test that touches the static
-    /// GitInvoker.Override seam (set it, or rely on it being null) is
-    /// serialized and cannot race across collections.
-    /// </summary>
+    /// <summary>GitInvokerTests and WorktreeFilterTests must share [Collection("GitInvoker")] to serialize static Override access.</summary>
     [Fact]
     public void GitInvokerTests_HasCollectionAttribute()
     {
@@ -248,12 +220,7 @@ public sealed partial class SplitGuardVerificationTests
         Assert.Contains("public sealed partial class WorktreeFilterTests", wfContent, StringComparison.Ordinal);
     }
 
-    /// <summary>
-    /// Every production git call site must route through
-    /// <see cref="VisualRelay.Core.Execution.GitInvoker"/>. Bare <c>"git"</c> in
-    /// <c>ProcessCapture.RunAsync</c> or <c>new ProcessStartInfo("git")</c> is
-    /// forbidden — those fail under nix-shell environment rot on macOS.
-    /// </summary>
+    /// <summary>Every production git call site must route through GitInvoker; bare "git" strings in ProcessCapture/ProcessStartInfo are forbidden.</summary>
     [Fact]
     public void NoBareGitString_InProductionCallSites()
     {
@@ -290,6 +257,32 @@ public sealed partial class SplitGuardVerificationTests
                 {
                     violations.Add($"{relative}: new ProcessStartInfo(\"git\") — use GitInvoker.RunAsync instead");
                 }
+            }
+        }
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>No test file may reintroduce WaitUntilAsync/WaitUntilWithDispatcherAsync condition-polling helpers. Await the real operation Task instead (see harness-await-not-poll-async-tests).</summary>
+    [Fact]
+    public void NoTestFile_ReintroducesConditionPollHelper()
+    {
+        var violations = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(TestsDir, "*.cs", SearchOption.TopDirectoryOnly))
+        {
+            // This convention file itself contains the banned strings as
+            // documentation — skip it so it cannot self-tripwire.
+            if (Path.GetFileName(file) == "SplitGuardVerificationTests.Conventions.cs") continue;
+
+            var content = File.ReadAllText(file);
+            if (content.Contains("WaitUntilAsync", StringComparison.Ordinal)
+                || content.Contains("WaitUntilWithDispatcherAsync", StringComparison.Ordinal))
+            {
+                var relative = Path.GetRelativePath(RepoSetup.Root, file);
+                violations.Add(
+                    $"{relative}: contains WaitUntilAsync / WaitUntilWithDispatcherAsync " +
+                    "polling helper — await the real operation Task instead. " +
+                    "See harness-await-not-poll-async-tests.");
             }
         }
 

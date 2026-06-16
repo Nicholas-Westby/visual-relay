@@ -57,7 +57,8 @@ public sealed class ConfigInitEmptyStateUiTests
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("dotnet test", viewModel.InitTestCommandInput);
 
-        // ── Act: click the Create config button via real mouse input ──
+        // ── Act: click the Create config button and await the command's
+        // in-flight task deterministically (no wall-clock poll). ──
         var button = queuePanel.FindControl<Button>("CreateConfigButton");
         Assert.NotNull(button);
         var buttonCenter = new Point(button.Bounds.Width / 2, button.Bounds.Height / 2);
@@ -66,11 +67,12 @@ public sealed class ConfigInitEmptyStateUiTests
         window.MouseUp(clickPoint, MouseButton.Left);
         Dispatcher.UIThread.RunJobs();
 
-        // ── Wait for the async command to settle ──
-        await WaitHelpers.WaitUntilWithDispatcherAsync(() => !viewModel.NeedsInitialization);
+        var createTask = viewModel.CreateConfigCommand.ExecutionTask;
+        Assert.NotNull(createTask);
+        await createTask;
+        Dispatcher.UIThread.RunJobs();
 
         // ── Assert: config file exists and parses ──
-        Dispatcher.UIThread.RunJobs();
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
         var configText = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"));
         Assert.Contains("dotnet test", configText);
@@ -80,6 +82,4 @@ public sealed class ConfigInitEmptyStateUiTests
         Assert.False(initBorder.IsVisible);
         Assert.True(taskList.IsVisible);
     }
-
-    // WaitUntilWithDispatcherAsync is provided by WaitHelpers.
 }

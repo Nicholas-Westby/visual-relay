@@ -132,6 +132,17 @@ public partial class MainWindowViewModel
         }
     }
 
+    /// <summary>
+    /// Captures the in-flight selection-load task so tests can
+    /// <c>await viewModel.LastSelectionLoad</c> instead of polling
+    /// derived properties on a wall-clock budget (which false-fails
+    /// under CPU load).  Set by <see cref="OnSelectedTaskChanged"/>
+    /// (the generated synchronous setter hook for
+    /// <see cref="SelectedTask"/>) and never null after the first
+    /// assignment.
+    /// </summary>
+    internal Task? LastSelectionLoad { get; private set; }
+
     partial void OnSelectedTaskChanged(TaskRowViewModel? value)
     {
         _selectedStageFilter = null;
@@ -164,10 +175,24 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(SelectedTaskBoostsTurns));
         OnPropertyChanged(nameof(TurnBudgetLabel));
         OnPropertyChanged(nameof(CanToggleTurnBudget));
-        _ = LoadSelectedTaskAsync(value);
+
+        // Capture the task so tests can await it deterministically
+        // (no 1 000 ms wall-clock budget — the real operation decides).
+        // Faults are surfaced to StatusText (the VM's operation-error
+        // channel) instead of being silently swallowed into _.
+        LastSelectionLoad = SelectTaskAsync(value);
     }
 
-    private async Task LoadSelectedTaskAsync(TaskRowViewModel? task)
+    /// <summary>
+    /// Loads the selected task's markdown, context, and run history.
+    /// Awaitable by tests via <see cref="LastSelectionLoad"/>.
+    /// Runtime behavior is unchanged on success; a load fault is
+    /// surfaced to <see cref="MainWindowViewModel.StatusText"/>
+    /// (the VM's established operation-error channel) rather than
+    /// being discarded as an unobserved task exception — a
+    /// previously-swallowed fault is now visible.
+    /// </summary>
+    internal async Task SelectTaskAsync(TaskRowViewModel? task)
     {
         if (task is null)
         {
@@ -180,22 +205,38 @@ public partial class MainWindowViewModel
             return;
         }
 
-        ResetStages();
-
-        // Lazily promote active flat tasks to the nested subfolder layout
-        // so the convention spreads incrementally without a bulk migration.
-        if (task.Task is { IsNested: false, IsArchived: false })
+        try
         {
-            var newPath = await RelayTaskWriter.PromoteToNestedAsync(RootPath, task.Task);
-            var newDir = Path.GetDirectoryName(newPath)!;
-            task.Task = task.Task with { IsNested = true, MarkdownPath = newPath, TaskDirectory = newDir };
-        }
+            ResetStages();
 
-        var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task);
-        SelectedTaskMarkdown = input.Markdown;
-        SelectedTaskContext = input.Context ?? string.Empty;
-        await LoadRunHistoryAsync(task.Id);
+            // Lazily promote active flat tasks to the nested subfolder layout
+            // so the convention spreads incrementally without a bulk migration.
+            if (task.Task is { IsNested: false, IsArchived: false })
+            {
+                var newPath = await RelayTaskWriter.PromoteToNestedAsync(RootPath, task.Task);
+                var newDir = Path.GetDirectoryName(newPath)!;
+                task.Task = task.Task with { IsNested = true, MarkdownPath = newPath, TaskDirectory = newDir };
+            }
+
+            var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task);
+            SelectedTaskMarkdown = input.Markdown;
+            SelectedTaskContext = input.Context ?? string.Empty;
+            await LoadRunHistoryAsync(task.Id);
+        }
+        catch (Exception ex)
+        {
+            // Surface the load fault through the VM's operation-error channel
+            // (consistent with RunBusyAsync's catch).  The task completes
+            // observed — no unobserved task exception escapes.
+            StatusText = ex.Message;
+        }
     }
+
+    /// <summary>
+    /// Delegate kept so the already-awaited caller in <c>Authoring.cs:66</c>
+    /// (<c>await LoadSelectedTaskAsync(SelectedTask)</c>) works unchanged.
+    /// </summary>
+    private Task LoadSelectedTaskAsync(TaskRowViewModel? task) => SelectTaskAsync(task);
 
     [RelayCommand]
     private void SelectStage(StageRowViewModel stage)

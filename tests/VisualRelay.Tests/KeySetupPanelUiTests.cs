@@ -50,8 +50,6 @@ public sealed class KeySetupPanelUiTests : IDisposable
         public void Dispose() => env[name] = null;
     }
 
-    // WaitUntilWithDispatcherAsync is provided by WaitHelpers.
-
     private static Button FindButton(Control root, string name)
     {
         var btn = root.FindControl<Button>(name);
@@ -129,7 +127,8 @@ public sealed class KeySetupPanelUiTests : IDisposable
         Assert.Contains("Hugging Face", vm.HfGateMessage, StringComparison.OrdinalIgnoreCase);
 
         vm.SelectedTask = vm.Tasks[0];
-        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.SelectedTaskMarkdown.Contains("Alpha"));
+        await vm.LastSelectionLoad!;
+        Dispatcher.UIThread.RunJobs();
         Assert.True(vm.RunSelectedCommand.CanExecute(null));
         Assert.True(vm.DrainQueueCommand.CanExecute(null));
 
@@ -140,7 +139,8 @@ public sealed class KeySetupPanelUiTests : IDisposable
 
         vm.ShowArchive = true; Assert.True(vm.ShowArchive); vm.ShowArchive = false;
         vm.SelectedTask = vm.Tasks[1]; Assert.Equal("beta", vm.SelectedTask.Id);
-        await WaitHelpers.WaitUntilWithDispatcherAsync(() => vm.SelectedTaskMarkdown.Contains("Beta"));
+        await vm.LastSelectionLoad!;
+        Dispatcher.UIThread.RunJobs();
 
         vm.SelectedTask = vm.Tasks[0];
         await vm.DrainQueueCommand.ExecuteAsync(null);
