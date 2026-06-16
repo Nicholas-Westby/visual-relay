@@ -12,7 +12,7 @@ public sealed partial class SwivalSubagentRunner
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        // Pre-flight guard: fail fast (~1-2s) when the backend is down.
+        // Pre-flight guard: _probe is the test-supplied fake (used verbatim) or the default retrying probe (see ProcessRunners.cs).
         var readiness = await _probe(cancellationToken);
         if (!readiness.IsReady)
             return new SubagentResult(string.Empty, null, false, readiness.Message);

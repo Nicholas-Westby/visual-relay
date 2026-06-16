@@ -32,7 +32,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         _config = config;
         _swivalBinary = swivalBinary;
         _eventSink = eventSink;
-        _probe = backendProbe ?? (token => BackendReadinessProbe.CheckAsync(ModelBackend.BaseUrl, ProbeTimeout, token));
+        _probe = backendProbe ?? (token => BackendReadinessProbe.CheckWithRetryAsync(ModelBackend.BaseUrl, ProbeTimeout, cancellationToken: token));
     }
 
     // Pure swival arguments — no sandbox flags. swival 1.0.25+ does support

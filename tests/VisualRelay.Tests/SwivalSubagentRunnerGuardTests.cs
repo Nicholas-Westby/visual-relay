@@ -25,6 +25,38 @@ public sealed partial class SwivalSubagentRunnerGuardTests
         Assert.False(Directory.Exists(SwivalTestHelpers.Invocation(repo.Root).TraceDirectory));
     }
 
+    /// <summary>
+    /// On a healthy backend the injected probe is called exactly once (no added
+    /// latency, no retry delay — injected fakes are used verbatim) and RunAsync
+    /// proceeds.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_BackendReadyOnFirstProbe_RunsWithSingleCall()
+    {
+        using var repo = TestRepository.Create();
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
+            repo.Root, "swival",
+            "#!/bin/bash\necho '{\"summary\":\"ok\"}'\n");
+        var callCount = 0;
+        var runner = new SwivalSubagentRunner(
+            TestConfig(),
+            swivalBinary: script,
+            backendProbe: ct =>
+            {
+                Interlocked.Increment(ref callCount);
+                return Task.FromResult(new BackendReadiness(true, null));
+            });
+
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
+
+        // Injected probes are used verbatim: exactly one call, no retry wrapping.
+        Assert.Equal(1, callCount);
+
+        // RunAsync proceeds past the probe — result comes from swival execution.
+        Assert.DoesNotContain("backend down", result.Error);
+        Assert.DoesNotContain("Can't reach", result.Error);
+    }
+
     private static RelayConfig TestConfig() =>
         new(
             "llm-tasks",
