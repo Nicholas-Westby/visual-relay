@@ -121,6 +121,69 @@ public sealed class SandboxExtraAllowPathsConfigTests
         Assert.Equal(wsPath, result.Config.SandboxExtraAllowPaths![0]);
     }
 
+    // ── Sensitive-subtree rejection ───────────────────────────────────
+
+    [Fact]
+    public async Task SandboxExtraAllowPaths_Ssh_ProducesLoadError()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), """
+            {
+              "testCmd": "true",
+              "logSources": [],
+              "sandboxExtraAllowPaths": ["~/.ssh"]
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Malformed, result.Status);
+        Assert.NotNull(result.Diagnostic);
+        Assert.Contains(".ssh", result.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SandboxExtraAllowPaths_Keychains_ProducesLoadError()
+    {
+        using var repo = TestRepository.Create();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var keychainsPath = Path.Combine(home, "Library", "Keychains");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), $$"""
+            {
+              "testCmd": "true",
+              "logSources": [],
+              "sandboxExtraAllowPaths": ["{{keychainsPath.Replace("\\", "\\\\")}}"]
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Malformed, result.Status);
+        Assert.NotNull(result.Diagnostic);
+        Assert.Contains("Keychains", result.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SandboxExtraAllowPaths_LegitimateCache_StillAccepted()
+    {
+        using var repo = TestRepository.Create();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var allowed = Path.Combine(home, ".cache", "exotic-tool");
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), $$"""
+            {
+              "testCmd": "true",
+              "logSources": [],
+              "sandboxExtraAllowPaths": ["{{allowed.Replace("\\", "\\\\")}}"]
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Single(result.Config.SandboxExtraAllowPaths!);
+        Assert.Equal(allowed, result.Config.SandboxExtraAllowPaths![0]);
+    }
+
     // ── Builder integration: -a flags appear in both invocations ───────
 
     [Fact]

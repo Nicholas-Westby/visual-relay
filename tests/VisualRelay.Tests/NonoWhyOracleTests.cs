@@ -143,6 +143,41 @@ public sealed class NonoWhyOracleTests
         AssertAllowed(Path.Combine(Home, ".cache", "go-build"));
     }
 
+    // ── Narrowed-allowlist regression: removed from ~/.local and ~/Library/Developer ──
+
+    [Fact]
+    public void NonoWhy_LocalBin_DeniedWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertDenied(Path.Combine(Home, ".local", "bin", "x"), "write");
+    }
+
+    [Fact]
+    public void NonoWhy_ProvisioningProfiles_DeniedWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        if (!OperatingSystem.IsMacOS())
+            Assert.Skip("Test is macOS-only (Provisioning Profiles under ~/Library/Developer)");
+        AssertDenied(Path.Combine(Home, "Library", "Developer", "Xcode", "UserData",
+            "Provisioning Profiles", "x"), "write");
+    }
+
+    [Fact]
+    public void NonoWhy_LocalShareUv_AllowedReadWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        if (!OperatingSystem.IsLinux())
+            Assert.Skip("Test is Linux-only (uv data under ~/.local/share/uv)");
+        AssertAllowed(Path.Combine(Home, ".local", "share", "uv"));
+    }
+
+    [Fact]
+    public void NonoWhy_LocalShareNuGet_AllowedReadWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".local", "share", "NuGet"));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static void AssertAllowed(string path)

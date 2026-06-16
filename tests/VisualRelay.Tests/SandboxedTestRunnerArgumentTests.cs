@@ -3,17 +3,9 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-/// <summary>
-/// Unit tests for <see cref="SandboxedTestRunner"/> argument shapes, the shared
-/// nono-prefix builder, and new-guard path containment.
-/// Every test in this file asserts on argument lists and pure-logic validation,
-/// never shelling out to nono.
-/// </summary>
 public sealed class SandboxedTestRunnerArgumentTests
 {
-    // ════════════════════════════════════════════════════════════════════
     // SandboxedTestRunner argument shapes
-    // ════════════════════════════════════════════════════════════════════
 
     [Fact]
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
@@ -76,9 +68,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.DoesNotContain("nono", args);
     }
 
-    // ════════════════════════════════════════════════════════════════════
     // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
-    // ════════════════════════════════════════════════════════════════════
 
     [Fact]
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
@@ -169,9 +159,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.DoesNotContain("--rollback", args);
     }
 
-    // ════════════════════════════════════════════════════════════════════
     // New-guard path containment
-    // ════════════════════════════════════════════════════════════════════
 
     [Fact]
     public void NewGuardProbe_RejectsPathTraversalOutsideGuardsDir()
@@ -208,6 +196,53 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.False(RelayDriver.IsPathWithinGuardRoot(otherPath, guardsRoot));
     }
 
+    // Symlink-resolution containment (IsSymlinkTargetContained)
+    [Fact]
+    public void NewGuardProbe_SymlinkOutsideGuardsDir_Rejected()
+    {
+        using var tmp = new TempGuardsDir();
+        // Create a real guard script and a symlink that escapes.
+        var realScript = Path.Combine(tmp.GuardsRoot, "real.sh");
+        File.WriteAllText(realScript, "#!/bin/sh\nexit 0\n");
+        var outsideTarget = Path.Combine(tmp.RootPath, "outside.sh");
+        File.WriteAllText(outsideTarget, "#!/bin/sh\necho bad\n");
+        var symlinkPath = Path.Combine(tmp.GuardsRoot, "escape.sh");
+        if (!TryCreateSymbolicLink(symlinkPath, outsideTarget))
+            Assert.Skip("Symlink creation not supported on this platform");
+
+        // Lexical check passes (symlink is under guards dir).
+        Assert.True(RelayDriver.IsPathWithinGuardRoot(symlinkPath, tmp.GuardsRoot));
+        // Symlink-target check must reject — the real target is outside.
+        Assert.False(RelayDriver.IsSymlinkTargetContained(symlinkPath, tmp.GuardsRoot));
+        // Real file still passes containment.
+        Assert.True(RelayDriver.IsSymlinkTargetContained(realScript, tmp.GuardsRoot));
+    }
+
+    [Fact]
+    public void NewGuardProbe_SymlinkInsideGuardsDir_Accepted()
+    {
+        using var tmp = new TempGuardsDir();
+        var realScript = Path.Combine(tmp.GuardsRoot, "real.sh");
+        File.WriteAllText(realScript, "#!/bin/sh\nexit 0\n");
+        var symlinkPath = Path.Combine(tmp.GuardsRoot, "link.sh");
+        if (!TryCreateSymbolicLink(symlinkPath, realScript))
+            Assert.Skip("Symlink creation not supported on this platform");
+
+        Assert.True(RelayDriver.IsPathWithinGuardRoot(symlinkPath, tmp.GuardsRoot));
+        Assert.True(RelayDriver.IsSymlinkTargetContained(symlinkPath, tmp.GuardsRoot));
+    }
+
+    [Fact]
+    public void NewGuardProbe_NonSymlinkFile_Accepted()
+    {
+        using var tmp = new TempGuardsDir();
+        var legitPath = Path.Combine(tmp.GuardsRoot, "check.sh");
+        File.WriteAllText(legitPath, "#!/bin/sh\nexit 0\n");
+
+        Assert.True(RelayDriver.IsPathWithinGuardRoot(legitPath, tmp.GuardsRoot));
+        Assert.True(RelayDriver.IsSymlinkTargetContained(legitPath, tmp.GuardsRoot));
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static RelayConfig TestConfig() =>
@@ -220,4 +255,40 @@ public sealed class SandboxedTestRunnerArgumentTests
             { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2);
+
+    private static bool TryCreateSymbolicLink(string linkPath, string target)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, target);
+            return File.Exists(linkPath) || Directory.Exists(linkPath);
+        }
+        catch { return false; }
+    }
+
+    private sealed class TempGuardsDir : IDisposable
+    {
+        public string RootPath { get; }
+        public string GuardsRoot { get; }
+
+        public TempGuardsDir()
+        {
+            RootPath = Path.Combine(Path.GetTempPath(), "vr-guard-tests", Guid.NewGuid().ToString("N"));
+            GuardsRoot = Path.Combine(RootPath, "tools", "guards");
+            Directory.CreateDirectory(GuardsRoot);
+        }
+
+        public void Dispose()
+        {
+            try
+            {
+                if (Directory.Exists(RootPath))
+                    Directory.Delete(RootPath, recursive: true);
+            }
+            catch
+            {
+                // Best-effort cleanup.
+            }
+        }
+    }
 }

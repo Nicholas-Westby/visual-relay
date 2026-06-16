@@ -173,6 +173,19 @@ public static class RelayConfigLoader
                             return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
                                 $"relay config: sandboxExtraAllowPaths entry must resolve under $HOME or workspace root, got: \"{raw}\" → \"{normalized}\" in {configPath}");
                         }
+                        // Reject entries that resolve into known-sensitive subtrees.
+                        var sensitiveSubtrees = new[] {
+                            Path.Combine(normalizedHome, ".ssh"), Path.Combine(normalizedHome, ".gnupg"),
+                            Path.Combine(normalizedHome, ".aws"), Path.Combine(normalizedHome, ".config", "gh"),
+                            Path.Combine(normalizedHome, "Library", "Keychains"),
+                            Path.Combine(normalizedHome, ".bashrc"), Path.Combine(normalizedHome, ".zshrc"),
+                            Path.Combine(normalizedHome, ".profile"), Path.Combine(normalizedHome, ".bash_profile"),
+                            Path.Combine(normalizedHome, ".zprofile"),
+                        };
+                        foreach (var subtree in sensitiveSubtrees)
+                            if (normalized == subtree || normalized.StartsWith(subtree + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                                return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
+                                    $"relay config: sandboxExtraAllowPaths entry resolves into sensitive subtree \"{subtree}\": \"{raw}\" → \"{normalized}\" in {configPath}");
 
                         validated.Add(normalized);
                     }
@@ -220,7 +233,6 @@ public static class RelayConfigLoader
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
     }
-
     private static bool TryGetString(JsonElement root, string name, out string value)
     {
         if (root.TryGetProperty(name, out var element) && element.ValueKind == JsonValueKind.String)
@@ -232,7 +244,6 @@ public static class RelayConfigLoader
         value = string.Empty;
         return false;
     }
-
     // Optional array: absent -> empty (ok); present-but-not-array -> error.
     private static bool TryReadStringArray(JsonElement root, string name, out IReadOnlyList<string> values, out string? error)
     {
@@ -253,12 +264,10 @@ public static class RelayConfigLoader
         values = element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
         return true;
     }
-
     private static string OptionalString(JsonElement root, string name, string fallback) =>
         root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? fallback
             : fallback;
-
     private static int OptionalInt(JsonElement root, string name, int fallback) =>
         root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : fallback;
 
@@ -266,7 +275,6 @@ public static class RelayConfigLoader
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : fallback;
-
     // Absent or non-array → empty list; present array → string values.
     private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name)
     {
@@ -274,7 +282,6 @@ public static class RelayConfigLoader
             return [];
         return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
     }
-
     // Absent or non-array → fallback; present array → string values.
     private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name, IReadOnlyList<string> fallback)
     {
@@ -282,7 +289,6 @@ public static class RelayConfigLoader
             return fallback;
         return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
     }
-
     // Absent or non-string → null; present string → value.
     private static string? OptionalStringOrNull(JsonElement root, string name)
     {

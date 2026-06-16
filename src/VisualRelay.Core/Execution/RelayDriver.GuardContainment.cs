@@ -13,6 +13,26 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// Resolves the final symlink target of <paramref name="resolvedPath"/> and
+    /// re-checks containment under <paramref name="guardRoot"/>.
+    /// Returns <c>true</c> if the path is not a symlink (lexical check already
+    /// passed) or if the resolved target is also inside the guards directory.
+    /// </summary>
+    internal static bool IsSymlinkTargetContained(string resolvedPath, string guardRoot)
+    {
+        // If the path is not a symlink, the lexical check already passed.
+        var linkTarget = File.ResolveLinkTarget(resolvedPath, returnFinalTarget: true);
+        if (linkTarget is null)
+            return true;
+
+        // The resolved target escapes the guards directory — reject.
+        if (!IsPathWithinGuardRoot(linkTarget.FullName, guardRoot))
+            return false;
+
+        return true;
+    }
+
+    /// <summary>
     /// Resolves manifest entries that match <paramref name="patterns"/> and pass
     /// path-containment under <c>tools/guards/</c>.  Entries that escape via
     /// <c>..</c> traversal are dropped with a <c>warn</c> event.
@@ -40,7 +60,18 @@ public sealed partial class RelayDriver
                 continue;
             }
             if (File.Exists(resolved))
+            {
+                if (!IsSymlinkTargetContained(resolved, guardRoot))
+                {
+                    await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                        DateTimeOffset.UtcNow, "warn", "guard_symlink_escaped",
+                        "", rootPath, "", 9,
+                        Data: new Dictionary<string, string>
+                        { ["entry"] = entry, ["resolved"] = resolved, ["guardRoot"] = guardRoot }), ct);
+                    continue;
+                }
                 candidates.Add(resolved);
+            }
         }
         return candidates;
     }
