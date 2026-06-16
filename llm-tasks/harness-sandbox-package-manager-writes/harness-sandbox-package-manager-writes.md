@@ -392,8 +392,20 @@ sandbox allowlist now grants workspace + caches and a `..`-escape could still hi
 ## Tests
 
 Write failing tests first. Mix of unit (argument-shape, pure logic) and an opt-in integration tier
-that actually invokes nono (skipped when `nono` is absent, mirroring how existing sandbox/real-run
-tests gate).
+that actually invokes nono.
+
+> **CRITICAL — the default `dotnet test` suite MUST stay fast and deterministic.** Visual Relay runs
+> the configured test command as its OWN verification on **every stage of every task** (including in
+> its self-hosting drains), so any test that shells out to a real, minute-scale build
+> (`nono → dotnet/swift/npm restore+build+test`) MUST be **opt-in**: gate it behind an explicit
+> environment variable (e.g. `VR_RUN_NONO_INTEGRATION=1`) and `Assert.Skip` it **by default — even
+> when `nono` IS installed**. "Skip only when nono is absent" is NOT acceptable: it makes the real
+> builds run by default on any machine that has nono (including VR's own self-hosting host), which
+> bloats the suite to minutes and makes verification flaky and non-converging (Fix-verify cannot get
+> a clean green, so the task flags even though the code is correct). Only the cheap `nono why` oracle
+> assertions and pure-logic unit tests run in the default suite; the real restore+build+test cases run
+> **only** when the opt-in env var is set. A bare `dotnet test` (env unset) must trigger **no** real
+> external build.
 
 ### Unit (always run)
 
@@ -425,7 +437,13 @@ tests gate).
   path outside `$HOME` and outside the workspace root (e.g. `/etc/x`, another user's home) is
   **rejected**; a legitimate `$HOME/.cache/exotic-tool` is accepted and forwarded as `-a`.
 
-### Integration (opt-in; skip when `nono` not on PATH — prove the escape is closed)
+### Integration (opt-in via `VR_RUN_NONO_INTEGRATION=1` — prove the escape is closed)
+
+> The cheap `nono why` oracle assertions below MAY run by default when `nono` is present (sub-second
+> each). The **real in-sandbox build** cases (the `dotnet restore/build/test` and `swift build/test`
+> smokes) are the slow/flaky ones and MUST be gated behind `VR_RUN_NONO_INTEGRATION=1` — skipped by
+> default even with `nono` installed (see the CRITICAL note above). Provide one shared skip helper for
+> the real-build cases so the gate is uniform.
 
 Use the `nono why` oracle for cheap, deterministic allow/deny assertions (no real build needed for
 the path checks), plus at least one real in-sandbox build for .NET and Swift:
@@ -483,6 +501,11 @@ the path checks), plus at least one real in-sandbox build for .NET and Swift:
   declarative default any nono user can read) **and** `RelayConfig.SandboxExtraAllowPaths` in
   `.relay/config.json` (the per-repo escape hatch, validated to reject `..` and out-of-`$HOME`/
   -workspace paths, appended as `-a` flags to both nono invocations).
+- The **default `dotnet test`** (env unset) completes in well under a minute and triggers **no** real
+  external build: the real restore+build+test integration cases are gated behind
+  `VR_RUN_NONO_INTEGRATION=1` and report Skipped by default even when `nono` is installed. (This is a
+  hard requirement — VR verifies via this suite every stage, and minute-scale real builds make
+  verification flaky and non-converging.)
 - `./visual-relay check` is green; all touched files stay under 300 lines; Conventional Commit
   subjects.
 
