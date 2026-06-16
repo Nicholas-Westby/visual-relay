@@ -22,17 +22,38 @@ nono flagged after all 5 fix-verify loops** with this `app-launch-failed`. So wi
 > `bypassSandbox` can return to `false`** and a normal .NET task verifies through nono. Re-set it to
 > `false` as part of validating this fix.
 
-## Root cause (diagnosed 2026-06-16)
+## Root cause — CONFIRMED by experiment (2026-06-16)
 
-- The `./visual-relay` launcher runs commands via `env -u DOTNET_ROOT … nix develop --command …`, so
-  inside the verify environment **`DOTNET_ROOT` is unset** and `dotnet` is the nix SDK (10.0.8).
-- With `DOTNET_ROOT` unset, the .NET host uses multi-level lookup and can resolve to a **different**
-  install — here a stale `~/.dotnet` (10.0.7) — which mismatches what the test assemblies were built
-  against (nix 10.0.8) → `app-launch-failed`. On the host (no nono) this happened to resolve correctly;
-  under the nono-wrapped exec it does not (the resolution is sensitive to env/path, and the wrapper
-  changes the process's view enough to tip it to the wrong runtime).
-- Confirmed: under nono, `dotnet --list-runtimes` succeeds when pointed at a complete SDK; the failure
-  is **runtime resolution**, not nono blocking dotnet outright.
+Empirically proven, not hypothesized:
+
+- **nono does NOT break dotnet.** `nono run -p vr-guard --allow-cwd -- dotnet test … --no-build`
+  **passes 1032/0/11** when `dotnet` resolves the nix SDK (10.0.8). (The 11 skipped are the gated
+  integration tests — gating works.) So the sandbox itself is fine.
+- **The culprit is the verify's login shell.** The harness runs verify as
+  `nono run -p vr-guard --allow-cwd -- /bin/sh -lc "<cmd>"` (see `SandboxedTestRunner.ResolveLaunch`
+  → `ShellTestRunner` form, and `ShellTestRunner` itself). Under that `-lc` **login** shell, `dotnet`
+  resolves to the user's **`~/.dotnet` (10.0.7)**, NOT the nix SDK (10.0.8) the project was built
+  against → runtime/ref mismatch → `app-launch-failed`. (nono also blocks `~/.profile`/`~/.zprofile`
+  via `deny_shell_configs`, so the login shell prints `… Operation not permitted` — harmless noise,
+  but a signal the login env is not what the harness built in.)
+- **Setting `DOTNET_ROOT` alone is NOT sufficient.** With `DOTNET_ROOT` pinned to the nix SDK AND
+  `DOTNET_MULTILEVEL_LOOKUP=0`, a `nono … -- /bin/sh -lc "dotnet --list-runtimes"` STILL listed only
+  `~/.dotnet/10.0.7` — the `-lc` PATH resolves the `~/.dotnet` `dotnet` binary regardless. The direct
+  (non-login) `nono … -- dotnet test` used the correct nix dotnet and passed.
+- On the host (no nono) the same `-lc → ~/.dotnet 10.0.7` happened too, but verify built AND ran with
+  10.0.7 self-consistently, so it passed; under nono the 10.0.7 launch fails. Either way the verify is
+  using a **different dotnet than the build** — the real defect.
+
+**So the fix must make the nono-wrapped verify use the SAME dotnet the harness/agent built with** (the
+nix devshell's), not the login-shell-resolved `~/.dotnet`. Likely approaches (pick the most general,
+**validate with a real nono-wrapped `dotnet test`**):
+- Use a **non-login** shell for the sandboxed verify (`/bin/sh -c`, not `-lc`) so it inherits the
+  harness's devshell `PATH`/dotnet instead of re-resolving a login `PATH`. (Smallest change; confirm
+  it doesn't regress tool discovery for non-nix repos — the harness already runs inside the repo's
+  configured env.)
+- And/or prepend the active dotnet's directory to `PATH` (+ `DOTNET_ROOT` + `DOTNET_MULTILEVEL_LOOKUP=0`)
+  in `BuildSandboxEnvironment` so the build's dotnet wins even under a login shell.
+Keep it toolchain-scoped/general; do not hardcode nix store paths.
 
 ## Why the existing tests/review missed it
 
