@@ -1,10 +1,5 @@
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
-using Avalonia.Headless;
-using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
@@ -20,70 +15,15 @@ public sealed class SettingsPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
 
-    private void EnsureNoUserEnv() =>
-        _env["XDG_CONFIG_HOME"] = null;
-
-    private static Button FindButton(Control root, string name)
-    {
-        var btn = root.FindControl<Button>(name);
-        Assert.NotNull(btn);
-        return btn;
-    }
-
-    private static void Click(Control target, TopLevel root)
-    {
-        var c = new Point(target.Bounds.Width / 2, target.Bounds.Height / 2);
-        var pt = target.TranslatePoint(c, root) ?? c;
-        root.MouseDown(pt, MouseButton.Left);
-        root.MouseUp(pt, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-    }
-
-    private static TopBar GetTopBar(Visual window) =>
-        window.GetVisualDescendants().OfType<TopBar>().Single();
-
-    /// <summary>
-    /// Writes a valid <c>.relay/config.json</c> with the given
-    /// <paramref name="commitProofArtifacts"/> value (or omits the key
-    /// when null) so the loader treats it as Loaded.
-    /// </summary>
-    private static void WriteCommitConfig(TestRepository repo, bool? commitProofArtifacts)
-    {
-        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
-        var json = new JsonObject
-        {
-            ["testCmd"] = "dotnet test",
-            ["logSources"] = new JsonArray()
-        };
-        if (commitProofArtifacts is { } value)
-        {
-            json["commitProofArtifacts"] = value;
-        }
-        var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        File.WriteAllText(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-    }
-
-    /// <summary>
-    /// Seeds the fake environment accessor with XDG_CONFIG_HOME pointing to
-    /// <paramref name="repo"/>.Root, writes the given <paramref name="content"/>
-    /// to the <c>.env</c> file under <c>visual-relay/</c>, and returns a
-    /// disposable that clears XDG_CONFIG_HOME from the accessor.
-    /// </summary>
-    private IDisposable SeedUserEnv(TestRepository repo, string content)
-    {
-        var dir = Path.Combine(repo.Root, "visual-relay");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, ".env"), content);
-        _env["XDG_CONFIG_HOME"] = repo.Root;
-        return new EnvVarRestore("XDG_CONFIG_HOME", _env);
-    }
-
-    private sealed class EnvVarRestore(string name, DictionaryEnvironmentAccessor env) : IDisposable
-    {
-        public void Dispose() => env[name] = null;
-    }
+    // Thin forwarders to SettingsTestHelpers keep these tests under the
+    // source-size guard and remove duplication with the other UI test classes.
+    private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
+    private IDisposable SeedUserEnv(TestRepository repo, string content) =>
+        SettingsTestHelpers.SeedUserEnv(_env, repo, content);
+    private static void WriteCommitConfig(TestRepository repo, bool? commitProofArtifacts) =>
+        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts);
+    private static SettingsWindow OpenSettings(MainWindow window) =>
+        SettingsTestHelpers.OpenSettings(window);
 
     [AvaloniaFact]
     public async Task CogOpensSettingsPanel()
@@ -99,9 +39,13 @@ public sealed class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
-        Assert.NotNull(window.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
+        Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsSettingsOpen);
     }
 
     [AvaloniaFact]
@@ -118,11 +62,11 @@ public sealed class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        // Open the Settings panel via the cog button.
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        // Open the Settings dialog via the cog button.
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
 
-        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var checkBox = panel.FindControl<CheckBox>("CommitProofCheckBox")!;
         Assert.NotNull(checkBox);
 
@@ -143,6 +87,9 @@ public sealed class SettingsPanelUiTests
         // Other keys must be preserved.
         Assert.Equal("dotnet test", result.Config.TestCommand);
         Assert.Empty(result.Config.LogSources);
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     // ── Consolidated Settings panel tests ────────────────────────────────────
@@ -162,13 +109,21 @@ public sealed class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
 
-        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var scrollViewer = panel.FindControl<ScrollViewer>("SettingsScrollViewer");
         Assert.NotNull(scrollViewer);
         Assert.Equal(ScrollBarVisibility.Disabled, scrollViewer.HorizontalScrollBarVisibility);
+
+        // Core fix: exactly ONE layout scroll region in the whole settings dialog
+        // — the old flyout added a second (FlyoutPresenter) scrollbar that clipped
+        // "Live Tiers". The modal owns the single scroll region.
+        Assert.Single(SettingsTestHelpers.LayoutScrollViewers(dialog));
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     [AvaloniaFact]
@@ -186,10 +141,10 @@ public sealed class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
 
-        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
 
         // Commit proof checkbox must still be present.
         var commitCheckBox = panel.FindControl<CheckBox>("CommitProofCheckBox");
@@ -203,10 +158,13 @@ public sealed class SettingsPanelUiTests
 
         var hfSave = panel.FindControl<Button>("HfSaveButton");
         Assert.NotNull(hfSave);
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     [Fact]
-    public async Task ToggleSettingsRefreshesKeyStatesOnOpen()
+    public async Task OpenSettingsRefreshesKeyStatesOnOpen()
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
@@ -216,19 +174,22 @@ public sealed class SettingsPanelUiTests
         var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
 
-        // Before toggling settings, key states should already be populated
-        // by LoadInitialAsync, but ToggleSettings should refresh them again.
-        // Clear them to verify ToggleSettings repopulates.
+        // Before opening settings, key states should already be populated
+        // by LoadInitialAsync, but OpenSettingsAsync should refresh them again.
+        // Clear them to verify OpenSettingsAsync repopulates.
         vm.KeyStates.Clear();
         Assert.Empty(vm.KeyStates);
 
-        vm.ToggleSettingsCommand.Execute(null);
+        await vm.OpenSettingsAsync();
         Assert.True(vm.IsSettingsOpen);
 
-        // KeyStates must be repopulated after ToggleSettings opens the panel.
+        // KeyStates must be repopulated after OpenSettingsAsync opens the dialog.
         Assert.Equal(5, vm.KeyStates.Count);
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").IsSet);
         Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == "DEEPSEEK_API_KEY").IsSet);
+
+        vm.CloseSettings();
+        Assert.False(vm.IsSettingsOpen);
     }
 
     [AvaloniaFact]
@@ -245,7 +206,7 @@ public sealed class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var topBar = GetTopBar(window);
+        var topBar = SettingsTestHelpers.GetTopBar(window);
         // The separate "Keys" button must be gone after consolidation.
         var keyButton = topBar.FindControl<Button>("KeySetupButton");
         Assert.Null(keyButton);

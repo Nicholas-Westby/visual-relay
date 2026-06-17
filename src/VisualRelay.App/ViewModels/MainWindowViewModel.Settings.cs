@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;
@@ -40,15 +39,22 @@ public partial class MainWindowViewModel
         }
     }
 
-    /// <summary>Whether the settings flyout is currently open.</summary>
+    /// <summary>Whether the settings modal dialog is currently open.</summary>
     [ObservableProperty]
     private bool _isSettingsOpen;
 
-    [RelayCommand]
-    private async Task ToggleSettings()
+    /// <summary>
+    /// Marks the settings modal as open and refreshes provider-key state so the
+    /// dialog shows the current values. Called by the view when it opens the
+    /// <see cref="Views.SettingsWindow"/>; closing is mirrored by
+    /// <see cref="CloseSettings"/>.
+    /// </summary>
+    public async Task OpenSettingsAsync()
     {
-        IsSettingsOpen = !IsSettingsOpen;
-        if (IsSettingsOpen)
-            await RefreshKeyStatesAsync();
+        IsSettingsOpen = true;
+        await RefreshKeyStatesAsync();
     }
+
+    /// <summary>Marks the settings modal as closed (mirrors the window closing).</summary>
+    public void CloseSettings() => IsSettingsOpen = false;
 }

@@ -1,7 +1,5 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
-using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
@@ -16,47 +14,13 @@ public sealed class KeySetupPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
 
-    /// <summary>
-    /// Seeds the fake environment accessor with XDG_CONFIG_HOME pointing to
-    /// <paramref name="repo"/>.Root, writes the given <paramref name="content"/>
-    /// to the <c>.env</c> file under <c>visual-relay/</c>, and returns a
-    /// disposable that clears XDG_CONFIG_HOME from the accessor.
-    /// </summary>
-    private IDisposable SeedUserEnv(TestRepository repo, string content)
-    {
-        var dir = Path.Combine(repo.Root, "visual-relay");
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, ".env"), content);
-        _env["XDG_CONFIG_HOME"] = repo.Root;
-        return new EnvVarRestore("XDG_CONFIG_HOME", _env);
-    }
-
-    private void EnsureNoUserEnv() =>
-        _env["XDG_CONFIG_HOME"] = null;
-
-    private sealed class EnvVarRestore(string name, DictionaryEnvironmentAccessor env) : IDisposable
-    {
-        public void Dispose() => env[name] = null;
-    }
-
-    private static Button FindButton(Control root, string name)
-    {
-        var btn = root.FindControl<Button>(name);
-        Assert.NotNull(btn);
-        return btn;
-    }
-
-    private static void Click(Control target, TopLevel root)
-    {
-        var c = new Point(target.Bounds.Width / 2, target.Bounds.Height / 2);
-        var pt = target.TranslatePoint(c, root) ?? c;
-        root.MouseDown(pt, MouseButton.Left);
-        root.MouseUp(pt, MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-    }
-
-    private static TopBar GetTopBar(Visual window) =>
-        window.GetVisualDescendants().OfType<TopBar>().Single();
+    // Thin forwarders to SettingsTestHelpers (shared with the other UI test
+    // classes) so this file stays under the source-size guard.
+    private IDisposable SeedUserEnv(TestRepository repo, string content) =>
+        SettingsTestHelpers.SeedUserEnv(_env, repo, content);
+    private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
+    private static SettingsWindow OpenSettings(MainWindow window) =>
+        SettingsTestHelpers.OpenSettings(window);
 
     [AvaloniaFact]
     public async Task PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv()
@@ -72,9 +36,9 @@ public sealed class KeySetupPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
-        Assert.NotNull(window.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
+        Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
         Assert.Equal(5, MainWindowViewModel.AllProviderKeys.Count);
         Assert.Equal(5, vm.KeyStates.Count);
@@ -96,6 +60,9 @@ public sealed class KeySetupPanelUiTests
         foreach (var row in MainWindowViewModel.AllProviderKeys)
             Assert.StartsWith("https://", row.GetKeyUrl!, StringComparison.Ordinal);
         Assert.Contains("pay-as-you-go", vm.HfPricingNote, StringComparison.Ordinal);
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     [AvaloniaFact]
@@ -154,14 +121,15 @@ public sealed class KeySetupPanelUiTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.False(vm.IsHuggingFaceConfigured);
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        var dialog = OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
 
-        var panel = window.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var input = panel.FindControl<TextBox>("HfTokenInput")!;
         input.Focus();
         Dispatcher.UIThread.RunJobs();
-        window.KeyTextInput("hf-pasted-token-789");
+        // Text input targets the dialog window (where the field now lives).
+        dialog.KeyTextInput("hf-pasted-token-789");
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("hf-pasted-token-789",
             vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").PendingValue);
@@ -185,6 +153,9 @@ public sealed class KeySetupPanelUiTests
         Assert.True(hf.IsSet);
         Assert.Contains("hf-p", hf.DisplayValue, StringComparison.Ordinal);
         Assert.Equal(string.Empty, hf.PendingValue);
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     [Fact]
