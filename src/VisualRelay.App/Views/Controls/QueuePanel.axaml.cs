@@ -21,6 +21,9 @@ public partial class QueuePanel : UserControl
     private static readonly DataFormat<TaskRowViewModel> TaskRowFormat =
         DataFormat.CreateInProcessFormat<TaskRowViewModel>("visual-relay/task-row");
 
+    // Exposed for tests so they can verify the payload composition.
+    internal static DataFormat<TaskRowViewModel> TaskRowFormatForTest => TaskRowFormat;
+
     private ListBox? _list;
     private ListBoxItem? _dropTarget;
 
@@ -67,14 +70,32 @@ public partial class QueuePanel : UserControl
         _ = BeginDragAsync(e, row);
     }
 
-    private async Task BeginDragAsync(PointerPressedEventArgs e, TaskRowViewModel row)
+    /// <summary>
+    /// Builds the drag DataTransfer for the given row.
+    /// Contains both the in-process TaskRow format (drives the reorder drop handler)
+    /// and a serializable DataFormat.Text item (populates the macOS pasteboard so
+    /// AppKit's "≥1 pasteboard item per drag image" contract is satisfied).
+    /// </summary>
+    internal static DataTransfer BuildDragData(TaskRowViewModel row)
     {
         var data = new DataTransfer();
-        data.Add(DataTransferItem.Create(TaskRowFormat, row));
+        data.Add(DataTransferItem.Create(TaskRowFormat, row));    // in-process: drives the reorder
+        data.Add(DataTransferItem.Create(DataFormat.Text, row.Id)); // pasteboard-backed: satisfies AppKit
+        return data;
+    }
+
+    private async Task BeginDragAsync(PointerPressedEventArgs e, TaskRowViewModel row)
+    {
+        var data = BuildDragData(row);
         try
         {
             // Returns once the user releases. Avalonia only promotes this to a real
             // drag after the system threshold, so a plain click still selects.
+            //
+            // NOTE: the native macOS NSGenericException (empty pasteboard) cannot be
+            // caught here — it terminates the process via libc++abi before any managed
+            // catch runs. The fix is in BuildDragData: adding DataFormat.Text ensures
+            // the OS pasteboard has ≥1 item so AppKit's drag-session contract is met.
             await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         }
         catch (Exception ex)
