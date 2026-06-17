@@ -109,6 +109,56 @@ public sealed class ChevronAffordanceRenderTests
     }
 
     /// <summary>
+    /// Both focus-toggle states must draw real ink that sits comfortably inset
+    /// from the box edges. The old icon packed four corner elbows so tightly they
+    /// read as a near-solid square (ink spanning ~edge-to-edge with hairline
+    /// gaps); the clean diagonal-arrow icon keeps its ink well within the box, so
+    /// we assert a margin on every side for each state.
+    /// </summary>
+    [AvaloniaTheory]
+    [InlineData(false)] // expand / focus
+    [InlineData(true)]  // contract / restore
+    public void FocusIcon_Renders_NonEmptyInkInsetFromEdges(bool contracted)
+    {
+        var geometry = contracted
+            ? FocusToggleIcon.BuildContract()
+            : FocusToggleIcon.BuildExpand();
+
+        var bounds = geometry.Bounds;
+        Assert.True(bounds is { Width: > 0, Height: > 0 },
+            "focus icon must render non-empty ink");
+
+        // A real margin on all four sides — not an edge-to-edge square outline.
+        const double minMargin = 1.5;
+        Assert.True(bounds.Left >= minMargin,
+            $"left ink {bounds.Left:F2} too close to edge");
+        Assert.True(bounds.Top >= minMargin,
+            $"top ink {bounds.Top:F2} too close to edge");
+        Assert.True(bounds.Right <= FocusToggleIcon.IconSize - minMargin,
+            $"right ink {bounds.Right:F2} too close to edge {FocusToggleIcon.IconSize}");
+        Assert.True(bounds.Bottom <= FocusToggleIcon.IconSize - minMargin,
+            $"bottom ink {bounds.Bottom:F2} too close to edge {FocusToggleIcon.IconSize}");
+    }
+
+    /// <summary>
+    /// The expand and contract states must render visibly different shapes so the
+    /// toggle reads clearly in each state — the contracted (inward) arrows are not
+    /// a mere recolour of the expanded (outward) ones.
+    /// </summary>
+    [AvaloniaFact]
+    public void FocusIcon_Expand_And_Contract_AreDistinctShapes()
+    {
+        // StreamGeometry needs the platform render interface, which the headless
+        // [AvaloniaFact] session provides.
+        var expand = FocusToggleIcon.BuildExpand();
+        var contract = FocusToggleIcon.BuildContract();
+
+        // Outward arrows reach the corners; inward arrows pull toward the centre,
+        // so their bounding boxes differ.
+        Assert.NotEqual(expand.Bounds, contract.Bounds);
+    }
+
+    /// <summary>
     /// The shared chevron geometry's ink bounding box must be optically centered
     /// about the midpoint of the icon box (IconSize/2, IconSize/2). Both axes
     /// are checked to within a half-pixel tolerance so a large uncentered path
