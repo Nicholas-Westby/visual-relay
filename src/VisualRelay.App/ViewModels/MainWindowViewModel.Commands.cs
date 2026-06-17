@@ -136,7 +136,7 @@ public partial class MainWindowViewModel
     /// Captures the in-flight selection-load task so tests can
     /// <c>await viewModel.LastSelectionLoad</c> instead of polling
     /// derived properties on a wall-clock budget (which false-fails
-    /// under CPU load).  Set by <see cref="OnSelectedTaskChanged"/>
+    /// under CPU load).  Set by <see cref="OnSelectedTaskChanged(TaskRowViewModel?)"/>
     /// (the generated synchronous setter hook for
     /// <see cref="SelectedTask"/>) and never null after the first
     /// assignment.
@@ -192,7 +192,7 @@ public partial class MainWindowViewModel
     /// being discarded as an unobserved task exception — a
     /// previously-swallowed fault is now visible.
     /// </summary>
-    internal async Task SelectTaskAsync(TaskRowViewModel? task)
+    private async Task SelectTaskAsync(TaskRowViewModel? task)
     {
         if (task is null)
         {

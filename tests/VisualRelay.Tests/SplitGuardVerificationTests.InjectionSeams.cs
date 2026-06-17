@@ -61,7 +61,7 @@ public sealed partial class SplitGuardVerificationTests
                 foreach (var field in type.GetFields(fieldFlags))
                 {
                     // Only public or internal (assembly) fields are seams.
-                    if (!field.IsPublic && !field.IsAssembly)
+                    if (field is { IsPublic: false, IsAssembly: false })
                         continue;
                     // Exclude readonly, const, [ThreadStatic], compiler-generated,
                     // and compiler-generated backing fields (names containing '<').
@@ -98,7 +98,7 @@ public sealed partial class SplitGuardVerificationTests
                     var accessibility = getter ?? setter;
                     if (accessibility is null)
                         continue;
-                    if (!accessibility.IsPublic && !accessibility.IsAssembly)
+                    if (accessibility is { IsPublic: false, IsAssembly: false })
                         continue;
                     // Must have a setter (of any accessibility).
                     if (setter is null)

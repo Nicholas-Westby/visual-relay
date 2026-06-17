@@ -21,8 +21,6 @@ internal sealed class DictionaryEnvironmentAccessor : IEnvironmentAccessor
     }
 
     public string? GetEnvironmentVariable(string name) => this[name];
-
-    public void Clear() => _vars.Clear();
 }
 
 internal sealed class TestRepository : IDisposable

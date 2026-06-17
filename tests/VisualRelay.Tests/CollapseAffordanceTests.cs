@@ -1,4 +1,3 @@
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
@@ -23,8 +22,7 @@ public sealed class CollapseAffordanceTests
         viewModel.IsQueueCollapsed = true;
         Dispatcher.UIThread.RunJobs();
 
-        Border? railBorder = null;
-        FindVisualOfType(window.Content as Control, out railBorder,
+        FindVisualOfType(window.Content as Control, out Border? railBorder,
             b => b.IsVisible && b.Classes.Contains("rail"));
         Assert.NotNull(railBorder);
 
@@ -108,8 +106,8 @@ public sealed class CollapseAffordanceTests
 
         // Rail toggles must say "Expand X".
         var railButtons = allButtons.FindAll(
-            b => b.Classes.Contains("collapseToggle") && b.IsVisible
-                && b.Parent is StackPanel sp && sp.Parent is Border brd
+            b => b.Classes.Contains("collapseToggle")
+                && b is { IsVisible: true, Parent: StackPanel { Parent: Border brd } }
                 && brd.Classes.Contains("rail"));
         Assert.NotEmpty(railButtons);
         foreach (var btn in railButtons)
@@ -131,12 +129,10 @@ public sealed class CollapseAffordanceTests
         var (viewModel, window) = CreateWindow();
 
         // ── Queue ──
-        QueuePanel? queuePanel = null;
-        FindVisualOfType(window.Content as Control, out queuePanel);
+        FindVisualOfType(window.Content as Control, out QueuePanel? queuePanel);
         Assert.NotNull(queuePanel);
 
-        Button? queueToggle = null;
-        FindVisualOfType(queuePanel, out queueToggle,
+        FindVisualOfType(queuePanel, out Button? queueToggle,
             b => b.Classes.Contains("collapseToggle"));
         Assert.NotNull(queueToggle);
 
@@ -151,12 +147,10 @@ public sealed class CollapseAffordanceTests
         Assert.Equal("Collapse Queue", ToolTip.GetTip(queueToggle) as string);
 
         // ── Stages ──
-        StageBoard? stageBoard = null;
-        FindVisualOfType(window.Content as Control, out stageBoard);
+        FindVisualOfType(window.Content as Control, out StageBoard? stageBoard);
         Assert.NotNull(stageBoard);
 
-        Button? stagesToggle = null;
-        FindVisualOfType(stageBoard, out stagesToggle,
+        FindVisualOfType(stageBoard, out Button? stagesToggle,
             b => b.Classes.Contains("collapseToggle"));
         Assert.NotNull(stagesToggle);
 
@@ -171,8 +165,7 @@ public sealed class CollapseAffordanceTests
         Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesToggle) as string);
 
         // ── Run Log ──
-        ActivityColumn? activityColumn = null;
-        FindVisualOfType(window.Content as Control, out activityColumn);
+        FindVisualOfType(window.Content as Control, out ActivityColumn? activityColumn);
         Assert.NotNull(activityColumn);
 
         var activityToggles = new List<Button>();
@@ -239,15 +232,15 @@ public sealed class CollapseAffordanceTests
             foreach (var child in panel.Children)
                 if (FindVisualOfType(child, out result, predicate)) return true;
         }
-        else if (root is Decorator decorator && decorator.Child is not null)
+        else if (root is Decorator { Child: not null } decorator)
         {
             if (FindVisualOfType(decorator.Child, out result, predicate)) return true;
         }
-        else if (root is ContentControl cc && cc.Content is Control contentChild)
+        else if (root is ContentControl { Content: Control contentChild })
         {
             if (FindVisualOfType(contentChild, out result, predicate)) return true;
         }
-        else if (root is LayoutTransformControl ltc && ltc.Child is not null)
+        else if (root is LayoutTransformControl { Child: not null } ltc)
         {
             if (FindVisualOfType(ltc.Child, out result, predicate)) return true;
         }
@@ -264,15 +257,15 @@ public sealed class CollapseAffordanceTests
         {
             foreach (var child in panel.Children) CollectControls(child, results);
         }
-        else if (root is Decorator decorator && decorator.Child is not null)
+        else if (root is Decorator { Child: not null } decorator)
         {
             CollectControls(decorator.Child, results);
         }
-        else if (root is ContentControl cc && cc.Content is Control contentChild)
+        else if (root is ContentControl { Content: Control contentChild })
         {
             CollectControls(contentChild, results);
         }
-        else if (root is LayoutTransformControl ltc && ltc.Child is not null)
+        else if (root is LayoutTransformControl { Child: not null } ltc)
         {
             CollectControls(ltc.Child, results);
         }

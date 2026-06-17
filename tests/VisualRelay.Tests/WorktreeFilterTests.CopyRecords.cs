@@ -19,22 +19,12 @@ public sealed partial class WorktreeFilterTests
     /// (matching a rootPath and argument substring) and returns synthetic
     /// results, falling through to real git for everything else.
     /// </summary>
-    private sealed class InterceptedGitInvoker : IGitInvoker
+    private sealed class InterceptedGitInvoker(
+        string interceptRootPath,
+        Func<string[], bool> interceptPredicate,
+        Func<string[], Task<(int, string, bool)>> fakeResult) : IGitInvoker
     {
-        private readonly string _rootPath;
-        private readonly Func<string[], bool> _interceptPredicate;
-        private readonly Func<string[], Task<(int, string, bool)>> _fakeResult;
         private static readonly HashSet<string> EnvRemove = new(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
-
-        public InterceptedGitInvoker(
-            string rootPath,
-            Func<string[], bool> interceptPredicate,
-            Func<string[], Task<(int, string, bool)>> fakeResult)
-        {
-            _rootPath = rootPath;
-            _interceptPredicate = interceptPredicate;
-            _fakeResult = fakeResult;
-        }
 
         public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath, IEnumerable<string> arguments, CancellationToken ct,
@@ -42,8 +32,8 @@ public sealed partial class WorktreeFilterTests
             CancellationToken killToken = default, Action<string>? onActivity = null)
         {
             var argv = arguments as string[] ?? arguments.ToArray();
-            if (rootPath == _rootPath && _interceptPredicate(argv))
-                return await _fakeResult(argv);
+            if (rootPath == interceptRootPath && interceptPredicate(argv))
+                return await fakeResult(argv);
 
             return await ProcessCapture.RunAsync(
                 "git", ["-C", rootPath, .. argv], rootPath,

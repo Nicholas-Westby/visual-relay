@@ -216,7 +216,7 @@ public sealed class BackendReadinessProbeTests
     }
 
     [Fact]
-    public async Task CheckWithRetryAsync_WorstCaseBudget_StaysUnder36Seconds()
+    public void CheckWithRetryAsync_WorstCaseBudget_StaysUnder36Seconds()
     {
         // The probe exists to avoid ~36 s of LLM-call retries. Even the
         // worst-case retry budget must stay well below that.

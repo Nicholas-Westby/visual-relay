@@ -12,7 +12,7 @@ namespace VisualRelay.Core.Configuration;
 ///
 /// Environment accessor seam: every env-dependent method accepts an optional
 /// <see cref="IEnvironmentAccessor"/> parameter. When null (default), the real
-/// process environment is used. Tests inject a <see cref="DictionaryEnvironmentAccessor"/>
+/// process environment is used. Tests inject a <c>DictionaryEnvironmentAccessor</c>
 /// by passing it directly — no process-global static.
 /// </summary>
 public static class KeyEnvFile
@@ -36,7 +36,7 @@ public static class KeyEnvFile
     /// Returns the user-level dotenv path, reading <c>XDG_CONFIG_HOME</c> and
     /// <c>HOME</c> from <paramref name="accessor"/> (or the real process env).
     /// </summary>
-    public static string ResolvePath(IEnvironmentAccessor? accessor = null) =>
+    private static string ResolvePath(IEnvironmentAccessor? accessor = null) =>
         ResolvePath(GetEnv("XDG_CONFIG_HOME", accessor), GetEnv("HOME", accessor));
 
     /// <summary>
@@ -189,15 +189,6 @@ public static class KeyEnvFile
     }
 
     // ── GetUnsetKeys ─────────────────────────────────────────────────────
-
-    /// <summary>
-    /// Returns keys and values from the resolved user-level dotenv whose keys
-    /// are <em>not</em> already set in the current process environment. This
-    /// implements the "only-if-unset" guard so the process environment always
-    /// wins over file values.
-    /// </summary>
-    public static Dictionary<string, string> GetUnsetKeys(IEnvironmentAccessor? accessor = null) =>
-        GetUnsetKeys(ResolvePath(accessor), accessor);
 
     /// <summary>
     /// Returns keys and values from <paramref name="filePath"/> whose keys are

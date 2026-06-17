@@ -80,12 +80,6 @@ public static class BackendReadinessProbe
             cancellationToken);
     }
 
-    // Convenience overload using the centralized base URL, default timeout,
-    // default retry attempts, and default backoff. Mirrors the existing
-    // CheckAsync() convenience overload pattern.
-    public static Task<BackendReadiness> CheckWithRetryAsync(CancellationToken cancellationToken = default) =>
-        CheckWithRetryAsync(ModelBackend.BaseUrl, DefaultTimeout, cancellationToken: cancellationToken);
-
     // Retries a probe delegate up to maxAttempts times with retryBackoff
     // between attempts. Returns ready as soon as any attempt succeeds (zero
     // added latency on the happy path).  On exhaustion it returns the last

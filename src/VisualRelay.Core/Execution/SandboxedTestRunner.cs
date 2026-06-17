@@ -15,29 +15,20 @@ namespace VisualRelay.Core.Execution;
 /// keeps the Swival and verification prefixes in lockstep; they differ only
 /// in the rollback flag pair.
 /// </summary>
-public sealed class SandboxedTestRunner : ITestRunner
+public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) : ITestRunner
 {
-    private readonly ITestRunner _inner;
-    private readonly RelayConfig _config;
-    private readonly TimeSpan _timeout;
-
-    public SandboxedTestRunner(ITestRunner inner, RelayConfig config)
-    {
-        _inner = inner;
-        _config = config;
-        _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
-    }
+    private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
 
     public async Task<TestRunResult> RunAsync(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        if (_config.BypassSandbox)
-            return await _inner.RunAsync(rootPath, command, cancellationToken);
+        if (config.BypassSandbox)
+            return await inner.RunAsync(rootPath, command, cancellationToken);
 
         var (fileName, args) = ResolveLaunch(command);
 
         var sw = Stopwatch.StartNew();
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(_config);
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
         var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
             fileName, args, rootPath, _timeout, cancellationToken, environment: env);
 
@@ -55,18 +46,18 @@ public sealed class SandboxedTestRunner : ITestRunner
     /// </summary>
     internal (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command)
     {
-        if (_config.BypassSandbox)
+        if (config.BypassSandbox)
         {
-            if (_inner is ShellTestRunner)
+            if (inner is ShellTestRunner)
                 return ("/bin/sh", new[] { $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"" });
             else
                 return DirectExecTestRunner.ResolveLaunch(command);
         }
 
         // Sandbox enabled: wrap in nono.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(_config, rollback: false);
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        if (_inner is ShellTestRunner)
+        if (inner is ShellTestRunner)
         {
             // Non-login shell (-c, not -lc): the sandboxed verify must use the SAME toolchain the
             // harness/agent built with (inherited from the harness's environment), not whatever a

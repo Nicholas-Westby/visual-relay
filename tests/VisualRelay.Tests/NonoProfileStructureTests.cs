@@ -115,7 +115,7 @@ public sealed class NonoProfileStructureTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    internal static string ResolveProfilePath()
+    private static string ResolveProfilePath()
     {
         var dir = AppContext.BaseDirectory;
         while (dir is not null)
@@ -139,7 +139,7 @@ public sealed class NonoProfileStructureTests
             "nono", "profiles", "vr-guard.json");
     }
 
-    internal static IReadOnlyList<string> CollectPaths(JsonElement entries)
+    private static IReadOnlyList<string> CollectPaths(JsonElement entries)
     {
         var paths = new List<string>();
         foreach (var entry in entries.EnumerateArray())

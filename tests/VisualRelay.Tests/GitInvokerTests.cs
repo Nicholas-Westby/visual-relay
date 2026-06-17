@@ -11,15 +11,10 @@ public sealed class GitInvokerTests
 {
     // ── Fake IGitInvoker helper ────────────────────────────────────────
 
-    private sealed class FakeGitInvoker : IGitInvoker
+    private sealed class FakeGitInvoker(
+        Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>> fn)
+        : IGitInvoker
     {
-        private readonly Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>> _fn;
-
-        public FakeGitInvoker(Func<string, IEnumerable<string>, string, CancellationToken, TimeSpan?, IReadOnlyDictionary<string, string>?, Task<(int ExitCode, string Output, bool TimedOut)>> fn)
-        {
-            _fn = fn;
-        }
-
         public Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath,
             IEnumerable<string> arguments,
@@ -28,7 +23,7 @@ public sealed class GitInvokerTests
             IReadOnlyDictionary<string, string>? environment = null,
             CancellationToken killToken = default,
             Action<string>? onActivity = null) =>
-            _fn(rootPath, arguments, rootPath, cancellationToken, timeout, environment);
+            fn(rootPath, arguments, rootPath, cancellationToken, timeout, environment);
     }
 
     // ── Override seam (now a fake IGitInvoker) ─────────────────────────

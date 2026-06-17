@@ -3,6 +3,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using VisualRelay.App.Services;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
@@ -294,6 +295,6 @@ public partial class MainWindowViewModel : ViewModelBase
     /// through the real process environment. Set only by tests to inject a
     /// <c>DictionaryEnvironmentAccessor</c> without touching any process-global static.
     /// </summary>
-    public VisualRelay.Core.Configuration.IEnvironmentAccessor? EnvironmentAccessor { get; set; }
+    public IEnvironmentAccessor? EnvironmentAccessor { get; init; }
 
 }

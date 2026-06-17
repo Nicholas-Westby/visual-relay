@@ -41,7 +41,7 @@ public sealed partial class SwivalSubagentRunnerGuardTests
         var runner = new SwivalSubagentRunner(
             TestConfig(),
             swivalBinary: script,
-            backendProbe: ct =>
+            backendProbe: _ =>
             {
                 Interlocked.Increment(ref callCount);
                 return Task.FromResult(new BackendReadiness(true, null));
