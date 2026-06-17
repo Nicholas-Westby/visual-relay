@@ -127,6 +127,14 @@ public partial class MainWindowViewModel
         // promotion above) so selection doesn't snap to the first task and the
         // new attachment is visible immediately.
         await ReloadTaskListAsync(currentTask.Id);
+
+        // Refresh the status line so a stale prior message doesn't linger.
+        // When the pick was partial (some items had no local path), surface a note;
+        // otherwise show the standard queue status.
+        var skipped = pick.ChosenCount - files.Count;
+        StatusText = skipped > 0
+            ? $"Added {files.Count} attachment(s); {skipped} item(s) had no local file path and were skipped."
+            : FormatQueueStatus();
     }
 
     private bool CanAddAttachments() =>
@@ -152,6 +160,10 @@ public partial class MainWindowViewModel
 
         RelayTaskWriter.RemoveAttachment(filePath);
         await ReloadTaskListAsync(editedTaskId);
+
+        // Refresh the status line after a successful remove so a stale prior
+        // message doesn't linger.
+        StatusText = FormatQueueStatus();
     }
 
     /// <summary>

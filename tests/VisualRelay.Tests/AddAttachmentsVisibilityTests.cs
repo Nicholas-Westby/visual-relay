@@ -148,4 +148,120 @@ public sealed class AddAttachmentsVisibilityTests
         Dispatcher.UIThread.RunJobs();
         Assert.Contains("local file path", unusableVm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
+
+    /// <summary>
+    /// After a successful add, StatusText must reflect the current queue status
+    /// (not a stale prior message or an empty string).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AddAttachments_Success_SetsQueueStatusText()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("zeta", "# Zeta\n");
+
+        var sourcePath = Path.Combine(Path.GetTempPath(), $"vr-status-{Guid.NewGuid():N}.png");
+        await File.WriteAllTextAsync(sourcePath, "bytes");
+
+        try
+        {
+            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            viewModel.UseFilePicker(new FakeFilePicker(new FilePickResult(1, [sourcePath])));
+            await viewModel.LoadInitialAsync();
+
+            viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "zeta");
+            Dispatcher.UIThread.RunJobs();
+
+            // Overwrite StatusText with stale content to confirm it gets replaced.
+            viewModel.StatusText = "stale message from a prior operation";
+
+            await viewModel.AddAttachmentsCommand.ExecuteAsync(null);
+            Dispatcher.UIThread.RunJobs();
+
+            // After a successful add the queue status (e.g. "2 pending") must
+            // replace the stale message — not a static string, just not stale.
+            Assert.NotEqual("stale message from a prior operation", viewModel.StatusText);
+            Assert.Contains("pending", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(sourcePath);
+        }
+    }
+
+    /// <summary>
+    /// After a successful remove, StatusText must reflect the current queue status.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task RemoveAttachment_Success_SetsQueueStatusText()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteNestedTask(
+            "zeta", "# Zeta\n",
+            ("drop.txt", "drop"));
+
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            ShowConfirmationAsync = (_, _) => Task.FromResult(true)
+        };
+        await viewModel.LoadInitialAsync();
+
+        viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "zeta");
+        Dispatcher.UIThread.RunJobs();
+
+        viewModel.StatusText = "stale message from a prior operation";
+
+        var dropPath = Path.Combine(repo.Root, "llm-tasks", "zeta", "drop.txt");
+        await viewModel.RemoveAttachmentCommand.ExecuteAsync(dropPath);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.NotEqual("stale message from a prior operation", viewModel.StatusText);
+        Assert.Contains("pending", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// When a multi-select yields some resolvable paths and some non-local paths,
+    /// the resolvable files attach and StatusText surfaces a "skipped" note.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task AddAttachments_PartialDrop_ReportsSkippedItems()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("zeta", "# Zeta\n");
+
+        var sourcePath = Path.Combine(Path.GetTempPath(), $"vr-partial-{Guid.NewGuid():N}.txt");
+        await File.WriteAllTextAsync(sourcePath, "content");
+
+        try
+        {
+            // 2 chosen, 1 resolved path → 1 skipped.
+            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            viewModel.UseFilePicker(new FakeFilePicker(new FilePickResult(2, [sourcePath])));
+            await viewModel.LoadInitialAsync();
+
+            viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "zeta");
+            Dispatcher.UIThread.RunJobs();
+
+            await viewModel.AddAttachmentsCommand.ExecuteAsync(null);
+            Dispatcher.UIThread.RunJobs();
+
+            // The file that resolved must be attached.
+            var fileName = Path.GetFileName(sourcePath);
+            Assert.Contains(
+                viewModel.Attachments,
+                a => a.Path.EndsWith(fileName, StringComparison.Ordinal));
+
+            // And a skipped-items note must appear in StatusText.
+            Assert.Contains("skipped", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(sourcePath);
+        }
+    }
 }
