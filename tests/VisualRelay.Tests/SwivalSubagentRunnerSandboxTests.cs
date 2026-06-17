@@ -92,7 +92,12 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
 
         Assert.NotNull(env);
-        Assert.Equal(5, env.Count);
+        // Assert the specific cache redirects rather than an exact count: the env
+        // is the single seam EVERY nono-wrapped invocation shares (the swival
+        // stage in ProcessRunners.RunAsync and the verify command in
+        // SandboxedTestRunner), so it grows as more redirects are added; pinning
+        // an exact count makes every such addition a spurious test break.
+        Assert.True(env.Count >= 3);
         Assert.Equal(Path.Combine(home, ".config", "swival", "huggingface"), env["HF_HOME"]);
         Assert.Equal(Path.Combine(home, ".config", "swival", "cache"), env["XDG_CACHE_HOME"]);
         Assert.Equal(Path.Combine(home, ".config", "swival", "uv-cache"), env["UV_CACHE_DIR"]);

@@ -261,6 +261,11 @@ cmd_start() {
     fi
     rm -f /tmp/.vr-gen-stderr
 
+    # Never let uv/litellm's Python write __pycache__/*.pyc into the (often
+    # system-owned, e.g. Homebrew) stdlib dir it imports from. The backend runs
+    # outside nono so this is not the sandbox-denial prompt, but it is the same
+    # latent system-dir pollution the nono-wrapped paths avoid, kept in lockstep.
+    export PYTHONDONTWRITEBYTECODE=1
     # aiohttp doesn't enforce read timeout on the first response byte (a pre-stream
     # hang is unbounded). httpx applies stream_timeout from byte 0, so hangs fail fast.
     export DISABLE_AIOHTTP_TRANSPORT="${DISABLE_AIOHTTP_TRANSPORT:-True}"
