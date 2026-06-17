@@ -18,6 +18,11 @@ class VisualRelay < Formula
   end
 
   def install
+    # The macOS release tarball ships app/VisualRelay.app (Info.plist + .icns)
+    # alongside the bare app/VisualRelay.App payload. Install the whole tree into
+    # libexec; the visual-relay launcher execs the bundle's inner binary when the
+    # .app is present (so the Dock shows the brand icon) and falls back to the
+    # bare exec otherwise. This stays a CLI formula: a bin symlink, no GUI wrapper.
     libexec.install Dir["*"]
     bin.install_symlink libexec/"visual-relay"
   end

@@ -32,6 +32,12 @@ public partial class App : Application
             viewModel.StartElapsedTimer();
         }
 
+        // Best-effort: show the brand icon in the macOS Dock. AppKit is live by
+        // now, so this covers the dev `dotnet run` path and the bare published
+        // exec (neither runs inside a .app bundle); harmless inside the bundle.
+        // No-op off macOS; never throws or blocks startup.
+        MacDockIcon.TrySet();
+
         base.OnFrameworkInitializationCompleted();
     }
 
