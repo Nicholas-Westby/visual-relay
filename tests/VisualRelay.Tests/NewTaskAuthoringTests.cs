@@ -108,39 +108,68 @@ public sealed class NewTaskAuthoringTests
     }
 
     /// <summary>
-    /// Whitespace or empty titles keep Create disabled; IsBusy=true also
-    /// gates the command regardless of title content.
+    /// Empty/whitespace titles keep Create disabled; IsBusy no longer gates it —
+    /// creation is allowed during an active run.
     /// </summary>
     [Fact]
-    public void NewTaskTitle_WhitespaceOrEmpty_KeepsCreateDisabled_BusyAlsoDisables()
+    public void NewTaskTitle_WhitespaceOrEmpty_KeepsCreateDisabled_CreateEnabledEvenWhenBusy()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
-
         // ReSharper disable once UseObjectOrCollectionInitializer — NewTaskTitle is set
-        // in separate statements on purpose: the test drives the SETTER repeatedly to
-        // re-evaluate CreateNewTaskCommand.CanExecute across several values.
+        // in separate statements to drive the SETTER repeatedly across several values.
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
-        // Empty title → disabled.
         viewModel.NewTaskTitle = string.Empty;
         Assert.False(viewModel.CreateNewTaskCommand.CanExecute(null));
 
-        // Whitespace-only title → disabled.
         viewModel.NewTaskTitle = "   ";
         Assert.False(viewModel.CreateNewTaskCommand.CanExecute(null));
 
-        // Valid title → enabled.
         viewModel.NewTaskTitle = "Fix the bug";
         Assert.True(viewModel.CreateNewTaskCommand.CanExecute(null));
 
-        // Valid title but busy → disabled.
+        // Valid title + busy → still enabled (creation allowed during a run).
         viewModel.IsBusy = true;
-        Assert.False(viewModel.CreateNewTaskCommand.CanExecute(null));
+        Assert.True(viewModel.CreateNewTaskCommand.CanExecute(null));
 
-        // No longer busy → enabled again.
         viewModel.IsBusy = false;
         Assert.True(viewModel.CreateNewTaskCommand.CanExecute(null));
+    }
+
+    /// <summary>
+    /// Creating a task while IsBusy=true must write the file, reload the list,
+    /// and select the new task without waiting for the run to finish.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task CreateNewTask_WhileBusy_WritesTaskAndSelectsItInList()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("existing", "# Existing\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        viewModel.IsBusy = true;
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        viewModel.NewTaskTitle = "Mid-run feature";
+
+        Assert.True(viewModel.CreateNewTaskCommand.CanExecute(null),
+            "Must be enabled with a valid title even when IsBusy=true.");
+
+        await viewModel.CreateNewTaskCommand.ExecuteAsync(null);
+
+        Assert.True(viewModel.IsBusy, "IsBusy must remain true — run still in progress.");
+
+        var expectedDir = Path.Combine(repo.Root, "llm-tasks", "mid-run-feature");
+        var expectedPath = Path.Combine(expectedDir, "mid-run-feature.md");
+        Assert.True(Directory.Exists(expectedDir));
+        Assert.True(File.Exists(expectedPath));
+
+        Assert.NotNull(viewModel.SelectedTask);
+        Assert.Equal("mid-run-feature", viewModel.SelectedTask.Id);
+        Assert.Contains(viewModel.Tasks, t => t.Id == "mid-run-feature");
     }
 
     /// <summary>

@@ -242,15 +242,11 @@ public partial class MainWindowViewModel
         }
 
         IsNewTaskDialogOpen = false;
-        await RefreshAsync();
-
-        // Select the newly created task.
-        SelectedTask = Tasks.FirstOrDefault(t =>
-            string.Equals(t.Id, slug, StringComparison.OrdinalIgnoreCase));
+        await ReloadTaskListAsync(slug);
     }
 
     private bool CanCreateNewTask() =>
-        !string.IsNullOrWhiteSpace(NewTaskTitle) && !IsBusy;
+        !string.IsNullOrWhiteSpace(NewTaskTitle);
 
     /// <summary>
     /// True when the Markdown tab should show the read-only view — neither
