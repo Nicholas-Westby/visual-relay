@@ -215,6 +215,145 @@ EOF
   exit 127
 }
 
+# ---------- swival binary prerequisite (hard, always required) ----------
+# swival is the agent that runs every stage; it is required unconditionally
+# (NOT sandbox-gated like nono).  Its supported channel is its own Homebrew tap
+# (no nixpkgs attr, so re-entering nix develop does not supply it).
+
+# Consent-gated swival install offer (mirrors _offer_nix_install).  No-op if
+# swival is found; refuses to re-ask within one invocation; prints manual
+# instructions and returns 1 when not on a TTY; otherwise prompts [y/N] and runs
+# an overridable installer, then re-checks command -v swival.
+_offer_swival_install() {
+  if command -v swival >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Already offered (and declined / failed) in this invocation — don't re-ask.
+  if [[ -n "${_VISUAL_RELAY_SWIVAL_OFFERED:-}" ]]; then
+    return 1
+  fi
+  _VISUAL_RELAY_SWIVAL_OFFERED=1
+
+  # Non-macOS: brew tap is macOS-specific — defer to swival.dev.
+  if [[ "$(uname -s 2>/dev/null)" != Darwin ]]; then
+    printf 'visual-relay: install swival — see https://swival.dev for install instructions\n' >&2
+    return 1
+  fi
+
+  # Homebrew is a prerequisite of the install path. Don't guess / auto-install it.
+  if ! command -v brew >/dev/null 2>&1; then
+    printf 'visual-relay: Homebrew is required to install swival — https://brew.sh, then:\n  brew trust swival/tap && brew install swival/tap/swival\n' >&2
+    return 1
+  fi
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'visual-relay: install swival to run stages:\n  brew trust swival/tap && brew install swival/tap/swival\n' >&2
+    return 1
+  fi
+
+  printf 'visual-relay: swival was not found on PATH. Install it via Homebrew? [y/N] ' >&2
+  IFS= read -r answer
+  case "$answer" in
+    [yY]|[yY][eE][sS])
+      eval "${VISUAL_RELAY_SWIVAL_INSTALLER:-brew trust swival/tap && brew install swival/tap/swival}"
+      if ! command -v swival >/dev/null 2>&1; then
+        echo "visual-relay: swival install ran but swival was still not found on PATH" >&2
+        return 1
+      fi
+      return 0
+      ;;
+    *)
+      printf 'visual-relay: install swival manually:\n  brew trust swival/tap && brew install swival/tap/swival\n' >&2
+      return 1
+      ;;
+  esac
+}
+
+_require_swival() {
+  if command -v swival >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # Offer the consent-gated install; on success swival is now present.
+  if _offer_swival_install; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+visual-relay: swival was not found on PATH.
+
+  swival is the agent that runs every stage and is a required dependency.
+  Install swival via its Homebrew tap:
+
+    brew trust swival/tap && brew install swival/tap/swival
+    (or see https://swival.dev for other platforms)
+EOF
+  exit 127
+}
+
+# Weekly, consent-gated swival upgrade check.  Best-effort and NON-FATAL: a
+# network/parse failure must never break launch.  Runs at most once every 7 days
+# (tracked by a per-machine XDG state timestamp, NEVER the repo tree — shared
+# host/VM).  The timestamp is ALWAYS rewritten after a check so a declined
+# upgrade doesn't re-nag until next week.  Suggestion only — never blocks launch.
+_swival_upgrade_check() {
+  # Best-effort wrapper: never let a failure here propagate (set -e safe).
+  _swival_upgrade_check_inner || true
+}
+
+_swival_upgrade_check_inner() {
+  command -v swival >/dev/null 2>&1 || return 0
+
+  local xdg_state="${XDG_STATE_HOME:-$HOME/.local/state}"
+  local state_dir="${xdg_state}/visual-relay"
+  local stamp_file="${state_dir}/swival-upgrade-check"
+  local now last interval=$((7 * 24 * 60 * 60))
+  now="$(date +%s 2>/dev/null)" || return 0
+
+  if [[ -f "$stamp_file" ]]; then
+    last="$(cat "$stamp_file" 2>/dev/null)"
+    if [[ "$last" =~ ^[0-9]+$ ]] && (( now - last < interval )); then
+      return 0  # checked within the last 7 days — nothing to do
+    fi
+  fi
+
+  # Probe for an available upgrade.  Overridable for tests/alternate channels.
+  # Default: brew outdated emits the formula name when an upgrade exists, nothing
+  # when current.  Any non-empty output ⇒ an upgrade is available.
+  local latest
+  latest="$(eval "${VISUAL_RELAY_SWIVAL_LATEST_CMD:-brew update --quiet >/dev/null 2>&1; brew outdated swival/tap/swival 2>/dev/null}" 2>/dev/null)" || latest=""
+
+  # ALWAYS rewrite the timestamp after a check (declined/failed/up-to-date all
+  # reset the 7-day window).
+  mkdir -p "$state_dir" 2>/dev/null && printf '%s\n' "$now" > "$stamp_file" 2>/dev/null || true
+
+  # Empty probe output ⇒ current (or the probe failed) ⇒ nothing to suggest.
+  [[ -n "$latest" ]] || return 0
+
+  local installed
+  installed="$(swival --version 2>/dev/null | head -n1)" || installed=""
+  [[ -n "$installed" ]] || installed="unknown"
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    printf 'visual-relay: a newer swival is available (you have %s). Upgrade with:\n  brew upgrade swival/tap/swival\n' "$installed" >&2
+    return 0
+  fi
+
+  printf 'visual-relay: a newer swival is available (you have %s). Upgrade now? [y/N] ' "$installed" >&2
+  IFS= read -r answer
+  case "$answer" in
+    [yY]|[yY][eE][sS])
+      eval "${VISUAL_RELAY_SWIVAL_UPGRADER:-brew upgrade swival/tap/swival}" || \
+        echo "visual-relay: swival upgrade failed; continuing launch" >&2
+      ;;
+    *)
+      printf 'visual-relay: skipping swival upgrade; run later with: brew upgrade swival/tap/swival\n' >&2
+      ;;
+  esac
+  return 0
+}
+
 _provision_nono() {
   local xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}"
   local profile_dir="${xdg_config}/nono/profiles"
@@ -318,6 +457,12 @@ case "$cmd" in
       _require_nono
       _provision_nono
     fi
+    # swival is a hard, always-required tool (not sandbox-gated): the agent that
+    # runs every stage.  Gate it before any backend work so a missing binary is
+    # caught here, not mid-flight.
+    _require_swival
+    # Weekly, consent-gated swival upgrade check — best-effort, never blocks.
+    _swival_upgrade_check
     # Best-effort: bring the local model backend up before launching so a fresh
     # launch can run a task without a manual proxy step. Idempotent and fast
     # when already healthy; if it fails (e.g. litellm not installed) the launch
@@ -354,6 +499,7 @@ case "$cmd" in
       _require_nono
     fi
     _require_dotnet
+    _require_swival
     dotnet run --project "$SCRIPT_DIR/tools/VisualRelay.RunTask/VisualRelay.RunTask.csproj" -- "$@"
     ;;
   init)

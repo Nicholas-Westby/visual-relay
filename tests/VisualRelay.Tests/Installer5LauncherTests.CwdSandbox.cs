@@ -212,9 +212,17 @@ public sealed partial class Installer5LauncherTests
             exit 0
             X
 
+            # Stub swival: hard-required tool, must be present for launch to proceed
+            cat > "$STUB_DIR/swival" << 'X' && chmod +x "$STUB_DIR/swival"
+            #!/bin/bash
+            exit 0
+            X
+
             # cd to a directory that is NOT the fake repo
             cd "$CALLER_DIR"
-            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 bash "$FAKE_REPO/visual-relay" launch 2>/dev/null || true
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 \
+                XDG_STATE_HOME="$FAKE_REPO/state" VISUAL_RELAY_SWIVAL_LATEST_CMD=true \
+                bash "$FAKE_REPO/visual-relay" launch 2>/dev/null || true
 
             # After the fix dotnet must have been called (bypass worked).
             # Before the fix _read_bypass_sandbox looks for .relay/config.json

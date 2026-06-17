@@ -71,6 +71,12 @@ public sealed class Installer5Sandbox2LauncherTests
             #!/bin/bash
             exit 0
             X
+            # swival is a hard, always-required tool — stub it so launch reaches
+            # the nono provisioning paths these tests assert on.
+            cat > "$STUB_DIR/swival" << 'X' && chmod +x "$STUB_DIR/swival"
+            #!/bin/bash
+            exit 0
+            X
             {{nonoStub}}
             cat > "$TEST_DIR/tools/backend/backend.sh" << 'X' && chmod +x "$TEST_DIR/tools/backend/backend.sh"
             #!/bin/bash
@@ -85,7 +91,9 @@ public sealed class Installer5Sandbox2LauncherTests
             chmod +x "$TEST_DIR/visual-relay"
             cd "$TEST_DIR"
             RC=0
-            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 {{xdgEnv}} bash "$TEST_DIR/visual-relay" launch \
+            PATH="$STUB_DIR:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY=1 {{xdgEnv}} \
+                XDG_STATE_HOME="$TEST_DIR/state" VISUAL_RELAY_SWIVAL_LATEST_CMD=true \
+                bash "$TEST_DIR/visual-relay" launch \
                 >/tmp/.vr-s2-out 2>/tmp/.vr-s2-err || RC=$?
             echo "$RC" > /tmp/.vr-s2-rc
             {{assertions}}
