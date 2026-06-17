@@ -29,21 +29,28 @@ public partial class TopBar : UserControl
             if (vm.IsSettingsOpen)
                 return;
 
-            await vm.OpenSettingsAsync();
-
-            var dialog = new SettingsWindow { DataContext = vm };
-            if (TopLevel.GetTopLevel(this) is Window owner)
+            try
             {
-                await dialog.ShowDialog(owner);
-            }
-            else
-            {
-                // Owner-null only happens in off-desktop environments (e.g. headless
-                // unit tests without a top-level window). Fall back to non-modal.
-                dialog.Show();
-            }
+                await vm.OpenSettingsAsync();
 
-            vm.CloseSettings();
+                var dialog = new SettingsWindow { DataContext = vm };
+                if (TopLevel.GetTopLevel(this) is Window owner)
+                {
+                    await dialog.ShowDialog(owner);
+                }
+                else
+                {
+                    // Owner-null only happens in off-desktop environments (e.g. headless
+                    // unit tests without a top-level window). Fall back to non-modal.
+                    dialog.Show();
+                }
+            }
+            finally
+            {
+                // Always clear IsSettingsOpen — even if OpenSettingsAsync/ShowDialog throws —
+                // otherwise the duplicate-open guard above would block reopening until restart.
+                vm.CloseSettings();
+            }
         }
         catch (Exception ex)
         {
