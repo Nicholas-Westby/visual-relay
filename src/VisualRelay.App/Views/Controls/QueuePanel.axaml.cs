@@ -71,16 +71,24 @@ public partial class QueuePanel : UserControl
     }
 
     /// <summary>
-    /// Builds the drag DataTransfer for the given row.
-    /// Contains both the in-process TaskRow format (drives the reorder drop handler)
-    /// and a serializable DataFormat.Text item (populates the macOS pasteboard so
-    /// AppKit's "≥1 pasteboard item per drag image" contract is satisfied).
+    /// Builds the drag DataTransfer for the given row as a SINGLE item carrying two
+    /// representations:
+    ///  - the in-process TaskRow format (drives the reorder drop handler; never serialized);
+    ///  - a serializable DataFormat.Text value (gives that one item a pasteboard entry).
+    /// macOS/AppKit requires exactly one pasteboard item per drag image. Avalonia's
+    /// backend creates one drag image PER DataTransferItem and one pasteboard item per
+    /// item that has a serializable format — so both formats MUST live on ONE item.
+    /// Two separate items would create two drag images but only one pasteboard item
+    /// (the in-process item has no pasteboard entry) → NSGenericException → the process
+    /// terminates. An in-process-only item is equally fatal (a drag image, no pasteboard).
     /// </summary>
     internal static DataTransfer BuildDragData(TaskRowViewModel row)
     {
+        // One item, two representations → one drag image AND one pasteboard item (1:1).
+        var item = DataTransferItem.Create(TaskRowFormat, row); // in-process: drives the reorder
+        item.Set(DataFormat.Text, row.Id);                      // serializable: the pasteboard entry
         var data = new DataTransfer();
-        data.Add(DataTransferItem.Create(TaskRowFormat, row));    // in-process: drives the reorder
-        data.Add(DataTransferItem.Create(DataFormat.Text, row.Id)); // pasteboard-backed: satisfies AppKit
+        data.Add(item);
         return data;
     }
 
@@ -92,10 +100,10 @@ public partial class QueuePanel : UserControl
             // Returns once the user releases. Avalonia only promotes this to a real
             // drag after the system threshold, so a plain click still selects.
             //
-            // NOTE: the native macOS NSGenericException (empty pasteboard) cannot be
-            // caught here — it terminates the process via libc++abi before any managed
-            // catch runs. The fix is in BuildDragData: adding DataFormat.Text ensures
-            // the OS pasteboard has ≥1 item so AppKit's drag-session contract is met.
+            // NOTE: a native macOS NSGenericException from a malformed drag payload
+            // cannot be caught here — it terminates the process via libc++abi before any
+            // managed catch runs. The fix is in BuildDragData: a single item carrying a
+            // serializable format keeps AppKit's 1-pasteboard-item-per-drag-image contract.
             await DragDrop.DoDragDropAsync(e, data, DragDropEffects.Move);
         }
         catch (Exception ex)
