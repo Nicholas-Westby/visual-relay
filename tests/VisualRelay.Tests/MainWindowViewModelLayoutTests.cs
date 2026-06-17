@@ -1,4 +1,5 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.Tests;
 
@@ -176,62 +177,59 @@ public sealed class MainWindowViewModelLayoutTests
     {
         var vm = new MainWindowViewModel();
         Assert.Equal("Focus task", vm.FocusButtonLabel);
-        Assert.Equal("\u2922", vm.FocusButtonIcon);
         Assert.Equal("Collapse all surrounding panels to maximize the task detail", vm.FocusButtonTooltip);
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
         Assert.Equal("Restore panels", vm.FocusButtonLabel);
-        Assert.Equal("\u2921", vm.FocusButtonIcon);
         Assert.Equal("Restore all panels to their previous layout", vm.FocusButtonTooltip);
         // Partial collapse: still shows "Focus task".
         vm.ToggleFocusCommand.Execute(null);
         vm.ToggleQueueCommand.Execute(null);
         Assert.False(vm.IsFocused);
         Assert.Equal("Focus task", vm.FocusButtonLabel);
-        Assert.Equal("\u2922", vm.FocusButtonIcon);
     }
 
     [Fact]
     public void Chevrons_FollowDirectionAndAxisScheme()
     {
         var vm = new MainWindowViewModel();
-        // Queue (left edge): header ◀ expanded (collapse left), ▶ collapsed.
-        Assert.Equal("\u25C0", vm.QueueChevron);
-        Assert.Equal("\u25B6", vm.QueueRailChevron);
+        // Queue (left edge): header Left expanded (collapse left), Right collapsed.
+        Assert.Equal(ChevronDirection.Left, vm.QueueChevron);
+        Assert.Equal(ChevronDirection.Right, vm.QueueRailChevron);
         vm.IsQueueCollapsed = true;
-        Assert.Equal("\u25B6", vm.QueueChevron);
-        Assert.Equal("\u25B6", vm.QueueRailChevron);
+        Assert.Equal(ChevronDirection.Right, vm.QueueChevron);
+        Assert.Equal(ChevronDirection.Right, vm.QueueRailChevron);
         vm.IsQueueCollapsed = false;
-        // Stages (vertical fold): ▾ expanded, ▸ collapsed.
-        Assert.Equal("\u25BE", vm.StagesChevron);
+        // Stages (vertical fold): Down expanded, Right collapsed.
+        Assert.Equal(ChevronDirection.Down, vm.StagesChevron);
         vm.IsStagesCollapsed = true;
-        Assert.Equal("\u25B8", vm.StagesChevron);
+        Assert.Equal(ChevronDirection.Right, vm.StagesChevron);
         vm.IsStagesCollapsed = false;
-        Assert.Equal("\u25BE", vm.StagesChevron);
-        // Run Log: sibling open → vertical ▾/▸; both collapsed → ▶.
-        Assert.Equal("\u25BE", vm.RunLogChevron);
+        Assert.Equal(ChevronDirection.Down, vm.StagesChevron);
+        // Run Log: sibling open -> vertical Down/Right; both collapsed -> Right slide.
+        Assert.Equal(ChevronDirection.Down, vm.RunLogChevron);
         vm.IsRunLogCollapsed = true;
-        Assert.Equal("\u25B8", vm.RunLogChevron);
+        Assert.Equal(ChevronDirection.Right, vm.RunLogChevron);
         vm.IsRunLogCollapsed = false;
         vm.IsLlmCommandsCollapsed = true;
-        Assert.Equal("\u25BE", vm.RunLogChevron); // sibling collapsed, column NOT collapsed → fold in place
+        Assert.Equal(ChevronDirection.Down, vm.RunLogChevron); // sibling collapsed, column NOT collapsed -> fold in place
         vm.IsRunLogCollapsed = true;
-        Assert.Equal("\u25B6", vm.RunLogChevron); // both collapsed → column-to-rail slide
+        Assert.Equal(ChevronDirection.Right, vm.RunLogChevron); // both collapsed -> column-to-rail slide
         vm.IsLlmCommandsCollapsed = false;
         vm.IsRunLogCollapsed = false;
         // LLM Commands: same dual-mode pattern.
-        Assert.Equal("\u25BE", vm.LlmCommandsChevron);
+        Assert.Equal(ChevronDirection.Down, vm.LlmCommandsChevron);
         vm.IsLlmCommandsCollapsed = true;
-        Assert.Equal("\u25B8", vm.LlmCommandsChevron);
+        Assert.Equal(ChevronDirection.Right, vm.LlmCommandsChevron);
         vm.IsLlmCommandsCollapsed = false;
         vm.IsRunLogCollapsed = true;
-        Assert.Equal("\u25BE", vm.LlmCommandsChevron); // sibling collapsed, column NOT collapsed → fold in place
+        Assert.Equal(ChevronDirection.Down, vm.LlmCommandsChevron); // sibling collapsed, column NOT collapsed -> fold in place
         vm.IsLlmCommandsCollapsed = true;
-        Assert.Equal("\u25B6", vm.LlmCommandsChevron); // both collapsed → column-to-rail slide
+        Assert.Equal(ChevronDirection.Right, vm.LlmCommandsChevron); // both collapsed -> column-to-rail slide
         vm.IsRunLogCollapsed = false;
         vm.IsLlmCommandsCollapsed = false;
-        // Activity rail: always ◀ (expand left from right edge).
-        Assert.Equal("\u25C0", vm.ActivityRailChevron);
+        // Activity rail: always Left (expand left from right edge).
+        Assert.Equal(ChevronDirection.Left, vm.ActivityRailChevron);
         // Header tooltips flip.
         Assert.Equal("Collapse Queue", vm.QueueHeaderTooltip);
         vm.IsQueueCollapsed = true;
