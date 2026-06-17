@@ -5,7 +5,7 @@ namespace VisualRelay.App.Services;
 
 public sealed class AvaloniaFilePicker(Window owner) : IFilePicker
 {
-    public async Task<IReadOnlyList<string>> PickFilesAsync(CancellationToken cancellationToken = default)
+    public async Task<FilePickResult> PickFilesAsync(CancellationToken cancellationToken = default)
     {
         var files = await owner.StorageProvider.OpenFilePickerAsync(new()
         {
@@ -15,6 +15,9 @@ public sealed class AvaloniaFilePicker(Window owner) : IFilePicker
 
         // TryGetLocalPath() can return null (non-file backings); OfType<string>
         // drops those and narrows to string without an always-true null check.
-        return files.Select(f => f.TryGetLocalPath()).OfType<string>().ToArray();
+        // Report the chosen count separately so a chosen-but-unresolvable pick
+        // (paths empty while count > 0) is distinguishable from a cancel.
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().ToArray();
+        return new FilePickResult(files.Count, paths);
     }
 }

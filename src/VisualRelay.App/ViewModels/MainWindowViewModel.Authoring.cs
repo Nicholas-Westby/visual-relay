@@ -85,9 +85,20 @@ public partial class MainWindowViewModel
             return;
         }
 
-        var files = await _filePicker.PickFilesAsync();
+        var pick = await _filePicker.PickFilesAsync();
+
+        // Distinguish a cancel (nothing chosen — stay silent) from a pick that
+        // chose entries but resolved no usable local path (surface a reason so
+        // the user never sees a silent "nothing happened").
+        if (pick.ChosenCount == 0)
+        {
+            return;
+        }
+
+        var files = pick.Paths;
         if (files.Count == 0)
         {
+            StatusText = "Couldn't attach: the selected item has no local file path.";
             return;
         }
 
@@ -112,7 +123,10 @@ public partial class MainWindowViewModel
             await RelayTaskWriter.AddAttachmentAsync(currentTask, file);
         }
 
-        await RefreshAsync();
+        // Reload directly to the edited task's id (stable across the flat→nested
+        // promotion above) so selection doesn't snap to the first task and the
+        // new attachment is visible immediately.
+        await ReloadTaskListAsync(currentTask.Id);
     }
 
     private bool CanAddAttachments() =>
@@ -132,8 +146,12 @@ public partial class MainWindowViewModel
             return;
         }
 
+        // Capture the edited task's id before the reload so selection stays put
+        // instead of snapping to the alphabetically-first task.
+        var editedTaskId = SelectedTask?.Id;
+
         RelayTaskWriter.RemoveAttachment(filePath);
-        await RefreshAsync();
+        await ReloadTaskListAsync(editedTaskId);
     }
 
     /// <summary>
