@@ -108,6 +108,39 @@ public sealed class ChevronAffordanceRenderTests
             "focus icon should be drawn larger than a chevron");
     }
 
+    /// <summary>
+    /// The shared chevron geometry's ink bounding box must be optically centered
+    /// about the midpoint of the icon box (IconSize/2, IconSize/2). Both axes
+    /// are checked to within a half-pixel tolerance so a large uncentered path
+    /// (like the old x-midpoint at 6.75 vs box centre 6.0) fails the test.
+    /// </summary>
+    [Fact]
+    public void SharedGeometry_IsOpticallycenteredInIconBox()
+    {
+        var bounds = ChevronIcon.SharedGeometry.Bounds;
+        double boxCenter = ChevronIcon.IconSize / 2.0;
+        const double tolerance = 0.5; // half-pixel; old path was off by 0.75
+
+        double inkMidX = (bounds.Left + bounds.Right) / 2.0;
+        double inkMidY = (bounds.Top + bounds.Bottom) / 2.0;
+
+        Assert.True(Math.Abs(inkMidX - boxCenter) <= tolerance,
+            $"Chevron ink x-midpoint {inkMidX:F3} deviates from box centre {boxCenter} by more than {tolerance}px");
+        Assert.True(Math.Abs(inkMidY - boxCenter) <= tolerance,
+            $"Chevron ink y-midpoint {inkMidY:F3} deviates from box centre {boxCenter} by more than {tolerance}px");
+    }
+
+    /// <summary>
+    /// The default foreground must be explicitly set so the chevron renders
+    /// deterministically even if no style matches.
+    /// </summary>
+    [Fact]
+    public void ChevronForeground_HasExplicitDefault_NotNull()
+    {
+        var icon = new ChevronIcon();
+        Assert.NotNull(icon.Foreground);
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────
 
     private static MainWindow CreateWindow()

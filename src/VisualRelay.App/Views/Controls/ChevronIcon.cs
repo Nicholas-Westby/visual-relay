@@ -28,11 +28,12 @@ public sealed class ChevronIcon : Control
 {
     /// <summary>The one shared chevron stroke geometry (points Right at rest).</summary>
     /// <remarks>
-    /// A small open "&gt;" centered in a 12×12 box. Drawn as a stroked
-    /// polyline so the weight is uniform; rotated for the other directions.
+    /// A small open "&gt;" optically centered in a 12×12 box (ink midpoint at x=6,
+    /// y=6). Drawn as a stroked polyline so the weight is uniform; rotated for
+    /// the other directions. X range: 4–8 (midpoint 6); Y range: 2.5–9.5 (midpoint 6).
     /// </remarks>
     public static readonly Geometry SharedGeometry =
-        Geometry.Parse("M 4.5 2 L 9 6 L 4.5 10");
+        Geometry.Parse("M 4 2.5 L 8 6 L 4 9.5");
 
     /// <summary>The fixed edge length of every chevron, in device-independent pixels.</summary>
     public const double IconSize = 12;
@@ -43,7 +44,8 @@ public sealed class ChevronIcon : Control
         AvaloniaProperty.Register<ChevronIcon, ChevronDirection>(nameof(Direction));
 
     public static readonly StyledProperty<IBrush?> ForegroundProperty =
-        AvaloniaProperty.Register<ChevronIcon, IBrush?>(nameof(Foreground));
+        AvaloniaProperty.Register<ChevronIcon, IBrush?>(nameof(Foreground),
+            defaultValue: new SolidColorBrush(Color.Parse("#6F7785")));
 
     static ChevronIcon()
     {
