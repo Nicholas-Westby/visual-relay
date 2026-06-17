@@ -46,9 +46,17 @@ internal static class SettingsTestHelpers
     /// </summary>
     public static SettingsWindow OpenSettings(MainWindow window)
     {
-        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+        ClickSettingsButton(window);
         return window.OwnedWindows.OfType<SettingsWindow>().Single();
     }
+
+    /// <summary>
+    /// Clicks the Settings cog on <paramref name="window"/> without asserting an
+    /// owned window was opened. Use when testing guard behaviour (e.g. a second
+    /// click that must be a no-op because the dialog is already open).
+    /// </summary>
+    public static void ClickSettingsButton(MainWindow window) =>
+        Click(FindButton(GetTopBar(window), "SettingsButton"), window);
 
     /// <summary>
     /// The layout (content) scroll regions under <paramref name="root"/>, i.e.

@@ -65,6 +65,34 @@ public sealed class SettingsModalUiTests
     }
 
     [AvaloniaFact]
+    public async Task ClickingSettingsCogTwice_OpensSingleWindow()
+    {
+        SettingsTestHelpers.EnsureNoUserEnv(_env);
+        using var repo = TestRepository.Create();
+        SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
+        repo.WriteTask("alpha", "# Alpha\n");
+        using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-dedup-test\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        // First click — opens the modal.
+        var dialog = SettingsTestHelpers.OpenSettings(window);
+        Assert.True(vm.IsSettingsOpen);
+
+        // Second click — must be a no-op; still exactly one owned window.
+        SettingsTestHelpers.ClickSettingsButton(window);
+        Assert.Single(window.OwnedWindows.OfType<SettingsWindow>());
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsSettingsOpen);
+    }
+
+    [AvaloniaFact]
     public async Task SettingsModal_AtDefaultSize_FitsWithoutScrolling_AndLiveTiersIsVisible()
     {
         SettingsTestHelpers.EnsureNoUserEnv(_env);
