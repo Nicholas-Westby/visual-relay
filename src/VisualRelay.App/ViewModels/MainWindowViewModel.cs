@@ -175,7 +175,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
-    [NotifyCanExecuteChangedFor(nameof(CreateNewTaskCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;

@@ -67,10 +67,12 @@ public sealed class NewTaskAuthoringTests
     }
 
     /// <summary>
-    /// Verifies that CanExecuteChanged fires when NewTaskTitle and IsBusy
-    /// change — the root cause of the dead Create task button.
+    /// Verifies that CanExecuteChanged fires when NewTaskTitle changes —
+    /// the root cause of the dead Create task button.
     /// Without [NotifyCanExecuteChangedFor] the event never fires, so the
     /// Button never re-queries CanExecute.
+    /// IsBusy no longer gates CreateNewTaskCommand, so changing it does NOT
+    /// need to notify here.
     /// </summary>
     [Fact]
     public void ChangingNewTaskTitle_NotifiesCanExecuteChanged()
@@ -93,18 +95,6 @@ public sealed class NewTaskAuthoringTests
         viewModel.NewTaskTitle = "Fix the bug";
         Assert.True(changedCount > afterTitle,
             "CanExecuteChanged must fire on subsequent title changes.");
-
-        // Setting IsBusy must fire.
-        var beforeBusy = changedCount;
-        viewModel.IsBusy = true;
-        Assert.True(changedCount > beforeBusy,
-            "CanExecuteChanged must fire when IsBusy changes.");
-
-        // Setting IsBusy back to false must fire.
-        var beforeUnbusy = changedCount;
-        viewModel.IsBusy = false;
-        Assert.True(changedCount > beforeUnbusy,
-            "CanExecuteChanged must fire when IsBusy returns to false.");
     }
 
     /// <summary>
