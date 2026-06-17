@@ -52,12 +52,6 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             Stages.Add(new StageRowViewModel(stage, SelectStageCommand));
         }
-
-        Tasks.CollectionChanged += (_, _) =>
-        {
-            MoveUpCommand.NotifyCanExecuteChanged();
-            MoveDownCommand.NotifyCanExecuteChanged();
-        };
     }
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
@@ -90,8 +84,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(FollowRunningTaskCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(IsViewingDifferentTaskDuringRun))]
@@ -126,8 +118,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
-    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(TaskListTitle))]
     [NotifyPropertyChangedFor(nameof(TaskListToggleText))]

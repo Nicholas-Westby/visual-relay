@@ -94,21 +94,6 @@ public partial class MainWindowViewModel
         }
     }
 
-    [RelayCommand(CanExecute = nameof(CanMoveUp))]
-    private void MoveUp()
-    {
-        if (SelectedTask is null)
-        {
-            return;
-        }
-
-        var index = Tasks.IndexOf(SelectedTask);
-        if (index > 0)
-        {
-            Tasks.Move(index, index - 1);
-        }
-    }
-
     [RelayCommand(CanExecute = nameof(CanToggleArchive))]
     private async Task ToggleArchiveAsync()
     {
@@ -117,19 +102,31 @@ public partial class MainWindowViewModel
         StatusText = PauseRequested ? "Paused: no new task will start" : FormatQueueStatus();
     }
 
-    [RelayCommand(CanExecute = nameof(CanMoveDown))]
-    private void MoveDown()
+    /// <summary>
+    /// Testable reorder seam: moves the task at <paramref name="fromIndex"/> to
+    /// <paramref name="toIndex"/> in the in-memory <see cref="Tasks"/> list,
+    /// keeps the moved row selected, and is a no-op while busy or showing the
+    /// archive (mirroring the old Up/Down gate). The drag gesture in
+    /// <c>QueuePanel</c> routes its mutation through here so the logic stays
+    /// unit-testable without driving pointer input.
+    /// </summary>
+    internal void MoveTask(int fromIndex, int toIndex)
     {
-        if (SelectedTask is null)
+        if (IsBusy || ShowArchive)
         {
             return;
         }
 
-        var index = Tasks.IndexOf(SelectedTask);
-        if (index >= 0 && index < Tasks.Count - 1)
+        if (fromIndex < 0 || fromIndex >= Tasks.Count ||
+            toIndex < 0 || toIndex >= Tasks.Count ||
+            fromIndex == toIndex)
         {
-            Tasks.Move(index, index + 1);
+            return;
         }
+
+        var moved = Tasks[fromIndex];
+        Tasks.Move(fromIndex, toIndex);
+        SelectedTask = moved;
     }
 
     /// <summary>
