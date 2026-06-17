@@ -170,7 +170,7 @@ public sealed class GitInvokerTests
         }
         finally
         {
-            Directory.Delete(repoPath, recursive: true);
+            TestFileSystem.DeleteDirectoryResilient(repoPath);
         }
     }
 

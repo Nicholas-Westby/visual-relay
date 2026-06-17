@@ -282,15 +282,7 @@ public sealed class SandboxedTestRunnerArgumentTests
 
         public void Dispose()
         {
-            try
-            {
-                if (Directory.Exists(RootPath))
-                    Directory.Delete(RootPath, recursive: true);
-            }
-            catch
-            {
-                // Best-effort cleanup.
-            }
+            TestFileSystem.DeleteDirectoryResilient(RootPath);
         }
     }
 }

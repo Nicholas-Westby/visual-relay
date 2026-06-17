@@ -23,8 +23,7 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(_root))
-            Directory.Delete(_root, recursive: true);
+        TestFileSystem.DeleteDirectoryResilient(_root);
     }
 
     [Fact]

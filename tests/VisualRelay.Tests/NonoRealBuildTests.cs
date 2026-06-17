@@ -133,8 +133,7 @@ public sealed class NonoRealBuildTests
     private static ScratchRepo CreateScratchRepo(string name)
     {
         var root = Path.Combine(Path.GetTempPath(), "visual-relay-tests", name);
-        if (Directory.Exists(root))
-            Directory.Delete(root, recursive: true);
+        TestFileSystem.DeleteDirectoryResilient(root);
         Directory.CreateDirectory(root);
         return new ScratchRepo(root);
     }

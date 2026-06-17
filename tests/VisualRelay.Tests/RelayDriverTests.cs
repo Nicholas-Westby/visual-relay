@@ -276,8 +276,7 @@ public sealed partial class RelayDriverTests
         }
         finally
         {
-            if (Directory.Exists(dir))
-                Directory.Delete(dir, recursive: true);
+            TestFileSystem.DeleteDirectoryResilient(dir);
         }
     }
 

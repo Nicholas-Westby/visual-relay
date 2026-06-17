@@ -95,10 +95,7 @@ internal sealed class TestRepository : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(Root))
-        {
-            Directory.Delete(Root, recursive: true);
-        }
+        TestFileSystem.DeleteDirectoryResilient(Root);
     }
 }
 
