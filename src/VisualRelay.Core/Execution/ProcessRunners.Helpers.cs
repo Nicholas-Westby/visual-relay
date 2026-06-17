@@ -71,6 +71,9 @@ public sealed partial class SwivalSubagentRunner
             ["HF_HOME"] = Path.Combine(home, ".config", "swival", "huggingface"),
             ["XDG_CACHE_HOME"] = Path.Combine(home, ".config", "swival", "cache"),
             ["UV_CACHE_DIR"] = Path.Combine(home, ".config", "swival", "uv-cache"),
+            // Stop Python under nono writing .pyc into its (denied) stdlib dir, e.g. the Homebrew python@3.14 Cellar — that triggers an interactive ~50-path "Review denied paths" prompt that blocks the run; PYCACHEPREFIX redirects any re-enabled bytecode to a write-allowed dir.
+            ["PYTHONDONTWRITEBYTECODE"] = "1",
+            ["PYTHONPYCACHEPREFIX"] = Path.Combine(home, ".config", "swival", "pycache"),
         };
     }
 

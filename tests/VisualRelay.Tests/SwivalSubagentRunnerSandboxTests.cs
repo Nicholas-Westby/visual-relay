@@ -92,10 +92,31 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
 
         Assert.NotNull(env);
-        Assert.Equal(3, env.Count);
+        Assert.Equal(5, env.Count);
         Assert.Equal(Path.Combine(home, ".config", "swival", "huggingface"), env["HF_HOME"]);
         Assert.Equal(Path.Combine(home, ".config", "swival", "cache"), env["XDG_CACHE_HOME"]);
         Assert.Equal(Path.Combine(home, ".config", "swival", "uv-cache"), env["UV_CACHE_DIR"]);
+    }
+
+    [Fact]
+    public void BuildSandboxEnvironment_SandboxEnabled_StopsPythonWritingBytecodeIntoSystemStdlib()
+    {
+        // Regression: a Python invoked under nono (swival's own tooling, a
+        // python-based verify command, or uv/litellm) imports stdlib modules and
+        // CPython writes __pycache__/*.pyc back into the interpreter's stdlib dir
+        // — e.g. the Homebrew python@3.14 Cellar — which the vr-guard profile
+        // denies, triggering an interactive 50-path "Review denied paths" prompt
+        // that blocks launch. Setting PYTHONDONTWRITEBYTECODE=1 makes CPython
+        // never emit .pyc, and PYTHONPYCACHEPREFIX redirects any bytecode that a
+        // tool re-enables into ~/.config/swival (already in the write-allow list).
+        var config = TestConfig() with { BypassSandbox = false };
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
+
+        Assert.NotNull(env);
+        Assert.Equal("1", env["PYTHONDONTWRITEBYTECODE"]);
+        Assert.Equal(Path.Combine(home, ".config", "swival", "pycache"), env["PYTHONPYCACHEPREFIX"]);
     }
 
     // ════════════════════════════════════════════════════════════════════
