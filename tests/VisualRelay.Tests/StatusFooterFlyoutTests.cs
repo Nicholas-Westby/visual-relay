@@ -102,6 +102,9 @@ public sealed class StatusFooterFlyoutTests
     /// <summary>
     /// When StatusText is non-empty the expand button must be visible;
     /// when it is empty or null the button must be hidden (converter driven).
+    /// The initial value of StatusText is "Idle" (non-empty), so the button
+    /// must already be visible right after layout — guards against a vacuous
+    /// test that only checks visibility after an explicit assignment.
     /// </summary>
     [AvaloniaFact]
     public void StatusExpandButton_Visibility_TracksStatusText()
@@ -123,7 +126,11 @@ public sealed class StatusFooterFlyoutTests
         var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
-        // Set a non-empty status — button must become visible.
+        // Initial state: StatusText == "Idle" (non-empty), so button is visible.
+        Assert.True(expandButton.IsVisible,
+            "Expand button must be visible on startup because StatusText starts as 'Idle'.");
+
+        // Set a non-empty status — button must remain visible.
         vm.StatusText = "Planning some-task…";
         Dispatcher.UIThread.RunJobs();
         Assert.True(expandButton.IsVisible,
@@ -134,5 +141,67 @@ public sealed class StatusFooterFlyoutTests
         Dispatcher.UIThread.RunJobs();
         Assert.False(expandButton.IsVisible,
             "Expand button must be hidden when StatusText is empty.");
+    }
+
+    /// <summary>
+    /// Opening the flyout and pumping the dispatcher must result in the
+    /// <see cref="SelectableTextBlock"/> inside displaying the current
+    /// <c>StatusText</c> value — verifies that the binding actually resolves
+    /// and is not just structurally present.
+    /// </summary>
+    [AvaloniaFact]
+    public void StatusFlyout_WhenOpened_SelectableTextBlockReflectsStatusText()
+    {
+        const string longStatus =
+            "UNIQUE-FLYOUT-BINDING-PROBE: line 1 of a very long status message that " +
+            "would normally be clipped in the four-line footer view.\n" +
+            "Line 2: more detail about the ongoing operation.\n" +
+            "Line 3: even more information about progress and current state.\n" +
+            "Line 4: final line of detail to ensure the flyout scrolls.";
+
+        var vm = new MainWindowViewModel();
+        var window = new MainWindow
+        {
+            DataContext = vm,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        vm.StatusText = longStatus;
+        Dispatcher.UIThread.RunJobs();
+
+        var queuePanel = window.GetVisualDescendants()
+            .OfType<QueuePanel>()
+            .Single();
+
+        var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
+        Assert.NotNull(expandButton);
+
+        // Open the flyout so its visual tree is materialised.
+        expandButton.Flyout!.ShowAt(expandButton);
+        Dispatcher.UIThread.RunJobs();
+
+        // Navigate the flyout content tree: Border > Grid > ScrollViewer > SelectableTextBlock.
+        var flyout = Assert.IsType<Flyout>(expandButton.Flyout);
+        var flyoutBorder = flyout.Content as Border;
+        Assert.NotNull(flyoutBorder);
+
+        var grid = flyoutBorder.Child as Grid;
+        Assert.NotNull(grid);
+
+        ScrollViewer? scrollViewer = null;
+        foreach (var child in grid.Children)
+        {
+            if (child is ScrollViewer sv) { scrollViewer = sv; break; }
+        }
+        Assert.NotNull(scrollViewer);
+
+        var selectableTextBlock = scrollViewer.Content as SelectableTextBlock;
+        Assert.NotNull(selectableTextBlock);
+
+        // The binding must have resolved to the exact value we set.
+        Assert.Equal(longStatus, selectableTextBlock.Text);
     }
 }
