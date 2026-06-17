@@ -211,6 +211,18 @@ public partial class MainWindowViewModel
             return false;
         }
 
+        // Fail fast before launching when a required tool (swival always; nono
+        // when the sandbox is on) isn't on PATH — so the user gets an actionable
+        // message up front instead of a failed stage full of nono advisory noise.
+        var missingTools = SwivalSubagentRunner.MissingRequiredTools(result.Config);
+        if (missingTools.Count > 0)
+        {
+            StatusText =
+                $"{string.Join(" and ", missingTools)} is not installed or not on PATH on this machine — " +
+                "Visual Relay can't run tasks here. Install swival and retry.";
+            return false;
+        }
+
         NeedsInitialization = false;
         ConfigDiagnostic = null;
         return true;

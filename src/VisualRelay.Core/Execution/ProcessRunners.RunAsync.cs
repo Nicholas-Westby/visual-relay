@@ -17,6 +17,13 @@ public sealed partial class SwivalSubagentRunner
         if (!readiness.IsReady)
             return new SubagentResult(string.Empty, null, false, readiness.Message);
 
+        // Fail fast when a required launch tool isn't on PATH — avoids the doomed
+        // launch and nono's advisory WARN dump, and names the real cause.
+        var missingTools = MissingRequiredTools(_config, swivalBinary: _swivalBinary);
+        if (missingTools.Count > 0)
+            return new SubagentResult(string.Empty, null, false,
+                ErrorHintClassifier.WithHint(MissingToolsMessage(missingTools)));
+
         // Resolve whitelist against PATH so missing optional tools degrade
         // instead of crashing swival's startup preflight. Emit a
         // command_dropped event per unresolvable name.
@@ -216,9 +223,10 @@ public sealed partial class SwivalSubagentRunner
                     continue;
                 }
 
-                // Retries exhausted — build the reason from the TAIL of the
-                // output (where errors actually are), not just the head.
-                var reason = $"swival exit {result.ExitCode}: {TrimForTail(result.Output)}" +
+                // Retries exhausted — surface the real error: ExtractFailureReason
+                // drops nono's advisory WARN spam (the deny_*/--bypass-protection red
+                // herrings) and keeps the tail. Preserve the full-output breadcrumb.
+                var reason = $"swival exit {result.ExitCode}: {ExtractFailureReason(result.Output)}" +
                     (killedOutputPath is not null ? $" (full output: {killedOutputPath})" : "");
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
             }
@@ -285,16 +293,4 @@ public sealed partial class SwivalSubagentRunner
             return new SubagentResult(result.Output, json, true, null);
         }
     }
-
-    private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
-        _eventSink!.PublishAsync(new RelayEvent(
-            DateTimeOffset.UtcNow, "info", "trace",
-            invocation.RunId, invocation.TargetRoot, invocation.TaskName,
-            invocation.Stage.Number, invocation.Tier,
-            Data: new Dictionary<string, string>
-            {
-                ["kind"] = entry.Kind.ToString(),
-                ["title"] = entry.Title,
-                ["content"] = TrimForTrace(entry.Content)
-            }), cancellationToken);
 }

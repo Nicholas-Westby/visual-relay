@@ -92,6 +92,62 @@ public sealed class ErrorHintClassifierTests
     }
 
     [Fact]
+    public void HintFor_MissingBinary_SuggestsInstallingTheTool()
+    {
+        // nono set up the sandbox fine, then could not exec swival because it
+        // isn't on PATH. The actionable fix is installing swival, not bypassing
+        // a sandbox-permission rule.
+        const string raw = "nono: Command execution failed: swival: cannot find binary path";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("install", hint, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("swival", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HintFor_CommandNotFound_SuggestsInstallingTheTool()
+    {
+        const string raw = "swival exit 127: nono: command not found";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("install", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HintFor_PreflightNotOnPath_SuggestsInstallingTheTool()
+    {
+        // The fail-fast pre-flight refusal phrases the failure as "not on PATH";
+        // the same actionable hint must fire there as at process exit.
+        const string raw =
+            "swival is not installed or not on PATH on this machine — Visual Relay can't run tasks here.";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("install", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HintFor_MissingBinary_DoesNotShadowConnectionOrAuth()
+    {
+        // The missing-binary branch must not accidentally swallow a connection
+        // error that happens to mention nothing about a binary.
+        var connectionHint = ErrorHintClassifier.HintFor(
+            "swival exit 1: OpenAIException - Connection error.");
+        Assert.NotNull(connectionHint);
+        Assert.Contains("http://127.0.0.1:4000", connectionHint);
+
+        var authHint = ErrorHintClassifier.HintFor(
+            "swival exit 1: Error code: 401 - invalid api_key");
+        Assert.NotNull(authHint);
+        Assert.Contains("key", authHint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void HintFor_UnrecognizedError_ReturnsNull()
     {
         const string raw = "swival exit 7: some entirely novel failure mode nobody has seen";

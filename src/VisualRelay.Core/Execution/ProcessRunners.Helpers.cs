@@ -282,4 +282,16 @@ public sealed partial class SwivalSubagentRunner
                 ["message"] = "corrective retry for rejected or missing JSON contract block"
             }), cancellationToken);
     }
+
+    private Task PublishTraceAsync(StageInvocation invocation, TraceEntry entry, CancellationToken cancellationToken) =>
+        _eventSink!.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "info", "trace",
+            invocation.RunId, invocation.TargetRoot, invocation.TaskName,
+            invocation.Stage.Number, invocation.Tier,
+            Data: new Dictionary<string, string>
+            {
+                ["kind"] = entry.Kind.ToString(),
+                ["title"] = entry.Title,
+                ["content"] = TrimForTrace(entry.Content)
+            }), cancellationToken);
 }
