@@ -119,8 +119,10 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
     }
 
     [Fact]
-    public void ExtractFailureReason_OnlyAdvisoryNoise_FallsBackToLastNonEmptyLine()
+    public void ExtractFailureReason_NoFailureSignal_FallsBackToLastNonEmptyLine()
     {
+        // No line looks like a failure, so the extractor keeps the surviving tail
+        // after dropping the advisory WARN — i.e. the final non-empty real line.
         var output = string.Join('\n', new[]
         {
             "WARN '/Users/me/.ssh' is blocked by 'deny_credentials'; use --bypass-protection /Users/me/.ssh to allow access",
@@ -131,6 +133,75 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
         var reason = SwivalSubagentRunner.ExtractFailureReason(output);
 
         Assert.Equal("swival completed with some final summary", reason);
+        Assert.DoesNotContain("bypass-protection", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractFailureReason_BenignErrorCountLineBeforeFatal_AnchorsOnTheFatalLine()
+    {
+        // A benign pre-failure line that merely *mentions* "errors" must not be
+        // mis-selected as the failure anchor: the strong-signal pass must win and
+        // anchor on the real fatal line.
+        var output = string.Join('\n', new[]
+        {
+            "INFO loaded config with 0 errors",
+            "INFO starting subagent",
+            "nono: Command execution failed: swival: cannot find binary path",
+        });
+
+        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+
+        Assert.Contains("cannot find binary path", reason, StringComparison.Ordinal);
+        // The surfaced reason must NOT lead with / include the benign info line.
+        Assert.DoesNotContain("loaded config with 0 errors", reason, StringComparison.Ordinal);
+        Assert.StartsWith("nono: Command execution failed", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractFailureReason_AllAdvisoryNoise_FallsBackToNoDiagnosticPlaceholder()
+    {
+        // Every line is either an advisory WARN or pure decoration, so nothing
+        // survives filtering. The extractor must surface a sensible placeholder so
+        // the caller never emits a dangling "swival exit 1: " with no cause.
+        var output = string.Join('\n', new[]
+        {
+            "WARN '/Users/me/.ssh' is blocked by 'deny_credentials'; use --bypass-protection /Users/me/.ssh to allow access",
+            "WARN '/Users/me/.envrc' is blocked by 'deny_shell_configs'; use --bypass-protection /Users/me/.envrc to allow access",
+            "  ────────────────────────────────────────────────────",
+            "",
+        });
+
+        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+
+        Assert.Equal("(no diagnostic output captured)", reason);
+        Assert.DoesNotContain("bypass-protection", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractFailureReason_EmptyOutput_FallsBackToNoDiagnosticPlaceholder()
+    {
+        Assert.Equal("(no diagnostic output captured)", SwivalSubagentRunner.ExtractFailureReason(string.Empty));
+        Assert.Equal("(no diagnostic output captured)", SwivalSubagentRunner.ExtractFailureReason("   \n\n  "));
+    }
+
+    [Fact]
+    public void ExtractFailureReason_FailureLineWithTraceback_KeepsMultiLineTail()
+    {
+        // A genuine multi-line failure block (anchor line + following frames) must
+        // survive intact from the anchor down to the end.
+        var output = string.Join('\n', new[]
+        {
+            "WARN '/Users/me/.ssh' is blocked by 'deny_credentials'; use --bypass-protection /Users/me/.ssh to allow access",
+            "Traceback (most recent call last):",
+            "  File \"runner.py\", line 10, in <module>",
+            "    raise RuntimeError(\"boom\")",
+            "RuntimeError: boom",
+        });
+
+        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+
+        Assert.StartsWith("Traceback (most recent call last):", reason, StringComparison.Ordinal);
+        Assert.Contains("RuntimeError: boom", reason, StringComparison.Ordinal);
         Assert.DoesNotContain("bypass-protection", reason, StringComparison.Ordinal);
     }
 

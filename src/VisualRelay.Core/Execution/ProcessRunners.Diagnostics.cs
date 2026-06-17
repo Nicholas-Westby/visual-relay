@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -40,31 +41,40 @@ public sealed partial class SwivalSubagentRunner
 
     // Actionable, user-facing message for the fail-fast tool-presence gate. Names
     // the real cause (a missing binary on this host) so the user never sees the
-    // sandbox advisory dump.
-    private static string MissingToolsMessage(IReadOnlyList<string> missing) =>
+    // sandbox advisory dump. internal (not private) so the GUI gate
+    // (MainWindowViewModel.EnsureRunnableAsync) reuses the exact same copy instead
+    // of hand-copying it — both surfaces stay identical.
+    internal static string MissingToolsMessage(IReadOnlyList<string> missing) =>
         $"{string.Join(" and ", missing)} is not installed or not on PATH on this machine — " +
         "Visual Relay can't run tasks here. It's set up on the VM, not this host. " +
         "Install swival and retry.";
+
+    // Substituted when nothing survives filtering (all advisory noise or empty
+    // output) so the caller never emits a dangling "swival exit 1: " with no cause
+    // while still keeping its "(full output: <path>)" breadcrumb.
+    private const string NoDiagnosticOutput = "(no diagnostic output captured)";
 
     /// <summary>
     /// Distills the real failure text from merged stdout/stderr by dropping
     /// nono's per-run advisory WARNs (lines containing <c>is blocked by '</c> and
     /// <c>use --bypass-protection</c>, which print every run regardless of the
     /// failure) and pure banner/decoration rows, then keeping the most relevant
-    /// remainder: from the FIRST line that looks like the real failure
-    /// (<c>cannot find binary path</c>, <c>Command execution failed</c>, an error)
-    /// down to the end (so a multi-line traceback survives), or the tail of the
-    /// surviving lines when nothing looks like a failure. The result is capped to
-    /// <paramref name="tailChars"/>. This ensures the advisory red herrings (e.g.
-    /// the <c>.envrc</c> / <c>deny_shell_configs</c> line) and the startup banner
-    /// never lead the surfaced reason. Returns empty when the output is nothing but
-    /// noise.
+    /// remainder. Anchoring is two-pass: first prefer a high-confidence failure
+    /// marker (<c>cannot find binary path</c>, <c>command execution failed</c>,
+    /// <c>command not found</c>); only when none is present fall back to
+    /// word-boundary weak keywords (<c>error</c>/<c>fatal</c>/… as whole words, so
+    /// a benign "loaded config with 0 errors" line is NOT mis-anchored). The reason
+    /// runs from the anchor line down to the end (so a multi-line traceback
+    /// survives), or the tail of the surviving lines when nothing looks like a
+    /// failure, capped to <paramref name="tailChars"/>. Returns
+    /// <see cref="NoDiagnosticOutput"/> when the output is nothing but noise/empty.
     /// </summary>
     internal static string ExtractFailureReason(string output, int tailChars = 600)
     {
         var lines = output.Replace("\r\n", "\n").Split('\n');
         var kept = new List<string>(lines.Length);
-        var firstFailure = -1;
+        var strongFailure = -1;
+        var weakFailure = -1;
         foreach (var raw in lines)
         {
             var line = raw.Trim();
@@ -77,15 +87,22 @@ public sealed partial class SwivalSubagentRunner
             // Drop pure banner/decoration rows (rules, box-drawing, separators).
             if (line.Trim('=', '-', '─', '━', '•', '*', ' ', '\t').Length == 0)
                 continue;
-            if (firstFailure < 0 && LooksLikeFailure(line))
-                firstFailure = kept.Count;
+            if (strongFailure < 0 && HasStrongFailureSignal(line))
+                strongFailure = kept.Count;
+            if (weakFailure < 0 && HasWeakFailureSignal(line))
+                weakFailure = kept.Count;
             kept.Add(line);
         }
 
         if (kept.Count == 0)
-            return string.Empty;
+            return NoDiagnosticOutput;
 
-        // Anchor on the first failure-looking line (the start of the error block),
+        // Strong signal wins outright; the weak keyword pass is only a fallback so
+        // benign pre-failure lines (e.g. "… 0 errors") can never lead the reason
+        // when a real fatal line exists.
+        var firstFailure = strongFailure >= 0 ? strongFailure : weakFailure;
+
+        // Anchor on the failure-looking line (the start of the error block),
         // dropping the startup banner that precedes it; otherwise fall back to the
         // tail of everything that survived filtering.
         var relevant = firstFailure >= 0
@@ -94,13 +111,19 @@ public sealed partial class SwivalSubagentRunner
         return TrimForTail(relevant, tailChars);
     }
 
-    private static bool LooksLikeFailure(string line) =>
+    // High-confidence markers: when present, anchor here regardless of any earlier
+    // benign line that merely mentions an error keyword.
+    private static bool HasStrongFailureSignal(string line) =>
         line.Contains("cannot find binary path", StringComparison.OrdinalIgnoreCase) ||
         line.Contains("command execution failed", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("command not found", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("error", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("fatal", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("traceback", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("exception", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("critical", StringComparison.OrdinalIgnoreCase);
+        line.Contains("command not found", StringComparison.OrdinalIgnoreCase);
+
+    // Weak keywords, matched only as whole words so substrings like "0 errors" in a
+    // benign info line do not get mis-selected. Used only when no strong signal is
+    // found anywhere in the surviving output.
+    private static readonly Regex WeakFailureKeywords = new(
+        @"\b(error|fatal|traceback|exception|critical)\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static bool HasWeakFailureSignal(string line) => WeakFailureKeywords.IsMatch(line);
 }
