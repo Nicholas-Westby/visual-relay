@@ -57,12 +57,20 @@ internal static partial class TaskCompletionArchive
         if (config.ArchiveOnDone)
         {
             batch ??= HighestCompletedBatch(rootPath, config.TasksDir);
+            var completedRoot = Path.Combine(rootPath, config.TasksDir, "completed");
             if (batch is not null)
             {
-                var batchDir = Path.Combine(rootPath, config.TasksDir, "completed", $"batch-{batch}");
+                var batchDir = Path.Combine(completedRoot, $"batch-{batch}");
                 archivePath = task.IsNested
                     ? Path.Combine(batchDir, task.Id)
                     : Path.Combine(batchDir, $"DONE-{task.Id}.md");
+            }
+            else
+            {
+                // No batch number available: archive directly under completed/.
+                archivePath = task.IsNested
+                    ? Path.Combine(completedRoot, task.Id)
+                    : Path.Combine(completedRoot, $"DONE-{task.Id}.md");
             }
         }
 
@@ -171,6 +179,21 @@ internal static partial class TaskCompletionArchive
         if (!Directory.Exists(completedDir))
             return null;
 
+        // Check directly under completed/ (the no-batch destination).
+        if (task.IsNested)
+        {
+            var direct = Path.Combine(completedDir, task.Id);
+            if (Directory.Exists(direct))
+                return direct;
+        }
+        else
+        {
+            var direct = Path.Combine(completedDir, $"DONE-{task.Id}.md");
+            if (File.Exists(direct))
+                return direct;
+        }
+
+        // Check inside batch-N subdirectories.
         foreach (var batchDir in Directory.EnumerateDirectories(completedDir))
         {
             if (task.IsNested)
