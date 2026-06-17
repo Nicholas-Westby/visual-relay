@@ -91,6 +91,12 @@ internal static class MacDockIcon
             return false;
 
         SendMessage(app, Sel("setApplicationIconImage:"), image);
+
+        // Balance the alloc/initWithData: +1 retain. AppKit has already retained
+        // (or copied) the image via setApplicationIconImage:, so the helper's own
+        // reference is no longer needed.
+        SendMessage(image, Sel("release"));
+
         return true;
     }
 
