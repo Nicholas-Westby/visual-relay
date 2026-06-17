@@ -22,13 +22,21 @@ public sealed class FocusToggleIcon : Control
     private const double StrokeWeight = 1.7;
 
     /// <summary>How far each outer arrow tip sits from the box corner.</summary>
-    private const double Inset = 3.0;
+    internal const double Inset = 3.0;
 
     /// <summary>Length of each of the two short arrowhead legs.</summary>
     private const double Head = 4.0;
 
     /// <summary>Half-gap between the two shafts at the centre so they never merge.</summary>
     private const double Gap = 1.3;
+
+    /// <summary>
+    /// Arrowhead leg length in the CONTRACT state: clamped so the furthest barb
+    /// lands exactly at <c>hi = IconSize - Inset</c>, keeping all ink within the
+    /// same <c>[Inset, IconSize-Inset]</c> box as the EXPAND state.
+    /// Value = hi - mid - Gap = (16-3) - 8 - 1.3 = 3.7.
+    /// </summary>
+    private const double ContractHead = (IconSize - Inset) - (IconSize / 2.0) - Gap;
 
     public static readonly StyledProperty<bool> IsContractedProperty =
         AvaloniaProperty.Register<FocusToggleIcon, bool>(nameof(IsContracted));
@@ -77,45 +85,57 @@ public sealed class FocusToggleIcon : Control
     }
 
     // Two arrows on the TR↔BL diagonal, tips at the outer corners (focus/expand).
-    internal static Geometry BuildExpand()
+    internal static Geometry BuildExpand() => BuildArrows(ExpandArrowSpecs());
+
+    // Two arrows on the TR↔BL diagonal, tips at the centre (restore/contract).
+    internal static Geometry BuildContract() => BuildArrows(ContractArrowSpecs());
+
+    /// <summary>
+    /// Arrow point-specs for the EXPAND (outward / focus) state: each arrow's tip is
+    /// at an outer corner, legs point back toward the box, shaft runs in to the centre.
+    /// Exposed for tests — comparing these against <see cref="ContractArrowSpecs"/> is
+    /// how the "distinct shapes" guard verifies the states differ (the two geometries
+    /// share a bounding box, and headless hit-testing is unavailable).
+    /// </summary>
+    internal static IReadOnlyList<(Point Tip, Point LegA, Point LegB, Point Tail)> ExpandArrowSpecs()
     {
         const double lo = Inset;
         const double hi = IconSize - Inset;
         const double mid = IconSize / 2.0;
-
-        var g = new StreamGeometry();
-        using var ctx = g.Open();
-        // Top-right arrow: tip at the corner, legs pointing back (left + down),
-        // shaft running in toward the centre.
-        Arrow(ctx, tip: new Point(hi, lo),
-            legA: new Point(hi - Head, lo), legB: new Point(hi, lo + Head),
-            tail: new Point(mid + Gap, mid - Gap));
-        // Bottom-left arrow: point reflection of the above through the centre.
-        Arrow(ctx, tip: new Point(lo, hi),
-            legA: new Point(lo + Head, hi), legB: new Point(lo, hi - Head),
-            tail: new Point(mid - Gap, mid + Gap));
-        return g;
+        return new[]
+        {
+            (new Point(hi, lo), new Point(hi - Head, lo), new Point(hi, lo + Head), new Point(mid + Gap, mid - Gap)),
+            (new Point(lo, hi), new Point(lo + Head, hi), new Point(lo, hi - Head), new Point(mid - Gap, mid + Gap)),
+        };
     }
 
-    // Two arrows on the TR↔BL diagonal, tips at the centre (restore/contract):
-    // shafts run out to the corners, arrowheads sit inward.
-    internal static Geometry BuildContract()
+    /// <summary>
+    /// Arrow point-specs for the CONTRACT (inward / restore) state: tips near the centre,
+    /// shafts run out to the corners, arrowheads sit inward. <c>ContractHead</c> keeps the
+    /// furthest barb at <c>hi = IconSize - Inset</c> so all ink stays within the same
+    /// <c>[Inset, IconSize-Inset]</c> box as the EXPAND state.
+    /// </summary>
+    internal static IReadOnlyList<(Point Tip, Point LegA, Point LegB, Point Tail)> ContractArrowSpecs()
     {
         const double lo = Inset;
         const double hi = IconSize - Inset;
         const double mid = IconSize / 2.0;
+        return new[]
+        {
+            (new Point(mid + Gap, mid - Gap), new Point(mid + Gap, mid - Gap - ContractHead), new Point(mid + Gap + ContractHead, mid - Gap), new Point(hi, lo)),
+            (new Point(mid - Gap, mid + Gap), new Point(mid - Gap, mid + Gap + ContractHead), new Point(mid - Gap - ContractHead, mid + Gap), new Point(lo, hi)),
+        };
+    }
 
+    private static Geometry BuildArrows(IReadOnlyList<(Point Tip, Point LegA, Point LegB, Point Tail)> specs)
+    {
         var g = new StreamGeometry();
         using var ctx = g.Open();
-        // Top-right quadrant arrow points inward (down-left toward centre):
-        // tip near centre, legs pointing back up + right, shaft out to the corner.
-        Arrow(ctx, tip: new Point(mid + Gap, mid - Gap),
-            legA: new Point(mid + Gap, mid - Gap - Head), legB: new Point(mid + Gap + Head, mid - Gap),
-            tail: new Point(hi, lo));
-        // Bottom-left quadrant arrow: point reflection through the centre.
-        Arrow(ctx, tip: new Point(mid - Gap, mid + Gap),
-            legA: new Point(mid - Gap, mid + Gap + Head), legB: new Point(mid - Gap - Head, mid + Gap),
-            tail: new Point(lo, hi));
+        foreach (var (tip, legA, legB, tail) in specs)
+        {
+            Arrow(ctx, tip, legA, legB, tail);
+        }
+
         return g;
     }
 

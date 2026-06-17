@@ -111,9 +111,12 @@ public sealed class ChevronAffordanceRenderTests
     /// <summary>
     /// Both focus-toggle states must draw real ink that sits comfortably inset
     /// from the box edges. The old icon packed four corner elbows so tightly they
-    /// read as a near-solid square (ink spanning ~edge-to-edge with hairline
-    /// gaps); the clean diagonal-arrow icon keeps its ink well within the box, so
-    /// we assert a margin on every side for each state.
+    /// read as a near-solid square (ink spanning ~edge-to-edge with the outer
+    /// tips sitting at Inset=2.5); the clean diagonal-arrow icon keeps its outer
+    /// tips at Inset=3.0, so asserting minMargin >= Inset (3.0) would FAIL the
+    /// old corner-elbow design while passing the current one. Note: the
+    /// <c>FocusIcon_Expand_And_Contract_AreDistinctShapes</c> test is the primary
+    /// regression guard for the design; this test anchors the minimum inset.
     /// </summary>
     [AvaloniaTheory]
     [InlineData(false)] // expand / focus
@@ -128,16 +131,18 @@ public sealed class ChevronAffordanceRenderTests
         Assert.True(bounds is { Width: > 0, Height: > 0 },
             "focus icon must render non-empty ink");
 
-        // A real margin on all four sides — not an edge-to-edge square outline.
-        const double minMargin = 1.5;
+        // Margin must be >= Inset (3.0). The old corner-elbow icon used Inset=2.5,
+        // so its ink reached 2.5 from the edge — this assertion would have failed
+        // it. The current diagonal-arrow design places outer tips exactly at Inset.
+        const double minMargin = FocusToggleIcon.Inset;
         Assert.True(bounds.Left >= minMargin,
-            $"left ink {bounds.Left:F2} too close to edge");
+            $"left ink {bounds.Left:F2} too close to edge (min {minMargin})");
         Assert.True(bounds.Top >= minMargin,
-            $"top ink {bounds.Top:F2} too close to edge");
+            $"top ink {bounds.Top:F2} too close to edge (min {minMargin})");
         Assert.True(bounds.Right <= FocusToggleIcon.IconSize - minMargin,
-            $"right ink {bounds.Right:F2} too close to edge {FocusToggleIcon.IconSize}");
+            $"right ink {bounds.Right:F2} too close to edge {FocusToggleIcon.IconSize} (min margin {minMargin})");
         Assert.True(bounds.Bottom <= FocusToggleIcon.IconSize - minMargin,
-            $"bottom ink {bounds.Bottom:F2} too close to edge {FocusToggleIcon.IconSize}");
+            $"bottom ink {bounds.Bottom:F2} too close to edge {FocusToggleIcon.IconSize} (min margin {minMargin})");
     }
 
     /// <summary>
@@ -148,14 +153,14 @@ public sealed class ChevronAffordanceRenderTests
     [AvaloniaFact]
     public void FocusIcon_Expand_And_Contract_AreDistinctShapes()
     {
-        // StreamGeometry needs the platform render interface, which the headless
-        // [AvaloniaFact] session provides.
-        var expand = FocusToggleIcon.BuildExpand();
-        var contract = FocusToggleIcon.BuildContract();
-
-        // Outward arrows reach the corners; inward arrows pull toward the centre,
-        // so their bounding boxes differ.
-        Assert.NotEqual(expand.Bounds, contract.Bounds);
+        // The two states share a bounding box (both fill [Inset, IconSize-Inset]) and
+        // headless hit-testing (StrokeContains) is unavailable, so compare the arrow
+        // point-specs the geometries are actually built from. Expanded arrowheads sit at
+        // the outer corners; contracted ones are pulled toward the centre — the spec
+        // sequences must differ, guaranteeing the states aren't a mere recolour.
+        var expandSpecs = FocusToggleIcon.ExpandArrowSpecs();
+        var contractSpecs = FocusToggleIcon.ContractArrowSpecs();
+        Assert.NotEqual(expandSpecs, contractSpecs);
     }
 
     /// <summary>
