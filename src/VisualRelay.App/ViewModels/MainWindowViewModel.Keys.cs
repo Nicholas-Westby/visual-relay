@@ -57,6 +57,14 @@ public partial class MainWindowViewModel
     private string? _pendingHfRunTaskId;
 
     /// <summary>
+    /// Set to true after the first call to <see cref="RefreshKeyStatesAsync"/> completes.
+    /// Guards the HF-gate banner against a startup flash: <see cref="IsHuggingFaceConfigured"/>
+    /// defaults false before key states are known, so without this flag the banner would blink
+    /// briefly on every launch even when a token is present.
+    /// </summary>
+    private bool _keyStatesLoaded;
+
+    /// <summary>
     /// True when HF_TOKEN is present in the user .env or process environment.
     /// Folded into the execution gate; does NOT affect browsing.
     /// </summary>
@@ -64,7 +72,14 @@ public partial class MainWindowViewModel
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyPropertyChangedFor(nameof(HfGateMessage))]
+    [NotifyPropertyChangedFor(nameof(ShowHfGate))]
     private bool _isHuggingFaceConfigured;
+
+    /// <summary>
+    /// True when the HF-gate banner should be shown: key states have been loaded once
+    /// (no startup flash) and HF_TOKEN is still absent.
+    /// </summary>
+    public bool ShowHfGate => _keyStatesLoaded && !IsHuggingFaceConfigured;
 
     /// <summary>
     /// Human-readable summary of tier→model resolutions given present keys,
@@ -139,6 +154,14 @@ public partial class MainWindowViewModel
         }
 
         IsHuggingFaceConfigured = KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").IsSet;
+
+        // Mark that at least one load has completed so ShowHfGate is unblocked.
+        if (!_keyStatesLoaded)
+        {
+            _keyStatesLoaded = true;
+            OnPropertyChanged(nameof(ShowHfGate));
+        }
+
         RefreshLitTiers();
         await Task.CompletedTask;
     }
