@@ -210,9 +210,9 @@ public sealed class TargetedTestInvocationTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_FixVerifyLoop_Stage10ReceivesTargetedTestCommandInPrompt()
+    public async Task RunTaskAsync_FixVerifyLoop_Stage10ReceivesFullGateCommandInPrompt()
     {
-        // Stage 9 red → fix-verify loop → stage 10 agent prompt uses targeted cmd
+        // Stage 9 red → fix-verify loop → stage 10 agent prompt uses full gate cmd (not targeted)
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
@@ -243,6 +243,6 @@ public sealed class TargetedTestInvocationTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var stage10 = runner.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Equal("bun test config.json", stage10.TestCommand);
+        Assert.Equal("dotnet test", stage10.TestCommand);  // full gate, not the targeted subset
     }
 }

@@ -76,12 +76,17 @@ public static class RelayStages
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
         "Fix-verify" =>
-            "Fix failures from the pinned suite. Verify by running ONLY the command shown " +
-            "in the ## Verify command section of the prompt — run exactly that one command " +
-            "and nothing else — and confirm it passes (exit 0) before returning success. " +
-            "Do NOT run the project's full check, lint, format, build, or screenshot gate " +
-            "(e.g. `./visual-relay check`), and do NOT broaden the command to a fuller " +
-            "gate — the harness runs the full gate at its own stage. " +
+            "Fix all failures from the full test suite gate shown in ## Verify command. " +
+            "The command in ## Verify command IS the full gate — run exactly that command " +
+            "and confirm it exits 0 before returning success. " +
+            "Treat a nonzero exit as a real, unfinished failure even when the summary " +
+            "says '0 failed': inspect the output tail for a non-test gate (perf/wall-clock " +
+            "ceiling, lint/coverage ratchet, a throwing setup/teardown hook) and resolve it " +
+            "legitimately — do NOT delete tests, weaken assertions, or skip hooks to beat " +
+            "the gate. If a non-test gate is not safely fixable within this task's scope, " +
+            "report it explicitly as a non-test gate failure instead of hacking around it. " +
+            "Do NOT run the project's broader orchestration gate (e.g. `./visual-relay check`). " +
+            "The harness runs the full gate mechanically; your job is to make it pass cleanly. " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         _ => string.Empty

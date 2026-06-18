@@ -68,6 +68,25 @@ public sealed class CodingStageSystemPromptTests
     }
 
     [Fact]
+    public void FixVerify_SystemPrompt_InstructsAgentToTreatNonzeroAsRealFailure()
+    {
+        var stage = RelayStages.All.Single(s => s.Name == "Fix-verify");
+        // Must tell the agent that a nonzero exit = real failure even when summary says 0 failed.
+        Assert.Contains("nonzero exit", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("0 failed", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void FixVerify_SystemPrompt_ForbidsRewardHacking_AndHasNonTestGateFallback()
+    {
+        var stage = RelayStages.All.Single(s => s.Name == "Fix-verify");
+        // Must instruct the agent NOT to delete tests or weaken assertions to beat the gate.
+        Assert.Contains("do NOT delete tests", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+        // Must carry the "report as a non-test gate if not safely fixable" fallback.
+        Assert.Contains("non-test gate", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ConfirmImplementationPrompt_ProhibitsReNarrationAndFullGate()
     {
         var prompt = RelayStages.ConfirmImplementationSystemPrompt;
