@@ -35,7 +35,6 @@ public sealed partial class RelayDriver
         string? bootstrapCheckCmd,
         string? guardCmd,
         string pinnedSwivalProfileContent,
-        string targetedTestCommand,
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify

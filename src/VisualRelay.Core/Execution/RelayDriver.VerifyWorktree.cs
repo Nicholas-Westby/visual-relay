@@ -19,7 +19,7 @@ public sealed partial class RelayDriver
         string rootPath, RelayConfig config, int stageNumber, int attempt,
         string runId, string taskId, CancellationToken cancellationToken)
     {
-        string? worktreePath = null;
+        string? worktreePath;
         var worktreeId = $"{taskId}-verify-s{stageNumber}-a{attempt}";
         try
         {
