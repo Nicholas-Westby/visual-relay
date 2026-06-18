@@ -11,6 +11,8 @@ namespace VisualRelay.App;
 
 public partial class App : Application
 {
+    private ControlServer? _controlServer;
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
@@ -36,6 +38,17 @@ public partial class App : Application
             _ = viewModel.LoadInitialAsync();
             viewModel.StartBackendMonitoring();
             viewModel.StartElapsedTimer();
+
+            // Localhost HTTP control surface so an operator can drive the app
+            // from curl exactly as if clicking its buttons (loopback-only;
+            // honors each command's enabled state). A startup failure (e.g. port
+            // in use) is swallowed inside ControlServer.Start — never blocks the
+            // app. Stop it on exit so the socket is released.
+            var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
+            _controlServer = new ControlServer(new ControlApi(viewModel, window), options);
+            _controlServer.Start();
+            desktop.Exit += (_, _) => _controlServer?.Stop();
+            desktop.ShutdownRequested += (_, _) => _controlServer?.Stop();
         }
 
         // Best-effort: show the brand icon in the macOS Dock. AppKit is live by
