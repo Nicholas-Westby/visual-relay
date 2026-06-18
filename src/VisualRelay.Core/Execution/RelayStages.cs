@@ -58,6 +58,9 @@ public static class RelayStages
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, or format gate (e.g. `./visual-relay check`) during " +
             "implementation — the harness runs the full gate at the Verify stage. " +
+            "Treat a nonzero exit as a real, unfinished failure even when the summary " +
+            "says '0 failed': inspect the output tail for a non-test gate and resolve " +
+            "it legitimately. " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Review" =>
@@ -72,6 +75,9 @@ public static class RelayStages
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, or format gate during implementation — the harness runs the " +
             "full gate at the Verify stage. " +
+            "Treat a nonzero exit as a real, unfinished failure even when the summary " +
+            "says '0 failed': inspect the output tail for a non-test gate and resolve " +
+            "it legitimately. " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",

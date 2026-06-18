@@ -86,6 +86,19 @@ public sealed class CodingStageSystemPromptTests
         Assert.Contains("non-test gate", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("Implement")]
+    [InlineData("Fix")]
+    [InlineData("Fix-verify")]
+    public void CodingStageSystemPrompt_InstructsAgentToTreatNonzeroAsRealFailure(string stageName)
+    {
+        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        // The prompt must tell the agent that a nonzero exit = failure even when
+        // the summary reports 0 failed tests.
+        Assert.Contains("nonzero", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("exit", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void ConfirmImplementationPrompt_ProhibitsReNarrationAndFullGate()
     {
