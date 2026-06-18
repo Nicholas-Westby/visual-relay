@@ -35,11 +35,14 @@ fi
 
 # Run dotnet test — pipe console output through tee so it shows live AND lands in the log.
 # The trx logger writes into --results-directory with its own filename; we'll locate it below.
+# NOTE: ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} (not "${EXTRA_ARGS[@]}") — on macOS's
+# bash 3.2, expanding an EMPTY array under `set -u` raises "unbound variable".
+# This bites the bare `./test.sh` full-suite path (no NO_BUILD, no filter).
 dotnet test "$PROJ" \
     --logger "console;verbosity=normal" \
     --logger "trx;LogFileName=${STEM}.trx" \
     --results-directory "$LOG_DIR" \
-    "${EXTRA_ARGS[@]}" 2>&1 | tee "$LOG_FILE"
+    ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} 2>&1 | tee "$LOG_FILE"
 
 TEST_EXIT="${PIPESTATUS[0]}"
 
