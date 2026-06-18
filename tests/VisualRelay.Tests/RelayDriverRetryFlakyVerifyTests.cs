@@ -75,6 +75,65 @@ public sealed class RelayDriverRetryFlakyVerifyTests
     }
 
     /// <summary>
+    /// The verify_retry event must carry reason="first-run-nonzero", not the
+    /// old misleading "transient-fault" label (R2: pre-emptive labelling fixed).
+    /// </summary>
+    [Fact]
+    public async Task RetryFlakyVerify_ReasonLabel_IsFirstRunNonzero_NotTransientFault()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteTask("retry-label", "# Retry label\n");
+        var runner = new ScriptedSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),              // stage 5 author gate
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed TestX"));     // stage 9 verify — retry also fails
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverOptions.NoGitCommit);
+
+        await driver.RunTaskAsync(repo.Root, "retry-label");
+
+        var retryEvent = sink.Events.Single(e => e.EventName == "verify_retry");
+        Assert.Equal("first-run-nonzero", retryEvent.Data?["reason"]);
+    }
+
+    /// <summary>
+    /// A failing test that passes on re-run (red→green flip) must be labeled
+    /// flaky (Approach 3) and must NOT hard-fail the gate — the task commits.
+    /// </summary>
+    [Fact]
+    public async Task RetryFlakyVerify_FailThenPass_LabeledFlaky_AndDoesNotHardFailGate()
+    {
+        // Acceptance (Approach 3): a failing test that passes on re-run is labeled
+        // flaky and does NOT by itself hard-fail the gate.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteTask("flaky", "# Flaky\n");
+        var runner = new ScriptedSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),              // stage 5 author gate
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(0, "green"));            // stage 9 verify — retry flips green
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "flaky");
+
+        // Did NOT hard-fail: the flaky red flipped green and the task committed.
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        // The flip is explicitly labeled flaky.
+        var flip = sink.Events.Single(e => e.EventName == "verify_retry_pass");
+        Assert.Equal("flaky", flip.Data?["classification"]);
+    }
+
+    /// <summary>
     /// When retryFlakyVerify is explicitly false, the verify runs exactly once
     /// with no retry — byte-for-byte unchanged from the single-run path.
     /// </summary>

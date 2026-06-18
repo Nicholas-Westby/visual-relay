@@ -77,7 +77,7 @@ public sealed partial class RelayDriver
         // Retry fires — emit warn event
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "warn", "verify_retry", runId, rootPath, taskId, stageNumber,
-            Data: new Dictionary<string, string> { ["reason"] = "transient-fault" }), ct);
+            Data: new Dictionary<string, string> { ["reason"] = "first-run-nonzero" }), ct);
 
         var retryResult = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
 
@@ -86,7 +86,11 @@ public sealed partial class RelayDriver
             // Fail→pass flip — emit info event
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "info", "verify_retry_pass", runId, rootPath, taskId, stageNumber,
-                Data: new Dictionary<string, string> { ["result"] = "pass-on-retry" }), ct);
+                Data: new Dictionary<string, string>
+                {
+                    ["result"] = "pass-on-retry",
+                    ["classification"] = "flaky"   // first-run red flipped green on re-run = non-deterministic
+                }), ct);
             return retryResult with { Elapsed = result.Elapsed + retryResult.Elapsed };
         }
 
