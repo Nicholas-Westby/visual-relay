@@ -77,13 +77,24 @@ internal sealed class RedGateObservingTestRunner : ITestRunner
 
     public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        Assert.Equal(_rootPath, rootPath);
+        // The gate runs either in-place at the live root (stage-5 author gate) or,
+        // for the authoritative verify gates (stage 9 / stage 10), in a Task-8
+        // full-fidelity isolated snapshot under the visual-relay worktree temp
+        // namespace (path leaf "<taskId>-verify-s<N>-a<A>"). Either way the snapshot
+        // mirrors the live tree, so the status content read here is identical.
+        Assert.True(
+            string.Equals(_rootPath, rootPath, StringComparison.Ordinal) || IsVerifySnapshot(rootPath),
+            $"unexpected gate rootPath: {rootPath}");
         var status = File.ReadAllText(Path.Combine(rootPath, "src", "status.cs")).Trim();
         StatusSnapshots.Add(status);
         return Task.FromResult(command == "full-suite"
             ? new TestRunResult(status == "new" ? 0 : 1, status)
             : new TestRunResult(status == "old" ? 1 : 0, status));
     }
+
+    private static bool IsVerifySnapshot(string path) =>
+        path.Replace('\\', '/').Contains("/visual-relay/wt/", StringComparison.Ordinal)
+        && Path.GetFileName(path).Contains("-verify-s", StringComparison.Ordinal);
 }
 
 internal sealed class BadManifestSubagentRunner : ISubagentRunner

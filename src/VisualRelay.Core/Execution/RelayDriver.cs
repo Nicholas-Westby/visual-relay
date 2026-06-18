@@ -190,7 +190,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 null, statusEntries, cancellationToken);
                         }
 
-                        var testResult = await RunTestCommandWithRetryAsync(rootPath, config, cancellationToken, 9, runId, taskId);
+                        var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
+                            rootPath, config, stageNumber: 9, attempt: 1, runId, taskId, cancellationToken);
+                        await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage, verifyMutations, cancellationToken);
                         testDurationSeconds = testResult.Elapsed.TotalSeconds;
                         if (testResult.TimedOut)
                         {
