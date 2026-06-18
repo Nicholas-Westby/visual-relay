@@ -11,44 +11,6 @@ public sealed partial class RelayDriver
     /// <summary>10× multiplier for tasks whose id appears in
     /// <see cref="RelayConfig.BoostTurnsTaskIds"/>.</summary>
     private const int TurnBoostMultiplier = 10;
-    private static HashSet<string> ExtractFailureIds(string? output)
-    {
-        var ids = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(output)) return ids;
-        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
-            if (line.Trim().StartsWith("Failed ", StringComparison.Ordinal))
-                ids.Add(line.Trim()["Failed ".Length..].Trim());
-        return ids;
-    }
-    private static async Task<string?> GetNewFailuresAsync(
-        string rootPath, string taskId, string runId,
-        ITestRunner testRunner, string testCommand,
-        TestRunResult workingResult, IGitInvoker gitInvoker, CancellationToken ct)
-    {
-        var tag = RedGate.StashTag(taskId, runId);
-        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct, gitInvoker);
-        try
-        {
-            if (!stashed) return "verify failed";
-            var baseline = await testRunner.RunAsync(rootPath, testCommand, ct);
-            if (baseline.TimedOut) return "verify failed";
-            var current = ExtractFailureIds(workingResult.Output);
-            if (current.Count == 0 && workingResult.ExitCode != 0)
-                return "verify failed";
-            current.ExceptWith(ExtractFailureIds(baseline.Output));
-            return current.Count == 0 ? null
-                : string.Join(", ", current.Order(StringComparer.Ordinal));
-        }
-        finally
-        {
-            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct, gitInvoker)
-                == RedGateRestoreResult.Conflict)
-            {
-                throw new InvalidOperationException(
-                    $"Red gate restore conflict after baseline verify for tag '{tag}'.");
-            }
-        }
-    }
     /// <summary>
     /// Runs the fix-verify loop: stage 10 → re-verify, bounded by <see cref="RelayConfig.MaxVerifyLoops"/>.
     /// Returns null outcome when the suite turns green (success). Returns a Flagged outcome when all
@@ -78,6 +40,7 @@ public sealed partial class RelayDriver
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
         var maxLoops = config.MaxVerifyLoops;
+        VerifyAttemptFingerprint? previousAttempt = null;
 
         for (var attempt = 1; attempt <= maxLoops; attempt++)
         {
@@ -190,6 +153,21 @@ public sealed partial class RelayDriver
 
             if (check == "green")
                 return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+
+            // Convergence guard (R3): if this red attempt left the manifest tree unchanged
+            // AND the distilled failure is identical to the prior attempt, the loop cannot
+            // converge — flag now instead of burning the remaining attempts. The attempt is
+            // already recorded above (honest history), so we only flag and return here.
+            var distilledReason = SwivalSubagentRunner.ExtractFailureReason(testResult.Output);
+            var thisAttempt = new VerifyAttemptFingerprint(treeHash, distilledReason);
+            if (IsNonConvergent(attempt, check, thisAttempt, previousAttempt))
+            {
+                var reason = $"verify non-convergent: working tree unchanged, same failure persists ({distilledReason})";
+                var ncOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+                    reason, testResult.Output, statusEntries, cancellationToken);
+                return (ncOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+            }
+            previousAttempt = thisAttempt;
 
             // Build combined failure output for next fix-verify iteration.
             failingTestOutput = BuildFailureOutput(testResult, guardFailureOutput,

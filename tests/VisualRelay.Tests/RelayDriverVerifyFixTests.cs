@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayDriverVerifyFixTests
+public sealed partial class RelayDriverVerifyFixTests
 {
     [Fact]
     public async Task RunTaskAsync_FixableVerifyFailure_CommitsAfterFixVerifyLoop()
@@ -36,38 +36,6 @@ public sealed class RelayDriverVerifyFixTests
         Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 10 });
         Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 10 });
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "fixable-verify", "NEEDS-REVIEW")));
-    }
-
-    [Fact]
-    public async Task RunTaskAsync_UnfixableVerifyFailure_FlagsAfterMaxLoops()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
-        repo.WriteTask("unfixable", "# Unfixable\n");
-        var runner = new ScriptedSubagentRunner();
-        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
-        var tests = new ScriptedTestRunner(
-            new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
-            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 first run — red
-            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 retry — still red
-            new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 first run — red
-            new TestRunResult(1, "Failed TestX"));     // fix-verify attempt 2 retry — still red
-        var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
-            RelayDriverOptions.NoGitCommit);
-
-        var outcome = await driver.RunTaskAsync(repo.Root, "unfixable");
-
-        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        Assert.Contains("verify failed after 2 fix-verify attempts", outcome.Reason, StringComparison.Ordinal);
-        var review = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "unfixable", "NEEDS-REVIEW"));
-        Assert.Contains("verify failed after 2 fix-verify attempts", review, StringComparison.Ordinal);
-        // Seals should record both failed stage 10 attempts
-        var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "unfixable", "unfixable.seals"));
-        Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
-        Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
     }
 
     [Fact]
