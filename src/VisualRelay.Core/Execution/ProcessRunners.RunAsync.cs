@@ -52,6 +52,10 @@ public sealed partial class SwivalSubagentRunner
         string? correctivePriorOutput = null;
         string? correctiveShapeError = null;
 
+        // Compute nono --skip-dir basenames ONCE (target root is constant across retries).
+        var skipDirs = await NonoRollbackSkipDirs.ComputeAsync(
+            invocation.TargetRoot, _gitInvoker, cancellationToken);
+
         while (true)
         {
             // Recompute first-output / inactivity for current tier (may have escalated).
@@ -98,7 +102,7 @@ public sealed partial class SwivalSubagentRunner
             arguments.Add(correctivePriorOutput is not null
                 ? BuildCorrectivePrompt(attemptInvocation, correctivePriorOutput, correctiveShapeError)
                 : BuildPrompt(attemptInvocation));
-            var (fileName, launchArguments) = BuildLaunchTarget(arguments);
+            var (fileName, launchArguments) = BuildLaunchTarget(arguments, skipDirs);
             var sandboxEnv = BuildSandboxEnvironment(_config);
             var processTimeout = absoluteCeilingMs <= 0
                 ? Timeout.InfiniteTimeSpan

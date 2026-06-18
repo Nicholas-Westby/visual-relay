@@ -72,8 +72,13 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     /// <see cref="RelayConfig.BypassSandbox"/> is true.  Appends
     /// <see cref="RelayConfig.SandboxExtraAllowPaths"/> as <c>-a &lt;path&gt;</c>
     /// before <c>--</c> (and before <c>--rollback</c> when enabled).
+    /// <paramref name="skipDirs"/> (basenames) are emitted as
+    /// <c>--skip-dir &lt;name&gt;</c> — before <c>--</c> — so nono's rollback
+    /// PREFLIGHT skips them and stays under its fixed budget on large repos
+    /// (the swival path passes these; the verify path leaves them null).
     /// </summary>
-    internal static IReadOnlyList<string> BuildNonoPrefix(RelayConfig config, bool rollback)
+    internal static IReadOnlyList<string> BuildNonoPrefix(
+        RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null)
     {
         if (config.BypassSandbox)
             return [];
@@ -83,6 +88,11 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)
         {
             foreach (var path in paths) { args.Add("-a"); args.Add(path); }
+        }
+
+        if (skipDirs is { Count: > 0 })
+        {
+            foreach (var name in skipDirs) { args.Add("--skip-dir"); args.Add(name); }
         }
 
         if (rollback) { args.Add("--rollback"); args.Add("--no-rollback-prompt"); }
