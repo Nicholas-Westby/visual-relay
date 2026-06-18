@@ -1,4 +1,3 @@
-using System.Text;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -17,9 +16,9 @@ public sealed partial class RelayDriver
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayStageDefinition stage, int attempt, RelayConfig config,
         TestRunResult testResult, IReadOnlyList<string> manifest,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string? overrideCheck = null)
     {
-        var check = testResult.ExitCode == 0 ? "green" : "red";
+        var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
         var reason = testResult.ExitCode != 0
             ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output)
             : string.Empty;

@@ -285,9 +285,11 @@ public sealed class RelayDriverVerifyFixTests
         Assert.Equal("dotnet test", stage10!.Data?["command"]);
         Assert.Equal("0", stage10.Data?["exitCode"]);
         Assert.Equal("green", stage10.Data?["check"]);
+        Assert.True(stage10.Data!.ContainsKey("treeHash"));
+        Assert.True(stage10.Data.ContainsKey("outputFile"));
+        Assert.True(File.Exists(stage10.Data["outputFile"]));
         // (3) verify_result carries a treeHash and outputFile POINTER; full output in file, never inlined.
         Assert.True(stage9.Data!.ContainsKey("treeHash"));
-        Assert.True(stage9.Data.ContainsKey("outputFile"));
         var outputFile = stage9.Data["outputFile"];
         Assert.False(string.IsNullOrEmpty(outputFile));
         Assert.True(File.Exists(outputFile));
