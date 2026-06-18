@@ -87,7 +87,7 @@ tools/backend/backend.sh stop     # SIGTERM then SIGKILL, and removes the PID fi
 
 ### Provider keys
 
-The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap`, `balanced`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`, `fallback`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.
+The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap`, `balanced`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.2`, `fallback`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.
 
 The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
 
@@ -107,7 +107,7 @@ cp .env.example .env   # repo-root .env, git-ignored
 
 **Precedence**: an exported environment variable overrides both files; the user-level file overrides the repo file. The in-app key panel reads and writes the user-level path.
 
-`backend.sh start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `.relay-scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. When the generator is unavailable (no `dotnet`), the script falls back to the static template. A one-line resolution summary is logged to stderr (e.g. `backend: config generated — cheap→deepseek-v4-flash, balanced→deepseek-v4-pro, frontier→kimi-k2, …; keys: HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY`), so "why did frontier run on HF?" is always answerable.
+`backend.sh start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `.relay-scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. When the generator is unavailable (no `dotnet`), the script falls back to the static template. A one-line resolution summary is logged to stderr (e.g. `backend: config generated — cheap→deepseek-v4-flash, balanced→deepseek-v4-pro, frontier→glm-5.2, …; keys: HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY`), so "why did frontier run on HF?" is always answerable.
 
 ## Sandbox
 

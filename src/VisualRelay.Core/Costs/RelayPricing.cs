@@ -12,7 +12,8 @@ internal static class RelayPricing
         {
             ["cheap"] = new(0.14, 0.28, 0.0028, 0.14),
             ["balanced"] = new(0.435, 0.87, 0.003625, 0.435),
-            ["frontier"] = new(0.95, 4.0, 0.16, 0.95),
+            ["frontier"] = new(0.80, 2.40, 0.08, 0.80),
+            ["glm-5.2"] = new(0.80, 2.40, 0.08, 0.80),  // GLM 5.2 via HF / Z.AI (zai-org); frontier primary
             ["vision"] = new(0.30, 1.50),
             ["claude-opus-1m"] = new(5.0, 25.0),
             ["claude-sonnet"] = new(3.0, 15.0),

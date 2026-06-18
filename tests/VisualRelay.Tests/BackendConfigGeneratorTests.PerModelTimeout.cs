@@ -60,13 +60,14 @@ public sealed partial class BackendConfigGeneratorTests
     /// for the 2026-06-10 wedge).
     /// </summary>
     [Fact]
-    public void PerModelTimeout_AllNineModelsHaveExplicitCeiling()
+    public void PerModelTimeout_AllTenModelsHaveExplicitCeiling()
     {
         var yaml = File.ReadAllText(TemplatePath);
         var timeouts = ParseModelTimeouts(yaml);
 
         string[] allModels =
         [
+            "glm-5.2",
             "kimi-k2",
             "deepseek-v4-pro",
             "deepseek-v4-flash",
@@ -93,6 +94,19 @@ public sealed partial class BackendConfigGeneratorTests
             "kimi-k2 must have a per-model timeout");
         // 480s (8 min) > 412s observed worst-case healthy Review,
         // far below the 40-min stage cap.
+        Assert.Equal(480, t);
+    }
+
+    [Fact]
+    public void PerModelTimeout_FrontierGlm52Has480s()
+    {
+        var yaml = File.ReadAllText(TemplatePath);
+        var timeouts = ParseModelTimeouts(yaml);
+
+        Assert.True(timeouts.TryGetValue("glm-5.2", out var t),
+            "glm-5.2 must have a per-model timeout");
+        // 480s (8 min) — same frontier ceiling as kimi-k2; > 412s observed
+        // worst-case healthy Review, far below the 40-min stage cap.
         Assert.Equal(480, t);
     }
 
@@ -149,6 +163,7 @@ public sealed partial class BackendConfigGeneratorTests
         var (yaml, _) = Generate(present);
         var timeouts = ParseModelTimeouts(yaml);
 
+        Assert.Equal(480, timeouts["glm-5.2"]);
         Assert.Equal(480, timeouts["kimi-k2"]);
         Assert.Equal(75, timeouts["deepseek-v4-pro"]);
         Assert.Equal(75, timeouts["deepseek-v4-flash"]);

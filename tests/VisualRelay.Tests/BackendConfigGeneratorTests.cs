@@ -86,7 +86,9 @@ public sealed partial class BackendConfigGeneratorTests
 
         Assert.Equal("fallback", aliases["cheap"]);
         Assert.Equal("fallback", aliases["balanced"]);
-        Assert.Equal("fallback", aliases["frontier"]);
+        // GLM 5.2 (frontier primary) requires HF_TOKEN, which is present, so
+        // frontier now resolves to glm-5.2 directly (not the fallback floor).
+        Assert.Equal("glm-5.2", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
         Assert.False(aliases.ContainsKey("claude"));
@@ -110,7 +112,9 @@ public sealed partial class BackendConfigGeneratorTests
 
         Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
-        Assert.Equal("deepseek-v4-pro", aliases["frontier"]);
+        // frontier primary glm-5.2 needs HF_TOKEN (present), so it wins ahead
+        // of the deepseek-v4-pro fallback even when DEEPSEEK_API_KEY is set.
+        Assert.Equal("glm-5.2", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
         Assert.Equal("hf-qwen3-coder-next", aliases["fallback"]);
         Assert.False(aliases.ContainsKey("claude"));
@@ -132,11 +136,13 @@ public sealed partial class BackendConfigGeneratorTests
 
         Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
-        Assert.Equal("kimi-k2", aliases["frontier"]);
+        // GLM 5.2 is the frontier primary; kimi-k2 drops to the first fallback.
+        Assert.Equal("glm-5.2", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
 
         Assert.True(fallbacks.ContainsKey("frontier"));
         var chain = fallbacks["frontier"];
+        Assert.Contains("kimi-k2", chain);
         Assert.Contains("deepseek-v4-pro", chain);
         Assert.Contains("hf-qwen3-coder-next", chain);
         Assert.Equal("fallback", chain[^1]);
@@ -162,7 +168,8 @@ public sealed partial class BackendConfigGeneratorTests
 
         Assert.Equal("fallback", aliases["cheap"]);
         Assert.Equal("fallback", aliases["balanced"]);
-        Assert.Equal("fallback", aliases["frontier"]);
+        // frontier primary glm-5.2 needs only HF_TOKEN (present).
+        Assert.Equal("glm-5.2", aliases["frontier"]);
         Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
     }
 
@@ -180,6 +187,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("fallbacks:", yaml, StringComparison.Ordinal);
         // model_list and litellm_settings preserved verbatim.
         Assert.Contains("kimi-k2", yaml, StringComparison.Ordinal);
+        Assert.Contains("glm-5.2", yaml, StringComparison.Ordinal);
         Assert.Contains("drop_params: true", yaml, StringComparison.Ordinal);
         Assert.Contains("json_logs: true", yaml, StringComparison.Ordinal);
         Assert.Contains("stream_timeout:", yaml, StringComparison.Ordinal);

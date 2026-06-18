@@ -136,7 +136,7 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         provider = "generic"
         base_url = "{ModelBackend.BaseUrl}"
         model = "frontier"
-        max_context_tokens = 128000
+        max_context_tokens = 200000
 
         [profiles.balanced]
         provider = "generic"
@@ -191,6 +191,12 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         base_url = "{ModelBackend.BaseUrl}"
         model = "fallback"
         max_context_tokens = 256000
+
+        [profiles.glm]
+        provider = "generic"
+        base_url = "{ModelBackend.BaseUrl}"
+        model = "glm-5.2"
+        max_context_tokens = 200000
 
         [profiles.kimi]
         provider = "generic"

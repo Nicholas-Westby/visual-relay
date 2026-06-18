@@ -51,4 +51,36 @@ public sealed partial class SwivalProfileSessionPinningTests
             "DefaultToml must contain a [profiles.kimi] block with max_context_tokens");
         Assert.Equal(256000, kimiMax);
     }
+
+    /// <summary>
+    /// GLM 5.2 (frontier primary) has a 200 K-token context window. The
+    /// <c>[profiles.glm]</c> block in DefaultToml must reflect that ceiling so
+    /// swival never under-budgets its context.
+    /// </summary>
+    [Fact]
+    public void DefaultToml_GlmProfile_MaxContextTokensIs200000()
+    {
+        var toml = SwivalProfileSession.DefaultToml;
+        var maxTokens = ParseSwivalProfileMaxContextTokens(toml);
+
+        Assert.True(maxTokens.TryGetValue("glm", out var glmMax),
+            "DefaultToml must contain a [profiles.glm] block with max_context_tokens");
+        Assert.Equal(200000, glmMax);
+    }
+
+    /// <summary>
+    /// The <c>frontier</c> tier alias now resolves to GLM 5.2 (200 K context),
+    /// so the <c>[profiles.frontier]</c> block must budget 200 000 tokens
+    /// rather than the prior 128 000.
+    /// </summary>
+    [Fact]
+    public void DefaultToml_FrontierProfile_MaxContextTokensIs200000()
+    {
+        var toml = SwivalProfileSession.DefaultToml;
+        var maxTokens = ParseSwivalProfileMaxContextTokens(toml);
+
+        Assert.True(maxTokens.TryGetValue("frontier", out var frontierMax),
+            "DefaultToml must contain a [profiles.frontier] block with max_context_tokens");
+        Assert.Equal(200000, frontierMax);
+    }
 }
