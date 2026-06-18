@@ -198,6 +198,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 ErrorHintClassifier.WithHint(testResult.Output),
                                 null, statusEntries, cancellationToken);
                         }
+                        await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, testResult, manifest, cancellationToken);
                         check = testResult.ExitCode == 0 ? "green" : "red";
                         if (bootstrapFailed || guardFailed || newGuardOutput is not null)
                             check = "red";

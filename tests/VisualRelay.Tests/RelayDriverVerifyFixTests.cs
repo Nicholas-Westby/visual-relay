@@ -250,4 +250,49 @@ public sealed class RelayDriverVerifyFixTests
             Assert.Equal(200, inv.MaxTurns);
         }
     }
+
+    [Fact]
+    public async Task RunVerifyFixLoop_EmitsVerifyResultEvent_AtStage9AndStage10_WithOutputFilePointer()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteTask("verify-event", "# Verify event test\n");
+        var runner = new ScriptedSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),              // stage 5 author gate
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(0, "green"),             // fix-verify attempt 1 gate — green
+            new TestRunResult(0, "green"));            // pad (not reached)
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverOptions.NoGitCommit);
+
+        await driver.RunTaskAsync(repo.Root, "verify-event");
+
+        // (1) The first authoritative red (stage 9) is observable.
+        var stage9 = sink.Events.SingleOrDefault(e => e is { EventName: "verify_result", StageNumber: 9 });
+        Assert.NotNull(stage9);
+        Assert.Equal("dotnet test", stage9!.Data?["command"]);
+        Assert.Equal("1", stage9.Data?["exitCode"]);
+        Assert.Equal("red", stage9.Data?["check"]);
+        Assert.Contains("Failed TestX", stage9.Data?["reason"] ?? "", StringComparison.Ordinal);
+        // (2) The stage-10 gate verdict is observable.
+        var stage10 = sink.Events.SingleOrDefault(e => e is { EventName: "verify_result", StageNumber: 10 });
+        Assert.NotNull(stage10);
+        Assert.Equal("dotnet test", stage10!.Data?["command"]);
+        Assert.Equal("0", stage10.Data?["exitCode"]);
+        Assert.Equal("green", stage10.Data?["check"]);
+        // (3) verify_result carries a treeHash and outputFile POINTER; full output in file, never inlined.
+        Assert.True(stage9.Data!.ContainsKey("treeHash"));
+        Assert.True(stage9.Data.ContainsKey("outputFile"));
+        var outputFile = stage9.Data["outputFile"];
+        Assert.False(string.IsNullOrEmpty(outputFile));
+        Assert.True(File.Exists(outputFile));
+        var persisted = await File.ReadAllTextAsync(outputFile);
+        Assert.Contains("Failed TestX", persisted, StringComparison.Ordinal);
+        Assert.DoesNotContain(stage9.Data.Values, v => v.Contains("Failed TestX") && v.Length > 200);
+    }
 }

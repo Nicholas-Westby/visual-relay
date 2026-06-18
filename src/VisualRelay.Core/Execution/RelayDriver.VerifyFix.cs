@@ -161,6 +161,7 @@ public sealed partial class RelayDriver
                 return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
             }
 
+            await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken);
             check ??= testResult.ExitCode == 0 ? "green" : "red";
 
             // Record attempt in ledger with labeled section.
