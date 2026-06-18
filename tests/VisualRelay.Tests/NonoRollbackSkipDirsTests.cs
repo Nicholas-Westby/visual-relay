@@ -173,19 +173,31 @@ public sealed class NonoRollbackSkipDirsTests
     }
 
     [Fact]
-    public async Task ComputeAsync_NullGitInvoker_FallsBackToAlwaysList_NeverThrows()
+    public async Task ComputeAsync_NullGitInvoker_DefaultsToRealGit_AndStillSizeGatesIgnoredDirs()
     {
-        var root = Path.Combine(Path.GetTempPath(), "vr-skipdir-nogit-" + Guid.NewGuid().ToString("N"));
+        // Regression guard for the production wiring gap: SwivalSubagentRunner was
+        // constructed WITHOUT a gitInvoker at every production site, which silently
+        // dropped the size-gated skips (keeping only the always-list) and let a
+        // multi-GB git-ignored dir blow nono's rollback budget. A null invoker MUST
+        // default to a real GitInvoker so big git-ignored dirs are still skipped.
+        var root = Path.Combine(Path.GetTempPath(), "vr-skipdir-nullgit-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         try
         {
+            TestGit.Run(root, "init", "-q");
+            File.WriteAllText(Path.Combine(root, ".gitignore"), "big/\n");
+            File.WriteAllText(Path.Combine(root, "tracked.txt"), "x");
+            Directory.CreateDirectory(Path.Combine(root, "big"));
+            File.WriteAllText(Path.Combine(root, "big", "blob.bin"), new string('z', 8_000));
+            TestGit.Run(root, "add", ".gitignore", "tracked.txt");
+
+            // gitInvoker: null → must fall back to a REAL GitInvoker (not the
+            // always-list only), so the ignored "big" dir is still size-gated in.
             var result = await NonoRollbackSkipDirs.ComputeAsync(
-                root, gitInvoker: null, CancellationToken.None);
+                root, gitInvoker: null, CancellationToken.None, thresholdBytes: 1_000);
 
             Assert.Contains(".git", result);
-            Assert.Contains(".relay", result);
-            Assert.Contains(".relay-scratch", result);
-            Assert.Contains(".swival", result);
+            Assert.Contains("big", result); // proves real git ran despite the null invoker
         }
         finally
         {
