@@ -14,6 +14,12 @@ public partial class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        // The macOS application menu (the bold first menu, next to the Apple logo)
+        // derives its title from Application.Name; left unset it defaults to
+        // "Avalonia Application". Set it so the unbundled `dotnet run` / bare
+        // published launch shows the product name. (The .app bundle independently
+        // sets CFBundleName via packaging/macos/build-app-bundle.sh.)
+        Name = "Visual Relay";
     }
 
     public override void OnFrameworkInitializationCompleted()
