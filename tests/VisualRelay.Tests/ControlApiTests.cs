@@ -70,7 +70,7 @@ public sealed class ControlApiTests
         [
             "run-all", "run-selected", "resume", "refresh", "pause-toggle",
             "archive-toggle", "new-task", "follow-running", "start-backend",
-            "edit", "select-task", "bypass-sandbox", "boost-turns"
+            "edit", "select-task", "bypass-sandbox", "boost-turns", "open-folder"
         ];
         foreach (var name in expected)
         {
@@ -132,6 +132,33 @@ public sealed class ControlApiTests
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
         Assert.Equal("unknown command", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [AvaloniaFact]
+    public async Task InvokeCommand_OpenFolder_SetsRootPath_AndRejectsMissingFolder()
+    {
+        var api = NewApi(out _);
+        var dir = AppContext.BaseDirectory; // a real, stable directory
+
+        var (status, json) = await api.InvokeCommandAsync(
+            "open-folder", JsonSerializer.Serialize(new { path = dir }));
+        Assert.Equal(200, status);
+        using (var doc = JsonDocument.Parse(json))
+        {
+            Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        }
+
+        // /state reflects the new root.
+        var stateJson = await api.BuildStateJsonAsync();
+        using var stateDoc = JsonDocument.Parse(stateJson);
+        Assert.Equal(dir, stateDoc.RootElement.GetProperty("rootPath").GetString());
+
+        // A non-existent folder is refused (409) and does not change the root.
+        var (missingStatus, missingJson) = await api.InvokeCommandAsync(
+            "open-folder", JsonSerializer.Serialize(new { path = "/no/such/dir/vr-xyz-zzz" }));
+        Assert.Equal(409, missingStatus);
+        using var missingDoc = JsonDocument.Parse(missingJson);
+        Assert.Equal("folder not found", missingDoc.RootElement.GetProperty("error").GetString());
     }
 
     [AvaloniaFact]

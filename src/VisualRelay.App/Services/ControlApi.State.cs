@@ -82,6 +82,7 @@ public sealed partial class ControlApi
         map["select-task"] = new { enabled = viewModel.Tasks.Count > 0 };
         map["bypass-sandbox"] = new { enabled = true };
         map["boost-turns"] = new { enabled = viewModel.SelectedTask is not null };
+        map["open-folder"] = new { enabled = true };
 
         return map;
     }

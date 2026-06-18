@@ -52,13 +52,15 @@ Endpoints:
   commands are fire-and-forget (like a click) — poll `/state` to follow progress. Names:
   `run-all`, `run-selected`, `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `start-backend`, `edit`, plus property actions
-  `select-task` (body `{"id":"<taskId>"}`), `bypass-sandbox` (body `{"value":true|false}`),
-  `boost-turns` (body `{"value":true|false}`).
+  `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
+  project), `select-task` (body `{"id":"<taskId>"}`), `bypass-sandbox` (body
+  `{"value":true|false}`), `boost-turns` (body `{"value":true|false}`).
 - `GET /screenshot[?path=/abs/file.png]` — renders the live window to PNG (`image/png`);
   with `?path=` it also writes the file and returns the location in `X-Screenshot-Path`.
 
 Examples:
 
+    curl -s -X POST -d '{"path":"/Users/me/Dev/my-project"}' http://127.0.0.1:8765/command/open-folder
     curl -s http://127.0.0.1:8765/state | jq .
     curl -s -X POST -d '{"id":"my-task"}' http://127.0.0.1:8765/command/select-task
     curl -s -X POST -d '' http://127.0.0.1:8765/command/run-all

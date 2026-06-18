@@ -42,7 +42,7 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
 
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
-        ["select-task", "bypass-sandbox", "boost-turns"];
+        ["select-task", "bypass-sandbox", "boost-turns", "open-folder"];
 
     /// <summary>
     /// Invokes a documented command/action by name. Returns the HTTP status and
@@ -132,6 +132,26 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
                     }
 
                     viewModel.SelectedTaskBoostsTurns = value.Value;
+                    return (200, Json.Object(("ok", true), ("command", name)));
+                }
+
+            case "open-folder":
+                {
+                    // Programmatic equivalent of the Browse button: point the app at a
+                    // project folder. Like Browse it is always available; mirrors
+                    // BrowseAsync (set RootPath, then refresh the task list).
+                    var path = Json.ReadString(body, "path");
+                    if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                    {
+                        return (409, Json.Object(("ok", false), ("command", name), ("error", "folder not found")));
+                    }
+
+                    viewModel.RootPath = path;
+                    if (viewModel.RefreshCommand.CanExecute(null))
+                    {
+                        viewModel.RefreshCommand.Execute(null);
+                    }
+
                     return (200, Json.Object(("ok", true), ("command", name)));
                 }
 
