@@ -66,6 +66,26 @@ public sealed class NonoRealBuildTests
     }
 
     [Fact]
+    public async Task RealVerify_ShellCommandWithSpaces_RunsThroughNonoSandbox()
+    {
+        SkipIfNotOptedIn();
+
+        using var repo = CreateScratchRepo("shell-verify-sandbox");
+        var config = TestConfig() with { BypassSandbox = false };
+        var sut = new SandboxedTestRunner(
+            new ShellTestRunner(TimeSpan.FromMinutes(1)), config);
+
+        // A spaced, always-green command exercising the full nono-wrapped shell
+        // verify. Before the -c/command split fix this returned exit 2
+        // ("/bin/sh: - : invalid option") for ANY command, because -c and the
+        // command were merged into one argument /bin/sh could not parse.
+        var result = await sut.RunAsync(repo.Root, "echo verify ok && true", CancellationToken.None);
+
+        Assert.False(result.TimedOut);
+        Assert.Equal(0, result.ExitCode);
+    }
+
+    [Fact]
     public async Task RealBuild_BypassEnabled_RunsOnHost()
     {
         SkipIfNotOptedIn();

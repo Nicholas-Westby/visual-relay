@@ -24,7 +24,12 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
         Assert.Equal("/bin/sh", args[5]);
-        Assert.Equal("-c \"bun test\"", args[6]);
+        // -c and the command MUST be separate ArgumentList entries. SandboxedTestRunner
+        // uses the IEnumerable<string> ProcessCapture overload, which adds each entry
+        // verbatim (no quote-splitting); a merged `-c "bun test"` entry reaches /bin/sh
+        // as one unparseable arg → exit 2 (every sandboxed verify falsely red).
+        Assert.Equal("-c", args[6]);
+        Assert.Equal("bun test", args[7]);
     }
 
     [Fact]

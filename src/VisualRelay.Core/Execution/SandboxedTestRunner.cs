@@ -48,6 +48,12 @@ public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) :
     {
         if (config.BypassSandbox)
         {
+            // Not reached in production: RunAsync short-circuits to inner.RunAsync when
+            // BypassSandbox is set, so this branch only feeds argument-shape unit tests.
+            // The merged `-lc "<command>"` string mirrors what ShellTestRunner.RunAsync
+            // actually passes — and ShellTestRunner uses the ProcessCapture STRING overload,
+            // which splits the arguments string honoring quotes. So the merge is correct here
+            // (unlike the sandbox path below, which uses the non-splitting IEnumerable overload).
             if (inner is ShellTestRunner)
                 return ("/bin/sh", new[] { $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"" });
             else
@@ -64,10 +70,18 @@ public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) :
             // login shell re-resolves from the user's profile/PATH. A login shell here re-sourced a
             // different dotnet (e.g. ~/.dotnet) than the build's, causing runtime-mismatch launch
             // failures under nono. Inheriting the harness env keeps build and verify on one toolchain.
+            //
+            // -c and the command MUST be SEPARATE list entries. RunAsync feeds these to the
+            // ProcessCapture IEnumerable<string> overload, which adds each entry to
+            // ProcessStartInfo.ArgumentList verbatim — no quote-splitting. A merged
+            // `-c "<command>"` entry would reach /bin/sh as one unparseable argument
+            // ("/bin/sh: - : invalid option", exit 2), making every sandboxed verify falsely red.
+            // ArgumentList re-quotes each entry as needed, so the command passes through unescaped.
             var args = new List<string>(prefix)
             {
                 "/bin/sh",
-                $"-c \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\""
+                "-c",
+                command
             };
             return ("nono", args);
         }
