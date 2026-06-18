@@ -31,8 +31,8 @@ public sealed class NonoLaunchDriftGuardTests
         Assert.DoesNotContain("--rollback", verifyPrefix);
         Assert.DoesNotContain("--no-rollback-prompt", verifyPrefix);
 
-        // The non-rollback portions must be identical (drop --rollback/--no-rollback-prompt from agent).
-        var agentCore = agentPrefix.Except(["--rollback", "--no-rollback-prompt"]).ToList();
+        // The non-rollback portions must be identical (positional filter preserves order and duplicates).
+        var agentCore = agentPrefix.Where(x => x is not "--rollback" and not "--no-rollback-prompt").ToList();
         Assert.Equal(agentCore, verifyPrefix);
     }
 
@@ -52,12 +52,12 @@ public sealed class NonoLaunchDriftGuardTests
         foreach (var extraPath in config.SandboxExtraAllowPaths!)
         {
             var agentIdx = agentPrefix.IndexOf("-a");
-            while (agentIdx >= 0 && agentPrefix[agentIdx + 1] != extraPath)
+            while (agentIdx >= 0 && agentIdx + 1 < agentPrefix.Count && agentPrefix[agentIdx + 1] != extraPath)
                 agentIdx = agentPrefix.IndexOf("-a", agentIdx + 1);
             Assert.True(agentIdx >= 0, $"agent prefix missing -a {extraPath}");
 
             var verifyIdx = verifyPrefix.IndexOf("-a");
-            while (verifyIdx >= 0 && verifyPrefix[verifyIdx + 1] != extraPath)
+            while (verifyIdx >= 0 && verifyIdx + 1 < verifyPrefix.Count && verifyPrefix[verifyIdx + 1] != extraPath)
                 verifyIdx = verifyPrefix.IndexOf("-a", verifyIdx + 1);
             Assert.True(verifyIdx >= 0, $"verify prefix missing -a {extraPath}");
         }

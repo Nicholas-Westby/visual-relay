@@ -120,6 +120,9 @@ public sealed partial class RelayDriver
     /// command wrote during verify. Emitted only when the delta is non-empty; the real
     /// <paramref name="rootPath"/> tree is always unaffected (the gate ran in the snapshot).
     /// </summary>
+    // NOTE: isolation covers the authoritative test gates (stages 9/10) only — the bootstrap
+    // check and commit gate still run in-place — so "the repo is unaffected" in the advisory
+    // refers specifically to the test command's writes during those isolated gate runs.
     private async Task EmitMutatedTreeAdvisoryAsync(
         string rootPath, string runId, string taskId, RelayStageDefinition stage,
         IReadOnlyList<string> mutations, CancellationToken cancellationToken)

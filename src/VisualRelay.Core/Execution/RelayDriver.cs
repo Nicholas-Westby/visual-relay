@@ -218,6 +218,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         {
                             var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
                             // Skip baseline diff when bootstrap, guard, or new-guard-probe is the source.
+                            // NOTE: GetNewFailuresAsync runs against the LIVE rootPath (stash/restore), while
+                            // testResult came from the isolated snapshot (HEAD + live overlay). These are
+                            // content-equivalent, so the new-vs-baseline failure diff is valid; if the suite
+                            // self-mutates, the snapshot absorbed those writes, leaving the live baseline cleaner.
                             var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed && newGuardOutput is null)
                                 ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, _dependencies.GitInvoker, cancellationToken)
                                 : null;
