@@ -277,7 +277,7 @@ public sealed partial class RelayDriver
     {
         var parts = new List<string>();
         if (testResult.ExitCode != 0)
-            parts.Add(testResult.Output);
+            parts.Add(SwivalSubagentRunner.ExtractFailureReason(testResult.Output));
         if (guardOutput is not null)
             parts.Add("--- Guard check output ---\n" + guardOutput);
         if (newGuardOutput is not null)

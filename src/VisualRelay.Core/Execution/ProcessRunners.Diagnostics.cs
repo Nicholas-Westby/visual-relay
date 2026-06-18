@@ -87,6 +87,15 @@ public sealed partial class SwivalSubagentRunner
             // Drop pure banner/decoration rows (rules, box-drawing, separators).
             if (line.Trim('=', '-', '─', '━', '•', '*', ' ', '\t').Length == 0)
                 continue;
+            // Drop "Verified N pack(s)" — nono prints it every run regardless of outcome.
+            if (VerifiedPacksLine.IsMatch(line))
+                continue;
+            // Drop a BARE nono advisory token line (e.g. "deny_read_user_home") that printed
+            // without the full "is blocked by … use --bypass-protection" phrase (already
+            // handled above). Match only a line that is ONLY such a token, so a real error
+            // that merely contains the substring is never dropped.
+            if (BareDenyAdvisoryLine.IsMatch(line))
+                continue;
             if (strongFailure < 0 && HasStrongFailureSignal(line))
                 strongFailure = kept.Count;
             if (weakFailure < 0 && HasWeakFailureSignal(line))
@@ -116,7 +125,13 @@ public sealed partial class SwivalSubagentRunner
     private static bool HasStrongFailureSignal(string line) =>
         line.Contains("cannot find binary path", StringComparison.OrdinalIgnoreCase) ||
         line.Contains("command execution failed", StringComparison.OrdinalIgnoreCase) ||
-        line.Contains("command not found", StringComparison.OrdinalIgnoreCase);
+        line.Contains("command not found", StringComparison.OrdinalIgnoreCase) ||
+        // A real test failure is exactly what we want to surface. "Failed " at line
+        // start matches this codebase's failing-test format (see ExtractFailureIds);
+        // \bFAIL\b (uppercase) matches bun/jest "FAIL path/to/test". NOT "N fail" —
+        // a benign "0 failed" summary must never anchor.
+        line.StartsWith("Failed ", StringComparison.Ordinal) ||
+        FailToken.IsMatch(line);
 
     // Weak keywords, matched only as whole words so substrings like "0 errors" in a
     // benign info line do not get mis-selected. Used only when no strong signal is
@@ -126,4 +141,14 @@ public sealed partial class SwivalSubagentRunner
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static bool HasWeakFailureSignal(string line) => WeakFailureKeywords.IsMatch(line);
+
+    private static readonly Regex VerifiedPacksLine = new(
+        @"^Verified\s+\d+\s+pack\(s\)\s*$", RegexOptions.Compiled);
+    // A line that is ONLY a bare nono advisory token like "deny_read_user_home".
+    private static readonly Regex BareDenyAdvisoryLine = new(
+        @"^deny_[a-z0-9_]+\s*$", RegexOptions.Compiled);
+    // Uppercase FAIL as a whole word (bun/jest/vitest failure rows). Case-SENSITIVE
+    // so "failed" inside prose / "Command execution failed" is not matched here.
+    private static readonly Regex FailToken = new(
+        @"\bFAIL\b", RegexOptions.Compiled);
 }
