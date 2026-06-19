@@ -30,6 +30,11 @@ public partial class MainWindowViewModel
             },
             OnExecuteStarted = taskId =>
             {
+                // The execute phase must OWN the status text — otherwise it stays on the
+                // last concurrent-planning message ("Planning <last task>…") for the whole
+                // run, even though a different (earlier) task is executing. Mirror the
+                // single-run path (RunOneAsync sets "Running <id>").
+                StatusText = $"Running {taskId}";
                 var task = Tasks.FirstOrDefault(t => t.Id == taskId);
                 if (task is not null)
                     BeginRunningTask(task);
@@ -42,8 +47,33 @@ public partial class MainWindowViewModel
                 // cleared. Fixes the stale "LATEST RUN FAILED" banner persisting
                 // across a drain re-run of the selected task.
                 RefreshSelectedTaskErrorAfterRun(taskId);
+                // Reconcile the live roster with the on-disk archive: a committed task
+                // whose spec moved to completed/ must leave the active list (else it
+                // lingers as "Pending" and its stale MarkdownPath is re-read).
+                ReconcileArchivedTaskRow(taskId);
             }
         };
+    }
+
+    /// <summary>
+    /// Reconciles a just-completed task's row with the on-disk archive. When the task
+    /// committed AND archiveOnDone moved its spec out of the active <c>llm-tasks/</c> tree
+    /// (to <c>completed/</c>), the in-memory row's <see cref="TaskRowViewModel.MarkdownPath"/>
+    /// is now stale: the row keeps showing "Pending" for the rest of the drain and a later
+    /// refresh / detail re-read throws "Could not find a part of the path …/&lt;task&gt;.md".
+    /// Detect the move by the spec no longer existing, then drop the row and re-point the
+    /// selection off it. A flagged task (or archiveOnDone off) keeps its spec → no-op.
+    /// Runs on the UI thread (its only caller mutates ObservableProperty state there).
+    /// </summary>
+    private void ReconcileArchivedTaskRow(string taskId)
+    {
+        var row = Tasks.FirstOrDefault(t => t.Id == taskId);
+        if (row is null || File.Exists(row.MarkdownPath))
+            return; // not archived (flagged, or archiveOnDone off) — nothing to reconcile
+
+        if (string.Equals(SelectedTask?.Id, taskId, StringComparison.Ordinal))
+            SelectedTask = Tasks.FirstOrDefault(t => !string.Equals(t.Id, taskId, StringComparison.Ordinal));
+        Tasks.Remove(row);
     }
 
     internal void RestoreRunningTaskState(string taskId, int? stageNumber, string? stageName)
