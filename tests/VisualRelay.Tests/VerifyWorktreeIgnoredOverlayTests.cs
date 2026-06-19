@@ -91,45 +91,50 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 2. SAFETY INVARIANT — overlaid content is COPIED; cleanup never touches source.
+    // 2. SAFETY INVARIANT — cleanup removes the LINKS, never the TARGETS.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task Cleanup_AfterCopyingIgnoredContent_SourceContentsSurviveIntact()
+    public async Task CleanupVerifyWorktree_RemovesLinksOnly_SourceTargetsSurviveWithContents()
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-safety-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
         try
         {
+            // A LOW injected threshold keeps node_modules above the copy/symlink
+            // boundary (so it is SYMLINKED — exercising the symlink-unlink cleanup
+            // path this test names) WITHOUT having to write 64 MB.
+            const long lowThreshold = 4 * 1024; // 4 KiB
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "node_modules/\n.env\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
             var depFile = Path.Combine(root, "node_modules", "dep", "blob.bin");
-            await File.WriteAllBytesAsync(depFile, new byte[8 * 1024]);
-            var envFile = Path.Combine(root, ".env");
+            await File.WriteAllBytesAsync(depFile, new byte[lowThreshold * 2]);
+            var envFile = Path.Combine(root, ".env"); // small → copied (also must survive)
             await File.WriteAllTextAsync(envFile, "REAL-ENV");
             CommitAll(root, "seed");
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-safety", "run-safety", CancellationToken.None);
-            // Overlaid content is a real COPY in the worktree, NOT a symlink out to source.
-            var nmDir = Path.Combine(worktree, "node_modules");
-            Assert.True(Directory.Exists(nmDir));
-            Assert.False(new DirectoryInfo(nmDir).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "overlaid node_modules must be COPIED (real dir), not symlinked");
+                root, "task-safety", "run-safety", CancellationToken.None, lowThreshold);
+            // Sanity: node_modules is present AND is a symlink (large → link).
+            var nmLink = Path.Combine(worktree, "node_modules");
+            Assert.True(Directory.Exists(nmLink));
+            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "above-threshold node_modules should be symlinked so this test exercises link-cleanup");
 
             await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
 
-            // The worktree is gone.
+            // The worktree (and its links) are gone.
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
 
-            // CRITICAL: the SOURCE contents STILL EXIST untouched - the overlay copies
-            // are worktree-local, so cleanup never reaches the real source nodes.
+            // CRITICAL: the SOURCE targets STILL EXIST with their original contents —
+            // cleanup must remove the symlink, NOT follow it and delete the real nodes;
+            // and the copied .env's source is likewise untouched.
             Assert.True(File.Exists(depFile), "source node_modules/dep/blob.bin must survive cleanup");
             Assert.True(File.Exists(envFile), "source .env must survive cleanup");
-            Assert.Equal(8 * 1024, new FileInfo(depFile).Length);
+            Assert.Equal(lowThreshold * 2, new FileInfo(depFile).Length);
             Assert.Equal("REAL-ENV", await File.ReadAllTextAsync(envFile));
         }
         finally
