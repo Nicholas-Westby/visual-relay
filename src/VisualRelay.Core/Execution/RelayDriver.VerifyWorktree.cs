@@ -56,16 +56,13 @@ public sealed partial class RelayDriver
 
     /// <summary>
     /// TEST SEAM: drives the otherwise-private <see cref="CreateVerifyWorktreeAsync"/>
-    /// so the verify-worktree copy/symlink overlay can be exercised directly. Production
-    /// goes through <see cref="RunIsolatedVerifyAsync"/>; tests use this to avoid
-    /// making the private surface public. <paramref name="thresholdBytes"/> lets a test
-    /// inject a LOW copy/symlink boundary so it need not write 64 MB to exercise the
-    /// large-entry (symlink) branch.
+    /// so the verify-worktree ignored-content overlay can be exercised directly.
+    /// Production goes through <see cref="RunIsolatedVerifyAsync"/>; tests use this to
+    /// avoid making the private surface public.
     /// </summary>
     internal Task<string> CreateVerifyWorktreeForTestAsync(
-        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
-        long thresholdBytes = IgnoredOverlayCopyMaxBytes) =>
-        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes);
+        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken) =>
+        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken);
 
     /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
     internal Task CleanupVerifyWorktreeForTestAsync(
@@ -80,8 +77,7 @@ public sealed partial class RelayDriver
     /// <paramref name="sourcePath"/> is not a git repo (caller catches → fallback).
     /// </summary>
     private async Task<string> CreateVerifyWorktreeAsync(
-        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
-        long thresholdBytes = IgnoredOverlayCopyMaxBytes)
+        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken)
     {
         var worktreePath = await PlanningWorktree.CreateAsync(
             sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker);
@@ -101,18 +97,16 @@ public sealed partial class RelayDriver
 
         // The overlay above carries only uncommitted-NOT-ignored files, so the
         // snapshot still omits everything git ignores — node_modules, .env, .venv,
-        // dist, … — and the project's test command then can't resolve its deps or
-        // read config, failing EVERY test on import. Mirror the source's git-ignored
-        // RUNTIME content into the worktree per top-level entry:
-        //   • SMALL entries (< threshold) are COPIED — real, writable, isolated files
-        //     and dirs, so a test that WRITES a git-ignored path (e.g. TEST-TIMING.md,
-        //     .test-tmp/) stays inside the sandboxed cwd instead of following a symlink
-        //     OUT to the source (which nono --allow-cwd refuses → EPERM, failing the
-        //     test), and never mutates the source.
-        //   • LARGE entries (>= threshold, e.g. node_modules) are SYMLINKED — copying
-        //     hundreds of MB per verify attempt is wasteful and these are read-mostly.
-        // Cleanup unlinks the symlinks first so neither git nor the recursive delete
-        // ever follows a link into the real tree; copies are worktree-local reals.
+        // dist, .build, … — and the project's test command then can't resolve its deps
+        // or read config, failing EVERY test on import. Mirror the source's git-ignored
+        // RUNTIME content into the worktree by COPYING each top-level entry — a real,
+        // writable, ISOLATED file/dir. A symlink would resolve OUT of the sandboxed
+        // worktree cwd back to the source, and nono (--allow-cwd) makes everything
+        // outside the cwd READONLY: any git-ignored path the build/test WRITES — a
+        // scratch file (TEST-TIMING.md, .test-tmp/) OR a build cache opened read-write
+        // (SwiftPM .build/build.db, Cargo target/, Gradle build/) — would then fail and
+        // the tool would exit non-zero even when every test passes. Copying keeps writes
+        // inside the cwd and never mutates the source.
         foreach (var (name, isDirectory) in await EnumerateTopLevelIgnoredEntriesAsync(sourcePath, cancellationToken))
         {
             var src = Path.Combine(sourcePath, name);
@@ -121,7 +115,7 @@ public sealed partial class RelayDriver
             if (File.Exists(dst) || Directory.Exists(dst)) continue;
             try
             {
-                OverlayIgnoredEntry(src, dst, isDirectory, thresholdBytes);
+                OverlayIgnoredEntry(src, dst, isDirectory);
             }
             catch
             {
@@ -132,36 +126,29 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Copy/symlink boundary for an ignored overlay entry (64 MB). BELOW it an entry
-    /// is COPIED (writable + isolated → test writes stay in the sandboxed cwd); AT/ABOVE
-    /// it the entry is SYMLINKED (avoids copying huge read-mostly deps like node_modules).
+    /// Overlays one top-level git-ignored entry from <paramref name="src"/> to
+    /// <paramref name="dst"/> as a REAL, WRITABLE, ISOLATED COPY inside the worktree —
+    /// NEVER a symlink. A symlink would resolve OUT of the sandboxed worktree cwd back
+    /// to the source, which nono (--allow-cwd) makes READONLY, so any git-ignored path
+    /// the build/test WRITES (a scratch file, or a build cache opened read-write such as
+    /// SwiftPM <c>.build/build.db</c>, Cargo <c>target/</c>, Gradle <c>build/</c>) would
+    /// fail — the tool exits non-zero even when every test passes. Copying keeps writes
+    /// inside the cwd and never mutates the source. <see cref="CopyDirectoryResilient"/>
+    /// is copy-on-write-backed (clonefile/reflink) where the filesystem supports it, so
+    /// even a large build dir clones cheaply; a non-CoW filesystem pays a one-time copy
+    /// but stays correct.
     /// </summary>
-    private const long IgnoredOverlayCopyMaxBytes = 64L * 1024 * 1024;
-
-    /// <summary>
-    /// Overlays one top-level ignored entry from <paramref name="src"/> to
-    /// <paramref name="dst"/>: COPY when below <paramref name="thresholdBytes"/>,
-    /// otherwise SYMLINK. Directory size uses the early-exiting
-    /// <see cref="NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold"/> (never fully sizes
-    /// a multi-GB tree); a single file uses its length.
-    /// </summary>
-    private static void OverlayIgnoredEntry(string src, string dst, bool isDirectory, long thresholdBytes)
+    private static void OverlayIgnoredEntry(string src, string dst, bool isDirectory)
     {
         if (isDirectory)
         {
             if (!Directory.Exists(src)) return;
-            if (NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold(src, thresholdBytes))
-                Directory.CreateSymbolicLink(dst, src); // large dep → share via link
-            else
-                CopyDirectoryResilient(src, dst); // small → copy so writes stay isolated
+            CopyDirectoryResilient(src, dst);
         }
         else
         {
             if (!File.Exists(src)) return;
-            if (new FileInfo(src).Length >= thresholdBytes)
-                File.CreateSymbolicLink(dst, src);
-            else
-                File.Copy(src, dst, overwrite: false);
+            File.Copy(src, dst, overwrite: false);
         }
     }
 
@@ -225,10 +212,11 @@ public sealed partial class RelayDriver
     /// <summary>Best-effort teardown: git worktree remove, then a resilient dir delete.</summary>
     private async Task CleanupVerifyWorktreeAsync(string sourcePath, string worktreePath, CancellationToken cancellationToken)
     {
-        // SAFETY-CRITICAL: unlink the symlinks we added FIRST. A `git worktree remove`
-        // or a recursive Directory.Delete that traversed a DIRECTORY symlink would
-        // delete the REAL node_modules/.env contents in the source repo. Remove the
-        // LINKS only (never recursive on a reparse point) so nothing can follow them.
+        // SAFETY-CRITICAL (defensive): the overlay COPIES ignored content (never
+        // symlinks), so the worktree should hold no overlay links — but unlink any
+        // top-level reparse point FIRST regardless, so a `git worktree remove` or the
+        // recursive Directory.Delete can never traverse a DIRECTORY symlink and delete
+        // real source contents. Remove LINKS only (never recursive on a reparse point).
         UnlinkOverlaySymlinks(worktreePath);
         await PlanningWorktree.RemoveAsync(sourcePath, worktreePath, cancellationToken, _dependencies.GitInvoker);
         try { if (Directory.Exists(worktreePath)) Directory.Delete(worktreePath, recursive: true); }
@@ -236,10 +224,13 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Removes the top-level symlinks added by the ignored-content overlay, leaving their
-    /// TARGETS untouched. For a directory symlink, <c>Directory.Delete(recursive:false)</c>
-    /// removes the link only; passing recursive:true on a reparse point would delete the
-    /// target's contents. Best-effort per entry — never throws.
+    /// Defensively removes any TOP-LEVEL symlink in the worktree, leaving its TARGET
+    /// untouched. The ignored-content overlay now COPIES (never symlinks), so this is a
+    /// safety net: should any reparse point exist, removing the LINK first stops a later
+    /// `git worktree remove` / recursive delete from following it into the real tree.
+    /// For a directory symlink, <c>Directory.Delete(recursive:false)</c> removes the link
+    /// only; recursive:true on a reparse point would delete the target's contents.
+    /// Best-effort per entry — never throws.
     /// </summary>
     private static void UnlinkOverlaySymlinks(string worktreePath)
     {

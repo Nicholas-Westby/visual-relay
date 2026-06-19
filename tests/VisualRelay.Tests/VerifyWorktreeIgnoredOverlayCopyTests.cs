@@ -3,18 +3,20 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Copy-vs-symlink overlay policy for the authoritative verify worktree.
+/// Ignored-content overlay policy for the authoritative verify worktree: every
+/// git-ignored runtime entry is COPIED into the worktree as a real, writable,
+/// ISOLATED file/dir — NEVER symlinked.
 ///
-/// Symlinking EVERY git-ignored entry (the original fix) breaks any test that
-/// WRITES to a git-ignored path: the symlink resolves OUT of the sandboxed
-/// worktree cwd back into the source repo, and nono (--allow-cwd) correctly
-/// refuses the cross-cwd write → EPERM, failing tests that would otherwise pass.
-///
-/// Fix: SMALL ignored entries (below a byte threshold) are COPIED into the
-/// worktree — real, writable, isolated files/dirs whose writes stay inside the
-/// cwd and never touch the source — while LARGE entries (e.g. node_modules) are
-/// still SYMLINKED to avoid copying hundreds of MB per verify attempt. These
-/// tests inject a LOW threshold so they never have to write 64 MB.
+/// Symlinking a git-ignored entry back to the source breaks any build/test that
+/// WRITES to it: the link resolves OUT of the sandboxed worktree cwd, and nono
+/// (--allow-cwd) makes everything outside the cwd READONLY, so the write fails
+/// (EPERM / "readonly database") and the tool exits non-zero even when every test
+/// passes. This bit BOTH small writable entries (TEST-TIMING.md, .test-tmp/) AND
+/// large writable build caches (SwiftPM .build, Cargo target/, Gradle build/),
+/// whose build databases are opened read-write. Copying keeps every write inside
+/// the cwd and never mutates the source (the verify's "real repo is never polluted"
+/// invariant). CopyDirectoryResilient is copy-on-write-backed (clonefile/reflink)
+/// where the filesystem supports it, so even a large build dir clones cheaply.
 ///
 /// Driven through the internal test seam (CreateVerifyWorktreeForTestAsync /
 /// CleanupVerifyWorktreeForTestAsync) with the real GitInvoker against a temp
@@ -22,10 +24,6 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class VerifyWorktreeIgnoredOverlayCopyTests
 {
-    /// <summary>A threshold low enough that small fixtures land below it but a
-    /// padded "large" dir lands above it — so tests never write 64 MB.</summary>
-    private const long LowThresholdBytes = 4 * 1024; // 4 KiB
-
     private static RelayDriver NewDriver() =>
         new(RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(),
@@ -46,12 +44,12 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 1. A small git-ignored FILE is COPIED (not symlinked); writing the
-    //    worktree copy does NOT change the source file — the write is isolated.
+    // 1. A git-ignored FILE is COPIED (not symlinked); writing the worktree
+    //    copy does NOT change the source file — the write is isolated.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateVerifyWorktree_SmallIgnoredFile_IsCopied_WriteDoesNotTouchSource()
+    public async Task CreateVerifyWorktree_IgnoredFile_IsCopied_WriteDoesNotTouchSource()
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-copyfile-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -68,13 +66,13 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-copyfile", "run-copyfile", CancellationToken.None, LowThresholdBytes);
+                root, "task-copyfile", "run-copyfile", CancellationToken.None);
 
             var worktreeTiming = Path.Combine(worktree, "TEST-TIMING.md");
-            Assert.True(File.Exists(worktreeTiming), "small ignored file should be present in worktree");
+            Assert.True(File.Exists(worktreeTiming), "ignored file should be present in worktree");
             // It is a REAL file, NOT a reparse point (symlink).
             Assert.False(new FileInfo(worktreeTiming).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "small ignored file must be COPIED (a regular file), not symlinked");
+                "ignored file must be COPIED (a regular file), not symlinked");
             Assert.Equal("ORIGINAL", await File.ReadAllTextAsync(worktreeTiming));
 
             // WRITE-ISOLATION: writing the worktree copy must NOT change the source.
@@ -91,12 +89,12 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 2. A small git-ignored DIR is COPIED (regular dir, not a symlink);
-    //    a file written inside the worktree copy does NOT appear in source.
+    // 2. A git-ignored DIR is COPIED (regular dir, not a symlink); a file
+    //    written inside the worktree copy does NOT appear in source.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateVerifyWorktree_SmallIgnoredDir_IsCopied_WriteDoesNotAppearInSource()
+    public async Task CreateVerifyWorktree_IgnoredDir_IsCopied_WriteDoesNotAppearInSource()
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-copydir-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -112,12 +110,12 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-copydir", "run-copydir", CancellationToken.None, LowThresholdBytes);
+                root, "task-copydir", "run-copydir", CancellationToken.None);
 
             var worktreeTmp = Path.Combine(worktree, ".test-tmp");
-            Assert.True(Directory.Exists(worktreeTmp), "small ignored dir should be present in worktree");
+            Assert.True(Directory.Exists(worktreeTmp), "ignored dir should be present in worktree");
             Assert.False(new DirectoryInfo(worktreeTmp).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "small ignored dir must be COPIED (a regular dir), not symlinked");
+                "ignored dir must be COPIED (a regular dir), not symlinked");
             // The seeded content was copied across.
             Assert.True(File.Exists(Path.Combine(worktreeTmp, "nested", "seed.txt")));
             Assert.Equal("seed", await File.ReadAllTextAsync(Path.Combine(worktreeTmp, "nested", "seed.txt")));
@@ -138,36 +136,53 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 3. A git-ignored dir ABOVE the (low) threshold is SYMLINKED — large
-    //    deps (node_modules) stay cheaply shared, not copied.
+    // 3. A LARGE git-ignored BUILD dir (SwiftPM .build, Cargo target, Gradle
+    //    build) is COPIED — real, writable, ISOLATED — so a sandboxed verify
+    //    can WRITE its build database inside the cwd. Regression: symlinking
+    //    large ignored dirs pointed .build OUT to the source repo, which is
+    //    READONLY under nono --allow-cwd, so `swift test` failed writing
+    //    build.db (exit 1) even though every test passed — looping Fix-verify.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateVerifyWorktree_LargeIgnoredDir_IsSymlinked()
+    public async Task CreateVerifyWorktree_LargeIgnoredBuildDir_IsCopiedWritableAndIsolated()
     {
-        var root = Path.Combine(Path.GetTempPath(), "vr-vw-largedir-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "vr-vw-builddir-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
         string? worktree = null;
         try
         {
             InitRepo(root);
-            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "node_modules/\n");
+            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), ".build/\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
-            Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
-            // Pad above the low threshold so it is treated as a large dep.
-            await File.WriteAllBytesAsync(
-                Path.Combine(root, "node_modules", "dep", "blob.bin"),
-                new byte[LowThresholdBytes * 2]);
+            // A build cache the build tool WRITES to (build.db). Sized well above the
+            // old 64 MB-style "large dep" boundary it once would have been symlinked at.
+            Directory.CreateDirectory(Path.Combine(root, ".build"));
+            var sourceDb = Path.Combine(root, ".build", "build.db");
+            await File.WriteAllBytesAsync(sourceDb, new byte[8 * 1024]);
             CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-largedir", "run-largedir", CancellationToken.None, LowThresholdBytes);
+                root, "task-builddir", "run-builddir", CancellationToken.None);
 
-            var nmLink = Path.Combine(worktree, "node_modules");
-            Assert.True(Directory.Exists(nmLink), "large ignored dir should be present in worktree");
-            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "large ignored dir must remain a SYMLINK (reparse point), not be copied");
+            var worktreeBuild = Path.Combine(worktree, ".build");
+            Assert.True(Directory.Exists(worktreeBuild), "ignored build dir should be present in worktree");
+            // It MUST be a REAL dir, NOT a symlink OUT to the (sandbox-readonly) source —
+            // otherwise the build tool's writes (build.db) resolve outside the nono
+            // --allow-cwd worktree and fail with a readonly error (exit 1) even though
+            // every test passes, looping Fix-verify forever.
+            Assert.False(new DirectoryInfo(worktreeBuild).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "a large git-ignored build dir must be COPIED (real, writable), not symlinked");
+            // WRITE-ISOLATION: rewriting build.db and adding an artifact inside the
+            // worktree must NOT touch the source repo.
+            var worktreeDb = Path.Combine(worktreeBuild, "build.db");
+            Assert.True(File.Exists(worktreeDb), "build dir contents must be copied across");
+            await File.WriteAllTextAsync(worktreeDb, "REBUILT-IN-WORKTREE");
+            await File.WriteAllTextAsync(Path.Combine(worktreeBuild, "new-artifact.o"), "obj");
+            Assert.False(File.Exists(Path.Combine(root, ".build", "new-artifact.o")),
+                "a new build artifact written in the worktree must not appear in the source");
+            Assert.Equal(8 * 1024, new FileInfo(sourceDb).Length);
         }
         finally
         {
@@ -178,44 +193,44 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 4. SAFETY INVARIANT — after create→cleanup, BOTH the copied small file
-    //    AND the large symlinked dir's source contents survive intact.
+    // 4. SAFETY INVARIANT — after create→cleanup, the source contents of an
+    //    overlaid file AND an overlaid large dir survive intact (copies are
+    //    worktree-local; the source is never written or deleted).
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CleanupVerifyWorktree_AfterCopyAndSymlink_SourceContentsSurviveIntact()
+    public async Task CleanupVerifyWorktree_AfterCopy_SourceContentsSurviveIntact()
     {
-        var root = Path.Combine(Path.GetTempPath(), "vr-vw-mixsafe-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(Path.GetTempPath(), "vr-vw-copysafe-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = NewDriver();
         try
         {
             InitRepo(root);
-            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "TEST-TIMING.md\nnode_modules/\n");
+            await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "TEST-TIMING.md\n.build/\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
-            // Small ignored file → copied.
+            // Ignored file → copied.
             var sourceTiming = Path.Combine(root, "TEST-TIMING.md");
             await File.WriteAllTextAsync(sourceTiming, "TIMING-DATA");
-            // Large ignored dir → symlinked.
-            Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
-            var depFile = Path.Combine(root, "node_modules", "dep", "blob.bin");
-            await File.WriteAllBytesAsync(depFile, new byte[LowThresholdBytes * 2]);
+            // Large ignored build dir → copied.
+            Directory.CreateDirectory(Path.Combine(root, ".build"));
+            var depFile = Path.Combine(root, ".build", "build.db");
+            await File.WriteAllBytesAsync(depFile, new byte[8 * 1024]);
             CommitAll(root, "seed");
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-mixsafe", "run-mixsafe", CancellationToken.None, LowThresholdBytes);
+                root, "task-copysafe", "run-copysafe", CancellationToken.None);
             Assert.True(File.Exists(Path.Combine(worktree, "TEST-TIMING.md")));
-            Assert.True(Directory.Exists(Path.Combine(worktree, "node_modules")));
+            Assert.True(Directory.Exists(Path.Combine(worktree, ".build")));
 
             await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
 
-            // Both source entries survive: the copy's source untouched, the
-            // symlink target NOT followed/deleted.
+            // Both source entries survive cleanup untouched.
             Assert.True(File.Exists(sourceTiming), "source TEST-TIMING.md must survive cleanup");
             Assert.Equal("TIMING-DATA", await File.ReadAllTextAsync(sourceTiming));
-            Assert.True(File.Exists(depFile), "source node_modules/dep/blob.bin must survive cleanup");
-            Assert.Equal(LowThresholdBytes * 2, new FileInfo(depFile).Length);
+            Assert.True(File.Exists(depFile), "source .build/build.db must survive cleanup");
+            Assert.Equal(8 * 1024, new FileInfo(depFile).Length);
         }
         finally
         {
