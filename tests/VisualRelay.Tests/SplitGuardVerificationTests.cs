@@ -106,7 +106,10 @@ public sealed partial class SplitGuardVerificationTests
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
     {
-        const int baseline = 149;
+        // Bumped 149→150 on 2026-06-18: the GLM 5.2 frontier upgrade added
+        // PerModelTimeout_FrontierGlm52Has480s to the BackendConfigGeneratorTests
+        // family (BackendConfigGeneratorTests.PerModelTimeout.cs).
+        const int baseline = 150;
 
         string[] prefixes =
         [
