@@ -3,11 +3,12 @@ namespace VisualRelay.Core.Execution;
 internal static class CommitMessageSanitizer
 {
     private const int MaxSubjectLength = 72;
+    private const string FallbackPrefix = "chore(relay): ";
     private static readonly string[] Types = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"];
 
     public static string FromRawOrFallback(string? raw, string taskId)
     {
-        var fallback = Truncate($"chore(relay): {taskId}");
+        var fallback = BuildFallbackSubject(taskId);
         if (string.IsNullOrWhiteSpace(raw))
         {
             return fallback;
@@ -56,6 +57,29 @@ internal static class CommitMessageSanitizer
         }
 
         return Truncate(clean);
+    }
+
+    /// <summary>
+    /// Builds the guaranteed <c>chore(relay): {taskId}</c> fallback subject.  The
+    /// <paramref name="taskId"/> is a single hyphenated token with no internal spaces,
+    /// so the generic word-boundary <see cref="Truncate"/> would cut at the lone space
+    /// after the colon and drop the whole id, yielding an empty <c>chore(relay):</c>.
+    /// Instead, when the id overflows the budget we keep a head slice plus an ellipsis
+    /// so the description is never empty; the full id still lives in the commit body.
+    /// </summary>
+    private static string BuildFallbackSubject(string taskId)
+    {
+        var trimmed = taskId.Trim();
+        var full = $"{FallbackPrefix}{trimmed}";
+        if (full.Length <= MaxSubjectLength)
+        {
+            return full;
+        }
+
+        // Reserve one char for the ellipsis so the id stays recognizable.
+        var idBudget = MaxSubjectLength - FallbackPrefix.Length - 1;
+        var head = trimmed[..idBudget].TrimEnd();
+        return $"{FallbackPrefix}{head}…";
     }
 
     private static string Truncate(string value)
