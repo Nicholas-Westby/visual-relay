@@ -59,4 +59,37 @@ public sealed partial class RelayDriver
             }
         }
     }
+
+    /// <summary>
+    /// TOP-LEVEL git-ignored entries of <paramref name="sourcePath"/> as (name, isDirectory)
+    /// pairs, suitable for overlaying the source's runtime content into a verify worktree.
+    /// Uses <c>--directory</c> so a FULLY-ignored dir collapses to <c>name/</c> (trailing
+    /// slash → directory); ignored files appear as plain paths. NESTED entries (those that
+    /// still contain a <c>/</c> after the trailing slash is trimmed — e.g.
+    /// <c>data/cache/</c>, the ignored part of a partially-tracked dir) are dropped: their
+    /// parent is partially checked out and overlaying it whole would conflict. VR/VCS
+    /// internal names and build-output dirs (see <see cref="BuildOutputOverlaySkipNames"/>)
+    /// are excluded.
+    /// </summary>
+    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> EnumerateTopLevelIgnoredEntriesAsync(
+        string sourcePath, CancellationToken cancellationToken)
+    {
+        var result = new List<(string, bool)>();
+        var ignored = await _dependencies.GitInvoker.RunAsync(
+            sourcePath, new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z" }, cancellationToken);
+        foreach (var raw in SplitNul(ignored.Output))
+        {
+            var isDirectory = raw.EndsWith('/');
+            var name = isDirectory ? raw[..^1] : raw;
+            // Keep ONLY top-level entries (no path separator remains after trimming).
+            if (name.Length == 0 || name.Contains('/')) continue;
+            if (IgnoredOverlayExcludedNames.Contains(name)) continue;
+            // Build-output dirs are PATH-SENSITIVE (compilers bake the build path into
+            // module caches / artifact DBs) and regenerable — OMIT them so the worktree
+            // builds fresh at its own path instead of inheriting stale baked paths.
+            if (isDirectory && BuildOutputOverlaySkipNames.Contains(name)) continue;
+            result.Add((name, isDirectory));
+        }
+        return result;
+    }
 }
