@@ -237,8 +237,9 @@ public partial class MainWindowViewModel
     {
         ResetStages(task.Id);
         ClearLogState();
-        SelectedTaskError = null;
         StatusText = $"Running {task.Id}";
+        // BeginRunningTask clears the stale detail-pane error when this is the
+        // selected task (run start ⇒ the prior run's error no longer applies).
         BeginRunningTask(task);
         NotifyPauseStateChanged();
         var config = await RelayConfigLoader.LoadAsync(RootPath);
@@ -261,38 +262,13 @@ public partial class MainWindowViewModel
         finally
         {
             ClearRunningTask(task.Id);
+            // _runningTaskId is now cleared, so the detail-pane error can be
+            // refreshed from the freshly-written status record: a flag surfaces
+            // the new reason, a commit leaves it cleared. (The earlier
+            // LoadRunHistoryAsync above runs while _runningTaskId == task.Id and
+            // so deliberately leaves the error untouched.)
+            RefreshSelectedTaskErrorAfterRun(task.Id);
             NotifyPauseStateChanged();
         }
     }
-
-    private DrainLifecycleCallbacks CreateDrainLifecycleCallbacks()
-    {
-        return new DrainLifecycleCallbacks
-        {
-            OnPlanningStarted = taskId =>
-            {
-                StatusText = $"Planning {taskId}…";
-                Tasks.FirstOrDefault(t => t.Id == taskId)?.MarkPlanning();
-            },
-            OnPlanningCompleted = (taskId, status) =>
-            {
-                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
-                if (task is not null)
-                {
-                    if (status == RelayTaskOutcomeStatus.Flagged)
-                        task.MarkIdle();
-                    else
-                        task.MarkPlanned();
-                }
-            },
-            OnExecuteStarted = taskId =>
-            {
-                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
-                if (task is not null)
-                    BeginRunningTask(task);
-            },
-            OnExecuteCompleted = (taskId, _) => ClearRunningTask(taskId)
-        };
-    }
-
 }

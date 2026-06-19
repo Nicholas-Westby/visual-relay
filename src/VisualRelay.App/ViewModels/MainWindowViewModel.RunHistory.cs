@@ -1,9 +1,21 @@
 using VisualRelay.Core.Tasks;
+using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    // Single source of truth for the detail-pane error: the highest-stage
+    // "Flagged" entry in the driver-written status record (null when none).
+    // Shared by the selection-load path and the run-completion refresh so the
+    // banner can never drift between them.
+    private static string? LatestFlaggedError(IReadOnlyList<StageStatusEntry> statusRecord) =>
+        statusRecord
+            .Where(e => e.Status == "Flagged")
+            .OrderByDescending(e => e.Stage)
+            .Select(e => e.Error)
+            .FirstOrDefault();
+
     private async Task LoadRunHistoryAsync(string taskId)
     {
         ClearLogState();
@@ -14,11 +26,7 @@ public partial class MainWindowViewModel
         var statusRecord = RelayRunHistory.ReadStatusRecord(RootPath, taskId);
         if (_runningTaskId != taskId)
         {
-            SelectedTaskError = statusRecord
-                .Where(e => e.Status == "Flagged")
-                .OrderByDescending(e => e.Stage)
-                .Select(e => e.Error)
-                .FirstOrDefault();
+            SelectedTaskError = LatestFlaggedError(statusRecord);
         }
 
         foreach (var stage in Stages)
