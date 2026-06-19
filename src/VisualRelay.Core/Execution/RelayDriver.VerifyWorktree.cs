@@ -55,6 +55,21 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// TEST SEAM: drives the otherwise-private <see cref="CreateVerifyWorktreeAsync"/>
+    /// so the verify-worktree symlink overlay can be exercised directly. Production
+    /// goes through <see cref="RunIsolatedVerifyAsync"/>; tests use this to avoid
+    /// making the private surface public.
+    /// </summary>
+    internal Task<string> CreateVerifyWorktreeForTestAsync(
+        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken) =>
+        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken);
+
+    /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
+    internal Task CleanupVerifyWorktreeForTestAsync(
+        string sourcePath, string worktreePath, CancellationToken cancellationToken) =>
+        CleanupVerifyWorktreeAsync(sourcePath, worktreePath, cancellationToken);
+
+    /// <summary>
     /// Creates a detached HEAD worktree (reusing <see cref="PlanningWorktree.CreateAsync"/>)
     /// then OVERLAYS the full uncommitted state of <paramref name="sourcePath"/> onto it:
     /// every tracked-modified and untracked-not-ignored file is copied across, so the
@@ -79,7 +94,71 @@ public sealed partial class RelayDriver
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             File.Copy(src, dst, overwrite: true);
         }
+
+        // The overlay above carries only uncommitted-NOT-ignored files, so the
+        // snapshot still omits everything git ignores — node_modules, .env, .venv,
+        // dist, … — and the project's test command then can't resolve its deps or
+        // read config, failing EVERY test on import. Mirror the source's git-ignored
+        // RUNTIME content by SYMLINKING each top-level ignored entry into the worktree
+        // (links, not copies — node_modules is huge). Cleanup unlinks these first so
+        // neither git nor the recursive delete ever follows a link into the real tree.
+        foreach (var (name, isDirectory) in await EnumerateTopLevelIgnoredEntriesAsync(sourcePath, cancellationToken))
+        {
+            var src = Path.Combine(sourcePath, name);
+            var dst = Path.Combine(worktreePath, name);
+            // Don't clobber the detached checkout or the uncommitted overlay.
+            if (File.Exists(dst) || Directory.Exists(dst)) continue;
+            try
+            {
+                if (isDirectory)
+                {
+                    if (!Directory.Exists(src)) continue;
+                    Directory.CreateSymbolicLink(dst, src);
+                }
+                else
+                {
+                    if (!File.Exists(src)) continue;
+                    File.CreateSymbolicLink(dst, src);
+                }
+            }
+            catch
+            {
+                // Best-effort: a failed symlink must NOT abort worktree creation.
+            }
+        }
         return worktreePath;
+    }
+
+    /// <summary>VR/VCS-internal dirs the verify worktree manages itself — never symlinked.</summary>
+    private static readonly IReadOnlySet<string> IgnoredOverlayExcludedNames =
+        new HashSet<string>(StringComparer.Ordinal) { ".git", ".relay", ".relay-scratch", ".swival" };
+
+    /// <summary>
+    /// TOP-LEVEL git-ignored entries of <paramref name="sourcePath"/> as (name, isDirectory)
+    /// pairs, suitable for symlinking the source's runtime content into a verify worktree.
+    /// Uses <c>--directory</c> so a FULLY-ignored dir collapses to <c>name/</c> (trailing
+    /// slash → directory); ignored files appear as plain paths. NESTED entries (those that
+    /// still contain a <c>/</c> after the trailing slash is trimmed — e.g.
+    /// <c>data/cache/</c>, the ignored part of a partially-tracked dir) are dropped: their
+    /// parent is partially checked out and overlaying it whole would conflict. VR/VCS
+    /// internal names are excluded.
+    /// </summary>
+    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> EnumerateTopLevelIgnoredEntriesAsync(
+        string sourcePath, CancellationToken cancellationToken)
+    {
+        var result = new List<(string, bool)>();
+        var ignored = await _dependencies.GitInvoker.RunAsync(
+            sourcePath, new[] { "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z" }, cancellationToken);
+        foreach (var raw in SplitNul(ignored.Output))
+        {
+            var isDirectory = raw.EndsWith('/');
+            var name = isDirectory ? raw[..^1] : raw;
+            // Keep ONLY top-level entries (no path separator remains after trimming).
+            if (name.Length == 0 || name.Contains('/')) continue;
+            if (IgnoredOverlayExcludedNames.Contains(name)) continue;
+            result.Add((name, isDirectory));
+        }
+        return result;
     }
 
     /// <summary>Tracked-modified + untracked-not-ignored repo-relative paths (NUL-safe).</summary>
@@ -110,9 +189,41 @@ public sealed partial class RelayDriver
     /// <summary>Best-effort teardown: git worktree remove, then a resilient dir delete.</summary>
     private async Task CleanupVerifyWorktreeAsync(string sourcePath, string worktreePath, CancellationToken cancellationToken)
     {
+        // SAFETY-CRITICAL: unlink the symlinks we added FIRST. A `git worktree remove`
+        // or a recursive Directory.Delete that traversed a DIRECTORY symlink would
+        // delete the REAL node_modules/.env contents in the source repo. Remove the
+        // LINKS only (never recursive on a reparse point) so nothing can follow them.
+        UnlinkOverlaySymlinks(worktreePath);
         await PlanningWorktree.RemoveAsync(sourcePath, worktreePath, cancellationToken, _dependencies.GitInvoker);
         try { if (Directory.Exists(worktreePath)) Directory.Delete(worktreePath, recursive: true); }
         catch { /* PRODUCTION fallback — never reference TestFileSystem here (Defect E). */ }
+    }
+
+    /// <summary>
+    /// Removes the top-level symlinks added by the ignored-content overlay, leaving their
+    /// TARGETS untouched. For a directory symlink, <c>Directory.Delete(recursive:false)</c>
+    /// removes the link only; passing recursive:true on a reparse point would delete the
+    /// target's contents. Best-effort per entry — never throws.
+    /// </summary>
+    private static void UnlinkOverlaySymlinks(string worktreePath)
+    {
+        if (!Directory.Exists(worktreePath)) return;
+        foreach (var entry in Directory.EnumerateFileSystemEntries(worktreePath))
+        {
+            try
+            {
+                var attributes = File.GetAttributes(entry);
+                if (!attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                if (attributes.HasFlag(FileAttributes.Directory))
+                    Directory.Delete(entry, recursive: false); // unlink dir symlink, never its target
+                else
+                    File.Delete(entry); // unlink file symlink
+            }
+            catch
+            {
+                // Best-effort: leave it for git worktree remove / the dir delete fallback.
+            }
+        }
     }
 
     /// <summary>
