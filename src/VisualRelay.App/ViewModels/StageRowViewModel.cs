@@ -35,7 +35,14 @@ public sealed class StageRowViewModel : ViewModelBase
     public IRelayCommand<StageRowViewModel>? SelectCommand { get; }
     public string Ordinal => Number.ToString("00");
     public string StatusLabel => Status == "Done" ? "Complete" : Status;
-    public string MetricLabel => (CostLabel == "No cost yet" ? DurationLabel : $"{DurationLabel}  {CostLabel}")
+
+    // The leading duration token: while Running, show the live per-second
+    // elapsed (so the card visibly ticks); otherwise the recorded/final
+    // DurationLabel. A running stage has no final duration yet, and the
+    // tick never touches DurationLabel, so the stage_done value is preserved.
+    private string LeadingDurationToken =>
+        Status == "Running" && !string.IsNullOrEmpty(ElapsedLabel) ? ElapsedLabel : DurationLabel;
+    public string MetricLabel => (CostLabel == "No cost yet" ? LeadingDurationToken : $"{LeadingDurationToken}  {CostLabel}")
         + (string.IsNullOrEmpty(TurnsLabel) ? string.Empty : $"  {TurnsLabel}")
         + (string.IsNullOrEmpty(TestDurationLabel) ? string.Empty : $"  test {TestDurationLabel}");
     public IBrush AccentBrush => Status switch
@@ -55,6 +62,8 @@ public sealed class StageRowViewModel : ViewModelBase
     private string _durationLabel = "No run yet";
     private string _costLabel = "No cost yet";
     private string _modelLabel = string.Empty;
+    private DateTimeOffset? _runningSince;
+    private string _elapsedLabel = string.Empty;
     public string Status
     {
         get => _status;
@@ -62,13 +71,64 @@ public sealed class StageRowViewModel : ViewModelBase
         {
             if (SetProperty(ref _status, value))
             {
+                // Leaving Running (e.g. stage_done/flag) ends live ticking; drop
+                // the elapsed so MetricLabel falls back to the final DurationLabel.
+                if (value != "Running")
+                {
+                    _runningSince = null;
+                    ElapsedLabel = string.Empty;
+                }
                 OnPropertyChanged(nameof(StatusLabel));
                 OnPropertyChanged(nameof(AccentBrush));
                 OnPropertyChanged(nameof(CardBackgroundBrush));
                 OnPropertyChanged(nameof(BorderBrush));
                 OnPropertyChanged(nameof(CardBorderThickness));
                 OnPropertyChanged(nameof(CardShadow));
+                OnPropertyChanged(nameof(MetricLabel));
             }
+        }
+    }
+
+    /// <summary>
+    /// Live, per-second elapsed shown on the active stage card (e.g. "2m 25s").
+    /// Empty unless the stage is Running and a tick has populated it. Formatted
+    /// by <see cref="ElapsedFormatter"/> — the same formatter the running-task
+    /// elapsed label uses — so the "2m 25s" style stays consistent.
+    /// </summary>
+    public string ElapsedLabel
+    {
+        get => _elapsedLabel;
+        private set
+        {
+            if (SetProperty(ref _elapsedLabel, value))
+            {
+                OnPropertyChanged(nameof(MetricLabel));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Marks this stage Running and captures the moment it started, so the
+    /// 1-second timer can tick its elapsed label. Mirrors the running-task
+    /// elapsed approach (a captured UtcNow start + periodic recompute).
+    /// </summary>
+    public void MarkRunning(DateTimeOffset startedAt)
+    {
+        _runningSince = startedAt;
+        ElapsedLabel = string.Empty;
+        Status = "Running";
+    }
+
+    /// <summary>
+    /// Per-tick refresh invoked by the 1-second DispatcherTimer. No-op unless the
+    /// stage is Running with a captured start; never touches the final
+    /// DurationLabel recorded on stage_done.
+    /// </summary>
+    public void RefreshElapsed(DateTimeOffset now)
+    {
+        if (Status == "Running" && _runningSince is { } since)
+        {
+            ElapsedLabel = ElapsedFormatter.Label(now - since);
         }
     }
 
@@ -182,5 +242,7 @@ public sealed class StageRowViewModel : ViewModelBase
         TestDurationLabel = string.Empty;
         ReportPath = null;
         TraceDirectory = null;
+        _runningSince = null;
+        ElapsedLabel = string.Empty;
     }
 }

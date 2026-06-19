@@ -137,6 +137,36 @@ public partial class MainWindowViewModel
         NotifyRunningTaskContextChanged();
     }
 
+    /// <summary>
+    /// One per-second refresh of every "elapsed while running" label — running
+    /// task rows plus the active stage card. Extracted from the 1-second
+    /// DispatcherTimer's tick so tests can seed a past start and call it directly
+    /// (no real wall-clock wait). Runs on the UI thread (the timer already ticks
+    /// there). Cost is a handful of label assignments per second.
+    /// </summary>
+    public void UpdateRunningElapsedLabels()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        // Update elapsed for every currently-running task row.
+        foreach (var taskId in _runningTaskIds)
+        {
+            if (_runStartedAt.TryGetValue(taskId, out var startedAt))
+            {
+                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+                if (task is not null)
+                    task.RunningElapsedLabel = ElapsedFormatter.Label(now - startedAt);
+            }
+        }
+
+        // Update the active stage card's elapsed (each running stage tracks its
+        // own start, set on stage_start; non-running stages are a no-op).
+        foreach (var stage in Stages)
+        {
+            stage.RefreshElapsed(now);
+        }
+    }
+
     private void ApplyRunningTaskToRows()
     {
         foreach (var task in Tasks)

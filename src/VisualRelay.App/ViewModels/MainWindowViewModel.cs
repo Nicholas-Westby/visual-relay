@@ -253,9 +253,10 @@ public partial class MainWindowViewModel : ViewModelBase
         _backendMonitor.Start();
     }
 
-    // Starts a 1-second timer that updates the running task's elapsed label
-    // while a task is running. Called ONLY from App startup (never the ctor or
-    // LoadInitialAsync) so unit tests spin no timer.
+    // Starts a 1-second timer that refreshes every "elapsed while running" label
+    // (running task rows + the active stage card) so a working task visibly ticks.
+    // Called ONLY from App startup (never the ctor or LoadInitialAsync) so unit
+    // tests spin no timer; they invoke UpdateRunningElapsedLabels() directly.
     public void StartElapsedTimer()
     {
         _elapsedTimer?.Stop();
@@ -263,19 +264,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             Interval = TimeSpan.FromSeconds(1)
         };
-        _elapsedTimer.Tick += (_, _) =>
-        {
-            // Update elapsed for every currently-running task.
-            foreach (var taskId in _runningTaskIds)
-            {
-                if (_runStartedAt.TryGetValue(taskId, out var startedAt))
-                {
-                    var task = Tasks.FirstOrDefault(t => t.Id == taskId);
-                    if (task is not null)
-                        task.RunningElapsedLabel = ElapsedFormatter.Label(DateTimeOffset.UtcNow - startedAt);
-                }
-            }
-        };
+        _elapsedTimer.Tick += (_, _) => UpdateRunningElapsedLabels();
         _elapsedTimer.Start();
     }
 

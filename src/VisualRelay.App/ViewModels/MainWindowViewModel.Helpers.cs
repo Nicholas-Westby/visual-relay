@@ -74,13 +74,21 @@ public partial class MainWindowViewModel
             return;
         }
 
-        stage.Status = relayEvent.EventName switch
+        if (relayEvent.EventName == "stage_start")
         {
-            "stage_start" => "Running",
-            "stage_done" or "stage_report" => "Done",
-            "flagged" => "Flagged",
-            _ => stage.Status
-        };
+            // Capture the stage start so the 1-second timer can tick its elapsed
+            // label (MarkRunning sets Status = "Running" and the start time).
+            stage.MarkRunning(DateTimeOffset.UtcNow);
+        }
+        else
+        {
+            stage.Status = relayEvent.EventName switch
+            {
+                "stage_done" or "stage_report" => "Done",
+                "flagged" => "Flagged",
+                _ => stage.Status
+            };
+        }
         if (relayEvent.EventName is "stage_done" or "stage_report")
         {
             ApplyStageEventMetric(stage, relayEvent);
