@@ -56,13 +56,16 @@ public sealed partial class RelayDriver
 
     /// <summary>
     /// TEST SEAM: drives the otherwise-private <see cref="CreateVerifyWorktreeAsync"/>
-    /// so the verify-worktree symlink overlay can be exercised directly. Production
+    /// so the verify-worktree copy/symlink overlay can be exercised directly. Production
     /// goes through <see cref="RunIsolatedVerifyAsync"/>; tests use this to avoid
-    /// making the private surface public.
+    /// making the private surface public. <paramref name="thresholdBytes"/> lets a test
+    /// inject a LOW copy/symlink boundary so it need not write 64 MB to exercise the
+    /// large-entry (symlink) branch.
     /// </summary>
     internal Task<string> CreateVerifyWorktreeForTestAsync(
-        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken) =>
-        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken);
+        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
+        long thresholdBytes = IgnoredOverlayCopyMaxBytes) =>
+        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes);
 
     /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
     internal Task CleanupVerifyWorktreeForTestAsync(
@@ -77,7 +80,8 @@ public sealed partial class RelayDriver
     /// <paramref name="sourcePath"/> is not a git repo (caller catches → fallback).
     /// </summary>
     private async Task<string> CreateVerifyWorktreeAsync(
-        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken)
+        string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
+        long thresholdBytes = IgnoredOverlayCopyMaxBytes)
     {
         var worktreePath = await PlanningWorktree.CreateAsync(
             sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker);
@@ -99,9 +103,16 @@ public sealed partial class RelayDriver
         // snapshot still omits everything git ignores — node_modules, .env, .venv,
         // dist, … — and the project's test command then can't resolve its deps or
         // read config, failing EVERY test on import. Mirror the source's git-ignored
-        // RUNTIME content by SYMLINKING each top-level ignored entry into the worktree
-        // (links, not copies — node_modules is huge). Cleanup unlinks these first so
-        // neither git nor the recursive delete ever follows a link into the real tree.
+        // RUNTIME content into the worktree per top-level entry:
+        //   • SMALL entries (< threshold) are COPIED — real, writable, isolated files
+        //     and dirs, so a test that WRITES a git-ignored path (e.g. TEST-TIMING.md,
+        //     .test-tmp/) stays inside the sandboxed cwd instead of following a symlink
+        //     OUT to the source (which nono --allow-cwd refuses → EPERM, failing the
+        //     test), and never mutates the source.
+        //   • LARGE entries (>= threshold, e.g. node_modules) are SYMLINKED — copying
+        //     hundreds of MB per verify attempt is wasteful and these are read-mostly.
+        // Cleanup unlinks the symlinks first so neither git nor the recursive delete
+        // ever follows a link into the real tree; copies are worktree-local reals.
         foreach (var (name, isDirectory) in await EnumerateTopLevelIgnoredEntriesAsync(sourcePath, cancellationToken))
         {
             var src = Path.Combine(sourcePath, name);
@@ -110,23 +121,48 @@ public sealed partial class RelayDriver
             if (File.Exists(dst) || Directory.Exists(dst)) continue;
             try
             {
-                if (isDirectory)
-                {
-                    if (!Directory.Exists(src)) continue;
-                    Directory.CreateSymbolicLink(dst, src);
-                }
-                else
-                {
-                    if (!File.Exists(src)) continue;
-                    File.CreateSymbolicLink(dst, src);
-                }
+                OverlayIgnoredEntry(src, dst, isDirectory, thresholdBytes);
             }
             catch
             {
-                // Best-effort: a failed symlink must NOT abort worktree creation.
+                // Best-effort: a failed overlay must NOT abort worktree creation.
             }
         }
         return worktreePath;
+    }
+
+    /// <summary>
+    /// Copy/symlink boundary for an ignored overlay entry (64 MB). BELOW it an entry
+    /// is COPIED (writable + isolated → test writes stay in the sandboxed cwd); AT/ABOVE
+    /// it the entry is SYMLINKED (avoids copying huge read-mostly deps like node_modules).
+    /// </summary>
+    private const long IgnoredOverlayCopyMaxBytes = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// Overlays one top-level ignored entry from <paramref name="src"/> to
+    /// <paramref name="dst"/>: COPY when below <paramref name="thresholdBytes"/>,
+    /// otherwise SYMLINK. Directory size uses the early-exiting
+    /// <see cref="NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold"/> (never fully sizes
+    /// a multi-GB tree); a single file uses its length.
+    /// </summary>
+    private static void OverlayIgnoredEntry(string src, string dst, bool isDirectory, long thresholdBytes)
+    {
+        if (isDirectory)
+        {
+            if (!Directory.Exists(src)) return;
+            if (NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold(src, thresholdBytes))
+                Directory.CreateSymbolicLink(dst, src); // large dep → share via link
+            else
+                CopyDirectoryResilient(src, dst); // small → copy so writes stay isolated
+        }
+        else
+        {
+            if (!File.Exists(src)) return;
+            if (new FileInfo(src).Length >= thresholdBytes)
+                File.CreateSymbolicLink(dst, src);
+            else
+                File.Copy(src, dst, overwrite: false);
+        }
     }
 
     /// <summary>VR/VCS-internal dirs the verify worktree manages itself — never symlinked.</summary>

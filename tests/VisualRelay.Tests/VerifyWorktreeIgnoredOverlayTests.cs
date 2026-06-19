@@ -40,11 +40,14 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 1. Ignored dir + ignored file are symlinked; tracked file present.
+    // 1. Small ignored dir + ignored file are present (copied) with source
+    //    content; tracked file present. (Copy-vs-symlink: these fixtures are
+    //    tiny, so they are COPIED — write-isolation is covered separately in
+    //    VerifyWorktreeIgnoredOverlayCopyTests; here we assert presence/content.)
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateVerifyWorktree_SymlinksTopLevelIgnoredDirAndFile_ResolvingToSource()
+    public async Task CreateVerifyWorktree_OverlaysTopLevelIgnoredDirAndFile_WithSourceContent()
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-overlay-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -67,21 +70,17 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             // Tracked file present in the checkout.
             Assert.True(File.Exists(Path.Combine(worktree, "tracked.txt")));
 
-            // node_modules and .env exist in the worktree as SYMLINKS.
-            var nmLink = Path.Combine(worktree, "node_modules");
-            var envLink = Path.Combine(worktree, ".env");
-            Assert.True(Directory.Exists(nmLink), "node_modules should be present in worktree");
-            Assert.True(File.Exists(envLink), ".env should be present in worktree");
-            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "node_modules should be a symlink (reparse point), not a real copy");
-            Assert.True(new FileInfo(envLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                ".env should be a symlink (reparse point), not a real copy");
+            // node_modules and .env are present in the worktree (overlaid).
+            var nmEntry = Path.Combine(worktree, "node_modules");
+            var envEntry = Path.Combine(worktree, ".env");
+            Assert.True(Directory.Exists(nmEntry), "node_modules should be present in worktree");
+            Assert.True(File.Exists(envEntry), ".env should be present in worktree");
 
-            // The dependency is READABLE through the worktree path (resolves to source).
+            // The dependency and config are READABLE in the worktree with source content.
             var depThroughWorktree = await File.ReadAllTextAsync(
                 Path.Combine(worktree, "node_modules", "dep", "index.js"));
             Assert.Equal("module.exports = 42;", depThroughWorktree);
-            Assert.Equal("SECRET=abc", await File.ReadAllTextAsync(envLink));
+            Assert.Equal("SECRET=abc", await File.ReadAllTextAsync(envEntry));
         }
         finally
         {
@@ -103,19 +102,27 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         var driver = NewDriver();
         try
         {
+            // A LOW injected threshold keeps node_modules above the copy/symlink
+            // boundary (so it is SYMLINKED — exercising the symlink-unlink cleanup
+            // path this test names) WITHOUT having to write 64 MB.
+            const long lowThreshold = 4 * 1024; // 4 KiB
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), "node_modules/\n.env\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
-            var depFile = Path.Combine(root, "node_modules", "dep", "index.js");
-            await File.WriteAllTextAsync(depFile, "REAL-DEP");
-            var envFile = Path.Combine(root, ".env");
+            var depFile = Path.Combine(root, "node_modules", "dep", "blob.bin");
+            await File.WriteAllBytesAsync(depFile, new byte[lowThreshold * 2]);
+            var envFile = Path.Combine(root, ".env"); // small → copied (also must survive)
             await File.WriteAllTextAsync(envFile, "REAL-ENV");
             CommitAll(root, "seed");
 
-            var worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-safety", "run-safety", CancellationToken.None);
-            // Sanity: the links were created.
-            Assert.True(Directory.Exists(Path.Combine(worktree, "node_modules")));
+            var worktree = await driver.CreateVerifyWorktreeForTestAsync(
+                root, "task-safety", "run-safety", CancellationToken.None, lowThreshold);
+            // Sanity: node_modules is present AND is a symlink (large → link).
+            var nmLink = Path.Combine(worktree, "node_modules");
+            Assert.True(Directory.Exists(nmLink));
+            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "above-threshold node_modules should be symlinked so this test exercises link-cleanup");
 
             await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
 
@@ -123,10 +130,11 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             Assert.False(Directory.Exists(worktree), "worktree directory should be removed");
 
             // CRITICAL: the SOURCE targets STILL EXIST with their original contents —
-            // cleanup must remove the symlinks, NOT follow them and delete the real nodes.
-            Assert.True(File.Exists(depFile), "source node_modules/dep/index.js must survive cleanup");
+            // cleanup must remove the symlink, NOT follow it and delete the real nodes;
+            // and the copied .env's source is likewise untouched.
+            Assert.True(File.Exists(depFile), "source node_modules/dep/blob.bin must survive cleanup");
             Assert.True(File.Exists(envFile), "source .env must survive cleanup");
-            Assert.Equal("REAL-DEP", await File.ReadAllTextAsync(depFile));
+            Assert.Equal(lowThreshold * 2, new FileInfo(depFile).Length);
             Assert.Equal("REAL-ENV", await File.ReadAllTextAsync(envFile));
         }
         finally
