@@ -110,6 +110,10 @@ public static class PlanPhaseRunner
         {
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan", "start");
             worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, ct, gitInvoker);
+            // The detached checkout omits the (normally git-ignored) per-repo
+            // config, so provide it from the source repo before the driver loads
+            // config from the worktree — otherwise stage 1 flags "config not found".
+            PlanningWorktree.CopyConfigIntoWorktree(mainRootPath, worktreePath);
 
             // Each planning task gets its OWN event sink to avoid log interleaving.
             // When an observable factory is provided (GUI drain), live progress

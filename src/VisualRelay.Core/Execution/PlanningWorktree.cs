@@ -47,6 +47,39 @@ public static class PlanningWorktree
     }
 
     /// <summary>
+    /// Copies the source repo's <c>.relay/config.json</c> into the freshly
+    /// created worktree so the planning stages can load the per-repo config.
+    /// </summary>
+    /// <remarks>
+    /// A detached-HEAD checkout contains only COMMITTED files, but
+    /// <c>.relay/config.json</c> is normally git-ignored (a repo-level
+    /// <c>.gitignore</c> with <c>.relay/</c>), so it is absent from the
+    /// checkout and the planning config load would otherwise throw
+    /// "<c>.relay/config.json not found</c>". This mirrors the verify
+    /// worktree's "provide a needed git-ignored file the checkout lacks"
+    /// pattern. Best-effort: when the source has no config (the already-handled
+    /// no-config path) nothing is copied, and any I/O failure is swallowed so
+    /// worktree setup is never aborted.
+    /// </remarks>
+    public static void CopyConfigIntoWorktree(string sourceRepoRoot, string worktreePath)
+    {
+        var sourceConfig = Path.Combine(sourceRepoRoot, ".relay", "config.json");
+        if (!File.Exists(sourceConfig))
+            return; // no source config → leave the existing no-config path intact
+
+        try
+        {
+            var destConfig = Path.Combine(worktreePath, ".relay", "config.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(destConfig)!);
+            File.Copy(sourceConfig, destConfig, overwrite: true);
+        }
+        catch
+        {
+            // Best-effort: a failed config copy must NOT abort worktree creation.
+        }
+    }
+
+    /// <summary>
     /// Copies the per-task artifact directory (<c>.relay/&lt;taskId&gt;/</c>)
     /// from <paramref name="worktreePath"/> into the main repo at
     /// <paramref name="mainRepoRoot"/>.
