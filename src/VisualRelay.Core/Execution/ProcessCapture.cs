@@ -1,3 +1,4 @@
+using System.Collections.Specialized;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -9,6 +10,31 @@ internal static class ProcessCapture
     // CPU delta per sample window that counts as real work rather than
     // scheduler dust from an idle-blocked process.
     private const long CpuPulseEpsilonMs = 50;
+
+    private static readonly string[] LeakedAppleSdkEnvNames = ["DEVELOPER_DIR", "SDKROOT"];
+
+    /// <summary>
+    /// VR runs under <c>nix develop</c>, which exports <c>DEVELOPER_DIR</c>/<c>SDKROOT</c>
+    /// pointing at the nix apple-sdk (for VR's own .NET build). A child process that
+    /// invokes <c>/usr/bin/git</c> (the macOS xcrun shim) — swival inside nono, the verify
+    /// test command — would treat that nix path as the developer directory, find no Command
+    /// Line Tools there, and trigger the macOS "install the command line developer tools"
+    /// dialog. Strip the LEAKED nix value so the child falls back to the xcode-select
+    /// default; a real (non-nix) <c>DEVELOPER_DIR</c> set for the target is left intact.
+    /// </summary>
+    internal static void StripLeakedNixSdkEnv(StringDictionary env)
+    {
+        foreach (var name in LeakedAppleSdkEnvNames)
+        {
+            // ProcessStartInfo.EnvironmentVariables' indexer THROWS on a missing key
+            // (unlike a plain StringDictionary, whose getter returns null), so guard
+            // with ContainsKey first — otherwise a spawn with no DEVELOPER_DIR throws.
+            if (!env.ContainsKey(name))
+                continue;
+            if (env[name] is { } current && current.Contains("/nix/store/", StringComparison.Ordinal))
+                env.Remove(name);
+        }
+    }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string fileName,
@@ -78,6 +104,9 @@ internal static class ProcessCapture
                 process.StartInfo.EnvironmentVariables[kvp.Key] = kvp.Value;
             }
         }
+        // Don't leak VR's own nix-build apple-sdk env into target subprocesses, or their
+        // /usr/bin/git calls pop the macOS Command Line Tools install dialog (see method).
+        StripLeakedNixSdkEnv(process.StartInfo.EnvironmentVariables);
         var output = new StringBuilder();
         // stdout and stderr fire on separate threads; StringBuilder is not thread-safe,
         // so all appends and reads of `output` must be serialized or it corrupts and
