@@ -27,6 +27,7 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
     /// </summary>
     private ICommand? ResolveCommand(string name) => name switch
     {
+        "bootstrap" => viewModel.BootstrapProjectCommand,
         "run-all" => viewModel.DrainQueueCommand,
         "run-selected" => viewModel.RunSelectedCommand,
         "resume" => viewModel.ResumeSelectedCommand,

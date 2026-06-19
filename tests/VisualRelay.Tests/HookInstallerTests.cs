@@ -27,6 +27,19 @@ public sealed class HookInstallerTests
     }
 
     [Fact]
+    public async Task InstallAsync_NonGitFolder_ReturnsWarning_WithoutCreatingGitDir()
+    {
+        using var repo = TestRepository.Create(); // a plain dir, NOT a git repo
+
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+
+        Assert.False(result.Installed);
+        Assert.NotNull(result.Warning);
+        // Must not fabricate a bogus .git/hooks dir where the hook can never run.
+        Assert.False(Directory.Exists(Path.Combine(repo.Root, ".git")));
+    }
+
+    [Fact]
     public async Task InstallAsync_IsIdempotent()
     {
         using var repo = TestRepository.Create();

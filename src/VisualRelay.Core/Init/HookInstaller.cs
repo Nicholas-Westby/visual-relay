@@ -59,6 +59,17 @@ exit 1
     public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
     {
         var gi = gitInvoker ?? new GitInvoker();
+
+        // Guard: without a real repository there is nowhere for a pre-commit hook to
+        // run. Refuse rather than fabricate a bogus .git/hooks directory (which would
+        // silently never execute). Bootstrap initializes the repo before calling here.
+        if (!await GitBootstrapper.IsRepositoryAsync(rootPath, gi, cancellationToken))
+        {
+            return new HookInstallResult(false, string.Empty,
+                $"{rootPath} is not a git repository — run `git init` (or bootstrap the project) " +
+                "before installing the Visual Relay pre-commit hook.");
+        }
+
         // Resolve the active hooks directory.
         var hooksDirResult = await gi.RunAsync(
             rootPath, ["config", "--default", ".git/hooks", "core.hooksPath"],

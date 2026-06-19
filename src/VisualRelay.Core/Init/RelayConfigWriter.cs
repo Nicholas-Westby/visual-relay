@@ -73,6 +73,47 @@ public static class RelayConfigWriter
     }
 
     /// <summary>
+    /// Read-modify-write upgrade of a greenfield/placeholder config to the real,
+    /// now-detectable toolchain commands: sets <c>testCmd</c> and fills in
+    /// <c>formatCmd</c>/<c>guardCmd</c> from detection when they are not already
+    /// present. Preserves every other key (bypassSandbox, tierProfiles, …) so an
+    /// upgrade never clobbers settings the operator changed after bootstrap.
+    /// </summary>
+    public static void UpsertResolvedToolchain(string rootPath, string testCommand)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        json["testCmd"] = testCommand;
+
+        // Now that a real toolchain exists, fill in the format/guard commands —
+        // but never overwrite values the operator already set.
+        if (json["formatCmd"] is null && FormatCommandDetector.Detect(rootPath) is { } formatCmd)
+        {
+            json["formatCmd"] = formatCmd;
+        }
+        if (json["guardCmd"] is null && GuardCommandDetector.Detect(rootPath) is { } guardCmd)
+        {
+            json["guardCmd"] = guardCmd;
+        }
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    /// <summary>
     /// Read-modify-write upsert of the <c>commitProofArtifacts</c> key into
     /// <c>.relay/config.json</c>. Preserves all existing keys (testCmd,
     /// tierProfiles, baselineVerify, etc.) so toggling the checkbox never

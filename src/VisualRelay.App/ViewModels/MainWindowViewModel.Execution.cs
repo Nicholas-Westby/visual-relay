@@ -199,6 +199,19 @@ public partial class MainWindowViewModel
     // launching a run; the App's commands call it the same way.
     internal async Task<bool> EnsureRunnableAsync(string? pendingTaskId)
     {
+        // Greenfield: when the test command is still the placeholder and the project
+        // has since gained a recognizable toolchain (a scaffold task ran), adopt the
+        // real test command before gating. Best-effort: a no-op for normal repos, and
+        // a failure here must never block an otherwise-runnable task.
+        try
+        {
+            await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(RootPath);
+        }
+        catch
+        {
+            // Detection/validation hiccup — fall through to gating on the current config.
+        }
+
         var result = await RelayConfigLoader.TryLoadAsync(RootPath);
         if (!result.IsRunnable)
         {
