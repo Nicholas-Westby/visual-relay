@@ -127,6 +127,11 @@ public partial class MainWindowViewModel
         var moved = Tasks[fromIndex];
         Tasks.Move(fromIndex, toIndex);
         SelectedTask = moved;
+
+        // Persist the new manual order so Run All, Refresh, and an app restart all
+        // honor it instead of resetting to alphabetical. Best-effort inside the
+        // store — a failed write never escapes into the drag gesture.
+        new TaskOrderStore(RootPath).Save(Tasks.Select(task => task.Id));
     }
 
     /// <summary>

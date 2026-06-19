@@ -45,7 +45,11 @@ public sealed class RelayQueueController
         Init.RelayGitignoreWriter.EnsureWritten(RootPath);
         State = RelayQueueState.Refreshing;
         Tasks.Clear();
-        foreach (var task in await _repository.ListPendingAsync(cancellationToken))
+        // Seed from the persisted manual order so a headless/CLI drain runs in the
+        // user's saved order — not the repository's alphabetical baseline. The same
+        // store backs the GUI's visible queue, so display and run order stay aligned.
+        var listed = await _repository.ListPendingAsync(cancellationToken);
+        foreach (var task in new TaskOrderStore(RootPath).Apply(listed, task => task.Id))
             Tasks.Add(task);
         State = RelayQueueState.Idle;
     }

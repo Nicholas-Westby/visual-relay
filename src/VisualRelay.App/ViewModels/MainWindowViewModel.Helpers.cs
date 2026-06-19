@@ -122,7 +122,12 @@ public partial class MainWindowViewModel
 
         var repository = new RelayTaskRepository(RootPath);
         Tasks.Clear();
-        var tasks = ShowArchive ? await repository.ListCompletedAsync() : await repository.ListAsync();
+        // The archive is sorted by completion time and is not reorderable; only the
+        // pending queue honors the user's persisted manual order (alphabetical
+        // fallback for tasks without a saved rank — e.g. newly-created ones).
+        var tasks = ShowArchive
+            ? await repository.ListCompletedAsync()
+            : new TaskOrderStore(RootPath).Apply(await repository.ListAsync(), task => task.Id);
         foreach (var task in tasks)
         {
             Tasks.Add(new TaskRowViewModel(task));

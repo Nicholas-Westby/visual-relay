@@ -1,10 +1,35 @@
 using VisualRelay.Core.Queue;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
 public sealed class RelayQueueControllerApplyOrderTests
 {
+    [Fact]
+    public async Task RefreshAsync_SeedsTasksFromPersistedOrder_SoDrainRunsInSavedOrder()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
+        repo.WriteTask("gamma", "# Gamma\n");
+        // A manual order was saved earlier (e.g. by a drag-drop in the GUI).
+        new TaskOrderStore(repo.Root).Save(["gamma", "beta", "alpha"]);
+
+        var runner = new RecordingTaskRunner();
+        var controller = new RelayQueueController(repo.Root, runner);
+
+        // RefreshAsync alone (no ApplyOrder call) must already reflect the saved order.
+        await controller.RefreshAsync();
+        Assert.Equal(["gamma", "beta", "alpha"], controller.Tasks.Select(t => t.Id));
+
+        var results = await controller.DrainAsync();
+        Assert.Equal(["gamma", "beta", "alpha"], runner.TasksRun);
+        Assert.Equal(["gamma", "beta", "alpha"], results.Select(r => r.TaskId));
+    }
+
+
     [Fact]
     public async Task DrainAsync_RunsInAppliedOrderWithUnknownIdSortingLast()
     {

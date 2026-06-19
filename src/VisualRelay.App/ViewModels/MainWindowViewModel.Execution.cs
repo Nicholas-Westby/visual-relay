@@ -96,7 +96,10 @@ public partial class MainWindowViewModel
                 lifecycle: lifecycle);
 
             await controller.RefreshAsync();
-            // Make Run All honor the app's visible (manually reordered) order.
+            // RefreshAsync already seeds from the persisted manual order (the shared
+            // source of truth). Re-applying the app's visible order keeps the drain
+            // aligned with any in-session reorder not yet reloaded — idempotent when
+            // they already match.
             controller.ApplyOrder(Tasks.Select(t => t.Id).ToList());
             // Wire pause.
             if (PauseRequested)
