@@ -24,6 +24,20 @@ public static class RelayConfigWriter
             ["logSources"] = new JsonArray()
         };
 
+        // Pin testFileCmd to the resolved testCmd instead of letting it inherit
+        // the global "bun test {files}" default. The default leaks a Bun-shaped
+        // targeted command into the stage agent's prompt, which makes greenfield
+        // agents on Go/Python repos assume the project uses Bun and write .test.ts
+        // junk. Using testCmd verbatim is correct (run the full suite for a changed
+        // file, just less targeted) and never mentions bun; with no {files} token
+        // the targeted-command builder cleanly falls back to testCmd. Only set it
+        // when a real/placeholder command exists — a null testCmd is the deliberate
+        // "Incomplete" exhaustion signal and must not gain a testFileCmd.
+        if (testCommand is not null)
+        {
+            json["testFileCmd"] = JsonValue.Create(testCommand);
+        }
+
         // Auto-detect guard command when guard scripts exist.
         var guardCmd = GuardCommandDetector.Detect(rootPath);
         if (guardCmd is not null)
@@ -98,6 +112,12 @@ public static class RelayConfigWriter
         }
 
         json["testCmd"] = testCommand;
+
+        // Re-derive testFileCmd from the now-real testCmd. The initial bootstrap
+        // wrote testFileCmd = placeholder (see Write); on upgrade it must track the
+        // real command so the upgraded config carries no placeholder/bun-shaped
+        // targeted command. Mirrors Write: testCmd verbatim, never "bun".
+        json["testFileCmd"] = testCommand;
 
         // Now that a real toolchain exists, fill in the format/guard commands —
         // but never overwrite values the operator already set.

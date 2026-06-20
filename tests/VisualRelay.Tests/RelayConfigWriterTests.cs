@@ -76,6 +76,60 @@ public sealed class RelayConfigWriterTests
         Assert.Equal(original, result.Config.TestCommand);
     }
 
+    // ── testFileCmd consistency (no orphaned "bun test {files}" default) ──
+
+    [Fact]
+    public async Task Write_WithPlaceholderTestCmd_TestFileCommandIsPlaceholder_NotBunDefault()
+    {
+        // Greenfield bootstrap writes the trivially-green placeholder testCmd.
+        // testFileCmd MUST track it (not silently inherit the "bun test {files}"
+        // global default), or the stage agent — shown a bun-shaped targeted
+        // command — infers the project uses Bun and writes .test.ts junk into a
+        // Go/Python repo. The placeholder has no {files} token, so the targeted
+        // command falls back to testCmd cleanly.
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, ProjectBootstrapper.PlaceholderTestCommand);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.DoesNotContain("bun", result.Config.TestFileCommand);
+        Assert.Equal(ProjectBootstrapper.PlaceholderTestCommand, result.Config.TestFileCommand);
+    }
+
+    [Fact]
+    public async Task Write_WithRealTestCmd_TestFileCommandIsConsistent_NotBunDefault()
+    {
+        // A real, detected test command (here a Go project's) must yield a
+        // consistent testFileCmd — never the orphaned "bun test {files}".
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "go test ./...");
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.DoesNotContain("bun", result.Config.TestFileCommand);
+        // Simplest correct choice: run the full suite for a changed file.
+        Assert.Equal("go test ./...", result.Config.TestFileCommand);
+    }
+
+    [Fact]
+    public async Task UpsertResolvedToolchain_FromPlaceholder_RewritesTestFileCommandConsistently()
+    {
+        // The placeholder→real upgrade must also replace the placeholder
+        // testFileCmd with one consistent with the now-real testCmd — otherwise
+        // the upgraded config still carries a bun-shaped (or placeholder)
+        // targeted command after a real toolchain is detected.
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, ProjectBootstrapper.PlaceholderTestCommand);
+
+        RelayConfigWriter.UpsertResolvedToolchain(repo.Root, "pytest");
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal("pytest", result.Config.TestCommand);
+        Assert.DoesNotContain("bun", result.Config.TestFileCommand);
+        Assert.Equal("pytest", result.Config.TestFileCommand);
+    }
+
     // ── Swift guard detection ───────────────────────────────────────────
 
     [Fact]
