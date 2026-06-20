@@ -89,7 +89,7 @@ public sealed partial class ControlApi
 
     private static readonly string[] IcommandNames =
     [
-        "run-all", "run-selected", "resume", "refresh", "pause-toggle",
+        "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
         "archive-toggle", "new-task", "follow-running", "start-backend", "edit"
     ];
 }

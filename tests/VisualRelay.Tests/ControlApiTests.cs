@@ -68,7 +68,7 @@ public sealed class ControlApiTests
         var commands = root.GetProperty("commands");
         string[] expected =
         [
-            "run-all", "run-selected", "resume", "refresh", "pause-toggle",
+            "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
             "archive-toggle", "new-task", "follow-running", "start-backend",
             "edit", "select-task", "bypass-sandbox", "boost-turns", "open-folder"
         ];
