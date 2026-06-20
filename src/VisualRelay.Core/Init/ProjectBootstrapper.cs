@@ -30,7 +30,7 @@ public static class ProjectBootstrapper
     /// green and the first task can scaffold the real project.
     /// </summary>
     public const string PlaceholderTestCommand =
-        "true # visual-relay: no test command yet — replace with your project's test command";
+        "true # visual-relay placeholder test command — auto-managed; do not edit";
 
     // The upgrade re-validates the detected command against a freshly-scaffolded
     // project; a first compile (cargo/go/cmake) can be slow, so allow generous time.
