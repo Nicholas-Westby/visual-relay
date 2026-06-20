@@ -76,6 +76,26 @@ public sealed class NonoWhyOracleTests
     }
 
     [Fact]
+    public void NonoWhy_CargoHome_AllowedReadWrite()
+    {
+        // The cargo HOME itself — not just registry/git — must be read+write.
+        // Cargo writes .package-cache / .package-cache-mutate / .global-cache /
+        // config directly under $HOME/.cargo; denying those forced cargo to a
+        // workspace-local CARGO_HOME and vendored the whole crates.io cache into
+        // the committed project. Granting only the two sub-dirs is insufficient.
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".cargo"));
+    }
+
+    [Fact]
+    public void NonoWhy_CargoPackageCache_AllowedReadWrite()
+    {
+        // The specific lock file cargo could not write under the old profile.
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".cargo", ".package-cache"));
+    }
+
+    [Fact]
     public void NonoWhy_NixState_AllowedReadWrite()
     {
         if (!NonoAvailable) Assert.Skip("nono is not on PATH");

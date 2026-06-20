@@ -83,6 +83,25 @@ public sealed class NonoProfileStructureTests
     }
 
     [Fact]
+    public void VrGuardProfile_GrantsCargoHome_NotJustRegistryAndGit()
+    {
+        // Cargo writes lock/state files (.package-cache, .package-cache-mutate,
+        // .global-cache, config) directly under $HOME/.cargo — NOT only the
+        // registry/git sub-dirs. Granting only $HOME/.cargo/registry and
+        // $HOME/.cargo/git left those writes denied, so cargo fell back to a
+        // workspace-local CARGO_HOME and vendored the entire crates.io cache
+        // (63 MB / 9,289 files) into the committed project. The profile must
+        // grant the cargo HOME itself so cargo stays at its default location.
+        var profilePath = ResolveProfilePath();
+        using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
+
+        Assert.True(doc.RootElement.TryGetProperty("filesystem", out var fs));
+        Assert.True(fs.TryGetProperty("allow", out var allow));
+        var paths = CollectPaths(allow);
+        Assert.Contains("$HOME/.cargo", paths);
+    }
+
+    [Fact]
     public void VrGuardProfile_HasNixEntries()
     {
         // nix-managed target projects install deps in-sandbox via the daemon;
