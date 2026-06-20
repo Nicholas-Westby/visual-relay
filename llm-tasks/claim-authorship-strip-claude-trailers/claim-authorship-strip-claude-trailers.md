@@ -169,14 +169,20 @@ TDD — write the failing test(s) first for each unit.
   trailer whose value contains "claude" is intentionally removed); coordination with the in-flight
   thin-`.sh` task (below).
 
-## Coordinate with the in-flight "thin `.sh` wrappers" task
+## Coordinate with the C#-first shell series (tasks 12–17)
 
-A separate task that converts the repo's `.sh` files into thin wrappers calling out to C# is being
-written and may not be committed yet (it may arrive from the VM side — the repo is shared between the
-host and the VM). Coordination, baked here because the implementer sees only one task at a time:
+The C#-first shell series (see
+`docs/superpowers/specs/2026-06-20-csharp-first-shell-scripts-design.md`) converts the repo's other
+`.sh` files into thin wrappers over C# and adds a guard that fails the build on any shell script over
+20 logic lines. It deliberately leaves `me.sh` to **this** task. Coordination, baked here because the
+implementer sees only one task at a time:
 
-- **This task already converts `me.sh` into a thin wrapper.** The thin-`.sh` task must **not**
+- **This task already converts `me.sh` into a thin wrapper.** The series must **not**
   double-convert `me.sh`; treat `me.sh` as done.
-- If the thin-`.sh` task defines a canonical entrypoint convention (a shared CLI, a `visual-relay`
-  subcommand, or a published-exe fast path), relocate/rename `VisualRelay.ClaimAuthorship` and update
-  `me.sh` to match it rather than introducing a competing pattern.
+- The series keeps **standalone tools** (`VisualRelay.Cli`, `VisualRelay.Backend`,
+  `VisualRelay.Guards`) invoked via `dotnet run`/published exes, so a standalone
+  `VisualRelay.ClaimAuthorship` already fits the convention — **no relocation needed**. Keep the thin
+  `me.sh` wrapper ≤ 20 logic lines (trivial for a wrapper).
+- **This task must land before task 17** (the enforcing shell-size guard): task 17 fails the build if
+  any tracked shell script — including `me.sh` — exceeds 20 logic lines, so `me.sh` must already be
+  thin by then.
