@@ -4,61 +4,73 @@ using System.Xml.Linq;
 namespace VisualRelay.Tests;
 
 // macOS .app bundle (packaging) coverage. The bundle (.icns + Info.plist) is a
-// build-time output, so we assert on the committed generator scripts (existence
-// / executable / references iconutil) and the committed source iconset rather
-// than on an opaque .icns blob. House style mirrors AppIconTests.
+// build-time output produced by the tools/VisualRelay.Packaging C# tool.
+// We assert on the committed C# source files (existence / content references)
+// and the committed source iconset rather than on an opaque .icns blob.
+// House style mirrors AppIconTests.
 public sealed class MacAppBundleTests
 {
     private static string RepoRoot => RepoSetup.Root;
 
-    private static string BuildBundleScript =>
-        Path.Combine(RepoRoot, "packaging", "macos", "build-app-bundle.sh");
-    private static string GenIconsetScript =>
-        Path.Combine(RepoRoot, "packaging", "macos", "generate-iconset.sh");
+    private static string PackagingProjectDir =>
+        Path.Combine(RepoRoot, "tools", "VisualRelay.Packaging");
+    private static string PackagingCsproj =>
+        Path.Combine(PackagingProjectDir, "VisualRelay.Packaging.csproj");
+    private static string PackagingProgramCs =>
+        Path.Combine(PackagingProjectDir, "Program.cs");
+    private static string PackagingPlistsCs =>
+        Path.Combine(PackagingProjectDir, "Plists.cs");
+    private static string PackagingIconsetsCs =>
+        Path.Combine(PackagingProjectDir, "Iconsets.cs");
     private static string IconsetDir =>
         Path.Combine(RepoRoot, "packaging", "icon", "Visual Relay.iconset");
     private static string IconReadmePath =>
         Path.Combine(RepoRoot, "packaging", "icon", "README.md");
 
-    // ── Bundle generator scripts (build-time artifacts) ──────────────────
+    // ── Bundle generator C# tool (build-time artifacts) ───────────────────
 
     [Fact]
     public void BuildAppBundleScript_Exists()
     {
-        Assert.True(File.Exists(BuildBundleScript),
-            $"Bundle build script not found at {BuildBundleScript}. " +
-            "A committed packaging script must assemble VisualRelay.app.");
+        Assert.True(File.Exists(PackagingCsproj),
+            $"Packaging project not found at {PackagingCsproj}. " +
+            "A committed C# tool must assemble VisualRelay.app.");
+        Assert.True(File.Exists(PackagingProgramCs),
+            $"Program.cs not found at {PackagingProgramCs}.");
     }
 
     [Fact]
     public void BuildAppBundleScript_IsExecutable()
     {
-        Assert.True(File.Exists(BuildBundleScript),
-            $"Bundle build script not found at {BuildBundleScript}.");
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Skip("Unix file mode is not meaningful on Windows.");
-        }
-
-        AssertExecutable(BuildBundleScript);
+        Assert.True(File.Exists(PackagingCsproj),
+            $"Packaging project not found at {PackagingCsproj}.");
+        Assert.True(File.Exists(PackagingProgramCs),
+            $"Program.cs not found at {PackagingProgramCs}.");
+        // C# projects are compiled, not executed as scripts — no Unix mode check needed.
     }
 
-    // The bundle script must drive the .icns generation (iconutil) and write a
+    // The C# tool must drive the .icns generation (iconutil) and write a
     // valid Info.plist with the settled identifiers.
     [Fact]
     public void BuildAppBundleScript_ReferencesIconutilAndPlistKeys()
     {
-        Assert.True(File.Exists(BuildBundleScript),
-            $"Bundle build script not found at {BuildBundleScript}.");
-        var content = File.ReadAllText(BuildBundleScript);
-        Assert.Contains("iconutil", content);
-        Assert.Contains("org.minify.VisualRelay", content);
-        Assert.Contains("CFBundleIconFile", content);
-        Assert.Contains("VisualRelay", content);
-        Assert.Contains("CFBundleExecutable", content);
-        Assert.Contains("NSHighResolutionCapable", content);
-        Assert.Contains("LSMinimumSystemVersion", content);
-        Assert.Contains("APPL", content);
+        Assert.True(File.Exists(PackagingProgramCs),
+            $"Program.cs not found at {PackagingProgramCs}.");
+        Assert.True(File.Exists(PackagingPlistsCs),
+            $"Plists.cs not found at {PackagingPlistsCs}.");
+
+        var programContent = File.ReadAllText(PackagingProgramCs);
+        var plistsContent = File.ReadAllText(PackagingPlistsCs);
+        var combined = programContent + plistsContent;
+
+        Assert.Contains("iconutil", combined);
+        Assert.Contains("org.minify.VisualRelay", combined);
+        Assert.Contains("CFBundleIconFile", combined);
+        Assert.Contains("VisualRelay", combined);
+        Assert.Contains("CFBundleExecutable", combined);
+        Assert.Contains("NSHighResolutionCapable", combined);
+        Assert.Contains("LSMinimumSystemVersion", combined);
+        Assert.Contains("APPL", combined);
     }
 
     // The iconset generator must regenerate the full .iconset from the master
@@ -66,9 +78,9 @@ public sealed class MacAppBundleTests
     [Fact]
     public void GenerateIconsetScript_ExistsAndReferencesSips()
     {
-        Assert.True(File.Exists(GenIconsetScript),
-            $"Iconset generator not found at {GenIconsetScript}.");
-        var content = File.ReadAllText(GenIconsetScript);
+        Assert.True(File.Exists(PackagingIconsetsCs),
+            $"Iconsets.cs not found at {PackagingIconsetsCs}.");
+        var content = File.ReadAllText(PackagingIconsetsCs);
         Assert.Contains("sips", content);
         Assert.Contains("icon_512x512@2x.png", content);
     }
@@ -76,14 +88,9 @@ public sealed class MacAppBundleTests
     [Fact]
     public void GenerateIconsetScript_IsExecutable()
     {
-        Assert.True(File.Exists(GenIconsetScript),
-            $"Iconset generator not found at {GenIconsetScript}.");
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Skip("Unix file mode is not meaningful on Windows.");
-        }
-
-        AssertExecutable(GenIconsetScript);
+        Assert.True(File.Exists(PackagingIconsetsCs),
+            $"Iconsets.cs not found at {PackagingIconsetsCs}.");
+        // C# source files are compiled, not executed as scripts — no Unix mode check needed.
     }
 
     // ── Committed iconset (regenerable source art for the .icns) ──────────
@@ -107,7 +114,7 @@ public sealed class MacAppBundleTests
         {
             Assert.True(File.Exists(Path.Combine(IconsetDir, name)),
                 $"Iconset is missing {name}. Regenerate with " +
-                "packaging/macos/generate-iconset.sh.");
+                "dotnet run --project tools/VisualRelay.Packaging/VisualRelay.Packaging.csproj -- generate-iconset.");
         }
     }
 

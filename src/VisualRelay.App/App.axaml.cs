@@ -20,7 +20,7 @@ public partial class App : Application
         // derives its title from Application.Name; left unset it defaults to
         // "Avalonia Application". Set it so the unbundled `dotnet run` / bare
         // published launch shows the product name. (The .app bundle independently
-        // sets CFBundleName via packaging/macos/build-app-bundle.sh.)
+        // sets CFBundleName via tools/VisualRelay.Packaging.)
         Name = "Visual Relay";
     }
 

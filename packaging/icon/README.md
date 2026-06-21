@@ -32,18 +32,17 @@ The macOS Dock/Finder icon for the installed app comes from the bundle's
 `Visual Relay.iconset/` and regenerated from the master with:
 
 ```bash
-packaging/macos/generate-iconset.sh
+dotnet run --project tools/VisualRelay.Packaging/VisualRelay.Packaging.csproj -- generate-iconset
 ```
 
-The `.icns` itself is a **build-time artifact** (not committed). To build the
-bundle from a `dotnet publish` output for the macOS RID:
+To build the bundle from a `dotnet publish` output for the macOS RID:
 
 ```bash
-# Produces <publish-dir>/VisualRelay.app/Contents/{Info.plist,MacOS/…,Resources/VisualRelay.icns}
-packaging/macos/build-app-bundle.sh <publish-dir> [output-dir]
+# Produces <output-dir>/VisualRelay.app/Contents/{Info.plist,MacOS/…,Resources/VisualRelay.icns}
+dotnet run --project tools/VisualRelay.Packaging/VisualRelay.Packaging.csproj -- build-app-bundle <publish-dir> [output-dir]
 ```
 
-`build-app-bundle.sh` regenerates the iconset, runs
+`build-app-bundle` regenerates the iconset, runs
 `iconutil -c icns "<iconset>" -o VisualRelay.icns`, lays out
 `VisualRelay.app/Contents/{Info.plist, MacOS/<exe + payload>, Resources/VisualRelay.icns}`,
 and writes a valid `Info.plist` (bundle id `org.minify.VisualRelay`, display

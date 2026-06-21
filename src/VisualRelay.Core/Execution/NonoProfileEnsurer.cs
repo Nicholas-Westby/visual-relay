@@ -77,8 +77,10 @@ public static class NonoProfileEnsurer
         try
         {
             var dir = Path.GetDirectoryName(path)!;
-            Directory.CreateDirectory(dir);
-            if (!OperatingSystem.IsWindows())
+            var dirExisted = Directory.Exists(dir);
+            if (!dirExisted)
+                Directory.CreateDirectory(dir);
+            if (!OperatingSystem.IsWindows() && !dirExisted)
             {
                 File.SetUnixFileMode(dir,
                     UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
