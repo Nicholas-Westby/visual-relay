@@ -126,6 +126,7 @@ public sealed partial class RelayDriver
         string taskHash,
         string activeLockNonce,
         IReadOnlySet<string>? preRunUntracked,
+        string? runBaseSha,
         List<StageStatusEntry> statusEntries,
         CancellationToken cancellationToken)
     {
@@ -153,7 +154,7 @@ public sealed partial class RelayDriver
                 proofFiles.AddRange(additions);
 
             var chain = BuildCommitChain(commitMessages, taskId);
-            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker);
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker, runBaseSha);
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();

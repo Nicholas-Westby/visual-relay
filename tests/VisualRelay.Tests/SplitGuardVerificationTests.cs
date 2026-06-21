@@ -109,7 +109,11 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 149→150 on 2026-06-18: the GLM 5.2 frontier upgrade added
         // PerModelTimeout_FrontierGlm52Has480s to the BackendConfigGeneratorTests
         // family (BackendConfigGeneratorTests.PerModelTimeout.cs).
-        const int baseline = 150;
+        // Bumped 150→156 on 2026-06-21: the in-run agent self-commit squash added
+        // 5 facts to the GitCommitterTests family (GitCommitterTests.RunBaseSquash.cs)
+        // and 1 to the RelayDriverGitCommitTests family
+        // (RelayDriverGitCommitTests.SelfCommitSquash.cs).
+        const int baseline = 156;
 
         string[] prefixes =
         [

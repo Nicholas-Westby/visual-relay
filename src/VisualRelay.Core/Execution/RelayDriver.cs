@@ -56,6 +56,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
 
             IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // pre-run untracked snapshot
+            var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // HEAD at run-start, for squashing agent self-commits
 
             var stage10Handled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
@@ -275,7 +276,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                 }
             }
-            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, taskHash, activeLock.Nonce, preRunUntracked, statusEntries, cancellationToken);
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);
         }
         catch (Exception ex)
         {

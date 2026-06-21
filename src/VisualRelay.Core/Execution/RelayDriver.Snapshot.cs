@@ -71,6 +71,44 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
+    /// Records the run-base sha — the HEAD commit when the task began — so the
+    /// Commit stage can squash any commits the agent made itself during the run
+    /// into the single sealed commit (parented on the run-base). Persisted to the
+    /// task directory so it survives a resume. On resume reuses the persisted
+    /// value; a re-added task (or missing snapshot) captures the current HEAD.
+    /// Returns <c>null</c> when commits are disabled or HEAD cannot be resolved
+    /// (e.g. an empty repo with no commit yet), in which case the squash is
+    /// skipped and the existing single-commit behaviour is unchanged.
+    /// </summary>
+    private async Task<string?> CaptureRunBaseShaAsync(
+        string rootPath,
+        string taskDirectory,
+        bool forceFresh = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_options.CreateGitCommit)
+            return null;
+
+        var runBasePath = Path.Combine(taskDirectory, "run-base.txt");
+        if (_options.Resume && !forceFresh && File.Exists(runBasePath))
+        {
+            var saved = (await File.ReadAllTextAsync(runBasePath, cancellationToken)).Trim();
+            return string.IsNullOrEmpty(saved) ? null : saved;
+        }
+
+        var head = await _dependencies.GitInvoker.RunAsync(
+            rootPath, ["rev-parse", "HEAD"], cancellationToken);
+        if (head.ExitCode != 0)
+            return null;
+        var sha = head.Output.Trim();
+        if (string.IsNullOrEmpty(sha))
+            return null;
+
+        await File.WriteAllTextAsync(runBasePath, sha + Environment.NewLine, cancellationToken);
+        return sha;
+    }
+
+    /// <summary>
     /// Plan-completeness gate: on coverage gap, issues one corrective retry
     /// of stage 4 with the gap error in <c>LastTestOutput</c>.  Returns the
     /// (possibly updated) stage-4 JSON body, updated targeted test command,

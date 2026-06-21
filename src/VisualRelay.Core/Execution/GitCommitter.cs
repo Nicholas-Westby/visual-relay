@@ -1,6 +1,6 @@
 namespace VisualRelay.Core.Execution;
 
-internal static class GitCommitter
+internal static partial class GitCommitter
 {
     // Visual Relay's own run artifacts. These are never auto-committed (the
     // deliberate proof subset is force-added via proofFiles); everything else the
@@ -19,7 +19,8 @@ internal static class GitCommitter
         IReadOnlySet<string>? preRunUntracked,
         string? tasksDir,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker? gitInvoker = null,
+        string? runBaseSha = null)
     {
         var gi = gitInvoker ?? new GitInvoker();
         var inside = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
@@ -27,6 +28,15 @@ internal static class GitCommitter
         {
             return GitCommitResult.Failed($"target root is not a git repository (git exit {inside.ExitCode}): {inside.Output.Trim()}");
         }
+
+        // Squash any commits the agent made itself during the run (authorized via
+        // RELAY_COMMIT_TOKEN, so they land BARE — no Task:/Relay-Seal: trailers)
+        // into the single sealed commit below: soft-reset to the run-base so every
+        // change since run-start stays staged with the run-base as parent. No-op
+        // when HEAD is already the run-base (the normal path). See .Squash.cs.
+        var squash = await SquashInRunCommitsAsync(gi, rootPath, runBaseSha, cancellationToken);
+        if (squash is not null)
+            return squash;
 
         var reset = await GitAsync(gi, rootPath, ["reset", "-q"], cancellationToken);
         if (reset.ExitCode != 0)
