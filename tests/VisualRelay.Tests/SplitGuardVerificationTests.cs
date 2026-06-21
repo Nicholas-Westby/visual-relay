@@ -117,7 +117,13 @@ public sealed partial class SplitGuardVerificationTests
         // to the GitCommitterTests family (GitCommitterTests.RunBaseSquashGuards.cs):
         // sealed-commit-in-range skip + only-bare control, all-candidates-rejected
         // HEAD restore, and committed-only-content preservation.
-        const int baseline = 160;
+        // Dropped 160→151 on 2026-06-21: the launcher's subcommand logic moved into
+        // VisualRelay.Cli, so the bash-asserting Installer5LauncherTests family lost
+        // 9 facts (per-command published-binary/needs_dotnet/init-dispatch checks).
+        // The behavior is now covered by the Cli* suites (CliInitCommandTests,
+        // CliNonoGateTests, CliSwivalGateTests, CliSwivalUpgradeCheckTests,
+        // CliWatchdogTests, CliCommandRouterTests), which are not oversized families.
+        const int baseline = 151;
 
         string[] prefixes =
         [

@@ -232,18 +232,6 @@ public sealed class MacAppBundleTests
             "PNG ships at runtime.");
     }
 
-    // Asserts the user-execute bit is set. Isolated behind an explicit
-    // !IsWindows() guard so the platform analyzer (CA1416) accepts the
-    // Unix-only File.GetUnixFileMode call.
-    private static void AssertExecutable(string path)
-    {
-        if (OperatingSystem.IsWindows())
-            return;
-        var mode = File.GetUnixFileMode(path);
-        Assert.True((mode & UnixFileMode.UserExecute) != 0,
-            $"{path} must be executable (chmod +x).");
-    }
-
     // Resolves a command name to its full path by searching PATH directories.
     private static string? FindInPath(string command)
     {

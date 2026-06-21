@@ -13,7 +13,7 @@ namespace VisualRelay.Packaging;
 /// <param name="PackageType"><c>CFBundlePackageType</c> — four-character code.</param>
 /// <param name="ShortVersionString"><c>CFBundleShortVersionString</c> — release version.</param>
 /// <param name="BundleVersion"><c>CFBundleVersion</c> — build version.</param>
-/// <param name="MinMacOSVersion"><c>LSMinimumSystemVersion</c> — minimum macOS version.</param>
+/// <param name="MinMacOsVersion"><c>LSMinimumSystemVersion</c> — minimum macOS version.</param>
 public record PlistInfo(
     string BundleName,
     string BundleDisplayName,
@@ -23,7 +23,7 @@ public record PlistInfo(
     string PackageType,
     string ShortVersionString,
     string BundleVersion,
-    string MinMacOSVersion);
+    string MinMacOsVersion);
 
 /// <summary>
 /// macOS <c>Info.plist</c> writer with the same identifiers, version knobs, and
@@ -42,7 +42,7 @@ public static class Plists
         getEnv ??= Environment.GetEnvironmentVariable;
         var version = getEnv("VISUAL_RELAY_VERSION") ?? "0.1.0";
         var bundleVersion = getEnv("VISUAL_RELAY_BUNDLE_VERSION") ?? version;
-        var minMacOS = getEnv("VISUAL_RELAY_MIN_MACOS") ?? "11.0";
+        var minMacOs = getEnv("VISUAL_RELAY_MIN_MACOS") ?? "11.0";
 
         return new PlistInfo(
             BundleName: "Visual Relay",
@@ -53,7 +53,7 @@ public static class Plists
             PackageType: "APPL",
             ShortVersionString: version,
             BundleVersion: bundleVersion,
-            MinMacOSVersion: minMacOS);
+            MinMacOsVersion: minMacOs);
     }
 
     /// <summary>
@@ -95,7 +95,7 @@ public static class Plists
         writer.WriteElementString("key", "NSHighResolutionCapable");
         writer.WriteElementString("true", null);
 
-        WriteKeyString(writer, "LSMinimumSystemVersion", info.MinMacOSVersion);
+        WriteKeyString(writer, "LSMinimumSystemVersion", info.MinMacOsVersion);
 
         writer.WriteEndElement(); // </dict>
         writer.WriteEndElement(); // </plist>

@@ -93,12 +93,6 @@ public sealed class Installer5Bootstrap2LauncherTests
     // ── Static analysis ──────────────────────────────────────────────────
 
     [Fact]
-    public void Launcher_ContainsMissingRequiredTools()
-    {
-        Assert.Contains("_missing_required_tools", ReadLauncher(), StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Launcher_ContainsNixReentryMarkerGuard()
     {
         Assert.Contains("VISUAL_RELAY_NIX_REENTRY", ReadLauncher(), StringComparison.Ordinal);
@@ -162,19 +156,20 @@ public sealed class Installer5Bootstrap2LauncherTests
 
     // ── 3. re-entry marker set → no second nix invocation (no loop) ──────
 
+    /// <summary>
+    /// With the re-entry marker set (already inside the devshell), the bootstrap
+    /// must NOT re-enter <c>nix develop</c> a second time — it execs the C# CLI
+    /// directly (here a stubbed <c>dotnet run</c>). The prerequisite gates that
+    /// hard-fail on a missing nono now live in the CLI and are covered by
+    /// <c>CliNonoGateTests</c>; this test guards only the bash no-loop property.
+    /// </summary>
     [Fact]
-    public async Task Launch_ReentryMarkerSet_NonoMissing_ExitsWithError_NoLoop()
+    public async Task Launch_ReentryMarkerSet_DoesNotReenterNix_ExecsCli()
     {
-        var body = SetupB2Test(bypass: false, stubNono: false, stubNix: true, stubUv: true,
+        var body = SetupB2Test(bypass: true, stubNono: false, stubNix: true, stubUv: true,
             marker: "1", """
-            RC=$(cat /tmp/.vr-b2-rc); C=$(cat /tmp/.vr-b2-err /tmp/.vr-b2-out)
-            (( RC != 0 )) || { echo "FAIL: should exit non-zero" >&2; exit 1; }
-            echo "$C"|grep -qi nono||{ echo "FAIL: no nono mention" >&2; exit 1; }
             if [[ -f /tmp/.vr-b2-nix-argv ]]; then
-              echo "FAIL: nix called again (loop)" >&2; exit 1
-            fi
-            if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before gate" >&2; exit 1
+              echo "FAIL: nix called again (loop) despite reentry marker" >&2; exit 1
             fi
             """);
         var (ec, _, err) = await RunBashTestAsync("c-marker-no-loop", body);

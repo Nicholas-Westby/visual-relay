@@ -64,7 +64,7 @@ public sealed class PackagingToolTests
             PackageType: "APPL",
             ShortVersionString: "0.1.0",
             BundleVersion: "0.1.0",
-            MinMacOSVersion: "11.0");
+            MinMacOsVersion: "11.0");
 
         var tmpDir = Path.Combine(Path.GetTempPath(), $"vr-plist-test-{Guid.NewGuid():N}");
         var plistPath = Path.Combine(tmpDir, "Info.plist");
@@ -105,9 +105,7 @@ public sealed class PackagingToolTests
             var trueElements = dict.Elements("true").ToList();
             Assert.Contains(trueElements,
                 t => t.Parent == dict
-                     && t.PreviousNode is XElement prev
-                     && prev.Name.LocalName == "key"
-                     && prev.Value == "NSHighResolutionCapable");
+                     && t.PreviousNode is XElement { Name.LocalName: "key", Value: "NSHighResolutionCapable" });
 
             // Check DOCTYPE is present
             Assert.NotNull(xml.DocumentType);
@@ -130,12 +128,12 @@ public sealed class PackagingToolTests
             ["VISUAL_RELAY_MIN_MACOS"] = "13.0",
         };
         static string? Get(string name, Dictionary<string, string?> d) =>
-            d.TryGetValue(name, out var v) ? v : null;
+            d.GetValueOrDefault(name);
         var info = Plists.ResolveInfo("MyApp.Exe", n => Get(n, env));
 
         Assert.Equal("2.0.0", info.ShortVersionString);
         Assert.Equal("42", info.BundleVersion);
-        Assert.Equal("13.0", info.MinMacOSVersion);
+        Assert.Equal("13.0", info.MinMacOsVersion);
         Assert.Equal("MyApp.Exe", info.ExecutableName);
     }
 
@@ -146,7 +144,7 @@ public sealed class PackagingToolTests
 
         Assert.Equal("0.1.0", info.ShortVersionString);
         Assert.Equal("0.1.0", info.BundleVersion);
-        Assert.Equal("11.0", info.MinMacOSVersion);
+        Assert.Equal("11.0", info.MinMacOsVersion);
         Assert.Equal("VisualRelay.App", info.ExecutableName);
 
         Assert.Equal("org.minify.VisualRelay", info.BundleIdentifier);
@@ -185,6 +183,7 @@ public sealed class PackagingToolTests
                 File.SetUnixFileMode(exePath, UnixFileMode.UserExecute | UnixFileMode.UserRead);
 
             // Run the build-app-bundle subcommand
+            // Set the version env vars so the bundle is reproducible.
             var psi = new ProcessStartInfo
             {
                 FileName = "dotnet",
@@ -202,12 +201,13 @@ public sealed class PackagingToolTests
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                Environment =
+                {
+                    ["VISUAL_RELAY_VERSION"] = "0.1.0",
+                    ["VISUAL_RELAY_BUNDLE_VERSION"] = "0.1.0",
+                    ["VISUAL_RELAY_MIN_MACOS"] = "11.0",
+                },
             };
-
-            // Set the version env vars so the bundle is reproducible
-            psi.Environment["VISUAL_RELAY_VERSION"] = "0.1.0";
-            psi.Environment["VISUAL_RELAY_BUNDLE_VERSION"] = "0.1.0";
-            psi.Environment["VISUAL_RELAY_MIN_MACOS"] = "11.0";
 
             using var p = Process.Start(psi)!;
             var exited = p.WaitForExit(60_000);

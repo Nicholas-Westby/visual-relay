@@ -138,17 +138,14 @@ public sealed class Installer5Bootstrap3LauncherTests
     public void HasManualCurlHint()
     { Assert.Contains("install.determinate.systems", C(), StringComparison.Ordinal); Assert.Contains("curl", C(), StringComparison.Ordinal); }
     [Fact]
-    public void RequireDotnet_CallsOffer()
-    { Assert.Contains("_offer_nix_install", ExtractFn(C(), "_require_dotnet"), StringComparison.Ordinal); }
-    [Fact]
-    public void RequireNono_CallsOffer()
-    { Assert.Contains("_offer_nix_install", ExtractFn(C(), "_require_nono"), StringComparison.Ordinal); }
+    public void EnsureDevshell_CallsOffer()
+    { Assert.Contains("_offer_nix_install", ExtractFn(C(), "_ensure_devshell"), StringComparison.Ordinal); }
     // ═══ TTY: y → install + re-exec ═══
     [Fact]
     public async Task Tty_Yes_InstallerInvokedAndReexecs()
     {
         var body = TtyTest("y", nono: false, nix: false, dotnet: true,
-            bypass: false, reentry: true, isBody: """
+            bypass: false, reentry: false, isBody: """
             echo ran > /tmp/.vr-b3-installer-ran
             D=$(dirname "$0")
             cat>"$D/nix"<<'Y'&&chmod +x "$D/nix"
@@ -170,10 +167,14 @@ public sealed class Installer5Bootstrap3LauncherTests
         Assert.Equal(0, ec);
     }
     // ═══ Decline tests (n / empty / non-TTY) ═══
+    // After declining the offer the bootstrap no longer hard-exits: it prints the
+    // manual install hint and falls through to exec the CLI (best-effort
+    // devshell), which then runs its own tool gates. So the decline assertions
+    // check the hint was shown and the installer was NOT run — not a non-zero
+    // exit (the missing-tool hard-fail now lives in the CLI).
     static string NoInstallerStub => "echo ran > /tmp/.vr-b3-installer-ran\nexit 0\n";
     static string DeclineAssert(string extra = "") => $$"""
-        RC=$(cat /tmp/.vr-b3-rc); O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)
-        (( RC != 0 )) || { echo FAIL: should exit non-zero >&2; echo "$O" >&2; exit 1; }
+        O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)
         [[ -f /tmp/.vr-b3-installer-ran ]] && { echo FAIL: installer invoked >&2; exit 1; } || true
         echo "$O" | grep -q 'install.determinate.systems' || { echo FAIL: missing manual hint >&2; echo "$O" >&2; exit 1; }
         {{extra}}
@@ -185,8 +186,8 @@ public sealed class Installer5Bootstrap3LauncherTests
     public async Task Decline_NoInstaller(string stdin, bool tty, string extra)
     {
         var body = tty
-            ? TtyTest(stdin, false, false, true, false, true, NoInstallerStub, DeclineAssert(extra))
-            : NonTtyTest(false, false, true, false, true, NoInstallerStub, DeclineAssert(extra));
+            ? TtyTest(stdin, false, false, true, false, false, NoInstallerStub, DeclineAssert(extra))
+            : NonTtyTest(false, false, true, false, false, NoInstallerStub, DeclineAssert(extra));
         var (ec, _, err) = await Run($"d-{stdin}-{(tty ? "t" : "n")}", body);
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);

@@ -92,30 +92,14 @@ public sealed partial class Installer5LauncherTests
 
     // ── 1. sample-reset removal ──────────────────────────────────────────
 
+    // The bootstrap no longer holds a usage message or a command `case` (both
+    // moved to VisualRelay.Cli); sample-reset's absence from the user-visible
+    // command set is asserted by CliCommandRouterTests. The bootstrap must simply
+    // never mention sample-reset.
     [Fact]
-    public void SampleReset_IsNotInUsageMessage()
+    public void SampleReset_NotMentionedInBootstrap()
     {
-        var content = ReadLauncher();
-        var usageStart = content.IndexOf("echo \"usage:", StringComparison.Ordinal);
-        Assert.True(usageStart >= 0, "Launcher must have a usage message");
-        var usageLine = content[usageStart..];
-        var nl = usageLine.IndexOf('\n');
-        if (nl >= 0) usageLine = usageLine[..nl];
-        Assert.DoesNotContain("sample-reset", usageLine, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void SampleReset_HasNoDispatchCase()
-    {
-        var lines = ReadLauncher().Split('\n');
-        var inCase = false;
-        foreach (var line in lines)
-        {
-            if (line.TrimStart().StartsWith("case \"$cmd\" in")) { inCase = true; continue; }
-            if (inCase && line.TrimStart().StartsWith("esac")) break;
-            if (inCase && line.Contains("sample-reset"))
-                Assert.Fail($"sample-reset still present in dispatch: '{line.TrimStart()}'");
-        }
+        Assert.DoesNotContain("sample-reset", ReadLauncher(), StringComparison.Ordinal);
     }
 
     // ── 2. Published-binary preference ───────────────────────────────────
@@ -128,13 +112,14 @@ public sealed partial class Installer5LauncherTests
         Assert.Contains("BASH_SOURCE", content, StringComparison.Ordinal);
     }
 
+    // The bootstrap defines only the published APP path (the brew `launch` fast
+    // path it must own before dotnet exists); the published init/gen-backend-config
+    // fast paths moved into the CLI (CliInitCommandTests covers init's). The
+    // per-command published-init preference is covered by CliInitCommandTests.
     [Fact]
-    public void Launcher_DefinesPublishedBinaryPaths()
+    public void Launcher_DefinesPublishedAppPath()
     {
-        var content = ReadLauncher();
-        Assert.Contains("PUBLISHED_APP", content, StringComparison.Ordinal);
-        Assert.Contains("PUBLISHED_INIT", content, StringComparison.Ordinal);
-        Assert.Contains("PUBLISHED_GC", content, StringComparison.Ordinal);
+        Assert.Contains("PUBLISHED_APP", ReadLauncher(), StringComparison.Ordinal);
     }
 
     [Fact]
@@ -145,58 +130,17 @@ public sealed partial class Installer5LauncherTests
         Assert.Contains("-x", content, StringComparison.Ordinal);
     }
 
+    /// <summary>The brew fast path stays in bash: when a published app exists and
+    /// the verb is launch/run, the bootstrap execs it directly (no dotnet). It is
+    /// now an `if` guard rather than a `case` branch.</summary>
     [Fact]
     public void Launch_PrefersPublishedBinaryOverDotnetRun()
     {
-        var launchCase = ExtractCaseBody(ReadLauncher(), "launch|run");
-        Assert.Contains("PUBLISHED_APP", launchCase, StringComparison.Ordinal);
-        Assert.Contains("exec", launchCase, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Init_PrefersPublishedBinaryOverDotnetRun()
-    {
-        var initCase = ExtractCaseBody(ReadLauncher(), "init)");
-        Assert.Contains("PUBLISHED_INIT", initCase, StringComparison.Ordinal);
-        Assert.Contains("exec", initCase, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void GenBackendConfig_PrefersPublishedBinaryOverDotnetRun()
-    {
-        var gbcCase = ExtractCaseBody(ReadLauncher(), "gen-backend-config)");
-        Assert.Contains("PUBLISHED_GC", gbcCase, StringComparison.Ordinal);
-        Assert.Contains("exec", gbcCase, StringComparison.Ordinal);
-    }
-
-    // ── 3. backend.sh invocation via SCRIPT_DIR ──────────────────────────
-
-    [Fact]
-    public void BackendSh_InvokedViaScriptDirRelativePath()
-    {
-        var launchCase = ExtractCaseBody(ReadLauncher(), "launch|run");
-        Assert.Contains("SCRIPT_DIR", launchCase, StringComparison.Ordinal);
-        Assert.Contains("backend.sh", launchCase, StringComparison.Ordinal);
-    }
-
-    // ── 4. needs_dotnet logic ────────────────────────────────────────────
-
-    [Fact]
-    public void NeedsDotnet_LaunchIsConditionalOnPublishedBinary()
-    {
         var content = ReadLauncher();
-        Assert.Contains("needs_dotnet", content, StringComparison.Ordinal);
         Assert.Contains("HAS_PUBLISHED", content, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void NeedsDotnet_BuildTestCheckAlwaysRequireDotnet()
-    {
-        var needsDotnetCase = ExtractCaseBody(ReadLauncher(), "needs_dotnet=1");
-        Assert.Contains("build", needsDotnetCase, StringComparison.Ordinal);
-        Assert.Contains("test", needsDotnetCase, StringComparison.Ordinal);
-        Assert.Contains("check", needsDotnetCase, StringComparison.Ordinal);
-        Assert.DoesNotContain("sample-reset", needsDotnetCase, StringComparison.Ordinal);
+        Assert.Contains("PUBLISHED_APP", content, StringComparison.Ordinal);
+        Assert.Matches(@"\$cmd""?\s*==\s*launch", content);
+        Assert.Contains("exec \"$PUBLISHED_APP", content, StringComparison.Ordinal);
     }
 
     // ── 5. Self-edit parse safety ───────────────────────────────────────
@@ -284,17 +228,5 @@ public sealed partial class Installer5LauncherTests
         if (!string.IsNullOrEmpty(stderr))
             Assert.Fail($"Test failed:\n{stderr}");
         Assert.Equal(0, exitCode);
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────
-
-    private static string ExtractCaseBody(string content, string caseLabel)
-    {
-        var startIdx = content.IndexOf(caseLabel, StringComparison.Ordinal);
-        Assert.True(startIdx >= 0, $"Case label '{caseLabel}' not found in launcher");
-        var bodyStart = content.IndexOf('\n', startIdx) + 1;
-        var terminator = content.IndexOf(";;", bodyStart, StringComparison.Ordinal);
-        Assert.True(terminator >= 0, $"No ';;' terminator found after '{caseLabel}'");
-        return content[bodyStart..terminator];
     }
 }
