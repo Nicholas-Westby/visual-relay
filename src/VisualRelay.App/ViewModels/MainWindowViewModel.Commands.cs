@@ -34,28 +34,32 @@ public partial class MainWindowViewModel
         await RefreshBackendStatusAsync();
     }
 
+    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests
+    /// drive the wiring hermetically. Production runs the shared
+    /// <see cref="BackendLifecycle"/> with diagnostics routed to Trace.</summary>
+    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>
+        new BackendLifecycle(
+            options: BackendStartOptions.FromEnvironment() with
+            {
+                RepoRoot = Environment.GetEnvironmentVariable("VISUAL_RELAY_SCRIPT_DIR")
+                    ?? Environment.CurrentDirectory,
+            },
+            log: line => Trace.WriteLine($"backend: {line}"));
+
     [RelayCommand(CanExecute = nameof(CanStartBackend))]
     private async Task StartBackendAsync()
     {
-        // Best-effort one-click recovery: spawn the autostart script off the UI
-        // thread, never throw, then re-probe so the dot reflects the result.
+        // Best-effort one-click recovery: run the SHARED C# backend lifecycle off
+        // the UI thread (same code VisualRelay.Backend + the launcher use), never
+        // throw, then re-probe so the dot reflects the result.
         try
         {
-            var start = new ProcessStartInfo("tools/backend/backend.sh", "start")
-            {
-                WorkingDirectory = Environment.CurrentDirectory,
-                UseShellExecute = false
-            };
-            using var process = Process.Start(start);
-            if (process is not null)
-            {
-                await process.WaitForExitAsync();
-            }
+            await BackendLifecycleFactory().StartAsync();
         }
-        catch
+        catch (Exception ex)
         {
-            // Toolchain missing, script absent, etc. — leave the dot red.
-            Trace.WriteLine("StartBackendAsync: backend.sh failed to start.");
+            // Toolchain missing, spawn failure, etc. — leave the dot red.
+            Trace.WriteLine($"StartBackendAsync: backend lifecycle failed: {ex.Message}");
         }
 
         await RefreshBackendStatusAsync();

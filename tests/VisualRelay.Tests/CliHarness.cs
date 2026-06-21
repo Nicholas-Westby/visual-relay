@@ -109,20 +109,31 @@ internal static class CliHarness
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
+    /// <summary>
+    /// A flag-aware <c>dotnet</c> stub body for the launch tests: when invoked as
+    /// <c>dotnet run --project …VisualRelay.Backend… -- start</c> (the launch
+    /// preamble's repointed backend start) it touches <c>$VR_BACKEND_FLAG</c>;
+    /// every other dotnet invocation (the app's <c>dotnet run</c>) is a no-op
+    /// success. Replaces the old stub <c>tools/backend/backend.sh</c> signal.
+    /// </summary>
+    public const string BackendAwareDotnetStub =
+        "for a in \"$@\"; do case \"$a\" in *VisualRelay.Backend*) IS_BACKEND=1;; start) IS_START=1;; esac; done\n" +
+        "if [[ -n \"${IS_BACKEND:-}\" && -n \"${IS_START:-}\" && -n \"${VR_BACKEND_FLAG:-}\" ]]; then echo ran >> \"$VR_BACKEND_FLAG\"; fi\n" +
+        "exit 0";
+
     /// <summary>Creates a sandbox repo dir with <c>.relay/config.json</c> (carrying
-    /// the given bypassSandbox flag), a stub <c>tools/backend/backend.sh</c>, and a
-    /// <c>bin/</c> stub dir. Returns (repoRoot, stubBin).</summary>
-    public static (string RepoRoot, string StubBin) NewSandboxRepo(bool bypassSandbox, string? backendBody = null)
+    /// the given bypassSandbox flag) and a <c>bin/</c> stub dir. The backend start
+    /// signal now flows through the <see cref="BackendAwareDotnetStub"/> dotnet
+    /// stub (launch runs <c>VisualRelay.Backend start</c> via dotnet, not a shell
+    /// script). Returns (repoRoot, stubBin).</summary>
+    public static (string RepoRoot, string StubBin) NewSandboxRepo(bool bypassSandbox)
     {
         var repoRoot = Path.Combine(Path.GetTempPath(), "vr-cli-" + Guid.NewGuid().ToString("N"));
         var stubBin = Path.Combine(repoRoot, "bin");
         Directory.CreateDirectory(stubBin);
         Directory.CreateDirectory(Path.Combine(repoRoot, ".relay"));
-        Directory.CreateDirectory(Path.Combine(repoRoot, "tools", "backend"));
         File.WriteAllText(Path.Combine(repoRoot, ".relay", "config.json"),
             $"{{\"testCmd\":\"true\",\"bypassSandbox\":{(bypassSandbox ? "true" : "false")}}}");
-        WriteStub(Path.Combine(repoRoot, "tools", "backend"), "backend.sh",
-            backendBody ?? "echo ran >> \"$VR_BACKEND_FLAG\"\nexit 0");
         // A `visual-relay` marker file so any walk-up resolution lands here too.
         File.WriteAllText(Path.Combine(repoRoot, "visual-relay"), "#!/usr/bin/env bash\n");
         return (repoRoot, stubBin);

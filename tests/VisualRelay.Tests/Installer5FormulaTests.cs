@@ -57,7 +57,8 @@ public sealed class Installer5FormulaTests
     {
         var content = ReadFormula();
 
-        // Must declare uv as a dependency (needed by backend.sh).
+        // Must declare uv as a dependency (the backend lifecycle provisions the
+        // litellm venv with uv).
         Assert.Contains("depends_on", content, StringComparison.Ordinal);
         Assert.Contains("uv", content, StringComparison.Ordinal);
     }

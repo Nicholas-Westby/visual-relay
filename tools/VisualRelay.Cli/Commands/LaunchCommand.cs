@@ -23,10 +23,13 @@ public static class LaunchCommand
 
         Gates.SwivalUpgradeCheck.Run(paths.Root);
 
-        // Best-effort backend start: a fresh launch can run a task without a
-        // manual proxy step. If it fails the launch still proceeds and the
-        // in-app pre-flight probe surfaces the down backend.
-        if (ProcessLauncher.Run("bash", [paths.BackendScript, "start"], paths.Root) != 0)
+        // Best-effort backend start via the published VisualRelay.Backend tool
+        // (the C# successor to backend.sh; same shared lifecycle the app autostart
+        // runs). A fresh launch can run a task without a manual proxy step; if it
+        // fails the launch still proceeds and the in-app pre-flight probe surfaces
+        // the down backend.
+        var backendArgs = new List<string> { "run", "--project", paths.ToolProject("VisualRelay.Backend"), "--", "start" };
+        if (ProcessLauncher.Run(ProcessLauncher.Dotnet, backendArgs, paths.Root) != 0)
             Console.Error.WriteLine(
                 "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)");
 

@@ -104,7 +104,7 @@ public sealed class CliSwivalUpgradeCheckTests
         var backendRan = Path.Combine(repo, "backend-ran");
         try
         {
-            CliHarness.WriteStub(stub, "dotnet");
+            CliHarness.WriteStub(stub, "dotnet", CliHarness.BackendAwareDotnetStub);
             CliHarness.WriteStub(stub, "swival", "echo 'swival 1.0.0'\nexit 0");
             CliHarness.WriteStub(stub, "vr-swival-probe", probeBody);
             CliHarness.WriteStub(stub, "vr-swival-upgrader", $"echo ran > '{upgraderRan}'\nexit 0");

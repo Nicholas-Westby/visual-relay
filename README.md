@@ -71,19 +71,21 @@ Homebrew formula.
 
 ## Model Backend
 
-Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook calls `tools/backend/backend.sh start` best-effort. When the backend is already healthy this is a fast no-op, and if it cannot start the app still launches and the in-app pre-flight probe surfaces the down backend.
+Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook runs the `VisualRelay.Backend start` tool best-effort, and the app's GUI shares the same C# lifecycle for its one-click recovery. When the backend is already healthy this is a fast no-op, and if it cannot start the app still launches and the in-app pre-flight probe surfaces the down backend.
 
-On first start the script provisions LiteLLM itself — there is no manual install step. It uses [`uv`](https://docs.astral.sh/uv/) to create a project-local virtualenv at `tools/backend/.venv` pinned to Python 3.13 (LiteLLM's `uvloop` crashes on 3.14+) and installs `litellm[proxy]` into it; `uv` fetches the pinned Python automatically. The venv is git-ignored and reused on later starts, so only the first launch pays the install cost. The single prerequisite is `uv` on `PATH` (`curl -LsSf https://astral.sh/uv/install.sh | sh`); if a `litellm` is already on `PATH` and `uv` is absent, the script falls back to that.
+On first start the tool provisions LiteLLM itself — there is no manual install step. It uses [`uv`](https://docs.astral.sh/uv/) to create a virtualenv at `$XDG_DATA_HOME/visual-relay/backend-venv` (default `~/.local/share/visual-relay/backend-venv`) pinned to Python 3.13 (LiteLLM's `uvloop` crashes on 3.14+) and installs `litellm[proxy]` into it; `uv` fetches the pinned Python automatically. The venv lives under the user's XDG data home (never the repo tree, so host and VM each own their own) and is reused on later starts, so only the first launch pays the install cost. The single prerequisite is `uv` on `PATH` (`curl -LsSf https://astral.sh/uv/install.sh | sh`); if a `litellm` is already on `PATH` and `uv` is absent, the tool falls back to that.
 
 Manage the proxy directly with:
 
 ```bash
-tools/backend/backend.sh start    # idempotent; brings the proxy up on 127.0.0.1:4000 and waits for /health/readiness
-tools/backend/backend.sh status   # reports up/down
-tools/backend/backend.sh stop     # SIGTERM then SIGKILL, and removes the PID file
+VisualRelay.Backend start    # idempotent; brings the proxy up on 127.0.0.1:4000 and waits for /health/readiness
+VisualRelay.Backend status   # reports up/down
+VisualRelay.Backend stop     # SIGTERM then SIGKILL, and removes the PID file
 ```
 
-`start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under the git-ignored `.relay-scratch/` (`litellm.pid`, `litellm.log`).
+(From a source checkout: `dotnet run --project tools/VisualRelay.Backend -- {start|stop|status}`.)
+
+`start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under `$XDG_DATA_HOME/visual-relay/scratch/` (`litellm.pid`, `litellm.log`).
 
 ### Provider keys
 
@@ -107,7 +109,7 @@ cp .env.example .env   # repo-root .env, git-ignored
 
 **Precedence**: an exported environment variable overrides both files; the user-level file overrides the repo file. The in-app key panel reads and writes the user-level path.
 
-`backend.sh start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `.relay-scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. When the generator is unavailable (no `dotnet`), the script falls back to the static template. A one-line resolution summary is logged to stderr (e.g. `backend: config generated — cheap→deepseek-v4-flash, balanced→deepseek-v4-pro, frontier→glm-5.2, …; keys: HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY`), so "why did frontier run on HF?" is always answerable.
+`VisualRelay.Backend start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `$XDG_DATA_HOME/visual-relay/scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. Config generation is bounded by a timeout; on timeout or any failure it falls back to the static template so a wedged generator never blocks startup.
 
 ## Sandbox
 

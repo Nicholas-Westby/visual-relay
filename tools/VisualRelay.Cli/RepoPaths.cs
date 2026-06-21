@@ -46,7 +46,6 @@ public sealed class RepoPaths
     public string TestsProject => Path.Combine(Root, "tests", "VisualRelay.Tests", "VisualRelay.Tests.csproj");
     public string ToolProject(string name) => Path.Combine(Root, "tools", name, name + ".csproj");
     public string Guard(string script) => Path.Combine(Root, "tools", "guards", script);
-    public string BackendScript => Path.Combine(Root, "tools", "backend", "backend.sh");
     public string GitHooksDir => Path.Combine(Root, ".githooks");
     public string CheckCommitMessageOut => Path.Combine(Root, "check-commit-message");
     public string DocsImage(string name) => Path.Combine(Root, "docs", "images", name);

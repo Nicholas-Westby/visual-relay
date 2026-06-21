@@ -123,7 +123,12 @@ public sealed partial class SplitGuardVerificationTests
         // The behavior is now covered by the Cli* suites (CliInitCommandTests,
         // CliNonoGateTests, CliSwivalGateTests, CliSwivalUpgradeCheckTests,
         // CliWatchdogTests, CliCommandRouterTests), which are not oversized families.
-        const int baseline = 151;
+        // Dropped 151→150 on 2026-06-21: porting tools/backend/backend.sh to the
+        // published VisualRelay.Backend C# tool retired the script, so the
+        // Installer5LauncherTests family lost its BackendSh_EndsWithMainInvocation
+        // structural guard (the script no longer exists). The proxy lifecycle is now
+        // covered by the (non-oversized) BackendLifecycle* / BackendConfigStep suites.
+        const int baseline = 150;
 
         string[] prefixes =
         [

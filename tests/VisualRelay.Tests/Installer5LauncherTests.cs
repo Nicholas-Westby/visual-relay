@@ -11,9 +11,7 @@ public sealed partial class Installer5LauncherTests
 {
     private static string RepoRoot => RepoSetup.Root;
     private static string LauncherPath => Path.Combine(RepoRoot, "visual-relay");
-    private static string BackendShPath => Path.Combine(RepoRoot, "tools", "backend", "backend.sh");
     private static string ReadLauncher() => File.ReadAllText(LauncherPath);
-    private static string ReadBackendSh() => File.ReadAllText(BackendShPath);
 
     /// <summary>Runs an embedded bash script that sources the launcher's dispatch
     /// logic in a controlled environment and returns (exitCode, stdout, stderr).</summary>
@@ -151,18 +149,6 @@ public sealed partial class Installer5LauncherTests
     public void Launcher_EndsWithMainInvocation()
     {
         var lines = ReadLauncher().Split('\n');
-        var lastNonBlank = lines
-            .Select(l => l.Trim())
-            .LastOrDefault(l => l.Length > 0);
-        Assert.NotNull(lastNonBlank);
-        Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
-    }
-
-    /// <summary>Same structural guard for <c>tools/backend/backend.sh</c>.</summary>
-    [Fact]
-    public void BackendSh_EndsWithMainInvocation()
-    {
-        var lines = ReadBackendSh().Split('\n');
         var lastNonBlank = lines
             .Select(l => l.Trim())
             .LastOrDefault(l => l.Length > 0);

@@ -36,6 +36,22 @@ public static class KeyEnvFile
     // ── Path resolution ──────────────────────────────────────────────────
 
     /// <summary>
+    /// Public accessor for the user-level dotenv path, resolved against the real
+    /// process environment. The backend lifecycle reads this to source provider
+    /// keys at proxy start (the user-level tier of the precedence chain).
+    /// </summary>
+    public static string ResolvePathForCurrentUser() => ResolvePath();
+
+    /// <summary>
+    /// Public accessor for <see cref="GetUnsetKeys(string, IEnvironmentAccessor?)"/>:
+    /// keys/values from <paramref name="filePath"/> not already set in the process
+    /// environment. The backend lifecycle uses this to layer provider keys onto a
+    /// spawned proxy with process-env-wins precedence.
+    /// </summary>
+    public static Dictionary<string, string> GetUnsetKeysPublic(string filePath) =>
+        GetUnsetKeys(filePath);
+
+    /// <summary>
     /// Returns the user-level dotenv path, reading <c>XDG_CONFIG_HOME</c> and
     /// <c>HOME</c> from <paramref name="accessor"/> (or the real process env).
     /// </summary>

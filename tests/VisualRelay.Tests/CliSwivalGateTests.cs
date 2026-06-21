@@ -19,7 +19,7 @@ public sealed class CliSwivalGateTests
         var backendFlag = Path.Combine(repo, "backend-ran");
         try
         {
-            CliHarness.WriteStub(stub, "dotnet");
+            CliHarness.WriteStub(stub, "dotnet", CliHarness.BackendAwareDotnetStub);
             CliHarness.WriteStub(stub, "swival");
             await CliHarness.RunAsync(repo, stub, ["launch"], new Dictionary<string, string>
             {
