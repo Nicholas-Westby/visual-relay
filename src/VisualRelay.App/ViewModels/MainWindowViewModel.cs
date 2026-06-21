@@ -38,16 +38,22 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly Dictionary<string, DateTimeOffset> _runStartedAt = new(StringComparer.Ordinal);
     private string? _runningTaskId;
 
-    public MainWindowViewModel()
-        : this(new NullFolderPicker(), new NullFilePicker())
+    public MainWindowViewModel(IEnvironmentAccessor? environmentAccessor = null)
+        : this(new NullFolderPicker(), new NullFilePicker(), environmentAccessor)
     {
     }
 
-    private MainWindowViewModel(IFolderPicker folderPicker, IFilePicker filePicker)
+    private MainWindowViewModel(IFolderPicker folderPicker, IFilePicker filePicker, IEnvironmentAccessor? environmentAccessor = null)
     {
+        EnvironmentAccessor = environmentAccessor;
         _folderPicker = folderPicker;
         _filePicker = filePicker;
         _rootPath = RootFolderDisplay.DefaultPath();
+
+        var uiState = UiStateStore.Load(EnvironmentAccessor);
+        _activityColumnWidth = uiState.ActivityColumnWidth;
+        _activityTabIndex = uiState.ActivityTabIndex;
+
         foreach (var stage in RelayStages.All)
         {
             Stages.Add(new StageRowViewModel(stage, SelectStageCommand));

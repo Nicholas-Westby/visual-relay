@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -31,12 +32,48 @@ public partial class MainWindowViewModel
     [NotifyPropertyChangedFor(nameof(FocusButtonTooltip))]
     [NotifyPropertyChangedFor(nameof(ActivityColumnChevron))]
     [NotifyPropertyChangedFor(nameof(ActivityColumnHeaderTooltip))]
+    [NotifyPropertyChangedFor(nameof(ActivityColumnEffectiveWidth))]
     private bool _isActivityColumnCollapsed;
 
     // ── Activity tab selection ────────────────────────────────────────────
 
     [ObservableProperty]
     private int _activityTabIndex;
+
+    // ── Activity column width ──────────────────────────────────────────────
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ActivityColumnEffectiveWidth))]
+    private double _activityColumnWidth = 340;
+
+    /// <summary>
+    /// Effective width of the right Activity column: returns 36 when the
+    /// column is collapsed to a rail, otherwise <see cref="ActivityColumnWidth"/>.
+    /// Setting this value when the column is <em>not</em> collapsed updates
+    /// <see cref="ActivityColumnWidth"/>; setting it while collapsed is a no-op
+    /// so the stored width survives through collapse/expand cycles.
+    /// </summary>
+    public double ActivityColumnEffectiveWidth
+    {
+        get => IsActivityColumnCollapsed ? 36 : ActivityColumnWidth;
+        set
+        {
+            if (!IsActivityColumnCollapsed)
+                ActivityColumnWidth = value;
+        }
+    }
+
+    // ── Persistence callbacks ──────────────────────────────────────────────
+
+    partial void OnActivityColumnWidthChanged(double value)
+    {
+        UiStateStore.Save(new UiState(value, ActivityTabIndex), EnvironmentAccessor);
+    }
+
+    partial void OnActivityTabIndexChanged(int value)
+    {
+        UiStateStore.Save(new UiState(ActivityColumnWidth, value), EnvironmentAccessor);
+    }
 
     // ── Focus snapshot ─────────────────────────────────────────────────────
 

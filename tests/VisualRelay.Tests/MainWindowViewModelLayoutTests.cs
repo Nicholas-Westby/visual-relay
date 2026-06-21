@@ -3,13 +3,18 @@ using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.Tests;
 
-public sealed class MainWindowViewModelLayoutTests
+public sealed class MainWindowViewModelLayoutTests : IDisposable
 {
+    private readonly TestRepository _repo = TestRepository.Create();
+    private readonly DictionaryEnvironmentAccessor _env = new();
+    public MainWindowViewModelLayoutTests() => _env["XDG_CONFIG_HOME"] = _repo.Root;
+    public void Dispose() => _repo.Dispose();
+    private MainWindowViewModel CreateViewModel() => new(_env);
+
     [Fact]
     public void AllCollapseFlagsDefaultToFalse()
     {
-        var vm = new MainWindowViewModel();
-
+        var vm = CreateViewModel();
         Assert.False(vm.IsQueueCollapsed);
         Assert.False(vm.IsStagesCollapsed);
         Assert.False(vm.IsActivityColumnCollapsed);
@@ -19,7 +24,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void PerPanelToggleCommands_FlipOnlyTheirFlag()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
 
         // Queue
         vm.ToggleQueueCommand.Execute(null);
@@ -50,7 +55,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void ToggleFocus_FromDefaultState_CollapsesAllThreeAndSetsIsFocused()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsQueueCollapsed);
         Assert.True(vm.IsStagesCollapsed);
@@ -61,7 +66,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void ToggleFocus_Twice_RestoresExactPreFocusFlags()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
         vm.ToggleFocusCommand.Execute(null);
@@ -74,7 +79,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void ToggleFocus_AfterIndividualCollapse_RestoresThatOneCollapsed()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         // Pre-collapse just the Queue, then focus.
         vm.ToggleQueueCommand.Execute(null);
         Assert.True(vm.IsQueueCollapsed);
@@ -95,7 +100,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void FocusSnapshot_HandlesManualChangesWhileFocused()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         // Focus from default.
         vm.ToggleFocusCommand.Execute(null);
         Assert.True(vm.IsFocused);
@@ -120,7 +125,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void IsActivityColumnCollapsed_TogglesDirectly()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         Assert.False(vm.IsActivityColumnCollapsed);
         vm.ToggleActivityColumnCommand.Execute(null);
         Assert.True(vm.IsActivityColumnCollapsed);
@@ -131,7 +136,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void IsFocused_TrueOnlyWhenAllThreeFlagsSet()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         Assert.False(vm.IsFocused);
         vm.IsQueueCollapsed = true;
         Assert.False(vm.IsFocused);
@@ -146,14 +151,14 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void ActivityTabIndex_DefaultsToZero()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         Assert.Equal(0, vm.ActivityTabIndex);
     }
 
     [Fact]
     public void FocusButtonLabels_ReflectFocusedState()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         Assert.Equal("Focus task", vm.FocusButtonLabel);
         Assert.Equal("Collapse all surrounding panels to maximize the task detail", vm.FocusButtonTooltip);
         vm.ToggleFocusCommand.Execute(null);
@@ -170,7 +175,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void Chevrons_FollowDirectionAndAxisScheme()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         // Queue (left edge): header Left expanded (collapse left), Right collapsed.
         Assert.Equal(ChevronDirection.Left, vm.QueueChevron);
         Assert.Equal(ChevronDirection.Right, vm.QueueRailChevron);
@@ -209,7 +214,7 @@ public sealed class MainWindowViewModelLayoutTests
     [Fact]
     public void ChevronPropertyChanged_FiresOnFlagChange()
     {
-        var vm = new MainWindowViewModel();
+        var vm = CreateViewModel();
         var received = new List<string>();
         vm.PropertyChanged += (_, e) => received.Add(e.PropertyName!);
 
@@ -228,5 +233,68 @@ public sealed class MainWindowViewModelLayoutTests
         vm.IsActivityColumnCollapsed = true;
         Assert.Contains(nameof(MainWindowViewModel.ActivityColumnChevron), received);
         Assert.Contains(nameof(MainWindowViewModel.ActivityColumnHeaderTooltip), received);
+    }
+
+    [Fact]
+    public void ActivityColumnWidth_DefaultsTo340()
+    {
+        var vm = CreateViewModel();
+        Assert.Equal(340, vm.ActivityColumnWidth);
+    }
+
+    [Fact]
+    public void ActivityColumnEffectiveWidth_Returns36WhenCollapsed()
+    {
+        var vm = CreateViewModel();
+        Assert.Equal(340, vm.ActivityColumnEffectiveWidth);
+        vm.IsActivityColumnCollapsed = true;
+        Assert.Equal(36, vm.ActivityColumnEffectiveWidth);
+    }
+
+    [Fact]
+    public void ActivityColumnEffectiveWidth_SetWhenExpanded_UpdatesWidth()
+    {
+        var vm = CreateViewModel();
+        vm.ActivityColumnEffectiveWidth = 500;
+        Assert.Equal(500, vm.ActivityColumnWidth);
+        Assert.Equal(500, vm.ActivityColumnEffectiveWidth);
+    }
+
+    [Fact]
+    public void ActivityColumnEffectiveWidth_SetWhenCollapsed_DoesNotChangeStoredWidth()
+    {
+        var vm = CreateViewModel();
+        vm.IsActivityColumnCollapsed = true;
+        Assert.Equal(36, vm.ActivityColumnEffectiveWidth);
+
+        // Setting the effective width while collapsed must not overwrite the
+        // stored width that will be restored on re-expand.
+        vm.ActivityColumnEffectiveWidth = 500;
+        Assert.Equal(340, vm.ActivityColumnWidth);
+    }
+
+    [Fact]
+    public void ActivityColumnEffectiveWidth_RestoresStoredWidthOnExpand()
+    {
+        var vm = CreateViewModel();
+        vm.ActivityColumnWidth = 500;
+        vm.IsActivityColumnCollapsed = true;
+        Assert.Equal(36, vm.ActivityColumnEffectiveWidth);
+
+        vm.IsActivityColumnCollapsed = false;
+        Assert.Equal(500, vm.ActivityColumnEffectiveWidth);
+        Assert.Equal(500, vm.ActivityColumnWidth);
+    }
+
+    [Fact]
+    public void ActivityColumnEffectiveWidth_NotifiesOnCollapseChange()
+    {
+        var vm = CreateViewModel();
+        var received = new List<string>();
+        vm.PropertyChanged += (_, e) => received.Add(e.PropertyName!);
+
+        received.Clear();
+        vm.IsActivityColumnCollapsed = true;
+        Assert.Contains(nameof(MainWindowViewModel.ActivityColumnEffectiveWidth), received);
     }
 }

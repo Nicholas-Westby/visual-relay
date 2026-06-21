@@ -45,13 +45,7 @@ public static class KeyEnvFile
     /// </summary>
     internal static string ResolvePath(string? xdgConfigHome, string? home)
     {
-        var configDir = !string.IsNullOrWhiteSpace(xdgConfigHome)
-            ? xdgConfigHome
-            : !string.IsNullOrWhiteSpace(home)
-                ? Path.Combine(home, ".config")
-                : throw new InvalidOperationException(
-                    "Cannot resolve KeyEnvFile path: neither XDG_CONFIG_HOME nor HOME is set.");
-
+        var configDir = XdgConfig.ResolveConfigDir(xdgConfigHome, home);
         return Path.Combine(configDir, DirName, FileName);
     }
 

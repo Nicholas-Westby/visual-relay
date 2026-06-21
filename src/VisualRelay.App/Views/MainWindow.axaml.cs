@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
 using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.App.Views;
@@ -8,11 +10,14 @@ public partial class MainWindow : Window
 {
     private const double PreferredWidth = 1440;
     private const double PreferredHeight = 900;
+    private const double MinActivityWidth = 300;
     private MainWindowViewModel? _vm;
+    private bool _syncingColumnWidth;
 
     public MainWindow()
     {
         InitializeComponent();
+        ActivitySplitter.AddHandler(Thumb.DragCompletedEvent, OnActivitySplitterDragCompleted);
     }
 
     protected override void OnDataContextChanged(EventArgs e)
@@ -27,6 +32,7 @@ public partial class MainWindow : Window
             _vm = vm;
             vm.PropertyChanged += OnViewModelPropertyChanged;
             ApplyCenterSplit();
+            SyncActivityColumnWidth(vm);
         }
         else
         {
@@ -39,6 +45,14 @@ public partial class MainWindow : Window
         if (e.PropertyName == nameof(MainWindowViewModel.IsStagesCollapsed))
         {
             ApplyCenterSplit();
+        }
+        else if (e.PropertyName == nameof(MainWindowViewModel.IsActivityColumnCollapsed))
+        {
+            SyncActivityColumnWidth(_vm);
+        }
+        else if (e.PropertyName == nameof(MainWindowViewModel.ActivityColumnWidth) && _vm is not null)
+        {
+            SyncActivityColumnWidth(_vm);
         }
     }
 
@@ -62,6 +76,45 @@ public partial class MainWindow : Window
             CenterGrid.RowDefinitions[0].Height = new GridLength(1.45, GridUnitType.Star);
             CenterGrid.RowDefinitions[1].Height = new GridLength(1, GridUnitType.Star);
         }
+    }
+
+    private void SyncActivityColumnWidth(MainWindowViewModel? vm)
+    {
+        if (vm is null || ContentGrid is null)
+            return;
+
+        // Guard against re-entrancy: when the splitter drag updates the VM and
+        // the VM notifies us back, we must not fight the splitter.
+        if (_syncingColumnWidth)
+            return;
+
+        _syncingColumnWidth = true;
+        try
+        {
+            var width = vm.IsActivityColumnCollapsed ? 36 : vm.ActivityColumnWidth;
+            ContentGrid.ColumnDefinitions[2].Width = new GridLength(width);
+        }
+        finally
+        {
+            _syncingColumnWidth = false;
+        }
+    }
+
+    private void OnActivitySplitterDragCompleted(object? sender, VectorEventArgs e)
+    {
+        if (_vm is null || ContentGrid is null)
+            return;
+
+        var value = ContentGrid.ColumnDefinitions[2].Width.Value;
+        if (value < MinActivityWidth)
+            value = MinActivityWidth;
+
+        // Clamp to a reasonable maximum relative to the window.
+        var maxWidth = Math.Max(MinActivityWidth, Bounds.Width - 400);
+        if (value > maxWidth)
+            value = maxWidth;
+
+        _vm.ActivityColumnWidth = value;
     }
 
     protected override void OnOpened(EventArgs e)
