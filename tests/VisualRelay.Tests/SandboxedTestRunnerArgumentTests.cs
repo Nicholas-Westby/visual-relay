@@ -10,7 +10,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
     {
-        // "bun test" → nono run -p vr-guard --allow-cwd -- /bin/sh -c "bun test"
+        // "bun test" → nono run --profile <abs> --allow-cwd -- /bin/sh -c "bun test"
         // Non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
         // rather than re-resolving a different dotnet/PATH from a login profile (which caused
         // runtime-mismatch launch failures under nono). --rollback/--no-rollback-prompt ABSENT.
@@ -20,7 +20,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("bun test");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd", "--" }, args.Take(5));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, args.Take(5));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
         Assert.Equal("/bin/sh", args[5]);
@@ -49,14 +49,14 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void DirectExecMode_SandboxEnabled_WrapsScriptDirectly()
     {
-        // Script → nono run -p vr-guard --allow-cwd -- <script> <args>
+        // Script → nono run --profile <abs> --allow-cwd -- <script> <args>
         var config = TestConfig() with { BypassSandbox = false };
         var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
 
         var (fileName, args) = sut.ResolveLaunch("/path/to/guard.sh arg1");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd", "--" }, args.Take(5));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, args.Take(5));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
         Assert.Equal("/path/to/guard.sh", args[5]);
@@ -83,7 +83,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         var config = TestConfig() with { BypassSandbox = false };
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         Assert.Equal(
-            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
             prefix);
     }
 
@@ -92,7 +92,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     {
         var config = TestConfig() with { BypassSandbox = false };
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd", "--" }, prefix);
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, prefix);
     }
 
     [Fact]
@@ -102,8 +102,8 @@ public sealed class SandboxedTestRunnerArgumentTests
         var swi = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var ver = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" }, swi.Take(4));
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" }, ver.Take(4));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" }, swi.Take(4));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" }, ver.Take(4));
         Assert.Equal("--rollback", swi[4]);
         Assert.Equal("--no-rollback-prompt", swi[5]);
         Assert.Equal("--", swi[6]);
@@ -251,6 +251,10 @@ public sealed class SandboxedTestRunnerArgumentTests
     }
 
     // ── Helpers ────────────────────────────────────────────────────────
+
+    // The VR-owned profile abs path the prefix now carries (--profile <abs>),
+    // resolved from the real process env exactly as production does.
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
 
     private static RelayConfig TestConfig() =>
         new("llm-tasks", "true", "true", [],

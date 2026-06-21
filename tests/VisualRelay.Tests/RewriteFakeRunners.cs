@@ -10,11 +10,11 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal sealed class RewriteFakeRunner : ISubagentRunner
 {
-    public string NewContent { get; set; } = "# Rewritten\n\nBetter spec.\n";
-    public bool WriteStrayFile { get; set; }
-    public string StrayRelativePath { get; set; } = "src/stray.txt";
-    public string StrayContent { get; set; } = "stray data";
-    public bool ThrowOnRun { get; set; }
+    public string NewContent { get; init; } = "# Rewritten\n\nBetter spec.\n";
+    public bool WriteStrayFile { get; init; }
+    public string StrayRelativePath { get; init; } = "src/stray.txt";
+    public string StrayContent { get; init; } = "stray data";
+    public bool ThrowOnRun { get; init; }
     public StageInvocation? LastInvocation { get; private set; }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)
@@ -53,17 +53,10 @@ internal sealed class RewriteFakeRunner : ISubagentRunner
 /// <see cref="OperationCanceledException"/>, modelling a cancel that fires
 /// after the model has written output but before the runner returns.
 /// </summary>
-internal sealed class PostWriteCancellationRunner : ISubagentRunner
+internal sealed class PostWriteCancellationRunner(string newContent, CancellationToken cancelAfter)
+    : ISubagentRunner
 {
-    private readonly string _newContent;
-    private readonly CancellationToken _cancelAfter;
     public string WorktreeRoot { get; private set; } = string.Empty;
-
-    public PostWriteCancellationRunner(string newContent, CancellationToken cancelAfter)
-    {
-        _newContent = newContent;
-        _cancelAfter = cancelAfter;
-    }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)
     {
@@ -73,10 +66,10 @@ internal sealed class PostWriteCancellationRunner : ISubagentRunner
         {
             var fullPath = Path.Combine(invocation.TargetRoot, file);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-            File.WriteAllText(fullPath, _newContent);
+            File.WriteAllText(fullPath, newContent);
         }
 
-        _cancelAfter.ThrowIfCancellationRequested();
-        throw new OperationCanceledException(_cancelAfter);
+        cancelAfter.ThrowIfCancellationRequested();
+        throw new OperationCanceledException(cancelAfter);
     }
 }

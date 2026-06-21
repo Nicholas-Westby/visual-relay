@@ -13,11 +13,14 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     // swival's own `--sandbox nono` (see BuildArguments for why).
     private const string NonoBinary = "nono";
 
-    // The vr-guard profile (~/.config/nono/profiles/vr-guard.json, extends the
-    // registry-managed `swival` pack profile) grants broad read + network and
-    // confines writes/deletes to the granted workspace. workdir.access=readwrite
-    // in the swival profile means --allow-cwd grants read+write to the cwd.
-    private const string NonoProfile = "vr-guard";
+    // The vr-guard profile (extends the registry-managed `swival` pack profile)
+    // grants broad read + network and confines writes/deletes to the granted
+    // workspace. workdir.access=readwrite in the swival profile means --allow-cwd
+    // grants read+write to the cwd. VR OWNS this profile: NonoProfileEnsurer
+    // embeds the content and rewrites it under $XDG_CONFIG_HOME/visual-relay every
+    // run (self-heal), and nono loads it by ABSOLUTE PATH (--profile <path>) — not
+    // by the name "vr-guard" resolved from ~/.config/nono/profiles/, which the old
+    // launcher installed only-if-absent and so left stale forever.
 
     private readonly RelayConfig _config;
     private readonly IRelayEventSink? _eventSink;
@@ -83,7 +86,11 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         if (config.BypassSandbox)
             return [];
 
-        var args = new List<string> { "run", "-p", NonoProfile, "--allow-cwd" };
+        // Load by absolute path, not the global profile name: NonoProfileEnsurer
+        // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
+        // wrote (overwrite-always) at run start, so the sandbox can never run under
+        // a stale installed-by-name copy.
+        var args = new List<string> { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(), "--allow-cwd" };
 
         if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)
         {

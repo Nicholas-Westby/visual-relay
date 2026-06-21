@@ -33,6 +33,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
+            // Self-heal the VR-owned nono profile once per run (every entry point:
+            // GUI Run All, headless RunTask, resume) before any sandboxed stage, so
+            // the sandbox never loads a stale installed-by-name copy. Skipped when
+            // the sandbox is bypassed. A write failure throws here — the run must
+            // not silently proceed unsandboxed/stale.
+            if (!config.BypassSandbox)
+                await NonoProfileEnsurer.EnsureAsync(cancellationToken: cancellationToken);
             var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);

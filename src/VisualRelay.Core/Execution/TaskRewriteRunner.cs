@@ -1,4 +1,3 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;

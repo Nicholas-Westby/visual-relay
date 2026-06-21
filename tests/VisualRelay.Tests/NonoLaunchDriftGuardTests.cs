@@ -21,9 +21,10 @@ public sealed class NonoLaunchDriftGuardTests
         var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true).ToList();
         var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false).ToList();
 
-        // Both must start with: run -p vr-guard --allow-cwd
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" }, agentPrefix.Take(4));
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" }, verifyPrefix.Take(4));
+        // Both must start with: run --profile <abs> --allow-cwd
+        var head = new[] { "run", "--profile", NonoProfileEnsurer.ResolveProfilePath(), "--allow-cwd" };
+        Assert.Equal(head, agentPrefix.Take(4));
+        Assert.Equal(head, verifyPrefix.Take(4));
 
         // Agent must have --rollback and --no-rollback-prompt; verify must NOT.
         Assert.Contains("--rollback", agentPrefix);

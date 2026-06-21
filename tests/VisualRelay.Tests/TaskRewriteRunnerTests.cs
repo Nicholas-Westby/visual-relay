@@ -9,12 +9,11 @@ public sealed class TaskRewriteRunnerTests
     private const string OriginalSpec = "# Original\n\nDo the thing.\n";
     private const string RewrittenSpec = "# Rewritten\n\nBetter spec.\n";
 
-    private static string InitGitRepo(string root)
+    private static void InitGitRepo(string root)
     {
         TestGit.Run(root, "init", "-q");
         TestGit.Run(root, "config", "user.email", "test@example.test");
         TestGit.Run(root, "config", "user.name", "Test");
-        return root;
     }
 
     private static void CommitAll(string root, string message)

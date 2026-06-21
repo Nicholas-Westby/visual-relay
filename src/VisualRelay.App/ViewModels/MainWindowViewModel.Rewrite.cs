@@ -37,15 +37,15 @@ public partial class MainWindowViewModel
 
         var cts = new CancellationTokenSource();
         _rewriteCts[id] = cts;
+        var ct = cts.Token;
 
         RaiseRewriteStateChanged();
 
-        var config = await RelayConfigLoader.LoadAsync(RootPath);
+        var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var eventSink = new ObservableRelayEventSink(HandleRelayEvent);
         var runner = new SwivalSubagentRunner(config, eventSink: eventSink);
 
         var task = SelectedTask.Task;
-        var ct = cts.Token;
 
         // Run the rewrite on a background task — do NOT block the UI thread.
         _ = Task.Run(async () =>
@@ -61,7 +61,7 @@ public partial class MainWindowViewModel
             }
 
             // Marshal UI updates back to the UI thread.
-            await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(async () =>
+            await Dispatcher.UIThread.InvokeAsync(async () =>
             {
                 _rewritingTaskIds.Remove(id);
                 _rewriteStartedAt.Remove(id);
@@ -93,7 +93,7 @@ public partial class MainWindowViewModel
 
                 RaiseRewriteStateChanged();
             });
-        });
+        }, ct);
     }
 
     private bool CanRewriteSelected()

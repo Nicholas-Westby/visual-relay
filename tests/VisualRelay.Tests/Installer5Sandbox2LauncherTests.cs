@@ -60,11 +60,12 @@ public sealed class Installer5Sandbox2LauncherTests
         string? xdgRel, string assertions)
     {
         var nonoStub = stubNono
-            ? "cat > \"$STUB_DIR/nono\" << 'X' && chmod +x \"$STUB_DIR/nono\"\n#!/bin/bash\nexit 0\nX"
+            ? "cat > \"$STUB_DIR/nono\" << 'X' && chmod +x \"$STUB_DIR/nono\"\n#!/bin/bash\nprintf '%s ' \"$@\" >> /tmp/.vr-s2-nono-argv; printf '\\n' >> /tmp/.vr-s2-nono-argv\nexit 0\nX"
             : "# nono intentionally absent";
         var xdgEnv = xdgRel is not null ? $"XDG_CONFIG_HOME=\"$TEST_DIR/{xdgRel}\"" : "";
         var bypass = bypassSandbox ? "true" : "false";
         return $$"""
+            rm -f /tmp/.vr-s2-nono-argv
             TEST_DIR=$(mktemp -d); STUB_DIR="$TEST_DIR/bin"
             mkdir -p "$STUB_DIR" "$TEST_DIR/.relay" "$TEST_DIR/tools/backend" "$TEST_DIR/packaging/nono"
             cat > "$STUB_DIR/dotnet" << 'X' && chmod +x "$STUB_DIR/dotnet"
@@ -215,43 +216,44 @@ public sealed class Installer5Sandbox2LauncherTests
     // ── 3. Provisioning idempotence ──────────────────────────────────────
 
     [Fact]
-    public async Task Provisioning_FirstRun_InstallsProfile()
+    public async Task Provisioning_DoesNotWriteProfileUnderNonoProfilesDir()
     {
+        // VR now OWNS the vr-guard profile (embedded + rewritten at run start to
+        // $XDG_CONFIG_HOME/visual-relay/vr-guard.json, loaded by absolute path).
+        // _provision_nono must NOT write the legacy global profile under
+        // ~/.config/nono/profiles/ — that was the install-only-if-absent path
+        // that left a stale copy forever.
         var testBody = SetupRunAndAssert(bypassSandbox: false, stubNono: true, xdgRel: "xdg", """
             PROFILE="$TEST_DIR/xdg/nono/profiles/vr-guard.json"
-            if [[ ! -f "$PROFILE" ]]; then
-                echo "FAIL: vr-guard.json not installed to $PROFILE" >&2
+            if [[ -f "$PROFILE" ]]; then
+                echo "FAIL: vr-guard.json must NOT be installed to $PROFILE (VR owns it now)" >&2
                 cat /tmp/.vr-s2-err >&2
                 rm -rf "$TEST_DIR" /tmp/.vr-s2-*; exit 1
             fi
             rm -rf "$TEST_DIR" /tmp/.vr-s2-*
             """);
 
-        var (exitCode, _, stderr) = await RunBashTestAsync("prov-install", testBody);
+        var (exitCode, _, stderr) = await RunBashTestAsync("prov-no-global", testBody);
         if (!string.IsNullOrEmpty(stderr))
             Assert.Fail($"Test failed:\n{stderr}");
         Assert.Equal(0, exitCode);
     }
 
     [Fact]
-    public async Task Provisioning_FirstRun_ProfileHasExpectedContent()
+    public async Task Provisioning_StillPullsSwivalPack()
     {
+        // The vr-guard profile extends swival, so the base pack must still be
+        // pulled (idempotent). Only the profile cp is retired, not the pull.
         var testBody = SetupRunAndAssert(bypassSandbox: false, stubNono: true, xdgRel: "xdg", """
-            PROFILE_DIR="$TEST_DIR/xdg/nono/profiles"
-            PROFILE="$PROFILE_DIR/vr-guard.json"
-            if [[ ! -f "$PROFILE" ]]; then
-                echo "FAIL: vr-guard.json not installed on first run" >&2
-                rm -rf "$TEST_DIR" /tmp/.vr-s2-*; exit 1
-            fi
-            if ! grep -q '"extends"' "$PROFILE"; then
-                echo "FAIL: installed profile missing expected content" >&2
-                echo "=== content ===" >&2; cat "$PROFILE" >&2
+            if ! grep -q 'pull jedisct1/swival' /tmp/.vr-s2-nono-argv 2>/dev/null; then
+                echo "FAIL: nono pull jedisct1/swival was not invoked" >&2
+                echo "=== nono argv ===" >&2; cat /tmp/.vr-s2-nono-argv >&2 || true
                 rm -rf "$TEST_DIR" /tmp/.vr-s2-*; exit 1
             fi
             rm -rf "$TEST_DIR" /tmp/.vr-s2-*
             """);
 
-        var (exitCode, _, stderr) = await RunBashTestAsync("prov-update", testBody);
+        var (exitCode, _, stderr) = await RunBashTestAsync("prov-pull", testBody);
         if (!string.IsNullOrEmpty(stderr))
             Assert.Fail($"Test failed:\n{stderr}");
         Assert.Equal(0, exitCode);

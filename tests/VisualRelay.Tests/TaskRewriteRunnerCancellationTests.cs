@@ -48,7 +48,7 @@ public sealed class TaskRewriteRunnerCancellationTests
         var (root, task, config) = SetupRepo();
         try
         {
-            var originalBytes = File.ReadAllBytes(task.MarkdownPath);
+            var originalBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
 
             using var cts = new CancellationTokenSource();
             await cts.CancelAsync();
@@ -61,7 +61,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
 
-            var currentBytes = File.ReadAllBytes(task.MarkdownPath);
+            var currentBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
             Assert.Equal(originalBytes, currentBytes);
 
             // When cancelled before the runner is invoked, LastInvocation is null
@@ -82,7 +82,7 @@ public sealed class TaskRewriteRunnerCancellationTests
         var (root, task, config) = SetupRepo();
         try
         {
-            var originalBytes = File.ReadAllBytes(task.MarkdownPath);
+            var originalBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
 
             using var cts = new CancellationTokenSource();
             var fake = new PostWriteCancellationRunner(RewrittenSpec, cts.Token);
@@ -93,7 +93,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
 
-            var currentBytes = File.ReadAllBytes(task.MarkdownPath);
+            var currentBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
             Assert.Equal(originalBytes, currentBytes);
 
             Assert.False(Directory.Exists(fake.WorktreeRoot),

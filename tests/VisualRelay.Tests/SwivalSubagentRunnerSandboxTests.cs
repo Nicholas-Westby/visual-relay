@@ -37,9 +37,9 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // Launched process is nono, not swival.
         Assert.Equal("nono", fileName);
 
-        // Exact nono prefix: run -p vr-guard --allow-cwd --rollback --no-rollback-prompt -- swival ...
+        // Exact nono prefix: run --profile <abs> --allow-cwd --rollback --no-rollback-prompt -- swival ...
         Assert.Equal(
-            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
             args.Take(8));
 
         // Everything after `-- swival` is the swival arg list, unchanged.
@@ -131,26 +131,26 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
     {
-        // Swival path: rollback=true → run -p vr-guard --allow-cwd --rollback --no-rollback-prompt --
+        // Swival path: rollback=true → run --profile <abs> --allow-cwd --rollback --no-rollback-prompt --
         var config = TestConfig() with { BypassSandbox = false };
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
 
         Assert.Equal(
-            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
             prefix);
     }
 
     [Fact]
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
-        // Verification path: rollback=false → run -p vr-guard --allow-cwd --
+        // Verification path: rollback=false → run --profile <abs> --allow-cwd --
         var config = TestConfig() with { BypassSandbox = false };
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
         Assert.Equal(
-            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" },
             prefix);
     }
 
@@ -164,10 +164,10 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var swivalPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        // Both start with: run -p vr-guard --allow-cwd
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" },
+        // Both start with: run --profile <abs> --allow-cwd
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" },
             swivalPrefix.Take(4));
-        Assert.Equal(new[] { "run", "-p", "vr-guard", "--allow-cwd" },
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" },
             verifyPrefix.Take(4));
 
         // Swival has --rollback --no-rollback-prompt at positions 4,5 then -- at 6.
@@ -269,7 +269,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
 
         Assert.Equal("nono", fileName);
         Assert.Equal(
-            new[] { "run", "-p", "vr-guard", "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--", "swival" },
             args.Take(8));
 
         // Swival args follow after -- swival
@@ -278,21 +278,18 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         Assert.Equal(swivalArgs, args.Skip(separatorIdx + 2));
     }
 
+    // The VR-owned profile abs path the prefix now carries (--profile <abs>),
+    // resolved from the real process env exactly as production does.
+    private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+
     private static RelayConfig TestConfig() =>
-        new(
-            "llm-tasks",
-            "true",
-            "true",
-            [],
+        new("llm-tasks", "true", "true", [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
-            1,
-            1,
-            1,
-            false,
-            true,
-            5_000,
-            300_000,
-            new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
-            660_000,
-            2);
+            1, 1, 1, false, true,
+            SubagentTimeoutMilliseconds: 5_000,
+            TestTimeoutMilliseconds: 300_000,
+            FirstOutputTimeoutMsByTier: new Dictionary<string, int>
+            { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
+            FirstOutputTimeoutMs: 660_000,
+            MaxStallRetries: 2);
 }
