@@ -3,10 +3,11 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Guards;
 
 /// <summary>
-/// CLI runner for the advisory shell-script size guard: lists git-tracked files,
+/// CLI runner for the enforcing shell-script size guard: lists git-tracked files,
 /// reads them, and reports shell scripts whose logic-line count exceeds the limit
-/// (default 20, <c>--max N</c> or <c>VISUAL_RELAY_SHELL_LINE_LIMIT</c>). Advisory —
-/// always exits 0. Git is routed through <see cref="GitInvoker"/>.
+/// (default 20, <c>--max N</c> or <c>VISUAL_RELAY_SHELL_LINE_LIMIT</c>). Exits
+/// non-zero (1) when any script is over the limit. Git is routed through
+/// <see cref="GitInvoker"/>.
 /// </summary>
 public static class ShellSizeGuardRunner
 {
@@ -19,7 +20,7 @@ public static class ShellSizeGuardRunner
         if (exitCode != 0 || timedOut)
         {
             Console.Error.WriteLine("shell-size: git ls-files failed (exit " + exitCode + ")");
-            return 0; // advisory — exit 0
+            return 1; // enforcing — a failed enumeration is a failure, not a pass
         }
 
         var trackedFiles = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
@@ -50,23 +51,19 @@ public static class ShellSizeGuardRunner
         }
 
         Console.WriteLine($"shell-size: {violations.Count} script(s) over the limit.");
-        return 0;
+        return violations.Count > 0 ? 1 : 0;
     }
 
     private static int ResolveLimit(string[] args)
     {
-        var limit = 20;
+        // The shared default + env var (so the gate and the report never diverge),
+        // with an additional ad-hoc --max override for this runner.
+        var limit = ShellSizeGuard.ResolveLimit();
         var maxArgIndex = Array.IndexOf(args, "--max");
         if (maxArgIndex >= 0 && maxArgIndex + 1 < args.Length
             && int.TryParse(args[maxArgIndex + 1], out var parsed))
         {
             limit = parsed;
-        }
-
-        var envLimit = Environment.GetEnvironmentVariable("VISUAL_RELAY_SHELL_LINE_LIMIT");
-        if (envLimit is not null && int.TryParse(envLimit, out var envParsed))
-        {
-            limit = envParsed;
         }
 
         return limit;

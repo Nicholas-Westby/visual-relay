@@ -6,10 +6,27 @@ namespace VisualRelay.Guards;
 /// </summary>
 public static class ShellSizeGuard
 {
+    /// <summary>The default per-script logic-line limit (a ceiling, not a target).</summary>
+    public const int DefaultLimit = 20;
+
+    /// <summary>The environment variable that overrides <see cref="DefaultLimit"/>.</summary>
+    private const string LimitEnvVar = "VISUAL_RELAY_SHELL_LINE_LIMIT";
+
     /// <summary>
     /// Describes a single violation.
     /// </summary>
     public sealed record Violation(string Path, int Count, int Limit);
+
+    /// <summary>
+    /// Resolves the limit from <see cref="LimitEnvVar"/>, falling back to
+    /// <see cref="DefaultLimit"/>. The enforcing test and the ad-hoc runner both
+    /// call this so the gate and the report can never diverge.
+    /// </summary>
+    public static int ResolveLimit()
+    {
+        var env = Environment.GetEnvironmentVariable(LimitEnvVar);
+        return int.TryParse(env, out var parsed) ? parsed : DefaultLimit;
+    }
 
     /// <summary>
     /// Returns an ordered list of violations for shell scripts whose logic-line count

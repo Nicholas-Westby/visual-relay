@@ -2,7 +2,7 @@ using VisualRelay.Guards;
 
 // VisualRelay.Guards — the C# home for the repo's policy guards (ports of the
 // retired tools/guards/*.sh). Dispatch on the first arg:
-//   shell-size (default) — advisory: shell scripts over the logic-line limit
+//   shell-size (default) — enforcing: shell scripts over the logic-line limit (exit 1)
 //   file-size            — *.cs/*.axaml under src/tests/tools over the limit
 //   source-enumeration   — stale virtio-fs/readdir cache detector (pre-build)
 // shell-size is the default so `./visual-relay guards` keeps working.
@@ -14,7 +14,7 @@ var repoRoot = GuardRepoRoot.Resolve();
 if (repoRoot is null)
 {
     Console.Error.WriteLine("guards: could not find repo root (no visual-relay file walking up).");
-    return sub == "shell-size" ? 0 : 1; // shell-size is advisory; the gates are blocking
+    return 1; // every guard is blocking — a missing root is a failure, not a pass
 }
 
 return sub switch
