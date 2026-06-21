@@ -3,7 +3,7 @@ using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.Tests;
 
-public sealed class MainWindowViewModelLayoutTests : IDisposable
+public sealed partial class MainWindowViewModelLayoutTests : IDisposable
 {
     private readonly TestRepository _repo = TestRepository.Create();
     private readonly DictionaryEnvironmentAccessor _env = new();

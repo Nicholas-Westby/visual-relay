@@ -17,10 +17,15 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void SystemTab_Ready_UsesSelectableTextBlockInScrollViewer()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 01 (Ideate)";
-        vm.StageDetail.SystemState = StageDetailState.Ready;
-        vm.StageDetail.SystemPromptText = "You are a system. Be helpful.";
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 01 (Ideate)",
+                SystemState = StageDetailState.Ready,
+                SystemPromptText = "You are a system. Be helpful.",
+            }
+        };
 
         var window = new MainWindow
         {
@@ -55,13 +60,18 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void InputTab_Ready_UsesExpandersWithCollapsedByDefault()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 04 (Implement)";
-        vm.StageDetail.InputState = StageDetailState.Ready;
-        vm.StageDetail.InputSections = new PromptSection[]
+        var vm = new MainWindowViewModel
         {
-            new("Task input", "Write the code.", false),
-            new("Prior stages", "## Stage 1\nold output", true),
+            StageDetail =
+            {
+                Header = "Stage 04 (Implement)",
+                InputState = StageDetailState.Ready,
+                InputSections = new PromptSection[]
+                {
+                    new("Task input", "Write the code.", false),
+                    new("Prior stages", "## Stage 1\nold output", true),
+                },
+            }
         };
 
         var window = new MainWindow
@@ -95,14 +105,19 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void OutputTab_Ready_RendersFieldsByKind()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 05 (Author-tests)";
-        vm.StageDetail.OutputState = StageDetailState.Ready;
-        vm.StageDetail.OutputFields = new OutputField[]
+        var vm = new MainWindowViewModel
         {
-            new("summary", OutputFieldKind.Text, "Created tests."),
-            new("testFiles", OutputFieldKind.List, "a.cs\nb.cs"),
-            new("metadata", OutputFieldKind.Json, """{"count": 3}"""),
+            StageDetail =
+            {
+                Header = "Stage 05 (Author-tests)",
+                OutputState = StageDetailState.Ready,
+                OutputFields = new OutputField[]
+                {
+                    new("summary", OutputFieldKind.Text, "Created tests."),
+                    new("testFiles", OutputFieldKind.List, "a.cs\nb.cs"),
+                    new("metadata", OutputFieldKind.Json, """{"count": 3}"""),
+                },
+            }
         };
 
         var window = new MainWindow
@@ -133,14 +148,19 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void OutputTab_RawJsonToggle_ShowsRawJson()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 01 (Ideate)";
-        vm.StageDetail.OutputState = StageDetailState.Ready;
-        vm.StageDetail.OutputFields = new OutputField[]
+        var vm = new MainWindowViewModel
         {
-            new("summary", OutputFieldKind.Text, "Framed."),
+            StageDetail =
+            {
+                Header = "Stage 01 (Ideate)",
+                OutputState = StageDetailState.Ready,
+                OutputFields = new OutputField[]
+                {
+                    new("summary", OutputFieldKind.Text, "Framed."),
+                },
+                RawJson = """{"summary": "Framed.", "options": ["a", "b"]}""",
+            }
         };
-        vm.StageDetail.RawJson = """{"summary": "Framed.", "options": ["a", "b"]}""";
 
         var window = new MainWindow
         {

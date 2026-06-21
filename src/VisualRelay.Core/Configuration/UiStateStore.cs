@@ -60,7 +60,13 @@ public static class UiStateStore
 
             var path = Path.Combine(dir, FileName);
             var json = JsonSerializer.Serialize(state);
-            File.WriteAllText(path, json);
+
+            // Write to a temp file in the same directory, then atomically swap it
+            // into place so a crash mid-write can never leave a truncated/corrupt
+            // ui-state.json (which Load would then discard back to defaults).
+            var tmp = Path.Combine(dir, FileName + ".tmp");
+            File.WriteAllText(tmp, json);
+            File.Move(tmp, path, overwrite: true);
         }
         catch
         {

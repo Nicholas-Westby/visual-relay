@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
-using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
@@ -53,10 +52,15 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void SystemPromptReady_SystemTabShowsPromptText()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 01 (Ideate)";
-        vm.StageDetail.SystemState = StageDetailState.Ready;
-        vm.StageDetail.SystemPromptText = "You are a senior software engineer. Frame the task.";
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 01 (Ideate)",
+                SystemState = StageDetailState.Ready,
+                SystemPromptText = "You are a senior software engineer. Frame the task.",
+            }
+        };
 
         var window = new MainWindow
         {
@@ -82,9 +86,14 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void NotStartedStage_InputTabShowsTransitionalMessage()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 03 (Diagnose)";
-        vm.StageDetail.InputState = StageDetailState.NotStarted;
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 03 (Diagnose)",
+                InputState = StageDetailState.NotStarted,
+            }
+        };
 
         var window = new MainWindow
         {
@@ -110,9 +119,14 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void NotCompleteStage_OutputTabShowsTransitionalMessage()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 04 (Implement)";
-        vm.StageDetail.OutputState = StageDetailState.NotComplete;
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 04 (Implement)",
+                OutputState = StageDetailState.NotComplete,
+            }
+        };
 
         var window = new MainWindow
         {
@@ -138,11 +152,16 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void DriverStage_AllThreeTabsShowDriverMessage()
     {
-        var vm = new MainWindowViewModel();
-        vm.StageDetail.Header = "Stage 12 (Commit)";
-        vm.StageDetail.SystemState = StageDetailState.DriverStage;
-        vm.StageDetail.InputState = StageDetailState.DriverStage;
-        vm.StageDetail.OutputState = StageDetailState.DriverStage;
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 12 (Commit)",
+                SystemState = StageDetailState.DriverStage,
+                InputState = StageDetailState.DriverStage,
+                OutputState = StageDetailState.DriverStage,
+            }
+        };
 
         var window = new MainWindow
         {

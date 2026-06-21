@@ -21,7 +21,7 @@ public sealed partial class ActivityColumnTabsUiTests
         var vm = new MainWindowViewModel();
         vm.Events.Add(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "stage_start", "run-1", "/tmp",
-            "task-1", 1, "cheap", 1, null));
+            "task-1", 1, "cheap", 1));
 
         var window = new MainWindow
         {
@@ -41,7 +41,7 @@ public sealed partial class ActivityColumnTabsUiTests
         // The Events ListBox should exist somewhere under the RunLogView.
         var listBox = runLogView.GetVisualDescendants()
             .OfType<ListBox>()
-            .FirstOrDefault(lb => lb.ItemsSource == vm.Events);
+            .FirstOrDefault(lb => ReferenceEquals(lb.ItemsSource, vm.Events));
         Assert.NotNull(listBox);
         Assert.True(listBox.ItemCount >= 1);
     }

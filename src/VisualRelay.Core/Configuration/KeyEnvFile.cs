@@ -24,7 +24,10 @@ public static class KeyEnvFile
 
     /// <summary>
     /// Reads an environment variable through <paramref name="accessor"/> when
-    /// non-null, falling back to the real process environment.
+    /// non-null, falling back to the real process environment. The fallback is
+    /// by design: callers (e.g. the settings panel) inject an accessor that
+    /// overrides only specific keys and expect the rest to resolve against the
+    /// real environment.
     /// </summary>
     public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>
         accessor?.GetEnvironmentVariable(name)

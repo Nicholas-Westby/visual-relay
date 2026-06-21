@@ -42,6 +42,12 @@ public partial class MainWindowViewModel
 
     // ── Activity column width ──────────────────────────────────────────────
 
+    /// <summary>Lower clamp for the activity column width (matches the splitter-drag floor).</summary>
+    public const double MinActivityColumnWidth = 300;
+
+    /// <summary>Upper clamp for the activity column width.</summary>
+    public const double MaxActivityColumnWidth = 1200;
+
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ActivityColumnEffectiveWidth))]
     private double _activityColumnWidth = 340;

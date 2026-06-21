@@ -9,10 +9,9 @@ public sealed class ArchiveDayGroupingTests
     public void Today_FirstTaskLocalDateEqualsToday_ReturnsToday()
     {
         var today = new DateOnly(2026, 6, 20);
-        // UTC noon = local 5am PDT (UTC-7) → still June 20
         var tasks = new[]
         {
-            Archived("a", new DateTimeOffset(2026, 6, 20, 12, 0, 0, TimeSpan.Zero)),
+            Archived("a", AtLocal(2026, 6, 20, 5, 0)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -26,7 +25,7 @@ public sealed class ArchiveDayGroupingTests
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("a", new DateTimeOffset(2026, 6, 19, 10, 0, 0, TimeSpan.Zero)),
+            Archived("a", AtLocal(2026, 6, 19, 10, 0)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -40,7 +39,7 @@ public sealed class ArchiveDayGroupingTests
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("a", new DateTimeOffset(2026, 6, 17, 8, 0, 0, TimeSpan.Zero)),
+            Archived("a", AtLocal(2026, 6, 17, 8, 0)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -60,8 +59,8 @@ public sealed class ArchiveDayGroupingTests
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("a", new DateTimeOffset(2026, 6, 20, 10, 0, 0, TimeSpan.Zero)),
-            Archived("b", new DateTimeOffset(2026, 6, 20, 14, 0, 0, TimeSpan.Zero)),
+            Archived("a", AtLocal(2026, 6, 20, 10, 0)),
+            Archived("b", AtLocal(2026, 6, 20, 14, 0)),
         };
 
         var firstHeading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -72,13 +71,14 @@ public sealed class ArchiveDayGroupingTests
     }
 
     [Fact]
-    public void UtcEvening_MapsToCorrectLocalDay()
+    public void LocalEvening_StaysOnSameLocalDay()
     {
-        // UTC 2026-06-17T23:30:00Z → PDT (UTC-7) = 2026-06-17T16:30:00 → still June 17.
+        // A task completed at local 16:30 on June 17 stays on June 17
+        // regardless of the machine's timezone.
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("late", new DateTimeOffset(2026, 6, 17, 23, 30, 0, TimeSpan.Zero)),
+            Archived("late", AtLocal(2026, 6, 17, 16, 30)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -90,13 +90,14 @@ public sealed class ArchiveDayGroupingTests
     }
 
     [Fact]
-    public void UtcMidnightCrossesToPreviousLocalDay()
+    public void LateLocalEvening_StaysOnPreviousLocalDay()
     {
-        // UTC 2026-06-18T02:00:00Z → PDT (UTC-7) = 2026-06-17T19:00:00 → June 17.
+        // A task completed at local 19:00 on June 17 belongs to June 17,
+        // not the following calendar day — independent of timezone.
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("cross", new DateTimeOffset(2026, 6, 18, 2, 0, 0, TimeSpan.Zero)),
+            Archived("cross", AtLocal(2026, 6, 17, 19, 0)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -126,13 +127,13 @@ public sealed class ArchiveDayGroupingTests
         var tasks = new[]
         {
             // Day 1: June 20 (today) — two tasks
-            Archived("a", new DateTimeOffset(2026, 6, 20, 14, 0, 0, TimeSpan.Zero)),
-            Archived("b", new DateTimeOffset(2026, 6, 20, 10, 0, 0, TimeSpan.Zero)),
+            Archived("a", AtLocal(2026, 6, 20, 14, 0)),
+            Archived("b", AtLocal(2026, 6, 20, 10, 0)),
             // Day 2: June 18 — one task
-            Archived("c", new DateTimeOffset(2026, 6, 18, 9, 0, 0, TimeSpan.Zero)),
+            Archived("c", AtLocal(2026, 6, 18, 9, 0)),
             // Day 3: June 15 — two tasks
-            Archived("d", new DateTimeOffset(2026, 6, 15, 18, 0, 0, TimeSpan.Zero)),
-            Archived("e", new DateTimeOffset(2026, 6, 15, 8, 0, 0, TimeSpan.Zero)),
+            Archived("d", AtLocal(2026, 6, 15, 18, 0)),
+            Archived("e", AtLocal(2026, 6, 15, 8, 0)),
         };
 
         Assert.Equal("Today", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
@@ -146,12 +147,12 @@ public sealed class ArchiveDayGroupingTests
     [Fact]
     public void YesterdayBoundary_CrossesAtMidnightLocal()
     {
-        // Today is June 20. A task completed at local time 2026-06-19T23:59:00
-        // (UTC: 2026-06-20T06:59:00Z for PDT) should get "Yesterday".
+        // Today is June 20. A task completed at local 2026-06-19T23:59:00
+        // should get "Yesterday" on any machine timezone.
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("y", new DateTimeOffset(2026, 6, 20, 6, 59, 0, TimeSpan.Zero)),
+            Archived("y", AtLocal(2026, 6, 19, 23, 59)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
@@ -160,19 +161,29 @@ public sealed class ArchiveDayGroupingTests
     }
 
     [Fact]
-    public void TodayBoundary_EarlyMorningUtcStillToday()
+    public void TodayBoundary_EarlyMorningLocalStillToday()
     {
-        // Today is June 20. A task completed at UTC 2026-06-20T10:00:00Z
-        // = local 3am PDT → still June 20 → "Today".
+        // Today is June 20. A task completed at local 03:00 on June 20
+        // is still "Today" regardless of timezone.
         var today = new DateOnly(2026, 6, 20);
         var tasks = new[]
         {
-            Archived("t", new DateTimeOffset(2026, 6, 20, 10, 0, 0, TimeSpan.Zero)),
+            Archived("t", AtLocal(2026, 6, 20, 3, 0)),
         };
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
 
         Assert.Equal("Today", heading);
+    }
+
+    // Builds a DateTimeOffset at the given LOCAL wall-clock time using the
+    // machine's own UTC offset for that instant. HeadingFor groups by
+    // .ToLocalTime().Date, so anchoring construction to local time keeps every
+    // boundary assertion true on any agent timezone (UTC, Pacific, etc.).
+    private static DateTimeOffset AtLocal(int year, int month, int day, int hour, int minute)
+    {
+        var local = new DateTime(year, month, day, hour, minute, 0, DateTimeKind.Local);
+        return new DateTimeOffset(local);
     }
 
     private static RelayTaskItem Archived(string id, DateTimeOffset completedAt) =>

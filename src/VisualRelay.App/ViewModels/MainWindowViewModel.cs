@@ -51,7 +51,10 @@ public partial class MainWindowViewModel : ViewModelBase
         _rootPath = RootFolderDisplay.DefaultPath();
 
         var uiState = UiStateStore.Load(EnvironmentAccessor);
-        _activityColumnWidth = uiState.ActivityColumnWidth;
+        // Clamp a stale or absurd persisted width so a corrupt ui-state.json
+        // can never break layout on startup (mirrors the splitter-drag clamp).
+        _activityColumnWidth = Math.Clamp(
+            uiState.ActivityColumnWidth, MinActivityColumnWidth, MaxActivityColumnWidth);
         _activityTabIndex = uiState.ActivityTabIndex;
 
         foreach (var stage in RelayStages.All)

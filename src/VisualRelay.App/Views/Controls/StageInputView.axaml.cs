@@ -1,4 +1,3 @@
-using System;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
@@ -13,15 +12,21 @@ public partial class StageInputView : UserControl
         InitializeComponent();
     }
 
-    public async void CopyPromptSectionBody_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private async void CopyPromptSectionBody_Click(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        if (sender is Button btn && btn.DataContext is PromptSection section)
+        // Event handler must be async void; guard so an unhandled exception in
+        // the clipboard flow can never tear down the process.
+        try
         {
-            var topLevel = TopLevel.GetTopLevel(this);
-            if (topLevel?.Clipboard is { } clipboard)
+            if (sender is Button { DataContext: PromptSection section }
+                && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
             {
                 await clipboard.SetValueAsync(DataFormat.Text, section.Body);
             }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Copy prompt section failed: {ex}");
         }
     }
 }

@@ -103,6 +103,6 @@ public static partial class AssembledPromptParser
         return sections;
     }
 
-    [GeneratedRegex(@"^## (.+)$", RegexOptions.Multiline)]
+    [GeneratedRegex("^## (.+)$", RegexOptions.Multiline)]
     private static partial Regex HeadingRegex();
 }

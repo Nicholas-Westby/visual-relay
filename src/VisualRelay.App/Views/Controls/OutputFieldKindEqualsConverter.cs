@@ -1,4 +1,3 @@
-using System;
 using System.Globalization;
 using Avalonia.Data.Converters;
 using VisualRelay.App.Services;
@@ -7,7 +6,7 @@ namespace VisualRelay.App.Views.Controls;
 
 /// <summary>
 /// Returns true when the bound <see cref="OutputFieldKind"/> equals the
-/// <see cref="ConverterParameter"/> string (case-sensitive).
+/// binding's <c>ConverterParameter</c> string (case-sensitive).
 /// </summary>
 public class OutputFieldKindEqualsConverter : IValueConverter
 {
@@ -20,6 +19,6 @@ public class OutputFieldKindEqualsConverter : IValueConverter
         return false;
     }
 
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    public object ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }

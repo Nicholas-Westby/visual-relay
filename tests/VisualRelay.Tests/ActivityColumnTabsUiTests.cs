@@ -140,8 +140,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void ColumnHeader_TitleIsActivity_KeepRevealAndScopeLabel()
     {
-        var vm = new MainWindowViewModel();
-        vm.LogScopeLabel = "ideate";
+        var vm = new MainWindowViewModel { LogScopeLabel = "ideate" };
 
         var window = new MainWindow
         {
@@ -156,7 +155,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.NotNull(activityColumn);
 
         // Header should say "ACTIVITY", not "RUN LOG".
-        var allTextBlocks = activityColumn.GetVisualDescendants().OfType<TextBlock>();
+        var allTextBlocks = activityColumn.GetVisualDescendants().OfType<TextBlock>().ToList();
         var headerTitle = allTextBlocks.FirstOrDefault(tb => tb.Text == "ACTIVITY");
         Assert.NotNull(headerTitle); // FAILS: currently says "RUN LOG"
 
@@ -185,9 +184,8 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void Rail_HasSingleButtonAndActivityLabel()
     {
-        var vm = new MainWindowViewModel();
         // Force the rail visible by collapsing the column.
-        vm.IsActivityColumnCollapsed = true;
+        var vm = new MainWindowViewModel { IsActivityColumnCollapsed = true };
 
         var window = new MainWindow
         {
@@ -223,7 +221,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.Single(railButtons); // FAILS: currently has 2 buttons
 
         // The rail label says "ACTIVITY", not "RUN LOG" or "LLM CMDS".
-        var railTextBlocks = activeRail.GetVisualDescendants().OfType<TextBlock>();
+        var railTextBlocks = activeRail.GetVisualDescendants().OfType<TextBlock>().ToList();
         var activityLabel = railTextBlocks.FirstOrDefault(tb => tb.Text == "ACTIVITY");
         Assert.NotNull(activityLabel); // FAILS: currently says "RUN LOG" and "LLM CMDS"
 
@@ -236,14 +234,14 @@ public sealed partial class ActivityColumnTabsUiTests
 
     // ── helpers ──────────────────────────────────────────────────────────
 
-    internal static string? GetTabHeader(TabControl tabControl, int index)
+    private static string? GetTabHeader(TabControl tabControl, int index)
     {
         if (tabControl.Items[index] is TabItem tabItem)
             return tabItem.Header?.ToString();
         return null;
     }
 
-    internal static void AssertContainsText(Control root, string expected)
+    private static void AssertContainsText(Control root, string expected)
     {
         var allText = root.GetVisualDescendants()
             .OfType<TextBlock>()
@@ -262,7 +260,7 @@ public sealed partial class ActivityColumnTabsUiTests
     /// runs the dispatcher, then finds the first descendant of type <typeparamref name="T"/>.
     /// Necessary because TabControl defers creation of non-selected tab content.
     /// </summary>
-    internal static T SwitchToTabAndFindView<T>(ActivityColumn activityColumn, int tabIndex) where T : Control
+    private static T SwitchToTabAndFindView<T>(ActivityColumn activityColumn, int tabIndex) where T : Control
     {
         var tabControl = activityColumn.GetVisualDescendants()
             .OfType<TabControl>()
