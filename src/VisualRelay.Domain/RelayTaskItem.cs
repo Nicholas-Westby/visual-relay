@@ -11,7 +11,8 @@ public sealed record RelayTaskItem(
     string? ArchiveBatch = null,
     double CostUsd = 0,
     double DurationSeconds = 0,
-    int CompletedStageCount = 0)
+    int CompletedStageCount = 0,
+    DateTimeOffset? CompletedAt = null)
 {
     public bool NeedsReview => !string.IsNullOrWhiteSpace(ReviewReason);
     public string StateLabel => IsArchived ? "Completed" : NeedsReview ? "Needs review" : "Pending";

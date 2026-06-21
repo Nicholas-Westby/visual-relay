@@ -34,6 +34,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public bool NeedsReview => Task.NeedsReview;
     public bool IsArchived => Task.IsArchived;
     public IReadOnlyList<string> SiblingPaths => Task.SiblingPaths;
+    public string DayHeader { get; set; } = string.Empty;
     public string StateLabel => IsRunning ? "Running" : Task.StateLabel;
     public string MetricsLine => IsRunning
         ? string.IsNullOrEmpty(_runningElapsedLabel)

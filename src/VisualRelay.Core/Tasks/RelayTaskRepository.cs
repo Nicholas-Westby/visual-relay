@@ -1,22 +1,20 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Tasks;
 
-public sealed class RelayTaskRepository(string rootPath)
+public sealed class RelayTaskRepository(string rootPath, IGitInvoker? gitInvoker = null)
 {
     private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation"];
-    // PerFileContextLimit and TotalContextLimit live in TaskContentHelper.
 
     private string RootPath { get; } = rootPath;
-
     public async Task<IReadOnlyList<RelayTaskItem>> ListPendingAsync(CancellationToken cancellationToken = default)
     {
         return (await ListAsync(includeNeedsReview: false, cancellationToken))
             .Where(task => !task.NeedsReview)
             .ToArray();
     }
-
     public async Task<IReadOnlyList<RelayTaskItem>> ListAsync(
         bool includeNeedsReview = true,
         CancellationToken cancellationToken = default)
@@ -55,9 +53,7 @@ public sealed class RelayTaskRepository(string rootPath)
         var config = loaded.Config;
         var tasksRoot = Path.Combine(RootPath, config.TasksDir);
         var tasks = new List<RelayTaskItem>();
-        // Top-level DONE-*.md files (stranded when batch move was skipped),
-        // and DONE-*.md files in regular subdirectories (folder tasks where the
-        // only .md is DONE-prefixed — these are skipped by EmitSingleTaskFromFolder).
+        // Top-level DONE-*.md and folder DONE-*.md where the only .md is DONE-prefixed.
         if (Directory.Exists(tasksRoot))
         {
             foreach (var file in Directory.EnumerateFiles(tasksRoot, "DONE-*.md", SearchOption.TopDirectoryOnly))
@@ -128,14 +124,23 @@ public sealed class RelayTaskRepository(string rootPath)
             }
         }
 
-        return tasks
-            .Select(AttachRunMetrics)
-            .OrderByDescending(task => File.GetLastWriteTimeUtc(task.MarkdownPath))
+        var result = tasks.Select(AttachRunMetrics).ToArray();
+        for (var i = 0; i < result.Length; i++)
+            if (result[i].IsArchived && result[i].CompletedAt is null)
+            {
+                var resolved = await CompletionTimeResolver.ResolveAsync(
+                    result[i], RootPath, gitInvoker, cancellationToken);
+                if (resolved is not null)
+                    result[i] = result[i] with { CompletedAt = resolved };
+            }
+
+        return result
+            .OrderByDescending(t => t.CompletedAt)
+            .ThenBy(t => t.Id, StringComparer.Ordinal)
             .ToArray();
     }
 
-    /// <summary>Picks the canonical DONE-*.md for a directory: the file whose
-    /// id matches the directory name, or the shortest filename as fallback.</summary>
+    /// <summary>Picks the canonical DONE-*.md for a directory.</summary>
     private static string? FindCanonicalArchivedPath(string directory, string[] doneFiles)
     {
         var dirName = Path.GetFileName(directory);
@@ -163,17 +168,12 @@ public sealed class RelayTaskRepository(string rootPath)
         {
             var name = Path.GetFileName(path);
             if (IsSkippedName(name))
-            {
                 continue;
-            }
 
             if (Directory.Exists(path))
             {
                 if (!SkippedDirectories.Contains(name))
-                {
                     EmitSingleTaskFromFolder(path, tasks);
-                }
-
                 continue;
             }
 
@@ -243,11 +243,15 @@ public sealed class RelayTaskRepository(string rootPath)
     private RelayTaskItem AttachRunMetrics(RelayTaskItem task)
     {
         var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);
+        var maxTs = metric.Stages.Count > 0
+            ? metric.Stages.Max(s => s.Timestamp)
+            : (DateTimeOffset?)null;
         return task with
         {
             CostUsd = metric.CostUsd,
             DurationSeconds = metric.DurationSeconds,
-            CompletedStageCount = metric.CompletedStageCount
+            CompletedStageCount = metric.CompletedStageCount,
+            CompletedAt = task.IsArchived ? maxTs : null
         };
     }
 

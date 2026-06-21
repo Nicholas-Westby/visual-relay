@@ -277,7 +277,11 @@ public sealed class RelayTaskRepositoryTests
         Assert.Equal("top", tasks[1].Id);
     }
 
-    private static void WriteReport(string root, string taskId, int stage, string model, double duration, int tokens)
+    private static void WriteReport(string root, string taskId, int stage, string model, double duration, int tokens) =>
+        WriteReportWithTimestamp(root, taskId, stage, "2026-05-31T20:00:00+00:00", duration, tokens, model);
+
+    internal static void WriteReportWithTimestamp(string root, string taskId, int stage,
+        string timestamp, double duration, int tokens, string model = "cheap")
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
         Directory.CreateDirectory(taskDirectory);
@@ -285,7 +289,7 @@ public sealed class RelayTaskRepositoryTests
             Path.Combine(taskDirectory, $"stage{stage}-attempt1.report.json"),
             $$"""
             {
-              "timestamp": "2026-05-31T20:00:00+00:00",
+              "timestamp": "{{timestamp}}",
               "model": "{{model}}",
               "result": { "answer": "ok" },
               "stats": { "total_llm_time_s": {{duration}}, "prompt_cache": { "cached_tokens": 0 } },

@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
@@ -130,7 +131,7 @@ public partial class MainWindowViewModel
             InitTestCommandInput = TestCommandDetector.Detect(RootPath);
         }
 
-        var repository = new RelayTaskRepository(RootPath);
+        var repository = new RelayTaskRepository(RootPath, new GitInvoker());
         Tasks.Clear();
         // The archive is sorted by completion time and is not reorderable; only the
         // pending queue honors the user's persisted manual order (alphabetical
@@ -138,9 +139,13 @@ public partial class MainWindowViewModel
         var tasks = ShowArchive
             ? await repository.ListCompletedAsync()
             : new TaskOrderStore(RootPath).Apply(await repository.ListAsync(), task => task.Id);
-        foreach (var task in tasks)
+        var today = DateOnly.FromDateTime(DateTimeOffset.Now.LocalDateTime);
+        for (var i = 0; i < tasks.Count; i++)
         {
-            Tasks.Add(new TaskRowViewModel(task));
+            var row = new TaskRowViewModel(tasks[i]);
+            if (ShowArchive)
+                row.DayHeader = ArchiveDayGrouping.HeadingFor(tasks, i, today) ?? string.Empty;
+            Tasks.Add(row);
         }
 
         ApplyRunningTaskToRows();
