@@ -1,18 +1,24 @@
+using VisualRelay.CheckCommitMessage;
 using VisualRelay.Core.CommitLint;
 using VisualRelay.Core.Execution;
 
 // VisualRelay.CheckCommitMessage — the C# commit-message validator that the
-// .githooks/commit-msg wrapper execs. Two modes:
+// .githooks/commit-msg wrapper execs. Modes:
 //
 //   <commit-msg-file>      Hook mode: validate one pending commit message.
 //                          Driver tier (skip contextual rules) when
 //                          RELAY_COMMIT_TOKEN matches the active-run nonce.
 //   --check-history [range] Validate every commit in range (default: whole
 //                          branch) under the FULL ruleset; no driver relaxation.
+//   --rewrite-history <messages-dir> [range]
+//                          Rewrite history: per commit, take a conforming message
+//                          from <messages-dir>/<sha>.txt, else keep the original;
+//                          replay through the in-process engine. This one WRITES.
 //
-// Read-only: git reads + file reads only, never writes — sandbox-safe mid-run.
+// The two check modes are read-only (git reads + file reads only) — sandbox-safe
+// mid-run. --rewrite-history rebuilds the branch and is NOT read-only.
 //
-// Exit codes: 0 = clean, 1 = violations, 2 = usage error.
+// Exit codes: 0 = clean, 1 = violations / failure, 2 = usage error.
 
 if (args.Length == 0)
     return Usage();
@@ -26,13 +32,20 @@ if (args[0] == "--check-history")
     return await CheckHistoryAsync(git, cwd, range);
 }
 
+if (args[0] == "--rewrite-history")
+{
+    return await RewriteHistoryRunner.RunAsync(
+        args[1..], cwd, git, Console.Out, Console.Error, CancellationToken.None);
+}
+
 return await CheckOneAsync(git, cwd, args[0]);
 
 static int Usage()
 {
     Console.Error.WriteLine(
         "usage: VisualRelay.CheckCommitMessage <commit-msg-file>\n"
-        + "       VisualRelay.CheckCommitMessage --check-history [<range>]");
+        + "       VisualRelay.CheckCommitMessage --check-history [<range>]\n"
+        + "       VisualRelay.CheckCommitMessage --rewrite-history <messages-dir> [<range>]");
     return 2;
 }
 
