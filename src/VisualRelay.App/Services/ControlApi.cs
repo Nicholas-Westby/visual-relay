@@ -43,7 +43,7 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
 
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
-        ["select-task", "bypass-sandbox", "boost-turns", "open-folder"];
+        ["select-task", "bypass-sandbox", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge"];
 
     /// <summary>
     /// Invokes a documented command/action by name. Returns the HTTP status and
@@ -154,6 +154,33 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
                     }
 
                     return (200, Json.Object(("ok", true), ("command", name)));
+                }
+
+            case "obsidian-scan":
+                {
+                    _ = viewModel.RunObsidianBridgeScanAsync();
+                    return (200, Json.Object(("ok", true), ("command", name)));
+                }
+
+            case "obsidian-bridge":
+                {
+                    // Toggle enabled: {"value": true|false}
+                    var boolVal = Json.ReadBool(body, "value");
+                    if (boolVal.HasValue)
+                    {
+                        viewModel.ObsidianEnabled = boolVal.Value;
+                        return (200, Json.Object(("ok", true), ("command", name)));
+                    }
+
+                    // Set vault path: {"path": "…"}
+                    var path = Json.ReadString(body, "path");
+                    if (path is not null)
+                    {
+                        viewModel.ObsidianVaultRoot = path;
+                        return (200, Json.Object(("ok", true), ("command", name)));
+                    }
+
+                    return (409, Json.Object(("ok", false), ("command", name), ("error", "missing value or path")));
                 }
 
             default:

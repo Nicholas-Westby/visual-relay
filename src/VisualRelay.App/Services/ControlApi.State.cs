@@ -43,7 +43,13 @@ public sealed partial class ControlApi
                 status = s.Status,
                 tier = s.Tier
             }).ToArray(),
-            commands = BuildCommandsMap()
+            commands = BuildCommandsMap(),
+            obsidianBridge = new
+            {
+                enabled = vm.ObsidianEnabled,
+                vaultRoot = vm.ObsidianVaultRoot,
+                pollSeconds = vm.ObsidianPollSeconds
+            }
         };
     }
 
@@ -83,6 +89,8 @@ public sealed partial class ControlApi
         map["bypass-sandbox"] = new { enabled = true };
         map["boost-turns"] = new { enabled = viewModel.SelectedTask is not null };
         map["open-folder"] = new { enabled = true };
+        map["obsidian-scan"] = new { enabled = viewModel.ObsidianEnabled && !viewModel.IsBusy };
+        map["obsidian-bridge"] = new { enabled = true };
 
         return map;
     }

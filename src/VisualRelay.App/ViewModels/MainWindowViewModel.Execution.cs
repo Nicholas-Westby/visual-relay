@@ -269,6 +269,7 @@ public partial class MainWindowViewModel
         {
             var outcome = await driver.RunTaskAsync(RootPath, task.Id);
             StatusText = outcome.Status == RelayTaskOutcomeStatus.Committed ? $"Committed {task.Id}" : $"Flagged {task.Id}";
+            await ExportSummaryOnCompletion(task.Id, outcome);
             await LoadRunHistoryAsync(task.Id);
             if (PauseRequested)
             {

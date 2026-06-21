@@ -38,6 +38,7 @@ public partial class App : Application
             _ = viewModel.LoadInitialAsync();
             viewModel.StartBackendMonitoring();
             viewModel.StartElapsedTimer();
+            viewModel.StartObsidianBridge();
 
             // Localhost HTTP control surface so an operator can drive the app
             // from curl exactly as if clicking its buttons (loopback-only;
