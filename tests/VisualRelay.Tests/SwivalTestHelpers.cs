@@ -39,4 +39,27 @@ internal static class SwivalTestHelpers
 
         return path;
     }
+
+    /// <summary>
+    /// Writes a transparent passthrough <c>nono</c> stub and returns its path. The
+    /// sandbox is always on, so the runner always wraps swival as
+    /// <c>nono run --profile … --allow-cwd [flags] -- &lt;swival&gt; &lt;args&gt;</c>.
+    /// This stub skips everything up to and including the first <c>--</c>, then
+    /// execs the remainder, so a unit test exercises the real nono-wrapped launch
+    /// path while keeping the fake swival's stdout/stderr/timing fully under its
+    /// control (no dependency on the real nono's Seatbelt/Landlock startup or its
+    /// rollback preflight). Pass the returned path as the runner's
+    /// <c>nonoBinary</c>.
+    /// </summary>
+    public static Task<string> WritePassthroughNonoAsync(string rootPath) =>
+        WriteExecutableAsync(rootPath, "fake-nono-passthrough",
+            """
+            #!/usr/bin/env bash
+            # Skip args until the first "--", then exec the wrapped command verbatim.
+            while [[ $# -gt 0 ]]; do
+              if [[ "$1" == "--" ]]; then shift; break; fi
+              shift
+            done
+            exec "$@"
+            """);
 }

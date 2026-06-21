@@ -3,10 +3,11 @@ using System.Diagnostics;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Tests for bootstrap-2: unified prerequisite gate + nix devshell toolchain.
-/// The launcher must re-enter <c>nix develop</c> (once) when nono, uv, or
-/// dotnet (unless published) is missing, and the nono gate must run before any
-/// backend work.  These must FAIL before the implementation lands.
+/// Tests for bootstrap-2: the bash launcher re-enters <c>nix develop</c> exactly
+/// once (the reentry marker prevents a loop), execs the C# CLI otherwise, and the
+/// prerequisite gates that hard-fail on a missing nono/swival now live in the CLI
+/// (covered by <c>CliNonoGateTests</c>/<c>CliSwivalGateTests</c>). The sandbox is
+/// always on with no opt-out, so the launcher reads no bypass key.
 /// </summary>
 public sealed class Installer5Bootstrap2LauncherTests
 {
@@ -56,13 +57,12 @@ public sealed class Installer5Bootstrap2LauncherTests
     /// to /tmp/.vr-b2-nix-argv; the backend stub writes a flag to
     /// /tmp/.vr-b2-backend-ran.</summary>
     private static string SetupB2Test(
-        bool bypass, bool stubNono, bool stubNix, bool stubUv,
+        bool stubNono, bool stubNix, bool stubUv,
         string? marker, string assertions)
     {
         var no = stubNono ? Stub("nono") : "# nono absent";
         var nx = stubNix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
         var uv = stubUv ? Stub("uv") : "# uv absent";
-        var by = bypass ? "true" : "false";
         var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "VISUAL_RELAY_NIX_REENTRY=";
         return $$"""
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-*' EXIT
@@ -77,7 +77,7 @@ public sealed class Installer5Bootstrap2LauncherTests
             echo ran>>/tmp/.vr-b2-backend-ran
             exit 0
             X
-            echo '{"testCmd":"true","bypassSandbox":{{by}}}'>"$T/.relay/config.json"
+            echo '{"testCmd":"true"}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"; RC=0
             PATH="$S:/usr/bin:/bin" {{mk}} bash "$T/visual-relay" launch \
@@ -109,7 +109,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NonoMissing_NixAvailable_ReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(bypass: false, stubNono: false, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix not invoked for missing nono" >&2; exit 1
@@ -130,25 +130,26 @@ public sealed class Installer5Bootstrap2LauncherTests
         Assert.Equal(0, ec);
     }
 
-    // ── 2. bypass:true skips nono only; uv absence still triggers re-entry ─
+    // ── 2. no reentry marker + nix present → re-enter the devshell ───────
 
-    /// <summary>bypassSandbox removes the nono requirement, but the unified
-    /// gate still checks uv (soft want for launch).  When uv is absent and nix is
-    /// available, the gate must trigger re-entry even though nono is bypassed.
-    /// This proves bypass is scoped to nono, not a blanket skip of all checks.
+    /// <summary>
+    /// With no reentry marker and a real nix on PATH, the bootstrap enters
+    /// <c>nix develop</c> (the canonical toolchain env) before doing any work,
+    /// regardless of which tools are otherwise present. Backend work must not run
+    /// before that re-entry.
     /// </summary>
     [Fact]
-    public async Task Launch_BypassSandbox_UvMissing_StillReexecsForUv()
+    public async Task Launch_NoReentryMarker_NixPresent_ReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(bypass: true, stubNono: false, stubNix: true, stubUv: false,
+        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: false,
             marker: null, """
-            [[ -f /tmp/.vr-b2-nix-argv ]] || { echo "FAIL: nix not invoked (uv missing should trigger)" >&2; exit 1; }
+            [[ -f /tmp/.vr-b2-nix-argv ]] || { echo "FAIL: nix not invoked" >&2; exit 1; }
             grep -qFx develop /tmp/.vr-b2-nix-argv || { echo "FAIL: nix argv missing develop" >&2; exit 1; }
             if [[ -f /tmp/.vr-b2-backend-ran ]]; then
-              echo "FAIL: backend ran before gate" >&2; exit 1
+              echo "FAIL: backend ran before re-entry" >&2; exit 1
             fi
             """);
-        var (ec, _, err) = await RunBashTestAsync("b-bypass-uv-nix", body);
+        var (ec, _, err) = await RunBashTestAsync("b-noreentry-nix", body);
         if (!string.IsNullOrEmpty(err))
             Assert.Fail(err);
         Assert.Equal(0, ec);
@@ -166,7 +167,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_ReentryMarkerSet_DoesNotReenterNix_ExecsCli()
     {
-        var body = SetupB2Test(bypass: true, stubNono: false, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: true, stubUv: true,
             marker: "1", """
             if [[ -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix called again (loop) despite reentry marker" >&2; exit 1
@@ -183,7 +184,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_NonoMissing_NoNix_ExitsBeforeBackendRuns()
     {
-        var body = SetupB2Test(bypass: false, stubNono: false, stubNix: false, stubUv: true,
+        var body = SetupB2Test(stubNono: false, stubNix: false, stubUv: true,
             marker: null, """
             RC=$(cat /tmp/.vr-b2-rc)
             (( RC != 0 )) || { echo "FAIL: should exit non-zero" >&2; exit 1; }
@@ -214,7 +215,7 @@ public sealed class Installer5Bootstrap2LauncherTests
             printf '%s\n' "$@">>/tmp/.vr-b2-rt-nix-argv
             exit 0
             X
-            echo '{"testCmd":"true","bypassSandbox":false}'>"$T/.relay/config.json"
+            echo '{"testCmd":"true"}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"
             PATH="$S:/usr/bin:/bin" VISUAL_RELAY_NIX_REENTRY= bash "$T/visual-relay" run-task 'task-id' 2>/dev/null||true
@@ -240,7 +241,7 @@ public sealed class Installer5Bootstrap2LauncherTests
     [Fact]
     public async Task Launch_AllToolsPresent_StillReexecsViaNixDevelop()
     {
-        var body = SetupB2Test(bypass: false, stubNono: true, stubNix: true, stubUv: true,
+        var body = SetupB2Test(stubNono: true, stubNix: true, stubUv: true,
             marker: null, """
             if [[ ! -f /tmp/.vr-b2-nix-argv ]]; then
               echo "FAIL: nix not invoked when all tools present" >&2; exit 1

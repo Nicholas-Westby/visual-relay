@@ -10,11 +10,11 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class SwivalSubagentRunner
 {
     // Returns the required launch tools that do NOT resolve against PATH (empty
-    // ⇒ all present). swival is always required; nono is required only when the
-    // sandbox is on (BypassSandbox == false), because that is when nono wraps
-    // swival (see BuildLaunchTarget). PATH and the binary names are injectable so
-    // a test can simulate missing/present without touching the real PATH; callers
-    // probe the same PATH the launch uses (Environment.GetEnvironmentVariable).
+    // ⇒ all present). swival and nono are both always required: nono always wraps
+    // swival (see BuildLaunchTarget), so the sandbox is non-negotiable. PATH and
+    // the binary names are injectable so a test can simulate missing/present
+    // without touching the real PATH; callers probe the same PATH the launch uses
+    // (Environment.GetEnvironmentVariable).
     public static IReadOnlyList<string> MissingRequiredTools(
         RelayConfig config,
         string? pathValue = null,
@@ -34,7 +34,7 @@ public sealed partial class SwivalSubagentRunner
         var missing = new List<string>(2);
         if (!OnPath(swivalBinary))
             missing.Add(swivalBinary);
-        if (!config.BypassSandbox && !OnPath(nonoBinary))
+        if (!OnPath(nonoBinary))
             missing.Add(nonoBinary);
         return missing;
     }

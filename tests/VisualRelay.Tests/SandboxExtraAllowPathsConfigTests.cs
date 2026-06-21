@@ -193,7 +193,6 @@ public sealed class SandboxExtraAllowPathsConfigTests
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extra]
         };
 
@@ -211,7 +210,6 @@ public sealed class SandboxExtraAllowPathsConfigTests
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extra]
         };
 

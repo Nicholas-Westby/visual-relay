@@ -6,22 +6,6 @@ namespace VisualRelay.App.ViewModels;
 public partial class MainWindowViewModel
 {
     /// <summary>
-    /// When true, the nono OS-level sandbox is bypassed and Swival runs with
-    /// unguarded file-system access. Defaults to false (sandbox ON).
-    /// </summary>
-    [ObservableProperty]
-    private bool _bypassSandbox;
-
-    /// <summary>Persist every toggle to .relay/config.json.</summary>
-    partial void OnBypassSandboxChanged(bool value)
-    {
-        if (Directory.Exists(RootPath))
-        {
-            RelayConfigWriter.UpsertBypassSandbox(RootPath, value);
-        }
-    }
-
-    /// <summary>
     /// When true (default), the four proof files under .relay/&lt;taskId&gt;/
     /// (ledger.md, &lt;taskId&gt;.seals, manifest.txt, status.json) are force-added
     /// to each relay commit. When false, the proof files are still written to

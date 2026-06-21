@@ -36,8 +36,7 @@ If you are working from a source clone instead, use the launcher from the repo r
 The launcher requires `nono` for sandboxed Swival execution (install via `brew install nono`
 or from https://github.com/jedisct1/nono). If Nix is installed, `nono` (and all other
 prerequisites) are provided automatically by the devshell — no global install required.
-To run without the sandbox, set
-`bypassSandbox:true` in `.relay/config.json`.
+The sandbox is always on and `nono` is a hard requirement; there is no opt-out.
 
 The app opens with a native folder picker button. Point it at a repo containing
 `llm-tasks/` directories.
@@ -119,17 +118,9 @@ leaving reads, network, and all tools — including Playwright/Chromium — unre
 **accident containment**, not defense against a malicious agent: a stray `rm -rf` or `mv`
 outside the workspace is blocked by the OS.
 
-The sandbox is controlled by the `bypassSandbox` key in `.relay/config.json`:
-
-```json
-{
-  "testCmd": "dotnet test",
-  "bypassSandbox": true
-}
-```
-
-- **`false`** (default): Swival runs under nono with the `vr-guard` profile.
-- **`true`**: Sandbox is disabled; Swival runs with full filesystem access.
+The sandbox is **always on** — there is no opt-out. Every Swival subagent and every
+verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,
+always-required dependency.
 
 The `vr-guard` profile ships with Visual Relay and is installed automatically to
 `${XDG_CONFIG_HOME:-$HOME/.config}/nono/profiles/`. A missing nono binary is a hard error.

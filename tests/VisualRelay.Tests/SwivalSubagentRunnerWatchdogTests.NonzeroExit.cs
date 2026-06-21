@@ -48,7 +48,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStallRetries = 1
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -124,7 +125,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStallRetries = 1  // 1 retry → 2 total attempts before flagging
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -199,7 +201,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 

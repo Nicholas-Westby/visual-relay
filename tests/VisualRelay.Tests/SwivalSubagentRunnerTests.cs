@@ -23,7 +23,8 @@ public sealed partial class SwivalSubagentRunnerTests
             echo "profile was available" >&2
             exit 2
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -50,7 +51,8 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '```json\n{"summary":"ok","options":["small"]}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -76,7 +78,8 @@ public sealed partial class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             printf '```json\n{"plan":"insert a ```python fence inside the plan","manifest":["src/calculator.py"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[3] });
 
@@ -97,7 +100,8 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"pass","options":["small"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with
         {
             TaskInput = "Implement `multiply(left, right)` and return the product."
@@ -131,7 +135,8 @@ public sealed partial class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             cat '{fixture}'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[5] });
 
@@ -153,7 +158,8 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"fixed verify"}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with
         {
             Stage = RelayStages.All[9], // Stage 10 — Fix-verify
@@ -185,7 +191,8 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"framed","options":["small"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[0] }; // Stage 1 — Ideate
 
         var result = await runner.RunAsync(invocation);
@@ -230,7 +237,6 @@ public sealed partial class SwivalSubagentRunnerTests
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2,
-            BypassSandbox: true,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

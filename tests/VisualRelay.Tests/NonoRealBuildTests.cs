@@ -21,7 +21,7 @@ public sealed class NonoRealBuildTests
         using var repo = CreateScratchRepo("dotnet-sandbox-test");
         await CreateMinimalDotNetProjectAsync(repo);
 
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(
             new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
 
@@ -39,7 +39,7 @@ public sealed class NonoRealBuildTests
         using var repo = CreateScratchRepo("swift-sandbox-test");
         await CreateMinimalSwiftProjectAsync(repo);
 
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(
             new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
 
@@ -57,7 +57,7 @@ public sealed class NonoRealBuildTests
         using var repo = CreateScratchRepo("node-sandbox-test");
         await CreateMinimalNodeProjectAsync(repo);
 
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(
             new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
 
@@ -71,7 +71,7 @@ public sealed class NonoRealBuildTests
         SkipIfNotOptedIn();
 
         using var repo = CreateScratchRepo("shell-verify-sandbox");
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(
             new ShellTestRunner(TimeSpan.FromMinutes(1)), config);
 
@@ -83,45 +83,6 @@ public sealed class NonoRealBuildTests
 
         Assert.False(result.TimedOut);
         Assert.Equal(0, result.ExitCode);
-    }
-
-    [Fact]
-    public async Task RealBuild_BypassEnabled_RunsOnHost()
-    {
-        SkipIfNotOptedIn();
-        if (!ToolAvailable("dotnet")) Assert.Skip("dotnet is not on PATH");
-
-        using var repo = CreateScratchRepo("bypass-sandbox-test");
-        await CreateMinimalDotNetProjectAsync(repo);
-
-        var config = TestConfig() with { BypassSandbox = true };
-        var sut = new SandboxedTestRunner(
-            new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
-
-        var (fileName, args) = sut.ResolveLaunch("dotnet build --nologo");
-        Assert.DoesNotContain("nono", args);
-        Assert.Equal("/bin/sh", fileName);
-
-        Assert.Equal(0, (await sut.RunAsync(repo.Root, "dotnet build --nologo", CancellationToken.None)).ExitCode);
-    }
-
-    [Fact]
-    public async Task RealBuild_BypassEnabled_NoNonoInProcessTree()
-    {
-        SkipIfNotOptedIn();
-        if (!ToolAvailable("dotnet")) Assert.Skip("dotnet is not on PATH");
-
-        using var repo = CreateScratchRepo("bypass-no-nono");
-        await CreateMinimalDotNetProjectAsync(repo);
-
-        var config = TestConfig() with { BypassSandbox = true };
-        var sut = new SandboxedTestRunner(
-            new ShellTestRunner(TimeSpan.FromMinutes(3)), config);
-
-        var (fileName, args) = sut.ResolveLaunch("dotnet build --nologo");
-        Assert.Equal("/bin/sh", fileName);
-        Assert.DoesNotContain("nono", args);
-        Assert.DoesNotContain("run", args);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

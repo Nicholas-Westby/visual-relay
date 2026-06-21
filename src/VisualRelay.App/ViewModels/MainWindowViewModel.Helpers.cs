@@ -119,7 +119,6 @@ public partial class MainWindowViewModel
         ConfigDiagnostic = configResult.Status == RelayConfigStatus.Malformed ? configResult.Diagnostic : null;
         if (configResult.Status == RelayConfigStatus.Loaded)
         {
-            BypassSandbox = configResult.Config.BypassSandbox;
             CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
             HydrateTurnBudget(configResult.Config);
         }

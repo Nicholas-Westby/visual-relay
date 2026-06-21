@@ -71,7 +71,7 @@ public static class NonoProfileEnsurer
             throw new InvalidOperationException(
                 "Cannot resolve the vr-guard sandbox profile path "
                 + "($XDG_CONFIG_HOME/visual-relay/vr-guard.json): neither XDG_CONFIG_HOME "
-                + "nor HOME is set. Set HOME or disable the sandbox (bypassSandbox).", ex);
+                + "nor HOME is set. Set HOME so the always-on sandbox profile can be written.", ex);
         }
 
         try

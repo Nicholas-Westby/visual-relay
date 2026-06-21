@@ -14,7 +14,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         // Non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
         // rather than re-resolving a different dotnet/PATH from a login profile (which caused
         // runtime-mismatch launch failures under nono). --rollback/--no-rollback-prompt ABSENT.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
 
         var (fileName, args) = sut.ResolveLaunch("bun test");
@@ -33,24 +33,10 @@ public sealed class SandboxedTestRunnerArgumentTests
     }
 
     [Fact]
-    public void ShellMode_BypassEnabled_RunsInnerUnchanged()
-    {
-        var config = TestConfig() with { BypassSandbox = true };
-        var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
-
-        var (fileName, args) = sut.ResolveLaunch("bun test");
-
-        Assert.Equal("/bin/sh", fileName);
-        Assert.Contains("bun test", args[0]);
-        Assert.DoesNotContain("nono", args);
-        Assert.DoesNotContain("run", args);
-    }
-
-    [Fact]
     public void DirectExecMode_SandboxEnabled_WrapsScriptDirectly()
     {
         // Script → nono run --profile <abs> --allow-cwd -- <script> <args>
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
 
         var (fileName, args) = sut.ResolveLaunch("/path/to/guard.sh arg1");
@@ -63,24 +49,12 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.Equal("arg1", args[6]);
     }
 
-    [Fact]
-    public void DirectExecMode_BypassEnabled_RunsInnerUnchanged()
-    {
-        var config = TestConfig() with { BypassSandbox = true };
-        var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
-
-        var (fileName, args) = sut.ResolveLaunch("./tools/guards/check.sh");
-
-        Assert.Equal("./tools/guards/check.sh", fileName);
-        Assert.DoesNotContain("nono", args);
-    }
-
     // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
 
     [Fact]
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         Assert.Equal(
             new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
@@ -90,7 +64,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, prefix);
     }
@@ -98,7 +72,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void BuildNonoPrefix_TwoCallersDifferOnlyInRollbackFlagPair()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var swi = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var ver = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
@@ -112,17 +86,9 @@ public sealed class SandboxedTestRunnerArgumentTests
     }
 
     [Fact]
-    public void BuildNonoPrefix_BypassEnabled_ReturnsEmptyPrefix()
-    {
-        var config = TestConfig() with { BypassSandbox = true };
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        Assert.Empty(prefix);
-    }
-
-    [Fact]
     public void BuildNonoPrefix_DoesNotBlockNetwork()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         Assert.DoesNotContain("--block-net",
             SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true));
         Assert.DoesNotContain("--block-net",
@@ -136,7 +102,6 @@ public sealed class SandboxedTestRunnerArgumentTests
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extra]
         };
 
@@ -154,7 +119,6 @@ public sealed class SandboxedTestRunnerArgumentTests
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extra]
         };
         var sut = new SandboxedTestRunner(new ShellTestRunner(), config);

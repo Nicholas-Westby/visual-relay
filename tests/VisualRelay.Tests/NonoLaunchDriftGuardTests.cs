@@ -16,7 +16,7 @@ public sealed class NonoLaunchDriftGuardTests
     {
         // The agent launch uses rollback:true, verify launch uses rollback:false.
         // Everything else (profile, --allow-cwd, extra allow paths) must be identical.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true).ToList();
         var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false).ToList();
@@ -42,7 +42,6 @@ public sealed class NonoLaunchDriftGuardTests
     {
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = ["/tmp/extra-cache", "/tmp/extra-build"]
         };
 

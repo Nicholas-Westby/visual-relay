@@ -11,24 +11,21 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // swival 1.0.25+ has --sandbox/--nono-* flags, but VR doesn't use them:
         // it drives `nono run` itself (see BuildLaunchTarget). This test pins that
         // swival's own args stay sandbox-flag-free; the sandbox is the nono wrapper.
-        foreach (var bypass in new[] { true, false })
-        {
-            var config = TestConfig() with { BypassSandbox = bypass };
-            var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var config = TestConfig();
+        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
 
-            var args = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
+        var args = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
-            Assert.DoesNotContain("--sandbox", args);
-            Assert.DoesNotContain("--nono-profile", args);
-            Assert.DoesNotContain("--nono-rollback", args);
-            Assert.DoesNotContain("nono", args);
-        }
+        Assert.DoesNotContain("--sandbox", args);
+        Assert.DoesNotContain("--nono-profile", args);
+        Assert.DoesNotContain("--nono-rollback", args);
+        Assert.DoesNotContain("nono", args);
     }
 
     [Fact]
     public void BuildLaunchTarget_SandboxEnabled_WrapsSwivalInNono()
     {
-        var config = TestConfig() with { BypassSandbox = false }; // sandbox explicitly enabled (default is bypass)
+        var config = TestConfig(); // sandbox is always on
         var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
@@ -52,41 +49,14 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     }
 
     [Fact]
-    public void BuildLaunchTarget_BypassSandbox_LaunchesSwivalDirectly()
-    {
-        var config = TestConfig() with { BypassSandbox = true };
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
-        var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
-
-        var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
-
-        Assert.Equal("swival", fileName);
-        Assert.Same(swivalArgs, args);
-        Assert.DoesNotContain("nono", args);
-        Assert.DoesNotContain("run", args);
-    }
-
-    [Fact]
-    public void BuildSandboxEnvironment_BypassEnabled_ReturnsNull()
-    {
-        // When BypassSandbox is true the sandbox is off, so no env redirect
-        // is needed — the process runs directly on the host.
-        var config = TestConfig() with { BypassSandbox = true };
-
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
-
-        Assert.Null(env);
-    }
-
-    [Fact]
     public void BuildSandboxEnvironment_SandboxEnabled_ReturnsCacheRedirects()
     {
-        // When the sandbox is enabled (BypassSandbox = false), swival runs
-        // under nono. Transitive deps (huggingface_hub via litellm, uv) try
+        // The sandbox is always on, so swival runs under nono. Transitive deps
+        // (huggingface_hub via litellm, uv) try
         // to write to ~/.cache/… which nono's vr-guard profile denies.
         // We redirect those cache writes into ~/.config/swival (already in
         // the swival profile write-allow list) via env vars.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
@@ -114,7 +84,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // that blocks launch. Setting PYTHONDONTWRITEBYTECODE=1 makes CPython
         // never emit .pyc, and PYTHONPYCACHEPREFIX redirects any bytecode that a
         // tool re-enables into ~/.config/swival (already in the write-allow list).
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
@@ -132,7 +102,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     public void BuildNonoPrefix_WithRollback_EmitsRollbackFlags()
     {
         // Swival path: rollback=true → run --profile <abs> --allow-cwd --rollback --no-rollback-prompt --
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
 
@@ -145,7 +115,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
         // Verification path: rollback=false → run --profile <abs> --allow-cwd --
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
@@ -159,7 +129,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     {
         // Pin that the Swival and verification prefixes differ in exactly one
         // flag pair (--rollback --no-rollback-prompt) and nothing else.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var swivalPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
@@ -183,25 +153,12 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     }
 
     [Fact]
-    public void BuildNonoPrefix_BypassEnabled_ReturnsEmptyPrefix()
-    {
-        // When the sandbox is bypassed, BuildNonoPrefix returns an empty list
-        // so callers skip wrapping entirely.
-        var config = TestConfig() with { BypassSandbox = true };
-
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-
-        Assert.Empty(prefix);
-    }
-
-    [Fact]
     public void BuildNonoPrefix_WithExtraAllowPaths_AppendsAFlagsBeforeSeparator()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var extraPath = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extraPath]
         };
 
@@ -221,7 +178,6 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var extraPath = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with
         {
-            BypassSandbox = false,
             SandboxExtraAllowPaths = [extraPath]
         };
 
@@ -242,7 +198,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     {
         // The nono wrapper must never add --block-net — the relay must reach
         // the model backend (and package managers need network for restore).
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         Assert.DoesNotContain("--block-net", prefix);
@@ -261,7 +217,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     {
         // After the refactor, BuildLaunchTarget must produce the same args it
         // always did — the shared builder just means the prefix isn't inlined.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 

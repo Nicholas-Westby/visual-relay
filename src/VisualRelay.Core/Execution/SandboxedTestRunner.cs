@@ -4,16 +4,13 @@ using VisualRelay.Domain;
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// Sandbox-aware <see cref="ITestRunner"/> wrapper.  When
-/// <see cref="RelayConfig.BypassSandbox"/> is true, delegates directly to the
-/// inner runner (the bypass checkbox is the only sanctioned no-sandbox path).
-/// When the sandbox is enabled (the default), transforms the command into a
-/// <c>nono run -p vr-guard --allow-cwd --</c> invocation — without
+/// Sandbox-enforcing <see cref="ITestRunner"/> wrapper.  Transforms the command
+/// into a <c>nono run -p vr-guard --allow-cwd --</c> invocation — without
 /// <c>--rollback</c> / <c>--no-rollback-prompt</c> — so verification (test,
 /// guard, bootstrap, new-guard probe) runs inside the same nono sandbox as
 /// Swival with the same allowlist.  The shared <c>BuildNonoPrefix</c> builder
 /// keeps the Swival and verification prefixes in lockstep; they differ only
-/// in the rollback flag pair.
+/// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
 /// </summary>
 public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) : ITestRunner
 {
@@ -22,9 +19,6 @@ public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) :
     public async Task<TestRunResult> RunAsync(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        if (config.BypassSandbox)
-            return await inner.RunAsync(rootPath, command, cancellationToken);
-
         var (fileName, args) = ResolveLaunch(command);
 
         var sw = Stopwatch.StartNew();
@@ -46,21 +40,7 @@ public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) :
     /// </summary>
     internal (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command)
     {
-        if (config.BypassSandbox)
-        {
-            // Not reached in production: RunAsync short-circuits to inner.RunAsync when
-            // BypassSandbox is set, so this branch only feeds argument-shape unit tests.
-            // The merged `-lc "<command>"` string mirrors what ShellTestRunner.RunAsync
-            // actually passes — and ShellTestRunner uses the ProcessCapture STRING overload,
-            // which splits the arguments string honoring quotes. So the merge is correct here
-            // (unlike the sandbox path below, which uses the non-splitting IEnumerable overload).
-            if (inner is ShellTestRunner)
-                return ("/bin/sh", new[] { $"-lc \"{command.Replace("\"", "\\\"", StringComparison.Ordinal)}\"" });
-            else
-                return DirectExecTestRunner.ResolveLaunch(command);
-        }
-
-        // Sandbox enabled: wrap in nono.
+        // Sandbox always on: wrap in nono.
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
         if (inner is ShellTestRunner)

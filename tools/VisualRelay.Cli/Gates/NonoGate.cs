@@ -2,38 +2,36 @@ namespace VisualRelay.Cli.Gates;
 
 /// <summary>
 /// nono OS-level sandbox prerequisite + provisioning (ported from the launcher's
-/// <c>_require_nono</c> / <c>_provision_nono</c>). When the sandbox is enabled and
-/// nono is absent, prints install instructions and signals a hard failure (exit
-/// 127). When present, pulls the swival base pack (idempotent); the vr-guard
-/// profile is owned/self-healed by the app at run start, so no profile is copied.
+/// <c>_require_nono</c> / <c>_provision_nono</c>). nono is a hard, always-required
+/// dependency: when it is absent, prints install instructions and signals a hard
+/// failure (exit 127). When present, pulls the swival base pack (idempotent); the
+/// vr-guard profile is owned/self-healed by the app at run start, so no profile
+/// is copied.
 /// </summary>
 public static class NonoGate
 {
     /// <summary>
-    /// Ensures nono is available when the sandbox is enabled. Returns 0 to
-    /// proceed, or 127 when nono is required but missing (after printing
-    /// instructions). A bypassed sandbox always returns 0 without touching nono.
+    /// Ensures nono is available. The sandbox is always on, so nono is required
+    /// unconditionally. Returns 0 to proceed, or 127 when nono is missing (after
+    /// printing install instructions).
     /// </summary>
     public static int Require(string root)
     {
-        if (SandboxConfig.BypassSandbox(root))
-            return 0;
-
         if (ProcessLauncher.OnPath("nono"))
             return 0;
 
         Console.Error.WriteLine(
             """
-            visual-relay: nono sandbox is enabled but nono was not found on PATH.
+            visual-relay: nono was not found on PATH.
 
               nono is a required dependency for the OS-level sandbox (Seatbelt on macOS,
               Landlock on Linux) that confines Swival writes and deletes to the workspace.
-              Install nono:
+              The sandbox is always on; there is no opt-out. Install nono:
 
                 brew install nono
                 (or see https://github.com/jedisct1/nono for other platforms)
 
-              To run without the sandbox, set bypassSandbox:true in .relay/config.json.
+              If Nix is installed, the devshell provides nono automatically.
             """);
         return 127;
     }
@@ -41,13 +39,11 @@ public static class NonoGate
     /// <summary>
     /// Idempotently pulls the swival base profile pack so the vr-guard profile
     /// (which extends swival) resolves. Best-effort and non-fatal: a network /
-    /// Sigstore failure prints a hint but does not block launch. No-op when the
-    /// sandbox is bypassed or nono is absent.
+    /// Sigstore failure prints a hint but does not block launch. No-op when nono
+    /// is absent.
     /// </summary>
     public static void Provision(string root)
     {
-        if (SandboxConfig.BypassSandbox(root))
-            return;
         if (!ProcessLauncher.OnPath("nono"))
             return;
 

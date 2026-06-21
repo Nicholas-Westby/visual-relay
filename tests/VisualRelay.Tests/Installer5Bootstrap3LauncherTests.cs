@@ -29,12 +29,11 @@ public sealed class Installer5Bootstrap3LauncherTests
     // Hermetic TTY test: runs launcher in a Python pty with stdin fed in.
     // isBody = installer stub body (null = no stub).
     static string TtyTest(string stdin, bool nono, bool nix, bool dotnet,
-        bool bypass, bool reentry, string? isBody, string assert)
+        bool reentry, string? isBody, string assert)
     {
         var no = nono ? Stub("nono") : "# nono absent";
         var nx = nix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b3-nix-argv") : "# nix absent";
         var dt = dotnet ? Stub("dotnet") : "# dotnet absent";
-        var bp = bypass ? "true" : "false";
         var ie = isBody is not null
             ? "export VISUAL_RELAY_NIX_INSTALLER=REPLACE_S/vr-nix-installer" : ":";
         var re = reentry ? "export VISUAL_RELAY_NIX_REENTRY=1" : "export VISUAL_RELAY_NIX_REENTRY=";
@@ -51,7 +50,7 @@ public sealed class Installer5Bootstrap3LauncherTests
             {{no}}
             {{nx}}
             {{ins}}
-            echo '{"testCmd":"true","bypassSandbox":{{bp}}}' > "$T/.relay/config.json"
+            echo '{"testCmd":"true"}' > "$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"
             cat>"$T/run.sh"<<'REOF'
@@ -95,13 +94,12 @@ public sealed class Installer5Bootstrap3LauncherTests
             """;
     }
     // Non-TTY variant: stdin from /dev/null, stdout/stderr separated.
-    static string NonTtyTest(bool nono, bool nix, bool dotnet, bool bypass,
+    static string NonTtyTest(bool nono, bool nix, bool dotnet,
         bool reentry, string? isBody, string assert)
     {
         var no = nono ? Stub("nono") : "# nono absent";
         var nx = nix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b3-nix-argv") : "# nix absent";
         var dt = dotnet ? Stub("dotnet") : "# dotnet absent";
-        var bp = bypass ? "true" : "false";
         var ie = isBody is not null ? "VISUAL_RELAY_NIX_INSTALLER=\"$S/vr-nix-installer\"" : "";
         var re = reentry ? "VISUAL_RELAY_NIX_REENTRY=1" : "VISUAL_RELAY_NIX_REENTRY=";
         var fn = !nix ? "_VISUAL_RELAY_FAKE_NO_NIX=1" : "";
@@ -116,7 +114,7 @@ public sealed class Installer5Bootstrap3LauncherTests
             {{no}}
             {{nx}}
             {{ins}}
-            echo '{"testCmd":"true","bypassSandbox":{{bp}}}' > "$T/.relay/config.json"
+            echo '{"testCmd":"true"}' > "$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"
             RC=0
@@ -145,7 +143,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     public async Task Tty_Yes_InstallerInvokedAndReexecs()
     {
         var body = TtyTest("y", nono: false, nix: false, dotnet: true,
-            bypass: false, reentry: false, isBody: """
+ reentry: false, isBody: """
             echo ran > /tmp/.vr-b3-installer-ran
             D=$(dirname "$0")
             cat>"$D/nix"<<'Y'&&chmod +x "$D/nix"
@@ -186,8 +184,8 @@ public sealed class Installer5Bootstrap3LauncherTests
     public async Task Decline_NoInstaller(string stdin, bool tty, string extra)
     {
         var body = tty
-            ? TtyTest(stdin, false, false, true, false, false, NoInstallerStub, DeclineAssert(extra))
-            : NonTtyTest(false, false, true, false, false, NoInstallerStub, DeclineAssert(extra));
+            ? TtyTest(stdin, false, false, true, false, NoInstallerStub, DeclineAssert(extra))
+            : NonTtyTest(false, false, true, false, NoInstallerStub, DeclineAssert(extra));
         var (ec, _, err) = await Run($"d-{stdin}-{(tty ? "t" : "n")}", body);
         if (!string.IsNullOrEmpty(err)) Assert.Fail(err);
         Assert.Equal(0, ec);
@@ -196,7 +194,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     [Fact]
     public async Task NixPresent_NoPrompt_ReexecsDirectly()
     {
-        var body = TtyTest("y", false, true, true, false, false, NoInstallerStub, assert: """
+        var body = TtyTest("y", false, true, true, false, NoInstallerStub, assert: """
             O=$(cat /tmp/.vr-b3-out)
             echo "$O" | grep -q '\[y/N\]' && { echo FAIL: prompt with nix present >&2; echo "$O" >&2; exit 1; } || true
             [[ -f /tmp/.vr-b3-installer-ran ]] && { echo FAIL: installer invoked >&2; exit 1; } || true
@@ -231,7 +229,7 @@ public sealed class Installer5Bootstrap3LauncherTests
             #!/bin/bash
             exit 0
             X
-            echo '{"testCmd":"true","bypassSandbox":true}'>"$T/.relay/config.json"
+            echo '{"testCmd":"true"}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"
             cat>"$T/run.sh"<<"REOF"
@@ -267,7 +265,7 @@ public sealed class Installer5Bootstrap3LauncherTests
     public async Task NoNix_NoReentry_ReachesToolMissingNotSilentExit()
     {
         var body = NonTtyTest(nono: false, nix: false, dotnet: false,
-            bypass: true, reentry: false, isBody: null, assert: """
+ reentry: false, isBody: null, assert: """
                 RC=$(cat /tmp/.vr-b3-rc); O=$(cat /tmp/.vr-b3-out /tmp/.vr-b3-err)
                 (( RC == 127 )) || { echo "FAIL: expected 127 got $RC" >&2; echo "$O" >&2; exit 1; }
                 echo "$O" | grep -q 'install.determinate.systems' || { echo "FAIL: missing install hint" >&2; echo "$O" >&2; exit 1; }

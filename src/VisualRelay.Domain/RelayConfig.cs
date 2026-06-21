@@ -32,11 +32,6 @@ public sealed record RelayConfig(
     // lacks a parseable fenced JSON contract block (or the block has wrong shape).
     // 0 preserves today's fail-fast; defaults to 1.
     int MaxContractRetries = 1,
-    // Default false: nono OS-level sandboxing (Seatbelt on macOS, Landlock on
-    // Linux) is a REQUIRED dependency. Swival runs under `nono run -p vr-guard`
-    // by default. Set bypassSandbox:true in .relay/config.json to opt out —
-    // this is the only supported no-nono path, never a silent fallback.
-    bool BypassSandbox = false,
     // Maximum concurrent planning tasks during Phase 1 (parallel planning).
     // Planning stages (1–4) are read-only and run in isolated git worktrees,
     // so they are safe to overlap. Stages 5–11 always run serially.

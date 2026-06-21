@@ -104,7 +104,8 @@ public sealed class ProjectBootstrapperTests
     {
         using var repo = TestRepository.Create();
         await ProjectBootstrapper.BootstrapAsync(repo.Root);
-        RelayConfigWriter.UpsertBypassSandbox(repo.Root, true);
+        // Set an operator-changed key that the upgrade must preserve.
+        RelayConfigWriter.UpsertCommitProofArtifacts(repo.Root, false);
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
@@ -112,7 +113,7 @@ public sealed class ProjectBootstrapperTests
 
         Assert.True(upgraded);
         var loaded = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.True(loaded.Config.BypassSandbox); // preserved across the upgrade
+        Assert.False(loaded.Config.CommitProofArtifacts); // preserved across the upgrade
         Assert.Contains("go test", loaded.Config.TestCommand);
     }
 }

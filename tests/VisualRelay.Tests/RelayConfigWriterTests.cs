@@ -155,44 +155,6 @@ public sealed class RelayConfigWriterTests
         Assert.Null(result.Config.GuardCommand);
     }
 
-    // ── UpsertBypassSandbox (existing, preserved) ───────────────────────
-
-    [Fact]
-    public async Task UpsertBypassSandbox_True_RoundTripsThroughLoader()
-    {
-        using var repo = TestRepository.Create();
-        RelayConfigWriter.Write(repo.Root, "dotnet test");
-
-        RelayConfigWriter.UpsertBypassSandbox(repo.Root, true);
-
-        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.True(result.Config.BypassSandbox);
-    }
-
-    [Fact]
-    public async Task UpsertBypassSandbox_PreservesExistingKeys()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: true);
-
-        var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, before.Status);
-        Assert.False(before.Config.BypassSandbox);
-        Assert.True(before.Config.BaselineVerify);
-        Assert.Contains("cheap", before.Config.TierProfiles);
-
-        RelayConfigWriter.UpsertBypassSandbox(repo.Root, true);
-
-        var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, after.Status);
-        Assert.True(after.Config.BypassSandbox);
-        Assert.True(after.Config.BaselineVerify);
-        Assert.Contains("cheap", after.Config.TierProfiles);
-        Assert.Equal("dotnet test", after.Config.TestCommand);
-        Assert.Empty(after.Config.LogSources);
-    }
-
     // ── UpsertCommitProofArtifacts ──────────────────────────────────────
 
     [Fact]

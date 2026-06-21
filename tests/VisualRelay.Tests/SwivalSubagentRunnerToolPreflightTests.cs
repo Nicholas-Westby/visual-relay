@@ -24,19 +24,6 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
     }
 
     [Fact]
-    public void MissingRequiredTools_NeitherToolPresent_BypassSandbox_ReturnsSwivalOnly()
-    {
-        var config = SandboxOnConfig() with { BypassSandbox = true };
-        var emptyPath = string.Empty;
-
-        var missing = SwivalSubagentRunner.MissingRequiredTools(
-            config, emptyPath, swivalBinary: "swival", nonoBinary: "nono");
-
-        // With the sandbox bypassed nono is never launched, so only swival is required.
-        Assert.Equal(new[] { "swival" }, missing);
-    }
-
-    [Fact]
     public void MissingRequiredTools_BothPresentOnPath_ReturnsEmpty()
     {
         using var dir = new TempDir();
@@ -244,7 +231,6 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2,
-            BypassSandbox: false,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 

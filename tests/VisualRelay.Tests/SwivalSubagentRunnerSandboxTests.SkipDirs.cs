@@ -13,7 +13,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildNonoPrefix_WithSkipDirs_EmitsSkipDirFlagsBeforeSeparator()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         string[] skipDirs = [".git", ".relay", "data"];
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: skipDirs);
@@ -40,21 +40,10 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     }
 
     [Fact]
-    public void BuildNonoPrefix_WithSkipDirs_BypassEnabled_ReturnsEmpty()
-    {
-        var config = TestConfig() with { BypassSandbox = true };
-        string[] skipDirs = [".git", "data"];
-
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: skipDirs);
-
-        Assert.Empty(prefix);
-    }
-
-    [Fact]
     public void BuildNonoPrefix_NullSkipDirs_BehavesExactlyAsBefore()
     {
         // No skipDirs argument → identical to the historical rollback prefix.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: null);
 
@@ -67,7 +56,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildNonoPrefix_EmptySkipDirs_BehavesExactlyAsBefore()
     {
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>());
 

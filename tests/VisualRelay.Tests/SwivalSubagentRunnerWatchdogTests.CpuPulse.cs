@@ -40,7 +40,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 60_000,
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -68,7 +69,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 60_000,
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -96,7 +98,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 60_000,
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -150,7 +153,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 60_000,
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));

@@ -96,7 +96,7 @@ public sealed class CliSwivalUpgradeCheckTests
 
     private static async Task RunUpgradeScenario(long stampAgeSecs, string probeBody, Action<Ctx> assert)
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var xdgState = Path.Combine(repo, "xdg-state");
         var stampFile = Path.Combine(xdgState, "visual-relay", "swival-upgrade-check");
         var probeRan = Path.Combine(repo, "probe-ran");
@@ -105,6 +105,7 @@ public sealed class CliSwivalUpgradeCheckTests
         try
         {
             CliHarness.WriteStub(stub, "dotnet", CliHarness.BackendAwareDotnetStub);
+            CliHarness.WriteStub(stub, "nono");
             CliHarness.WriteStub(stub, "swival", "echo 'swival 1.0.0'\nexit 0");
             CliHarness.WriteStub(stub, "vr-swival-probe", probeBody);
             CliHarness.WriteStub(stub, "vr-swival-upgrader", $"echo ran > '{upgraderRan}'\nexit 0");

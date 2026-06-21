@@ -58,40 +58,11 @@ public static class RelayConfigWriter
     }
 
     /// <summary>
-    /// Read-modify-write upsert of the <c>bypassSandbox</c> key into
-    /// <c>.relay/config.json</c>. Preserves all existing keys (tierProfiles,
-    /// baselineVerify, etc.) so toggling the checkbox never clobbers other
-    /// settings.
-    /// </summary>
-    public static void UpsertBypassSandbox(string rootPath, bool bypassSandbox)
-    {
-        var relayDir = Path.Combine(rootPath, ".relay");
-        Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
-
-        json["bypassSandbox"] = bypassSandbox;
-
-        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
-    }
-
-    /// <summary>
     /// Read-modify-write upgrade of a greenfield/placeholder config to the real,
     /// now-detectable toolchain commands: sets <c>testCmd</c> and fills in
     /// <c>formatCmd</c>/<c>guardCmd</c> from detection when they are not already
-    /// present. Preserves every other key (bypassSandbox, tierProfiles, …) so an
-    /// upgrade never clobbers settings the operator changed after bootstrap.
+    /// present. Preserves every other key (tierProfiles, …) so an upgrade never
+    /// clobbers settings the operator changed after bootstrap.
     /// </summary>
     public static void UpsertResolvedToolchain(string rootPath, string testCommand)
     {

@@ -35,8 +35,6 @@ public static class RelayConfigLoader
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
             MaxContractRetries: 1,
-            // Default false: nono sandbox is required. Set bypassSandbox:true to opt out.
-            BypassSandbox: false,
             MaxPlanConcurrency: 10,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
@@ -215,7 +213,6 @@ public static class RelayConfigLoader
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
                 MaxContractRetries = OptionalInt(root, "maxContractRetries", defaults.MaxContractRetries),
-                BypassSandbox = OptionalBool(root, "bypassSandbox", defaults.BypassSandbox),
                 CommitProofArtifacts = OptionalBool(root, "commitProofArtifacts", defaults.CommitProofArtifacts),
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 InactivityTimeoutMsByTier = inactivityTiers,

@@ -46,7 +46,7 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
 
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
-        ["select-task", "bypass-sandbox", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge"];
+        ["select-task", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge"];
 
     /// <summary>
     /// Invokes a documented command/action by name. Returns the HTTP status and
@@ -105,18 +105,6 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
                     }
 
                     viewModel.SelectedTask = match;
-                    return (200, Json.Object(("ok", true), ("command", name)));
-                }
-
-            case "bypass-sandbox":
-                {
-                    var value = Json.ReadBool(body, "value");
-                    if (value is null)
-                    {
-                        return (409, Json.Object(("ok", false), ("command", name), ("error", "missing value")));
-                    }
-
-                    viewModel.BypassSandbox = value.Value;
                     return (200, Json.Object(("ok", true), ("command", name)));
                 }
 

@@ -86,7 +86,6 @@ public sealed partial class ControlApi
 
         // Property-backed actions: encode the documented enablement rules.
         map["select-task"] = new { enabled = viewModel.Tasks.Count > 0 };
-        map["bypass-sandbox"] = new { enabled = true };
         map["boost-turns"] = new { enabled = viewModel.SelectedTask is not null };
         map["open-folder"] = new { enabled = true };
         map["obsidian-scan"] = new { enabled = viewModel is { ObsidianEnabled: true, IsBusy: false } };

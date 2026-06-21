@@ -31,7 +31,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -69,7 +70,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with { TaskInput = "Implement the feature." };
         var result = await runner.RunAsync(invocation);
@@ -123,7 +125,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var stage4 = RelayStages.All[3]; // stage 4 Plan — produces manifest
         var invocation = new StageInvocation(
@@ -164,7 +167,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
@@ -189,7 +193,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             MaxContractRetries = 0,
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -219,7 +224,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2,
-            BypassSandbox: true,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

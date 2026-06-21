@@ -70,7 +70,7 @@ public sealed class ControlApiTests
         [
             "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
             "archive-toggle", "new-task", "follow-running", "start-backend",
-            "edit", "select-task", "bypass-sandbox", "boost-turns", "open-folder",
+            "edit", "select-task", "boost-turns", "open-folder",
             "obsidian-scan", "obsidian-bridge"
         ];
         foreach (var name in expected)

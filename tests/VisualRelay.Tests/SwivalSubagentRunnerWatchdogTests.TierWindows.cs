@@ -52,7 +52,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 0,  // no absolute ceiling
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(
@@ -98,7 +99,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 10_000,  // 10 s absolute ceiling
             MaxStallRetries = 0
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await runner.RunAsync(
@@ -154,7 +156,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStallRetries = 0
         };
-        var cheapRunner = new SwivalSubagentRunner(cheapConfig, cheapScript, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var cheapRunner = new SwivalSubagentRunner(cheapConfig, cheapScript, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var swCheap = System.Diagnostics.Stopwatch.StartNew();
         var cheapResult = await cheapRunner.RunAsync(
@@ -199,7 +202,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 60_000,
             MaxStallRetries = 0
         };
-        var frontRunner = new SwivalSubagentRunner(frontConfig, frontScript, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var frontRunner = new SwivalSubagentRunner(frontConfig, frontScript, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var frontResult = await frontRunner.RunAsync(
             SwivalTestHelpers.Invocation(repo.Root) with { Tier = "frontier" });

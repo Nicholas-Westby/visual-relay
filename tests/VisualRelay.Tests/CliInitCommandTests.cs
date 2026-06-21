@@ -12,7 +12,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_NoArgs_RunsInitToolWithOriginalCwd_AbsoluteProject()
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var argv = Path.Combine(repo, "dotnet-argv");
         try
         {
@@ -35,7 +35,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_ExplicitPath_TakesPrecedenceOverOriginalCwd()
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var argv = Path.Combine(repo, "dotnet-argv");
         const string explicitPath = "/explicit/test/path/for/vr";
         try
@@ -54,7 +54,7 @@ public sealed class CliInitCommandTests
     [Fact]
     public async Task Init_PrefersPublishedBinary_OverDotnetRun()
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var publishedRan = Path.Combine(repo, "published-ran");
         var dotnetRan = Path.Combine(repo, "dotnet-ran");
         try

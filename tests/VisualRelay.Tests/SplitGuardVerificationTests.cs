@@ -117,7 +117,11 @@ public sealed partial class SplitGuardVerificationTests
         // Installer5LauncherTests family lost its BackendSh_EndsWithMainInvocation
         // structural guard (the script no longer exists). The proxy lifecycle is now
         // covered by the (non-oversized) BackendLifecycle* / BackendConfigStep suites.
-        const int baseline = 150;
+        // Dropped 150→149 on 2026-06-21: removing the sandbox-bypass capability
+        // retired the bash BypassSandbox_ReadsConfigFromScriptDir fact from the
+        // Installer5LauncherTests family. Its replacement (a stale-key still-requires-
+        // nono regression) lives in the non-oversized CliNonoGateTests suite.
+        const int baseline = 149;
 
         string[] prefixes =
         [

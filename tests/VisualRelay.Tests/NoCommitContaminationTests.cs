@@ -49,7 +49,6 @@ public sealed partial class NoCommitContaminationTests
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>(),
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
-            BypassSandbox: false,
             MaxPlanConcurrency: 2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
@@ -160,7 +159,6 @@ public sealed partial class NoCommitContaminationTests
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>(),
             FirstOutputTimeoutMs: 660_000,
             MaxStallRetries: 2,
-            BypassSandbox: false,
             MaxPlanConcurrency: 2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);

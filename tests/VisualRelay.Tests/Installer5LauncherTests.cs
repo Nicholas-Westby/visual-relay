@@ -186,9 +186,10 @@ public sealed partial class Installer5LauncherTests
             exit 0
             X
 
-            # Create .relay/config.json with bypassSandbox:true to skip nono
+            # Minimal .relay/config.json (the CLI's nono gate is stubbed out here —
+            # dotnet is a stub, so this bash-layer test never reaches the real gate)
             mkdir -p "$TEST_DIR/.relay"
-            echo '{"bypassSandbox":true}' > "$TEST_DIR/.relay/config.json"
+            echo '{"testCmd":"true"}' > "$TEST_DIR/.relay/config.json"
 
             cd "$TEST_DIR"
             RC=0

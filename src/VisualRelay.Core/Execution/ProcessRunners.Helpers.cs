@@ -60,11 +60,8 @@ public sealed partial class SwivalSubagentRunner
     // into ~/.config/swival (already in the swival profile write-allow list)
     // so nono's vr-guard sandbox does not block them. See nono-grant-swival-
     // workspace-writes (stage 6).
-    internal static IReadOnlyDictionary<string, string>? BuildSandboxEnvironment(RelayConfig config)
+    internal static IReadOnlyDictionary<string, string> BuildSandboxEnvironment(RelayConfig config)
     {
-        if (config.BypassSandbox)
-            return null;
-
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         return new Dictionary<string, string>
         {
@@ -77,19 +74,16 @@ public sealed partial class SwivalSubagentRunner
         };
     }
 
-    // Resolve the process to actually launch. When the sandbox is bypassed we run
-    // swival directly. When it is enabled we run `nono` as the wrapper. skipDirs
-    // become --skip-dir flags so nono's rollback preflight stays under budget.
+    // Resolve the process to actually launch. The sandbox is always on, so we run
+    // `nono` as the wrapper around swival. skipDirs become --skip-dir flags so
+    // nono's rollback preflight stays under budget.
     internal (string FileName, IReadOnlyList<string> Arguments) BuildLaunchTarget(
         List<string> swivalArguments, IReadOnlyList<string>? skipDirs = null)
     {
-        if (_config.BypassSandbox)
-            return (_swivalBinary, swivalArguments);
-
         var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs);
         var nonoArguments = new List<string>(prefix) { _swivalBinary };
         nonoArguments.AddRange(swivalArguments);
-        return (NonoBinary, nonoArguments);
+        return (_nonoBinary, nonoArguments);
     }
 
     internal static string BuildPrompt(StageInvocation invocation)

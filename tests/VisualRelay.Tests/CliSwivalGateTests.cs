@@ -3,23 +3,26 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Behavioral tests for the swival prerequisite gate, now owned by
 /// VisualRelay.Cli's <c>launch</c> command (re-pointed from the bash
-/// <c>Installer5Bootstrap4</c> suite). swival is hard-required and not
-/// sandbox-gated. With swival present, launch proceeds and starts the backend;
-/// with swival absent in a non-TTY context, launch prints the Homebrew-tap
-/// instructions, does NOT prompt or run the installer, exits non-zero, and never
-/// starts the backend. (The TTY consent-accept path is covered by the pure
-/// <c>CliSwivalUpgradeDecisionTests</c> / <c>Tty</c> unit tests.)
+/// <c>Installer5Bootstrap4</c> suite). swival is hard-required. The nono gate
+/// runs first (the sandbox is always on), so these tests stub nono present to
+/// reach the swival gate. With swival present, launch proceeds and starts the
+/// backend; with swival absent in a non-TTY context, launch prints the
+/// Homebrew-tap instructions, does NOT prompt or run the installer, exits
+/// non-zero, and never starts the backend. (The TTY consent-accept path is
+/// covered by the pure <c>CliSwivalUpgradeDecisionTests</c> / <c>Tty</c> unit
+/// tests.)
 /// </summary>
 public sealed class CliSwivalGateTests
 {
     [Fact]
     public async Task Launch_SwivalPresent_BackendRuns()
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var backendFlag = Path.Combine(repo, "backend-ran");
         try
         {
             CliHarness.WriteStub(stub, "dotnet", CliHarness.BackendAwareDotnetStub);
+            CliHarness.WriteStub(stub, "nono");
             CliHarness.WriteStub(stub, "swival");
             await CliHarness.RunAsync(repo, stub, ["launch"], new Dictionary<string, string>
             {
@@ -36,12 +39,13 @@ public sealed class CliSwivalGateTests
     [Fact]
     public async Task Launch_SwivalMissing_NonTty_PrintsInstructions_NoInstaller_NonZero_NoBackend()
     {
-        var (repo, stub) = CliHarness.NewSandboxRepo(bypassSandbox: true);
+        var (repo, stub) = CliHarness.NewSandboxRepo();
         var backendFlag = Path.Combine(repo, "backend-ran");
         var installerRan = Path.Combine(repo, "installer-ran");
         try
         {
             CliHarness.WriteStub(stub, "dotnet");
+            CliHarness.WriteStub(stub, "nono");
             CliHarness.WriteStub(stub, "brew");
             CliHarness.WriteStub(stub, "vr-swival-installer", $"echo ran > '{installerRan}'\nexit 0");
             // swival intentionally absent.

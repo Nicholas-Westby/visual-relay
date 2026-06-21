@@ -7,10 +7,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
 
-    // The nono capability-sandbox binary used to wrap swival when the sandbox is
-    // enabled (BypassSandbox == false). nono is the WRAPPER command that runs
-    // swival — `nono run <flags> -- swival <args>` — rather than delegating to
-    // swival's own `--sandbox nono` (see BuildArguments for why).
+    // The nono capability-sandbox binary that always wraps swival. nono is the
+    // WRAPPER command that runs swival — `nono run <flags> -- swival <args>` —
+    // rather than delegating to swival's own `--sandbox nono` (see BuildArguments
+    // for why).
     private const string NonoBinary = "nono";
 
     // The vr-guard profile (extends the registry-managed `swival` pack profile)
@@ -25,6 +25,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly RelayConfig _config;
     private readonly IRelayEventSink? _eventSink;
     private readonly string _swivalBinary;
+    private readonly string _nonoBinary;
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
     private readonly IGitInvoker? _gitInvoker;
     public SwivalSubagentRunner(
@@ -32,10 +33,16 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         string swivalBinary = "swival",
         IRelayEventSink? eventSink = null,
         Func<CancellationToken, Task<BackendReadiness>>? backendProbe = null,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker? gitInvoker = null,
+        // The nono wrapper binary. Defaults to NonoBinary ("nono"); injectable so a
+        // unit test can supply a transparent passthrough stub and exercise the
+        // always-on nono-wrapped launch path without depending on the real nono's
+        // Seatbelt/Landlock startup, rollback preflight, and timing.
+        string? nonoBinary = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
+        _nonoBinary = nonoBinary ?? NonoBinary;
         _eventSink = eventSink;
         _probe = backendProbe ?? (token => BackendReadinessProbe.CheckWithRetryAsync(ModelBackend.BaseUrl, ProbeTimeout, cancellationToken: token));
         _gitInvoker = gitInvoker;
@@ -71,8 +78,8 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     /// <summary>
     /// Shared nono-prefix builder: Swival and verification callers produce
     /// identical prefixes except for <c>--rollback</c> / <c>--no-rollback-prompt</c>
-    /// (controlled by <paramref name="rollback"/>).  Returns empty when
-    /// <see cref="RelayConfig.BypassSandbox"/> is true.  Appends
+    /// (controlled by <paramref name="rollback"/>).  The sandbox is always on, so
+    /// this never returns empty.  Appends
     /// <see cref="RelayConfig.SandboxExtraAllowPaths"/> as <c>-a &lt;path&gt;</c>
     /// before <c>--</c> (and before <c>--rollback</c> when enabled).
     /// <paramref name="skipDirs"/> (basenames) are emitted as
@@ -83,9 +90,6 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     internal static IReadOnlyList<string> BuildNonoPrefix(
         RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null)
     {
-        if (config.BypassSandbox)
-            return [];
-
         // Load by absolute path, not the global profile name: NonoProfileEnsurer
         // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
         // wrote (overwrite-always) at run start, so the sandbox can never run under

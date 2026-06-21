@@ -1,4 +1,5 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -133,23 +134,13 @@ public sealed class RelayConfigLoaderTests
     }
 
     [Fact]
-    public async Task LoadAsync_BypassSandboxDefaultsToFalse()
+    public async Task LoadAsync_StaleBypassSandboxKey_LoadsAndStaysSandboxed()
     {
-        using var repo = TestRepository.Create();
-        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
-        await File.WriteAllTextAsync(
-            Path.Combine(repo.Root, ".relay", "config.json"),
-            """{ "testCmd": "dotnet test", "logSources": [] }""");
-
-        var config = await RelayConfigLoader.LoadAsync(repo.Root);
-
-        // Default is false: nono sandbox is required. Sandbox-2 made nono a hard prerequisite.
-        Assert.False(config.BypassSandbox);
-    }
-
-    [Fact]
-    public async Task TryLoadAsync_BypassSandboxTrue_FlipsFlag()
-    {
+        // Regression: the bypassSandbox capability was removed. A stale
+        // "bypassSandbox": true left in an old config must be SILENTLY IGNORED
+        // (parsed-and-dropped, not a load error) — and the run is still sandboxed,
+        // so nono remains an unconditional prerequisite. Against the old code this
+        // failed: the key was honoured and nono was treated as optional.
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
@@ -158,8 +149,17 @@ public sealed class RelayConfigLoaderTests
 
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
 
+        // The stale key does not break the load.
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.True(result.Config.BypassSandbox);
+
+        // And the sandbox is still effectively on: nono is reported missing on a
+        // PATH that lacks it (swival present so only nono is flagged), proving the
+        // stale opt-out does not make nono optional.
+        var stubBin = Path.Combine(repo.Root, "bin");
+        Directory.CreateDirectory(stubBin);
+        await File.WriteAllTextAsync(Path.Combine(stubBin, "swival"), "#!/bin/sh\nexit 0\n");
+        var missing = SwivalSubagentRunner.MissingRequiredTools(result.Config, pathValue: stubBin);
+        Assert.Contains("nono", missing);
     }
 
     [Fact]

@@ -22,7 +22,7 @@ public sealed class SandboxedShellVerifyExecutionTests
     {
         // The real incident command: spaces AND a flag. -c and the whole command
         // must be two distinct entries, with NO wrapping quotes added.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
 
         var (_, args) = sut.ResolveLaunch("bun test --timeout 15000");
@@ -41,7 +41,7 @@ public sealed class SandboxedShellVerifyExecutionTests
         // SandboxedTestRunner uses. Merged `-c "cmd"` → /bin/sh exits 2; separate
         // `-c`,`cmd` → exit 0. nono is not needed: we exercise only the /bin/sh
         // sub-launch, which is where the arg-merge bug actually bites.
-        var config = TestConfig() with { BypassSandbox = false };
+        var config = TestConfig();
         var sut = new SandboxedTestRunner(new ShellTestRunner(), config);
 
         var (_, args) = sut.ResolveLaunch("echo vr-sandbox-ok");

@@ -61,8 +61,8 @@ Endpoints:
   `resume`, `refresh`, `pause-toggle`, `archive-toggle`,
   `new-task`, `follow-running`, `start-backend`, `edit`, plus property actions
   `open-folder` (body `{"path":"<dir>"}` — the programmatic Browse: point the app at a
-  project), `select-task` (body `{"id":"<taskId>"}`), `bypass-sandbox` (body
-  `{"value":true|false}`), `boost-turns` (body `{"value":true|false}`).
+  project), `select-task` (body `{"id":"<taskId>"}`),
+  `boost-turns` (body `{"value":true|false}`).
 - `GET /screenshot[?path=/abs/file.png]` — renders the live window to PNG (`image/png`);
   with `?path=` it also writes the file and returns the location in `X-Screenshot-Path`.
 
