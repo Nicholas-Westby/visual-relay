@@ -7,9 +7,13 @@ Guidance for AI agents and contributors working in this repository.
 All work done in this project should be a commit against `main`; we don't use
 feature branches or PRs.
 
-Make focused commits directly on `main` with Conventional Commit subjects
-(enforced by the `commit-msg` hook once `./visual-relay install-hooks` has been
-run).
+Make focused commits directly on `main` with Conventional Commit subjects.
+The `commit-msg` hook (a C# validator wired by `./visual-relay install-hooks`)
+enforces a fuller ruleset than a bare subject regex: the fixed type set, a 72-char
+subject, lowercase after the prefix, no trailing period, no em dashes, and a body
+of at most three `- ` hyphen bullets (≤ 20 words each). Human commits also avoid
+naming changed files and path-like tokens; the driver's in-run sealed commit is
+exempt from those contextual checks. See `docs/commit-messages.md`.
 
 ## Build & checks
 

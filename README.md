@@ -167,7 +167,7 @@ are expanded; and each path must resolve under `$HOME` or the workspace root.
 ## Development Rails
 
 - `Directory.Build.props` enables nullable, latest analyzers, code style checks, and warnings as errors.
-- `.githooks/commit-msg` enforces Conventional Commits after `./visual-relay install-hooks`.
+- `.githooks/commit-msg` enforces a full Conventional Commit ruleset (a C# validator: fixed type set, 72-char subject, lowercase after prefix, no em dashes, ≤3 hyphen-bullet body) after `./visual-relay install-hooks`; see [docs/commit-messages.md](docs/commit-messages.md).
 - `tools/guards/check-file-size.sh` keeps C# and Avalonia XAML source files under 300 lines by default.
 - `tools/VisualRelay.Screenshots` renders the README screenshots through Avalonia Headless at desktop and compact widths.
 - `tools/VisualRelay.SampleTasks` (dev-only, not shipped in brew) regenerates a sample tasks repo for repeatable demos — see [AGENTS.md](AGENTS.md).

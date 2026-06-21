@@ -1,10 +1,18 @@
+using VisualRelay.Core.CommitLint;
+
 namespace VisualRelay.Core.Execution;
 
+/// <summary>
+/// Normalizes a raw, possibly-messy commit message into one that always passes
+/// <see cref="CommitMessageValidator"/>'s <em>structural</em> tier. It consumes
+/// the shared <see cref="CommitRules"/> constants so the generator and the hook
+/// can never drift. Contextual rules (file names, path tokens) are deliberately
+/// NOT applied here — those are relaxed by the hook's driver tier, and scrubbing
+/// them would degrade the messages Visual Relay writes into other repos.
+/// </summary>
 internal static class CommitMessageSanitizer
 {
-    private const int MaxSubjectLength = 72;
     private const string FallbackPrefix = "chore(relay): ";
-    private static readonly string[] Types = ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"];
 
     public static string FromRawOrFallback(string? raw, string taskId)
     {
@@ -23,9 +31,9 @@ internal static class CommitMessageSanitizer
 
         var bullets = lines
             .Skip(1)
-            .Select(line => line.Replace("\u2014", "-", StringComparison.Ordinal).TrimEnd())
-            .Where(line => line.StartsWith("- ", StringComparison.Ordinal) && line.Length > 2)
-            .Take(3)
+            .Select(SanitizeBullet)
+            .Where(line => line is not null)
+            .Take(CommitRules.MaxBullets)
             .ToArray();
         return bullets.Length == 0
             ? subject
@@ -33,8 +41,8 @@ internal static class CommitMessageSanitizer
     }
 
     /// <summary>
-    /// Returns the sanitized first-line subject if it has a Conventional Commit
-    /// prefix; otherwise <c>null</c>.  Does not attach bullet points.
+    /// Returns the sanitized first-line subject if it has a valid Conventional
+    /// Commit prefix; otherwise <c>null</c>.  Does not attach bullet points.
     /// </summary>
     internal static string? TrySanitizeSubject(string? raw)
     {
@@ -50,13 +58,61 @@ internal static class CommitMessageSanitizer
 
     private static string SanitizeSubject(string subject)
     {
-        var clean = subject.Replace("\u2014", "-", StringComparison.Ordinal).TrimEnd();
-        if (clean.EndsWith(".", StringComparison.Ordinal))
+        var clean = subject.Replace(CommitRules.EmDash, '-').TrimEnd();
+        if (clean.EndsWith('.'))
         {
             clean = clean[..^1];
         }
 
+        clean = LowercaseAfterPrefix(clean);
         return Truncate(clean);
+    }
+
+    /// <summary>
+    /// Lowercases the first character of the description (immediately after the
+    /// <c>type(scope):</c> prefix), closing the validator's
+    /// lowercase-after-prefix rule. A no-op when there is no valid prefix.
+    /// </summary>
+    private static string LowercaseAfterPrefix(string subject)
+    {
+        var match = CommitRules.FirstCharAfterPrefix.Match(subject);
+        if (!match.Success || match.Groups.Count <= 2)
+            return subject;
+
+        var charGroup = match.Groups[2];
+        var first = charGroup.Value;
+        if (first.Length == 1 && char.IsUpper(first[0]))
+        {
+            var idx = charGroup.Index;
+            return subject[..idx] + char.ToLowerInvariant(first[0]) + subject[(idx + 1)..];
+        }
+
+        return subject;
+    }
+
+    /// <summary>
+    /// Normalizes one raw line into a valid bullet, or returns <c>null</c> if it
+    /// is not a bullet. Converts em dashes and caps the bullet at
+    /// <see cref="CommitRules.MaxBulletWords"/> words on a word boundary so the
+    /// validator's word-count rule passes without cutting mid-word.
+    /// </summary>
+    private static string? SanitizeBullet(string line)
+    {
+        var clean = line.Replace(CommitRules.EmDash, '-').TrimEnd();
+        if (!clean.StartsWith(CommitRules.BulletPrefix, StringComparison.Ordinal)
+            || clean.Length <= CommitRules.BulletPrefix.Length)
+        {
+            return null;
+        }
+
+        var text = clean[CommitRules.BulletPrefix.Length..];
+        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length > CommitRules.MaxBulletWords)
+        {
+            text = string.Join(' ', words.Take(CommitRules.MaxBulletWords));
+        }
+
+        return $"{CommitRules.BulletPrefix}{text}";
     }
 
     /// <summary>
@@ -71,31 +127,36 @@ internal static class CommitMessageSanitizer
     {
         var trimmed = taskId.Trim();
         var full = $"{FallbackPrefix}{trimmed}";
-        if (full.Length <= MaxSubjectLength)
+        if (full.Length <= CommitRules.MaxSubjectChars)
         {
             return full;
         }
 
         // Reserve one char for the ellipsis so the id stays recognizable.
-        var idBudget = MaxSubjectLength - FallbackPrefix.Length - 1;
+        var idBudget = CommitRules.MaxSubjectChars - FallbackPrefix.Length - 1;
         var head = trimmed[..idBudget].TrimEnd();
         return $"{FallbackPrefix}{head}…";
     }
 
     private static string Truncate(string value)
     {
-        if (value.Length <= MaxSubjectLength)
+        if (value.Length <= CommitRules.MaxSubjectChars)
         {
             return value;
         }
 
-        var truncated = value[..MaxSubjectLength];
+        var truncated = value[..CommitRules.MaxSubjectChars];
         var lastSpace = truncated.LastIndexOf(' ');
         return (lastSpace > 0 ? truncated[..lastSpace] : truncated).TrimEnd();
     }
 
+    /// <summary>
+    /// True when <paramref name="subject"/> has a valid structural prefix — a
+    /// canonical type, optional <c>[a-z0-9._-]+</c> scope, optional <c>!</c>,
+    /// then <c>: </c> and a non-empty description. Uses the shared regex so the
+    /// gate matches the validator exactly (accepts <c>feat!: …</c>, rejects a bad
+    /// scope like <c>feat(App): …</c>).
+    /// </summary>
     private static bool HasConventionalPrefix(string subject) =>
-        Types.Any(type =>
-            subject.StartsWith($"{type}: ", StringComparison.Ordinal) ||
-            subject.StartsWith($"{type}(", StringComparison.Ordinal));
+        CommitRules.SubjectPrefix.IsMatch(subject);
 }
