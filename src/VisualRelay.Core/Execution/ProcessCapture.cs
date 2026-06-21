@@ -46,10 +46,12 @@ internal static class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
-        int cpuSampleIntervalMs = 0)
+        int cpuSampleIntervalMs = 0,
+        Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
+        Func<bool>? socketProbe = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -62,7 +64,9 @@ internal static class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
-        int cpuSampleIntervalMs = 0)
+        int cpuSampleIntervalMs = 0,
+        Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
+        Func<bool>? socketProbe = null)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -70,7 +74,7 @@ internal static class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -82,7 +86,9 @@ internal static class ProcessCapture
         CancellationToken killToken = default,
         Action<string>? onActivity = null,
         IReadOnlySet<string>? envRemove = null,
-        int cpuSampleIntervalMs = 0)
+        int cpuSampleIntervalMs = 0,
+        Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
+        Func<bool>? socketProbe = null)
     {
         using var process = new Process();
         process.StartInfo = startInfo;
@@ -126,7 +132,7 @@ internal static class ProcessCapture
 
         using var cpuCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var cpuTask = cpuSampleIntervalMs > 0 && onActivity is not null
-            ? SampleTreeCpuLoopAsync(process.Id, cpuSampleIntervalMs, onActivity, cpuCts.Token)
+            ? SampleTreeCpuLoopAsync(process.Id, cpuSampleIntervalMs, onActivity, onWedgeSample, socketProbe, cpuCts.Token)
             : Task.CompletedTask;
 
         try
@@ -191,9 +197,15 @@ internal static class ProcessCapture
     /// accumulated CPU during a failure gap can never cross the epsilon and
     /// emit a spurious pulse. The next successful sample silently
     /// re-establishes the baseline without signalling.
+    ///
+    /// On every successful sample it ALSO reports a <see cref="ActivityWatchdog.WedgeSample"/>
+    /// (agent-subtree-idle ⇔ this window's CPU delta was sub-epsilon, plus the
+    /// backend-socket-established verdict from <paramref name="socketProbe"/>) so the
+    /// watchdog's additive socket-wedge detector reads a fresh, pid-scoped verdict.
     /// </summary>
     private static async Task SampleTreeCpuLoopAsync(
-        int rootPid, int intervalMs, Action<string> onActivity, CancellationToken ct)
+        int rootPid, int intervalMs, Action<string> onActivity,
+        Action<ActivityWatchdog.WedgeSample>? onWedgeSample, Func<bool>? socketProbe, CancellationToken ct)
     {
         // A process starts with zero accrued CPU, so 0 is a correct first
         // baseline — the first sample can already pulse. (A null-seeded
@@ -214,6 +226,14 @@ internal static class ProcessCapture
                 var (pulse, newBaseline) = TryDecideCpuPulse(baseline, sample.Value, CpuPulseEpsilonMs);
                 if (pulse)
                     onActivity("cpu");
+
+                // Report the wedge verdict: subtree idle ⇔ this window did NOT
+                // cross the CPU epsilon. Gated by socketProbe presence so the
+                // detector stays inert (no sample emitted) unless wired up.
+                if (onWedgeSample is not null && socketProbe is not null)
+                    onWedgeSample(new ActivityWatchdog.WedgeSample(
+                        SubtreeIdle: !pulse, BackendSocketEstablished: SafeSocketProbe(socketProbe)));
+
                 baseline = newBaseline;
             }
         }
@@ -225,6 +245,14 @@ internal static class ProcessCapture
         {
             // sampling must never break the capture
         }
+    }
+
+    // The socket probe is best-effort: any failure means "no wedge evidence",
+    // never a kill — swallow and report false.
+    private static bool SafeSocketProbe(Func<bool> socketProbe)
+    {
+        try { return socketProbe(); }
+        catch { return false; }
     }
 
     // ── Process-group helpers (POSIX only) ─────────────────────────

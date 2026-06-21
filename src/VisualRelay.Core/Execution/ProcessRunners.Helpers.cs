@@ -219,8 +219,12 @@ public sealed partial class SwivalSubagentRunner
         try
         {
             var path = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.killed-output.txt");
-            var reason = wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling
-                ? "absolute_ceiling" : "stall";
+            var reason = wdResult.Outcome switch
+            {
+                ActivityWatchdog.Outcome.FiredAbsoluteCeiling => "absolute_ceiling",
+                ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
+                _ => "stall"
+            };
             var header =
                 $"# killed-attempt output (autopsy artifact){Environment.NewLine}" +
                 $"# reason: {reason}  lastSignal: {wdResult.LastPulseSource}  silenceMs: {wdResult.SilenceMs}{Environment.NewLine}" +

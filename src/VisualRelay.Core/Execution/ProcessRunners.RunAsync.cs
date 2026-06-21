@@ -108,7 +108,9 @@ public sealed partial class SwivalSubagentRunner
 
             var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot,
                 processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,
-                onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs);
+                onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
+                onWedgeSample: watchdog.RecordWedgeSample,
+                socketProbe: BackendSocketProbe.HasEstablishedBackendConnection);
             var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // WhenAny may return processTask when watchdog kill triggers near-simultaneous
@@ -138,8 +140,12 @@ public sealed partial class SwivalSubagentRunner
                             attemptInvocation.Tier, attempt,
                             Data: new Dictionary<string, string>
                             {
-                                ["reason"] = wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling
-                                    ? "absolute_ceiling" : "stall",
+                                ["reason"] = wdResult.Outcome switch
+                                {
+                                    ActivityWatchdog.Outcome.FiredAbsoluteCeiling => "absolute_ceiling",
+                                    ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
+                                    _ => "stall"
+                                },
                                 ["lastSignal"] = wdResult.LastPulseSource,
                                 ["silenceMs"] = wdResult.SilenceMs.ToString(),
                                 ["firstOutputTimeoutMs"] = currentFirstOutputMs.ToString(),
@@ -165,12 +171,8 @@ public sealed partial class SwivalSubagentRunner
                     else
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
-                            ErrorHintClassifier.WithHint(
-                                $"persistent model-backend stall: swival had no activity for " +
-                                $"{wdResult.SilenceMs}ms (phase={(wdResult.LastPulseSource == "none" ? "first-output" : "inactivity")}, " +
-                                $"threshold={(wdResult.LastPulseSource == "none" ? currentFirstOutputMs : currentInactivityMs)}ms). " +
-                                $"Last signal: {wdResult.LastPulseSource}. " +
-                                $"{maxStallAttempts} attempts exhausted."));
+                            ErrorHintClassifier.WithHint(BuildPersistentStallReason(
+                                wdResult, currentFirstOutputMs, currentInactivityMs, maxStallAttempts)));
                     }
                 }
             }
