@@ -55,6 +55,7 @@ public sealed partial class SplitGuardVerificationTests
         string[] expected =
         [
             "ActivityColumnItemsPanelTests.cs",
+            "ActivityColumnTabsUiTests.cs",
             "AddAttachmentsTests.cs",
             "ConfigInitEmptyStateUiTests.cs",
             "NewTaskAuthoringTests.cs",
@@ -68,7 +69,9 @@ public sealed partial class SplitGuardVerificationTests
             Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
             var content = File.ReadAllText(fullPath);
             Assert.Contains("[Collection(\"Headless\")]", content, StringComparison.Ordinal);
-            Assert.Contains("public sealed class", content, StringComparison.Ordinal);
+            Assert.True(content.Contains("public sealed class", StringComparison.Ordinal)
+                      || content.Contains("public sealed partial class", StringComparison.Ordinal),
+                $"{fileName}: must declare public sealed class or public sealed partial class");
         }
     }
 

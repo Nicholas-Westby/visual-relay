@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
@@ -21,7 +22,6 @@ public sealed class ActivityColumnItemsPanelTests
     [AvaloniaFact]
     public void TraceListBox_UsesNonVirtualizingStackPanel()
     {
-        // ── Arrange: show the window with a default ViewModel ──
         var viewModel = new MainWindowViewModel();
         var window = new MainWindow
         {
@@ -32,15 +32,26 @@ public sealed class ActivityColumnItemsPanelTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        // ── Act: locate the trace ListBox ──
-        // Traverse: window → ActivityColumn (UserControl) → ListBox x:Name="TraceList"
         var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
         Assert.NotNull(activityColumn);
-        var traceList = activityColumn.FindControl<ListBox>("TraceList");
+
+        // Switch to Commands tab (index 1) to ensure TraceList content is loaded.
+        var tabControl = activityColumn.GetVisualDescendants()
+            .OfType<TabControl>()
+            .FirstOrDefault();
+        Assert.NotNull(tabControl);
+        tabControl!.SelectedIndex = 1;
+        Dispatcher.UIThread.RunJobs();
+
+        var commandsView = activityColumn.GetVisualDescendants()
+            .OfType<CommandsView>()
+            .FirstOrDefault();
+        Assert.NotNull(commandsView);
+
+        var traceList = commandsView!.FindControl<ListBox>("TraceList");
         Assert.NotNull(traceList);
         Assert.NotNull(traceList.ItemsPanelRoot);
 
-        // ── Assert: the realized items panel is a plain (non-virtualizing) StackPanel ──
         Assert.IsType<StackPanel>(traceList.ItemsPanelRoot);
     }
 }

@@ -17,22 +17,77 @@ public partial class StageDetailViewModel : ViewModelBase
     private IReadOnlyList<PromptSection> _inputSections = [];
 
     [ObservableProperty]
+    private string _inputPromptRawText = "";
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsInputReadyAndNotRawText))]
+    [NotifyPropertyChangedFor(nameof(IsInputReadyAndRawText))]
+    private bool _isInputRawText;
+
+    [ObservableProperty]
     private IReadOnlyList<OutputField> _outputFields = [];
 
     [ObservableProperty]
     private string _rawJson = "";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOutputReadyAndNotRawJson))]
+    [NotifyPropertyChangedFor(nameof(IsOutputReadyAndRawJson))]
+    private bool _isOutputRawJson;
+
+    [ObservableProperty]
     private string _header = "";
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsSystemNoStage))]
+    [NotifyPropertyChangedFor(nameof(IsSystemNotStarted))]
+    [NotifyPropertyChangedFor(nameof(IsSystemNotComplete))]
+    [NotifyPropertyChangedFor(nameof(IsSystemReady))]
+    [NotifyPropertyChangedFor(nameof(IsSystemDriverStage))]
     private StageDetailState _systemState = StageDetailState.NoStage;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsInputNoStage))]
+    [NotifyPropertyChangedFor(nameof(IsInputNotStarted))]
+    [NotifyPropertyChangedFor(nameof(IsInputNotComplete))]
+    [NotifyPropertyChangedFor(nameof(IsInputReady))]
+    [NotifyPropertyChangedFor(nameof(IsInputDriverStage))]
     private StageDetailState _inputState = StageDetailState.NoStage;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsOutputNoStage))]
+    [NotifyPropertyChangedFor(nameof(IsOutputNotStarted))]
+    [NotifyPropertyChangedFor(nameof(IsOutputNotComplete))]
+    [NotifyPropertyChangedFor(nameof(IsOutputReady))]
+    [NotifyPropertyChangedFor(nameof(IsOutputDriverStage))]
     private StageDetailState _outputState = StageDetailState.NoStage;
+
+    // ── Boolean state properties for XAML binding (no converter needed) ──
+
+    public bool IsSystemNoStage => SystemState == StageDetailState.NoStage;
+    public bool IsSystemNotStarted => SystemState == StageDetailState.NotStarted;
+    public bool IsSystemNotComplete => SystemState == StageDetailState.NotComplete;
+    public bool IsSystemReady => SystemState == StageDetailState.Ready;
+    public bool IsSystemDriverStage => SystemState == StageDetailState.DriverStage;
+
+    public bool IsInputNoStage => InputState == StageDetailState.NoStage;
+    public bool IsInputNotStarted => InputState == StageDetailState.NotStarted;
+    public bool IsInputNotComplete => InputState == StageDetailState.NotComplete;
+    public bool IsInputReady => InputState == StageDetailState.Ready;
+    public bool IsInputDriverStage => InputState == StageDetailState.DriverStage;
+
+    public bool IsOutputNoStage => OutputState == StageDetailState.NoStage;
+    public bool IsOutputNotStarted => OutputState == StageDetailState.NotStarted;
+    public bool IsOutputNotComplete => OutputState == StageDetailState.NotComplete;
+    public bool IsOutputReady => OutputState == StageDetailState.Ready;
+    public bool IsOutputDriverStage => OutputState == StageDetailState.DriverStage;
+
+    // ── Raw toggle visibility helpers ──
+
+    public bool IsInputReadyAndNotRawText => InputState == StageDetailState.Ready && !IsInputRawText;
+    public bool IsInputReadyAndRawText => InputState == StageDetailState.Ready && IsInputRawText;
+    public bool IsOutputReadyAndNotRawJson => OutputState == StageDetailState.Ready && !IsOutputRawJson;
+    public bool IsOutputReadyAndRawJson => OutputState == StageDetailState.Ready && IsOutputRawJson;
 
     /// <summary>
     /// Loads stage detail from the latest attempt artifacts in
@@ -98,11 +153,15 @@ public partial class StageDetailViewModel : ViewModelBase
             data is not null)
         {
             InputSections = AssembledPromptParser.Parse(data.InputPrompt);
+            InputPromptRawText = data.InputPrompt;
+            IsInputRawText = false;
             InputState = StageDetailState.Ready;
         }
         else
         {
             InputSections = [];
+            InputPromptRawText = "";
+            IsInputRawText = false;
             InputState = StageDetailState.NotStarted;
         }
     }
@@ -194,8 +253,11 @@ public partial class StageDetailViewModel : ViewModelBase
     {
         SystemPromptText = "";
         InputSections = [];
+        InputPromptRawText = "";
+        IsInputRawText = false;
         OutputFields = [];
         RawJson = "";
+        IsOutputRawJson = false;
         Header = "";
     }
 }

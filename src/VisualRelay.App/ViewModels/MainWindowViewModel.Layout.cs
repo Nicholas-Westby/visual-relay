@@ -29,36 +29,25 @@ public partial class MainWindowViewModel
     [NotifyPropertyChangedFor(nameof(IsFocused))]
     [NotifyPropertyChangedFor(nameof(FocusButtonLabel))]
     [NotifyPropertyChangedFor(nameof(FocusButtonTooltip))]
-    [NotifyPropertyChangedFor(nameof(RunLogChevron))]
-    [NotifyPropertyChangedFor(nameof(RunLogHeaderTooltip))]
-    [NotifyPropertyChangedFor(nameof(LlmCommandsChevron))]
-    [NotifyPropertyChangedFor(nameof(IsActivityColumnCollapsed))]
-    private bool _isRunLogCollapsed;
+    [NotifyPropertyChangedFor(nameof(ActivityColumnChevron))]
+    [NotifyPropertyChangedFor(nameof(ActivityColumnHeaderTooltip))]
+    private bool _isActivityColumnCollapsed;
+
+    // ── Activity tab selection ────────────────────────────────────────────
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(IsFocused))]
-    [NotifyPropertyChangedFor(nameof(FocusButtonLabel))]
-    [NotifyPropertyChangedFor(nameof(FocusButtonTooltip))]
-    [NotifyPropertyChangedFor(nameof(LlmCommandsChevron))]
-    [NotifyPropertyChangedFor(nameof(LlmCommandsHeaderTooltip))]
-    [NotifyPropertyChangedFor(nameof(RunLogChevron))]
-    [NotifyPropertyChangedFor(nameof(IsActivityColumnCollapsed))]
-    private bool _isLlmCommandsCollapsed;
+    private int _activityTabIndex;
 
     // ── Focus snapshot ─────────────────────────────────────────────────────
 
     private bool _focusSnapshotQueue;
     private bool _focusSnapshotStages;
-    private bool _focusSnapshotRunLog;
-    private bool _focusSnapshotLlmCommands;
+    private bool _focusSnapshotActivity;
 
     // ── Computed properties ────────────────────────────────────────────────
 
     public bool IsFocused =>
-        IsQueueCollapsed && IsStagesCollapsed && IsRunLogCollapsed && IsLlmCommandsCollapsed;
-
-    public bool IsActivityColumnCollapsed =>
-        IsRunLogCollapsed && IsLlmCommandsCollapsed;
+        IsQueueCollapsed && IsStagesCollapsed && IsActivityColumnCollapsed;
 
     public string FocusButtonLabel => IsFocused ? "Restore panels" : "Focus task";
     public string FocusButtonTooltip => IsFocused
@@ -80,21 +69,9 @@ public partial class MainWindowViewModel
     public ChevronDirection StagesChevron =>
         IsStagesCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
 
-    /// <summary>
-    /// Run Log header: when the column slides to the right rail (both collapsed)
-    /// point Right; otherwise use the vertical disclosure (Down expanded /
-    /// Right collapsed) for the in-place fold.
-    /// </summary>
-    public ChevronDirection RunLogChevron => IsActivityColumnCollapsed
-        ? ChevronDirection.Right // slide right
-        : IsRunLogCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
-
-    /// <summary>
-    /// LLM Commands header: same dual-mode scheme as Run Log.
-    /// </summary>
-    public ChevronDirection LlmCommandsChevron => IsActivityColumnCollapsed
-        ? ChevronDirection.Right // slide right
-        : IsLlmCommandsCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
+    /// <summary>Activity column (right edge): Down expanded, Right collapsed in-place; Left to expand from rail.</summary>
+    public ChevronDirection ActivityColumnChevron =>
+        IsActivityColumnCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
 
     /// <summary>Activity rail expand affordance (always Left — expand left from right edge).</summary>
     public ChevronDirection ActivityRailChevron => ChevronDirection.Left;
@@ -107,11 +84,8 @@ public partial class MainWindowViewModel
     public string StagesHeaderTooltip =>
         IsStagesCollapsed ? "Expand Stages" : "Collapse Stages";
 
-    public string RunLogHeaderTooltip =>
-        IsRunLogCollapsed ? "Expand Run Log" : "Collapse Run Log";
-
-    public string LlmCommandsHeaderTooltip =>
-        IsLlmCommandsCollapsed ? "Expand LLM Commands" : "Collapse LLM Commands";
+    public string ActivityColumnHeaderTooltip =>
+        IsActivityColumnCollapsed ? "Expand Activity" : "Collapse Activity";
 
     // ── Per-panel toggle commands ──────────────────────────────────────────
 
@@ -128,15 +102,9 @@ public partial class MainWindowViewModel
     }
 
     [RelayCommand]
-    private void ToggleRunLog()
+    private void ToggleActivityColumn()
     {
-        IsRunLogCollapsed = !IsRunLogCollapsed;
-    }
-
-    [RelayCommand]
-    private void ToggleLlmCommands()
-    {
-        IsLlmCommandsCollapsed = !IsLlmCommandsCollapsed;
+        IsActivityColumnCollapsed = !IsActivityColumnCollapsed;
     }
 
     // ── Master focus toggle ────────────────────────────────────────────────
@@ -149,21 +117,18 @@ public partial class MainWindowViewModel
             // Restore from snapshot.
             IsQueueCollapsed = _focusSnapshotQueue;
             IsStagesCollapsed = _focusSnapshotStages;
-            IsRunLogCollapsed = _focusSnapshotRunLog;
-            IsLlmCommandsCollapsed = _focusSnapshotLlmCommands;
+            IsActivityColumnCollapsed = _focusSnapshotActivity;
         }
         else
         {
             // Snapshot current state, then collapse all.
             _focusSnapshotQueue = IsQueueCollapsed;
             _focusSnapshotStages = IsStagesCollapsed;
-            _focusSnapshotRunLog = IsRunLogCollapsed;
-            _focusSnapshotLlmCommands = IsLlmCommandsCollapsed;
+            _focusSnapshotActivity = IsActivityColumnCollapsed;
 
             IsQueueCollapsed = true;
             IsStagesCollapsed = true;
-            IsRunLogCollapsed = true;
-            IsLlmCommandsCollapsed = true;
+            IsActivityColumnCollapsed = true;
         }
     }
 }

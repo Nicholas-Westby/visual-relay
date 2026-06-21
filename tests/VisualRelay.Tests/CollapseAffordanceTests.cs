@@ -164,7 +164,7 @@ public sealed class CollapseAffordanceTests
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesToggle) as string);
 
-        // ── Run Log ──
+        // ── Activity ──
         FindVisualOfType(window.Content as Control, out ActivityColumn? activityColumn);
         Assert.NotNull(activityColumn);
 
@@ -172,31 +172,18 @@ public sealed class CollapseAffordanceTests
         CollectControls(activityColumn, activityToggles);
         var headerToggles = activityToggles.FindAll(
             b => b.Classes.Contains("collapseToggle"));
-        Assert.True(headerToggles.Count >= 2);
+        Assert.Single(headerToggles);
 
-        var runLogToggle = headerToggles[0];
-        Assert.Equal("Collapse Run Log", ToolTip.GetTip(runLogToggle) as string);
+        var activityToggle = headerToggles[0];
+        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityToggle) as string);
 
-        viewModel.IsRunLogCollapsed = true;
+        viewModel.IsActivityColumnCollapsed = true;
         Dispatcher.UIThread.RunJobs();
-        Assert.False(viewModel.IsActivityColumnCollapsed);
-        Assert.Equal("Expand Run Log", ToolTip.GetTip(runLogToggle) as string);
+        Assert.Equal("Expand Activity", ToolTip.GetTip(activityToggle) as string);
 
-        viewModel.IsRunLogCollapsed = false;
+        viewModel.IsActivityColumnCollapsed = false;
         Dispatcher.UIThread.RunJobs();
-
-        // ── LLM Commands ──
-        var llmToggle = headerToggles[1];
-        Assert.Equal("Collapse LLM Commands", ToolTip.GetTip(llmToggle) as string);
-
-        viewModel.IsLlmCommandsCollapsed = true;
-        Dispatcher.UIThread.RunJobs();
-        Assert.False(viewModel.IsActivityColumnCollapsed);
-        Assert.Equal("Expand LLM Commands", ToolTip.GetTip(llmToggle) as string);
-
-        viewModel.IsLlmCommandsCollapsed = false;
-        Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Collapse LLM Commands", ToolTip.GetTip(llmToggle) as string);
+        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityToggle) as string);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────

@@ -2,9 +2,9 @@ using Avalonia.Controls;
 
 namespace VisualRelay.App.Views.Controls;
 
-public partial class ActivityColumn : UserControl
+public partial class CommandsView : UserControl
 {
-    public ActivityColumn()
+    public CommandsView()
     {
         InitializeComponent();
     }
