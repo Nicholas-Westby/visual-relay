@@ -1,3 +1,5 @@
+using System.Text.RegularExpressions;
+
 namespace VisualRelay.Core.ObsidianBridge;
 
 /// <summary>
@@ -5,10 +7,34 @@ namespace VisualRelay.Core.ObsidianBridge;
 /// Given a vault root and repo name, computes all relevant paths and can scaffold
 /// the directory tree with INFO.md guide files.
 /// </summary>
-public sealed class ObsidianVaultLayout
+public sealed partial class ObsidianVaultLayout
 {
     private readonly string _vaultRoot;
     private readonly string _repoName;
+
+    /// <summary>
+    /// Fallback repo-folder name used when the real repo name sanitizes away to
+    /// nothing or to an unsafe path component (empty, ".", "..").
+    /// </summary>
+    private const string FallbackRepoName = "project";
+
+    // Slug rule shared with RelayTaskWriter.ValidateSlug: lowercase letters,
+    // digits, and single hyphens, no leading/trailing/double hyphen. Anchored so
+    // it can never match a path-traversal token ("..", "a/b", "x.y", …).
+    [GeneratedRegex("^[a-z0-9]+(-[a-z0-9]+)*$")]
+    private static partial Regex SlugRegex();
+
+    /// <summary>
+    /// True when <paramref name="taskId"/> is a safe kebab-case slug
+    /// (<c>^[a-z0-9]+(-[a-z0-9]+)*$</c>) and therefore cannot escape the
+    /// <c>Completed/&lt;date&gt;/</c> folder or the <c>.relay/&lt;id&gt;/</c>
+    /// directory when composed into a path. The egress boundary
+    /// (<see cref="ObsidianSummaryWriter"/>) rejects ids that fail this check
+    /// BEFORE any path is built, so a crafted on-disk task id cannot clobber a
+    /// file elsewhere in the vault.
+    /// </summary>
+    public static bool IsValidTaskId(string taskId) =>
+        !string.IsNullOrWhiteSpace(taskId) && SlugRegex().IsMatch(taskId);
 
     /// <summary>
     /// Reserved file names (case-insensitive) that must never be treated as tasks.
@@ -43,7 +69,7 @@ public sealed class ObsidianVaultLayout
     private static string SanitizeRepoName(string repoName)
     {
         if (string.IsNullOrWhiteSpace(repoName))
-            return "project";
+            return FallbackRepoName;
 
         // Strip directory separators (including backslash on Unix for cross-platform safety).
         var sanitized = repoName
@@ -51,7 +77,15 @@ public sealed class ObsidianVaultLayout
             .Replace('/', '-')
             .Trim();
 
-        return string.IsNullOrWhiteSpace(sanitized) ? "project" : sanitized;
+        // Reject pure-dot residues ("." / "..") that would resolve a path component
+        // ABOVE the configured vault root (Path.Combine(vault, "..")). After the
+        // separator strip a "/../" collapses to "-..-"; trim hyphens before the
+        // dot check so a bare ".." surrounded by separators is also caught.
+        var dotCheck = sanitized.Trim('-');
+        if (string.IsNullOrWhiteSpace(sanitized) || dotCheck is "." or "..")
+            return FallbackRepoName;
+
+        return sanitized;
     }
 
     /// <summary>

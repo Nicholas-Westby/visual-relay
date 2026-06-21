@@ -15,7 +15,14 @@ public static class ObsidianBridgeSettings
 {
     private const string DirName = "visual-relay";
     private const string FileName = "obsidian.json";
-    private const int MinPollSeconds = 15;
+
+    /// <summary>
+    /// Minimum allowed bridge poll interval (seconds). Enforced both on
+    /// <see cref="Load"/> and at every live set (the VM property setter) so a
+    /// value pushed via the settings UI or control API can't spin the timer too
+    /// fast.
+    /// </summary>
+    public const int MinPollSeconds = 15;
 
     private static readonly string DefaultVaultRootTemplate =
         "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/";

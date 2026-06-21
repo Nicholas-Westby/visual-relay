@@ -30,7 +30,9 @@ public sealed record ImportResult(
 /// </summary>
 public sealed class ObsidianTaskImporter
 {
-    // Regex to detect vr-recognized: <guid> in YAML frontmatter.
+    // Regex to detect a vr-recognized: <value> line. Multiline so it can match any
+    // line WITHIN the already-extracted leading frontmatter block — never run
+    // against the whole file (a body that merely mentions the stamp must not skip).
     private static readonly Regex VrRecognizedRegex = new(
         @"^vr-recognized\s*:\s*\S", RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
@@ -225,7 +227,12 @@ public sealed class ObsidianTaskImporter
             using var reader = new StreamReader(filePath);
             var read = reader.Read(firstKb, 0, firstKb.Length);
             var prefix = new string(firstKb, 0, read);
-            return VrRecognizedRegex.IsMatch(prefix);
+
+            // Anchor the check to the leading frontmatter block ONLY. A body that
+            // merely mentions "vr-recognized:" must still be imported, so we never
+            // scan the whole prefix — only the parsed `--- … ---` header.
+            var frontmatter = FrontmatterBlockRegex.Match(prefix);
+            return frontmatter.Success && VrRecognizedRegex.IsMatch(frontmatter.Value);
         }
         catch
         {

@@ -39,10 +39,13 @@ public partial class MainWindowViewModel
                 if (task is not null)
                     BeginRunningTask(task);
             },
-            OnExecuteCompleted = (taskId, status) =>
+            OnExecuteCompleted = (taskId, outcome) =>
             {
                 ClearRunningTask(taskId);
-                _ = ExportSummaryOnCompletion(taskId, new RelayTaskOutcome(taskId, status, null, null, null));
+                // Publish the FULL outcome — the drain has the real commit SHA and
+                // flag reason, so the summary matches the single-run path (which also
+                // forwards the full outcome) instead of showing blank commit/reason.
+                _ = ExportSummaryOnCompletion(taskId, outcome);
                 // After clearing _runningTaskId, refresh the detail-pane error
                 // when this is the viewed task: flag ⇒ new reason, commit ⇒ stays
                 // cleared. Fixes the stale "LATEST RUN FAILED" banner persisting

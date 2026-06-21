@@ -57,7 +57,8 @@ public sealed class DrainLifecycleStatusTests
         var firstRow = viewModel.Tasks.Single(t => t.Id == "first");
         File.Delete(firstRow.MarkdownPath);
 
-        callbacks.OnExecuteCompleted!("first", RelayTaskOutcomeStatus.Committed);
+        callbacks.OnExecuteCompleted!("first",
+            new RelayTaskOutcome("first", RelayTaskOutcomeStatus.Committed, null, "sha", null));
 
         // The archived task left the active roster (no longer "Pending")...
         Assert.DoesNotContain(viewModel.Tasks, t => t.Id == "first");

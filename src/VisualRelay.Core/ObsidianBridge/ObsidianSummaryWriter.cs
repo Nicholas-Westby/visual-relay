@@ -23,6 +23,12 @@ public sealed class ObsidianSummaryWriter
         Guid? sourceGuid,
         DateTimeOffset nowUtc)
     {
+        // Egress guard: task ids come from on-disk folder/file names, so a crafted
+        // id (".."/"a/b"/"x.y"/…) must never reach Path.Combine(rootPath, ".relay",
+        // taskId) below. Reject before composing any path — a no-op, not a crash.
+        if (!ObsidianVaultLayout.IsValidTaskId(taskId))
+            return string.Empty;
+
         var metric = RelayRunHistory.ReadTaskMetric(rootPath, taskId);
         var statusEntries = RelayRunHistory.ReadStatusRecord(rootPath, taskId);
         var repoName = Path.GetFileName(rootPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
@@ -149,6 +155,13 @@ public sealed class ObsidianSummaryWriter
         Guid? sourceGuid,
         DateTimeOffset nowUtc)
     {
+        // Egress guard: reject a crafted task id BEFORE composing SummaryPath
+        // (Completed/<date>/<id>.md) or the .relay/<id> read path — a bad id could
+        // otherwise escape the dated folder and clobber a file elsewhere in the
+        // vault (Write overwrites unconditionally). Best-effort no-op when invalid.
+        if (!ObsidianVaultLayout.IsValidTaskId(taskId))
+            return;
+
         var metric = RelayRunHistory.ReadTaskMetric(rootPath, taskId);
         var completedDate = ResolveCompletionDateOnly(metric, rootPath, taskId, nowUtc);
         var summaryPath = layout.SummaryPath(taskId, completedDate);

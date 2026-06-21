@@ -70,7 +70,8 @@ public sealed class TaskDetailErrorRefreshTests
 
         // The re-run COMMITS (no flagged entry left) — the error stays cleared.
         await WriteCommittedStatusAsync(repo.Root, "broken");
-        lifecycle.OnExecuteCompleted.Invoke("broken", RelayTaskOutcomeStatus.Committed);
+        lifecycle.OnExecuteCompleted.Invoke("broken",
+            new RelayTaskOutcome("broken", RelayTaskOutcomeStatus.Committed, null, "sha", null));
         await viewModel.LastRunCompletionRefresh!;
         Assert.False(viewModel.HasSelectedTaskError);
         Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
@@ -101,7 +102,8 @@ public sealed class TaskDetailErrorRefreshTests
 
         // The re-run FLAGS with a NEW reason — the new error must surface.
         await WriteFlaggedStatusAsync(repo.Root, "broken", 4, "new distinct failure");
-        lifecycle.OnExecuteCompleted.Invoke("broken", RelayTaskOutcomeStatus.Flagged);
+        lifecycle.OnExecuteCompleted.Invoke("broken",
+            new RelayTaskOutcome("broken", RelayTaskOutcomeStatus.Flagged, null, null, "new distinct failure"));
         await viewModel.LastRunCompletionRefresh!;
         Assert.True(viewModel.HasSelectedTaskError);
         Assert.Equal("new distinct failure", viewModel.SelectedTaskError);

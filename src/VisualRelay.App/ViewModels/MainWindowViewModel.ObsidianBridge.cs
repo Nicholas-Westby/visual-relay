@@ -26,8 +26,21 @@ public partial class MainWindowViewModel
     partial void OnObsidianEnabledChanged(bool value) => PersistBridgeSettings();
     // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnObsidianVaultRootChanged(string value) => PersistBridgeSettings();
-    // ReSharper disable once UnusedParameterInPartialMethod
-    partial void OnObsidianPollSecondsChanged(int value) => PersistBridgeSettings();
+
+    partial void OnObsidianPollSecondsChanged(int value)
+    {
+        // Clamp at the live-set boundary too — Load alone leaves a value pushed via
+        // the settings TextBox or the control API able to spin the timer far too
+        // fast. Reassigning the clamped value re-enters this handler once and then
+        // no-ops (clamped == clamped), so persistence runs exactly once at the floor.
+        if (value < ObsidianBridgeSettings.MinPollSeconds)
+        {
+            ObsidianPollSeconds = ObsidianBridgeSettings.MinPollSeconds;
+            return;
+        }
+
+        PersistBridgeSettings();
+    }
 
     private void PersistBridgeSettings()
     {

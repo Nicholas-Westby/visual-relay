@@ -222,7 +222,7 @@ public sealed class RelayQueueController
             DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", milestone,
                 outcome.Status == RelayTaskOutcomeStatus.Committed ? outcome.CommitSha : outcome.Reason);
 
-            _lifecycle?.OnExecuteCompleted?.Invoke(task.Id, outcome.Status);
+            _lifecycle?.OnExecuteCompleted?.Invoke(task.Id, outcome);
 
             if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
             {

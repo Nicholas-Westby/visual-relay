@@ -18,6 +18,11 @@ public sealed class DrainLifecycleCallbacks
     /// <summary>Called when a task enters the serial execute phase (Phase 2).</summary>
     public Action<string>? OnExecuteStarted { get; init; }
 
-    /// <summary>Called when a task finishes execution (Committed, Flagged, or Failed).</summary>
-    public Action<string, RelayTaskOutcomeStatus>? OnExecuteCompleted { get; init; }
+    /// <summary>
+    /// Called when a task finishes execution (Committed, Flagged, or Failed). Carries
+    /// the full <see cref="RelayTaskOutcome"/> — not just the status — so the drain
+    /// path can publish the real commit SHA and flag reason (the single-run path
+    /// already passes the full outcome).
+    /// </summary>
+    public Action<string, RelayTaskOutcome>? OnExecuteCompleted { get; init; }
 }
