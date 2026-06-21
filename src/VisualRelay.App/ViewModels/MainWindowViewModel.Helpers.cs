@@ -43,6 +43,16 @@ public partial class MainWindowViewModel
         }
 
         ApplyStageEventToBoard(relayEvent);
+
+        // When a stage_input or stage_done event fires for the currently-selected
+        // stage, refresh the per-stage detail VM so the tabs show fresh data.
+        if (relayEvent.EventName is "stage_input" or "stage_done" &&
+            _selectedStageFilter is { } selectedStage &&
+            relayEvent.StageNumber == selectedStage)
+        {
+            var selectedStageRow = Stages.FirstOrDefault(s => s.Number == selectedStage);
+            RefreshStageDetail(selectedStageRow);
+        }
     }
 
     private void UpdateRunningTask(RelayEvent relayEvent)
@@ -206,10 +216,8 @@ public partial class MainWindowViewModel
 
     private void ClearLogState()
     {
-        Events.Clear();
-        TraceEntries.Clear();
-        _allTaskEvents.Clear();
-        _allTraceEntries.Clear();
+        Events.Clear(); TraceEntries.Clear();
+        _allTaskEvents.Clear(); _allTraceEntries.Clear();
     }
 
     private List<RelayEvent> EventsFor(string taskId)
@@ -269,19 +277,11 @@ public partial class MainWindowViewModel
         }
 
         if (relayEvent.Data.TryGetValue("time", out var time))
-        {
             stage.DurationLabel = time;
-        }
-
         if (relayEvent.Data.TryGetValue("cost", out var cost))
-        {
             stage.CostLabel = cost;
-        }
-
         if (relayEvent.Data.TryGetValue("model", out var model))
-        {
             stage.ModelLabel = model;
-        }
         if (relayEvent.Data.TryGetValue("turns", out var turns))
         {
             stage.TurnsLabel = turns + "t";

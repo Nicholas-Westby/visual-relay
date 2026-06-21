@@ -250,6 +250,7 @@ public partial class MainWindowViewModel
             LogScopeLabel = "full";
             ApplyLogFilter();
             RevealStageArtifactsCommand.NotifyCanExecuteChanged();
+            RefreshStageDetail(null);
             return;
         }
 
@@ -262,6 +263,7 @@ public partial class MainWindowViewModel
         LogScopeLabel = $"stage {stage.Number:00}";
         ApplyLogFilter();
         RevealStageArtifactsCommand.NotifyCanExecuteChanged();
+        RefreshStageDetail(stage);
     }
 
     [RelayCommand(CanExecute = nameof(CanRevealStageArtifacts))]
