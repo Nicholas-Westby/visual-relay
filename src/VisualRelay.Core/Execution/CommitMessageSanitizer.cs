@@ -58,15 +58,18 @@ internal static class CommitMessageSanitizer
 
     private static string SanitizeSubject(string subject)
     {
-        var clean = subject.Replace(CommitRules.EmDash, '-').TrimEnd();
-        if (clean.EndsWith('.'))
-        {
-            clean = clean[..^1];
-        }
-
+        var clean = StripTrailingPeriods(subject.Replace(CommitRules.EmDash, '-').TrimEnd());
         clean = LowercaseAfterPrefix(clean);
-        return Truncate(clean);
+
+        // The 72-char word-boundary cut can resurface a trailing period when the
+        // surviving word ends in an internal '.', which the validator rejects.
+        // Re-strip after truncating. If that empties the description, the result
+        // no longer matches the prefix regex, so the caller takes its fallback.
+        return StripTrailingPeriods(Truncate(clean));
     }
+
+    /// <summary>Removes any trailing period(s) and trailing whitespace.</summary>
+    private static string StripTrailingPeriods(string value) => value.TrimEnd().TrimEnd('.').TrimEnd();
 
     /// <summary>
     /// Lowercases the first character of the description (immediately after the
@@ -106,7 +109,10 @@ internal static class CommitMessageSanitizer
         }
 
         var text = clean[CommitRules.BulletPrefix.Length..];
-        var words = text.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // Split on ALL whitespace to match BodyRules.CheckBulletWords; splitting
+        // on a single space would undercount tab-separated words, so the sanitizer
+        // would leave an over-cap bullet that the validator then rejects.
+        var words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
         if (words.Length > CommitRules.MaxBulletWords)
         {
             text = string.Join(' ', words.Take(CommitRules.MaxBulletWords));

@@ -29,11 +29,27 @@ public static partial class CommitLintRunner
         if (!File.Exists(infoPath))
             return Task.FromResult(RuleTier.Human);
 
-        var nonce = ExtractNonce(File.ReadAllText(infoPath));
-        var tier = nonce is not null && string.Equals(nonce, token, StringComparison.Ordinal)
-            ? RuleTier.Driver
-            : RuleTier.Human;
-        return Task.FromResult(tier);
+        // The read/parse can fail exactly when a run is starting/stopping
+        // (info.json mid-write, truncated, or a permission hiccup). A throw here
+        // would exit the hook non-zero and git would ABORT the commit. Fail open
+        // instead — never let a read/parse error propagate out of the hook. With a
+        // token set this is almost certainly VR's sealed commit, so use Driver.
+        //
+        // Only a cleanly extracted, NON-matching nonce yields Human: that is a
+        // real run sealed under a different nonce, so this commit is not its.
+        try
+        {
+            var nonce = ExtractNonce(File.ReadAllText(infoPath));
+            if (nonce is null)
+                return Task.FromResult(RuleTier.Driver); // unparseable → fail open
+            return Task.FromResult(string.Equals(nonce, token, StringComparison.Ordinal)
+                ? RuleTier.Driver
+                : RuleTier.Human);
+        }
+        catch
+        {
+            return Task.FromResult(RuleTier.Driver);
+        }
     }
 
     private static string? ExtractNonce(string infoJson)

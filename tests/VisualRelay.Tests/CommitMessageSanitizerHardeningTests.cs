@@ -115,6 +115,50 @@ public sealed class CommitMessageSanitizerHardeningTests
         AssertValidatesClean(CommitMessageSanitizer.FromRawOrFallback(null, "enforce-conventional-commits-csharp"));
     }
 
+    public static IEnumerable<object[]> OverflowInternalPeriodCases()
+    {
+        // Each case overflows 72 chars and is built so the word-boundary cut
+        // leaves a surviving word ending in an internal period — the exact shape
+        // that produced a trailing '.' before the post-truncate re-strip. These
+        // heads all keep a non-empty description after the cut; the degenerate
+        // collapse-to-prefix case is covered by the fallback test below.
+        foreach (var head in new[] { 60, 62, 63, 64 })
+            yield return [$"feat: {new string('a', head)}. tail goes here and is long enough to overflow the limit"];
+    }
+
+    [Theory]
+    [MemberData(nameof(OverflowInternalPeriodCases))]
+    public void OverflowWithInternalPeriod_DoesNotEndWithPeriod(string raw)
+    {
+        Assert.True(raw.Length > CommitRules.MaxSubjectChars, "test input must overflow to exercise truncation");
+        var subject = CommitMessageSanitizer.TrySanitizeSubject(raw);
+        Assert.NotNull(subject);
+        Assert.False(subject!.EndsWith('.'), $"sanitized subject must not end with a period: \"{subject}\"");
+        AssertValidatesClean(subject);
+    }
+
+    [Fact]
+    public void OverflowStrippedToEmptyDescription_FallsBackAndValidates()
+    {
+        // After the word-boundary cut and trailing-period strip, the description
+        // can be emptied; the sanitizer must take its fallback rather than emit
+        // "feat: " with nothing after the prefix.
+        var raw = "feat: " + new string('a', 80) + ". tail";
+        var message = CommitMessageSanitizer.FromRawOrFallback(raw, "my-task");
+        AssertValidatesClean(message);
+    }
+
+    [Fact]
+    public void TabSeparatedBullet_OverTwentyWords_TrimmedSoItValidates()
+    {
+        // The validator counts words on any whitespace, so a tab-separated bullet
+        // over the cap must be trimmed by the sanitizer to match — not undercounted.
+        var bulletWords = string.Join('\t', Enumerable.Range(1, 25).Select(i => $"word{i}"));
+        var raw = $"feat: add a control\n\n- {bulletWords}";
+        var message = CommitMessageSanitizer.FromRawOrFallback(raw, "my-task");
+        AssertValidatesClean(message);
+    }
+
     [Fact]
     public void FullMessyMessage_FullyValidates()
     {
