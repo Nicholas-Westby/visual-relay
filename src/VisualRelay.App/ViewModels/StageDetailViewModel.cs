@@ -157,7 +157,7 @@ public partial class StageDetailViewModel : ViewModelBase
 
         foreach (var path in Directory.EnumerateFiles(taskDirectory, pattern))
         {
-            var name = System.IO.Path.GetFileName(path);
+            var name = Path.GetFileName(path);
             var attempt = RelayAttempt.AttemptNumber(name);
             if (attempt > bestAttempt)
             {
@@ -175,7 +175,7 @@ public partial class StageDetailViewModel : ViewModelBase
 
         if (inputPath is not null && File.Exists(inputPath))
         {
-            var attempt = RelayAttempt.AttemptNumber(System.IO.Path.GetFileName(inputPath));
+            var attempt = RelayAttempt.AttemptNumber(Path.GetFileName(inputPath));
             var sizeKb = new FileInfo(inputPath).Length / 1024.0;
             header += $" · attempt {attempt} · {sizeKb:0.#} KB";
         }

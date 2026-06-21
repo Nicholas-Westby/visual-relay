@@ -216,6 +216,13 @@ public sealed class StageDetailViewModelTests
         public string Path { get; } = System.IO.Path.Combine(
             System.IO.Path.GetTempPath(), "vr-sdvm-tests", Guid.NewGuid().ToString("N"));
         public TempDirectory() => Directory.CreateDirectory(Path);
-        public void Dispose() { try { TestFileSystem.DeleteDirectoryResilient(Path); } catch { } }
+        public void Dispose()
+        {
+            try { TestFileSystem.DeleteDirectoryResilient(Path); }
+            catch
+            {
+                // Best-effort cleanup; ignore failures to avoid masking test results.
+            }
+        }
     }
 }
