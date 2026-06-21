@@ -48,7 +48,12 @@ public partial class App : Application
             var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
             _controlServer = new ControlServer(new ControlApi(viewModel, window), options);
             _controlServer.Start();
-            desktop.Exit += (_, _) => _controlServer?.Stop();
+            desktop.Exit += (_, _) =>
+            {
+                _controlServer?.Stop();
+                // Delete any un-reverted rewrite-undo snapshots so they never leak.
+                viewModel.DiscardPendingRewriteUndos();
+            };
             desktop.ShutdownRequested += (_, _) => _controlServer?.Stop();
         }
 

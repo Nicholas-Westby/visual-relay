@@ -66,7 +66,7 @@ public partial class MainWindowViewModel
         }
 
         await RelayTaskWriter.SaveAsync(SelectedTask.Task, EditBuffer);
-        _rewriteUndo.Remove(SelectedTask.Id);
+        _rewriteUndo.Discard(SelectedTask.Id);
         RaiseRewriteStateChanged();
         IsEditingMarkdown = false;
 

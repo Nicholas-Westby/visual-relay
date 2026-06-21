@@ -15,7 +15,17 @@ public static class PlanningWorktree
     /// Root directory for all ephemeral planning worktrees created by this
     /// process. Deleted on completion; pruned on next drain after crash.
     /// </summary>
-    private static string GetTempRoot(string repoRoot, string runId)
+    /// <remarks>
+    /// Rewrite worktrees (<paramref name="isRewrite"/> = <c>true</c>) live under a
+    /// DISJOINT top-level segment (<c>wt-rewrite</c> vs <c>wt</c>). A rewrite is
+    /// explicitly allowed to run WHILE the queue drains, and the drain calls
+    /// <see cref="PruneLeftoversAsync"/> at every planning phase — which deletes
+    /// every leftover run dir under its repo-hash namespace. Sharing one namespace
+    /// would let the drain's prune wipe a live rewrite worktree out from under the
+    /// running swival process (and vice-versa). Separate namespaces make a prune
+    /// physically unable to see the other kind.
+    /// </remarks>
+    private static string GetTempRoot(string repoRoot, string runId, bool isRewrite)
     {
         var repoHash = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(Path.GetFullPath(repoRoot)))
@@ -23,19 +33,21 @@ public static class PlanningWorktree
         return Path.Combine(
             Path.GetTempPath(),
             "visual-relay",
-            "wt",
+            isRewrite ? "wt-rewrite" : "wt",
             repoHash,
             runId);
     }
 
     /// <summary>
     /// Creates a detached git worktree for the task under the per-run temp
-    /// root, checked out at HEAD. Throws on failure.
+    /// root, checked out at HEAD. Throws on failure. When <c>isRewrite</c> is
+    /// <c>true</c> the worktree lives in the rewrite-only namespace so a concurrent
+    /// drain's <see cref="PruneLeftoversAsync"/> cannot delete it.
     /// </summary>
-    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null)
+    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null, bool isRewrite = false)
     {
         var gi = gitInvoker ?? new GitInvoker();
-        var worktreePath = Path.Combine(GetTempRoot(repoRoot, runId), taskId);
+        var worktreePath = Path.Combine(GetTempRoot(repoRoot, runId, isRewrite), taskId);
         if (Directory.Exists(worktreePath))
             Directory.Delete(worktreePath, recursive: true);
 
@@ -122,8 +134,12 @@ public static class PlanningWorktree
     /// directories from a prior crashed drain. Called at drain start.
     /// Cleans ALL leftover directories under the repo-hash namespace, not
     /// just the current runId, so crashes from prior drains are recovered.
+    /// The sweep is scoped to the rewrite namespace when <c>isRewrite</c> is
+    /// <c>true</c>: a planning-phase prune (<c>false</c>) therefore never touches a
+    /// live rewrite worktree, and a rewrite-namespace prune never touches a live
+    /// planning worktree.
     /// </summary>
-    public static async Task PruneLeftoversAsync(string repoRoot, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null)
+    public static async Task PruneLeftoversAsync(string repoRoot, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null, bool isRewrite = false)
     {
         var gi = gitInvoker ?? new GitInvoker();
         try
@@ -137,7 +153,7 @@ public static class PlanningWorktree
 
         // Clean all run-id directories under the repo-hash namespace, not just
         // the current runId, to recover disk space from prior crashed drains.
-        var repoHashDir = Path.GetDirectoryName(GetTempRoot(repoRoot, runId));
+        var repoHashDir = Path.GetDirectoryName(GetTempRoot(repoRoot, runId, isRewrite));
         if (repoHashDir is not null && Directory.Exists(repoHashDir))
         {
             foreach (var runDir in Directory.GetDirectories(repoHashDir))
@@ -145,6 +161,43 @@ public static class PlanningWorktree
                 try { Directory.Delete(runDir, recursive: true); }
                 catch { /* concurrency-safe */ }
             }
+        }
+    }
+
+    /// <summary>
+    /// Crash-recovery for the rewrite namespace, SCOPED to a single
+    /// <paramref name="taskId"/>: prunes stale git worktree admin entries and
+    /// deletes only this task's leftover worktree directories (any runId) under
+    /// <c>wt-rewrite/&lt;repoHash&gt;/</c>. Because a task can never be rewritten
+    /// twice concurrently, deleting its own leftovers is safe and — unlike a
+    /// blanket <see cref="PruneLeftoversAsync"/> over the rewrite namespace —
+    /// cannot wipe a concurrent rewrite of a DIFFERENT task that shares the
+    /// namespace. Best-effort: never throws.
+    /// </summary>
+    public static async Task PruneTaskLeftoversAsync(string repoRoot, string taskId, CancellationToken ct, IGitInvoker? gitInvoker = null)
+    {
+        var gi = gitInvoker ?? new GitInvoker();
+        try
+        {
+            await RunGitAsync(gi, repoRoot, ["worktree", "prune"], ct);
+        }
+        catch
+        {
+            // Best-effort.
+        }
+
+        // Sample the repo-hash dir via a throwaway runId; only the parent matters.
+        var repoHashDir = Path.GetDirectoryName(GetTempRoot(repoRoot, "_", isRewrite: true));
+        if (repoHashDir is null || !Directory.Exists(repoHashDir))
+            return;
+
+        foreach (var runDir in Directory.GetDirectories(repoHashDir))
+        {
+            var taskLeaf = Path.Combine(runDir, taskId);
+            if (!Directory.Exists(taskLeaf))
+                continue;
+            try { Directory.Delete(taskLeaf, recursive: true); }
+            catch { /* concurrency-safe best-effort */ }
         }
     }
 

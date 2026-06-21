@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -27,7 +28,8 @@ public static class TaskRewriteRunner
         RelayConfig config,
         ISubagentRunner runner,
         CancellationToken ct,
-        IGitInvoker? git = null)
+        IGitInvoker? git = null,
+        IEnvironmentAccessor? environment = null)
     {
         var runId = "rewrite-" + DateTimeOffset.UtcNow.Ticks;
         var taskDir = task.TaskDirectory;
@@ -43,10 +45,23 @@ public static class TaskRewriteRunner
         string originalSpec;
         try
         {
+            // Self-heal the VR-owned nono profile before launching the sandboxed
+            // rewrite, mirroring RelayDriver.RunTaskAsync. The sandbox is always
+            // on; on a fresh machine the profile does not exist yet, so without
+            // this the nono --profile invocation inside the runner would fail. A
+            // write failure throws — the run must not proceed unsandboxed/stale.
+            await NonoProfileEnsurer.EnsureAsync(environment, ct);
+
             // Read the current spec before any worktree operations.
             originalSpec = await File.ReadAllTextAsync(specPath, ct);
 
-            worktreePath = await PlanningWorktree.CreateAsync(rootPath, task.Id, runId, ct, git);
+            // Reclaim this task's leftover rewrite worktrees from a prior crash
+            // (the finally-RemoveAsync is skipped on a hard kill). Scoped to this
+            // task id so a concurrent rewrite of a DIFFERENT task — which shares
+            // the rewrite namespace — is never deleted.
+            await PlanningWorktree.PruneTaskLeftoversAsync(rootPath, task.Id, ct, git);
+
+            worktreePath = await PlanningWorktree.CreateAsync(rootPath, task.Id, runId, ct, git, isRewrite: true);
             PlanningWorktree.CopyConfigIntoWorktree(rootPath, worktreePath);
         }
         catch (OperationCanceledException)

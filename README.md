@@ -122,8 +122,10 @@ The sandbox is **always on** — there is no opt-out. Every Swival subagent and 
 verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,
 always-required dependency.
 
-The `vr-guard` profile ships with Visual Relay and is installed automatically to
-`${XDG_CONFIG_HOME:-$HOME/.config}/nono/profiles/`. A missing nono binary is a hard error.
+The `vr-guard` profile ships embedded in Visual Relay, which **owns and self-heals** it at
+`${XDG_CONFIG_HOME:-$HOME/.config}/visual-relay/vr-guard.json` (beside VR's `.env`) — the file is
+rewritten to match the shipped content at the start of every run, so it can never go stale, and
+nono loads it by absolute path. A missing nono binary is a hard error.
 The profile grants per-ecosystem toolchain cache paths (.NET, Swift, Node, Python, Go, Rust)
 so package-manager writes (`dotnet restore`, `swift build`, `npm install`, `pip install`,
 `go build`, `cargo build`) succeed inside the sandbox.  The destructive surface — Documents,

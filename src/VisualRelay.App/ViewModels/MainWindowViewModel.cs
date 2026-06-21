@@ -42,7 +42,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly HashSet<string> _rewritingTaskIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> _rewriteStartedAt = new(StringComparer.Ordinal);
     private readonly Dictionary<string, CancellationTokenSource> _rewriteCts = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, string> _rewriteUndo = new(StringComparer.Ordinal);
+    // Undo for "Rewrite with AI": snapshots the WHOLE task folder so a revert
+    // restores attachments too, not just the spec .md. (Rewrite-specific members
+    // live in the MainWindowViewModel.Rewrite partial.)
+    private readonly RewriteUndoStore _rewriteUndo = new();
 
     public MainWindowViewModel(IEnvironmentAccessor? environmentAccessor = null)
         : this(new NullFolderPicker(), new NullFilePicker(), environmentAccessor)

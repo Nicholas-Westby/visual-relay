@@ -104,7 +104,7 @@ public partial class MainWindowViewModel
         _runningStageNumbers[task.Id] = null;
         _runningStageNames[task.Id] = null;
         _runStartedAt[task.Id] = DateTimeOffset.UtcNow;
-        _rewriteUndo.Remove(task.Id);
+        _rewriteUndo.Discard(task.Id);
         RaiseRewriteStateChanged();
         ClearSelectedTaskErrorForRunStart(task.Id);
         ApplyRunningTaskToRows();
