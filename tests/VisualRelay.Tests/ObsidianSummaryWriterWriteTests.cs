@@ -1,4 +1,3 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.ObsidianBridge;
 using VisualRelay.Domain;
 
@@ -10,9 +9,6 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class ObsidianSummaryWriterWriteTests : IDisposable
 {
-    private static string TempDir() =>
-        Path.Combine(Path.GetTempPath(), "vr-obsidian-summary-tests", Guid.NewGuid().ToString("N"));
-
     private static (string RepoRoot, ObsidianVaultLayout Layout) Setup(
         string repoName = "test-repo")
     {

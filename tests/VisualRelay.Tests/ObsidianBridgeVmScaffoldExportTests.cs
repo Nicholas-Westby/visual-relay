@@ -74,7 +74,7 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
                 "Vault repo dir should not exist before first scan");
 
             await Dispatcher.UIThread.InvokeAsync(
-                () => viewModel.RunObsidianBridgeScanAsync());
+                viewModel.RunObsidianBridgeScanAsync);
 
             Assert.True(Directory.Exists(repoDir));
             Assert.True(Directory.Exists(Path.Combine(repoDir, "New Tasks")));
@@ -107,7 +107,7 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
 
             var viewModel = CreateViewModel(repoRoot, vaultRoot, env);
             await viewModel.LoadInitialAsync();
-            await Dispatcher.UIThread.InvokeAsync(() => viewModel.RunObsidianBridgeScanAsync());
+            await Dispatcher.UIThread.InvokeAsync(viewModel.RunObsidianBridgeScanAsync);
 
             var repoName = RootFolderDisplay.Name(repoRoot);
             var summaryPath = Path.Combine(vaultRoot, repoName, "Completed", "2026-06-20", $"{taskId}.md");

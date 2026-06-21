@@ -183,9 +183,9 @@ public static class ObsidianBridgeSettings
 
     private sealed class ObsidianBridgeConfigDto
     {
-        public bool? Enabled { get; set; }
-        public string? VaultRoot { get; set; }
-        public int? PollSeconds { get; set; }
+        public bool? Enabled { get; init; }
+        public string? VaultRoot { get; init; }
+        public int? PollSeconds { get; init; }
     }
 }
 

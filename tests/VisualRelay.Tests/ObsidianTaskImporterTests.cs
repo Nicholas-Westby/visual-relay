@@ -1,5 +1,4 @@
 using VisualRelay.Core.ObsidianBridge;
-using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.Tests;
 
@@ -20,12 +19,6 @@ public sealed class ObsidianTaskImporterTests
         var layout = new ObsidianVaultLayout(vaultRoot, repoName);
         layout.EnsureScaffold();
         return (vaultRoot, repoRoot, layout);
-    }
-
-    private static void WriteTaskFile(string path, string content)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, content);
     }
 
     // ── Scan ──────────────────────────────────────────────────────

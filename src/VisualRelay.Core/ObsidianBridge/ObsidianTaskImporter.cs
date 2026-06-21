@@ -9,6 +9,9 @@ namespace VisualRelay.Core.ObsidianBridge;
 public sealed record ImportCandidate(
     string FilePath,
     string Title,
+    // ReSharper disable once NotAccessedPositionalProperty.Global — supplied
+    // positionally at every construction site (incl. Scan's debounce value);
+    // retained for completeness/diagnostics even though no caller reads it.
     DateTimeOffset LastWrite);
 
 /// <summary>

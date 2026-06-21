@@ -1,7 +1,5 @@
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
-using VisualRelay.Core.Configuration;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -102,7 +100,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
 
             // Run the bridge scan cycle directly.
             var imported = await Dispatcher.UIThread.InvokeAsync(
-                () => viewModel.RunObsidianBridgeScanAsync());
+                viewModel.RunObsidianBridgeScanAsync);
 
             // At least one task should have been imported.
             Assert.True(imported >= 1);
@@ -139,7 +137,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddSeconds(-30));
 
             var imported = await Dispatcher.UIThread.InvokeAsync(
-                () => viewModel.RunObsidianBridgeScanAsync());
+                viewModel.RunObsidianBridgeScanAsync);
 
             Assert.Equal(0, imported);
 
@@ -183,7 +181,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
 
             // Scan should still import (not suppressed by pause).
             var imported = await Dispatcher.UIThread.InvokeAsync(
-                () => viewModel.RunObsidianBridgeScanAsync());
+                viewModel.RunObsidianBridgeScanAsync);
 
             // Import should succeed — pause only suppresses auto-run, not import.
             Assert.True(imported >= 1);
@@ -224,7 +222,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             File.SetLastWriteTimeUtc(sourcePath, DateTime.UtcNow.AddSeconds(-30));
 
             var imported = await Dispatcher.UIThread.InvokeAsync(
-                () => viewModel.RunObsidianBridgeScanAsync());
+                viewModel.RunObsidianBridgeScanAsync);
 
             // While busy, the bridge must not scan/import.
             Assert.Equal(0, imported);

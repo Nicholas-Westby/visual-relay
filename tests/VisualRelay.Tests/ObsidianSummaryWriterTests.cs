@@ -1,5 +1,4 @@
 using VisualRelay.Core.ObsidianBridge;
-using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;

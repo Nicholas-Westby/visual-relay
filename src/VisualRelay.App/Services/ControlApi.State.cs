@@ -89,7 +89,7 @@ public sealed partial class ControlApi
         map["bypass-sandbox"] = new { enabled = true };
         map["boost-turns"] = new { enabled = viewModel.SelectedTask is not null };
         map["open-folder"] = new { enabled = true };
-        map["obsidian-scan"] = new { enabled = viewModel.ObsidianEnabled && !viewModel.IsBusy };
+        map["obsidian-scan"] = new { enabled = viewModel is { ObsidianEnabled: true, IsBusy: false } };
         map["obsidian-bridge"] = new { enabled = true };
 
         return map;

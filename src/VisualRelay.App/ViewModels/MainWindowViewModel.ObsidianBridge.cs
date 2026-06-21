@@ -22,8 +22,11 @@ public partial class MainWindowViewModel
     private bool _bridgeCycleBusy;
     private DispatcherTimer? _obsidianBridgeTimer;
 
+    // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnObsidianEnabledChanged(bool value) => PersistBridgeSettings();
+    // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnObsidianVaultRootChanged(string value) => PersistBridgeSettings();
+    // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnObsidianPollSecondsChanged(int value) => PersistBridgeSettings();
 
     private void PersistBridgeSettings()
@@ -36,7 +39,7 @@ public partial class MainWindowViewModel
         catch { /* best-effort */ }
     }
 
-    public void LoadObsidianBridgeSettings()
+    private void LoadObsidianBridgeSettings()
     {
         try
         {
@@ -124,7 +127,7 @@ public partial class MainWindowViewModel
     /// <summary>
     /// Exports a run summary to the vault when a task completes. Best-effort.
     /// </summary>
-    internal async Task ExportSummaryOnCompletion(string taskId, RelayTaskOutcome outcome, Guid? sourceGuid = null)
+    private async Task ExportSummaryOnCompletion(string taskId, RelayTaskOutcome outcome, Guid? sourceGuid = null)
     {
         if (!ObsidianEnabled || string.IsNullOrWhiteSpace(ObsidianVaultRoot)) return;
         try
@@ -154,7 +157,7 @@ public partial class MainWindowViewModel
             if (match is not null && File.Exists(match.MarkdownPath))
                 return await File.ReadAllTextAsync(match.MarkdownPath);
         }
-        catch { }
+        catch { /* best-effort: fall back to placeholder spec */ }
         return $"# {taskId}\n\n(Spec unavailable)";
     }
 

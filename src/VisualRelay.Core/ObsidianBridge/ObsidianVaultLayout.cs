@@ -20,6 +20,9 @@ public sealed class ObsidianVaultLayout
         "readme.md"
     };
 
+    // ReSharper disable once ConvertToPrimaryConstructor — the ctor runs
+    // SanitizeRepoName over repoName before storing it; a primary ctor cannot
+    // express that transform without an extra init member.
     public ObsidianVaultLayout(string vaultRoot, string repoName)
     {
         _vaultRoot = vaultRoot;
@@ -29,7 +32,7 @@ public sealed class ObsidianVaultLayout
     public string RepoDir => Path.Combine(_vaultRoot, _repoName);
     public string NewTasksDir => Path.Combine(RepoDir, "New Tasks");
     public string RecognizedDir => Path.Combine(NewTasksDir, "Recognized");
-    public string CompletedRootDir => Path.Combine(RepoDir, "Completed");
+    private string CompletedRootDir => Path.Combine(RepoDir, "Completed");
 
     public string CompletedDir(DateOnly date) =>
         Path.Combine(CompletedRootDir, date.ToString("yyyy-MM-dd"));
