@@ -98,10 +98,8 @@ public sealed partial class SwivalSubagentRunner
                 _eventSink is null ? null : (entry, token) => PublishTraceAsync(attemptInvocation, entry, token),
                 onActivity: () => watchdog.Pulse("trace"));
 
-            var arguments = BuildArguments(attemptInvocation, resolvedCommands);
-            arguments.Add(correctivePriorOutput is not null
-                ? BuildCorrectivePrompt(attemptInvocation, correctivePriorOutput, correctiveShapeError)
-                : BuildPrompt(attemptInvocation));
+            var arguments = BuildPromptArguments(attemptInvocation, resolvedCommands, correctivePriorOutput, correctiveShapeError, attempt, reportFile);
+
             var (fileName, launchArguments) = BuildLaunchTarget(arguments, skipDirs);
             var sandboxEnv = BuildSandboxEnvironment(_config);
             var processTimeout = absoluteCeilingMs <= 0
