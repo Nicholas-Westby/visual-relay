@@ -1,85 +1,32 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Guards;
 
-// ── Resolve limit ──────────────────────────────────────────────────
-var limit = 20; // default
-var maxArgIndex = Array.IndexOf(args, "--max");
-if (maxArgIndex >= 0 && maxArgIndex + 1 < args.Length
-    && int.TryParse(args[maxArgIndex + 1], out var parsed))
-{
-    limit = parsed;
-}
+// VisualRelay.Guards — the C# home for the repo's policy guards (ports of the
+// retired tools/guards/*.sh). Dispatch on the first arg:
+//   shell-size (default) — advisory: shell scripts over the logic-line limit
+//   file-size            — *.cs/*.axaml under src/tests/tools over the limit
+//   source-enumeration   — stale virtio-fs/readdir cache detector (pre-build)
+// shell-size is the default so `./visual-relay guards` keeps working.
 
-var envLimit = Environment.GetEnvironmentVariable("VISUAL_RELAY_SHELL_LINE_LIMIT");
-if (envLimit is not null && int.TryParse(envLimit, out var envParsed))
-{
-    limit = envParsed;
-}
+var sub = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal) ? args[0] : "shell-size";
+var rest = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal) ? args[1..] : args;
 
-// ── Resolve repo root (walk up to find visual-relay) ──────────────
-var cwd = Environment.CurrentDirectory;
-var repoRoot = cwd;
-while (repoRoot is not null && !File.Exists(Path.Combine(repoRoot, "visual-relay")))
-{
-    repoRoot = Path.GetDirectoryName(repoRoot);
-}
-
+var repoRoot = GuardRepoRoot.Resolve();
 if (repoRoot is null)
 {
-    Console.Error.WriteLine("shell-size: could not find repo root (no visual-relay file found walking up from " + cwd + ")");
-    return 0; // advisory — exit 0
+    Console.Error.WriteLine("guards: could not find repo root (no visual-relay file walking up).");
+    return sub == "shell-size" ? 0 : 1; // shell-size is advisory; the gates are blocking
 }
 
-// ── Get tracked files via GitInvoker ───────────────────────────────
-var git = new GitInvoker();
-var (exitCode, output, timedOut) = await git.RunAsync(
-    repoRoot,
-    ["ls-files"],
-    CancellationToken.None);
-
-if (exitCode != 0 || timedOut)
+return sub switch
 {
-    Console.Error.WriteLine("shell-size: git ls-files failed (exit " + exitCode + ")");
-    return 0; // advisory — exit 0
-}
+    "shell-size" => await ShellSizeGuardRunner.RunAsync(repoRoot, rest),
+    "file-size" => FileSizeGuardRunner.Run(repoRoot),
+    "source-enumeration" => await SourceEnumerationGuardRunner.RunAsync(repoRoot),
+    _ => Unknown(sub),
+};
 
-var trackedFiles = output.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-    .Select(f => f.TrimEnd('\r'))
-    .ToArray();
-
-// ── Read files ────────────────────────────────────────────────────
-var fileData = new List<(string Path, string[] Lines)>();
-foreach (var file in trackedFiles)
+static int Unknown(string sub)
 {
-    var fullPath = Path.Combine(repoRoot, file);
-    if (!File.Exists(fullPath))
-        continue;
-
-    string[] allLines;
-    try
-    {
-        allLines = File.ReadAllLines(fullPath);
-    }
-    catch
-    {
-        continue; // skip unreadable files (e.g. permissions)
-    }
-
-    fileData.Add((file, allLines));
+    Console.Error.WriteLine($"guards: unknown subcommand '{sub}' (expected shell-size|file-size|source-enumeration).");
+    return 2;
 }
-
-// ── Find violations ───────────────────────────────────────────────
-var violations = ShellSizeGuard.FindViolations(fileData, limit);
-
-// ── Print ─────────────────────────────────────────────────────────
-if (violations.Count > 0)
-{
-    foreach (var v in violations)
-    {
-        Console.WriteLine($"{v.Path}: {v.Count} logic lines (limit {v.Limit})");
-        Console.WriteLine("  → move the logic into a C# tool and leave a thin wrapper; there is no allowlist.");
-    }
-}
-
-Console.WriteLine($"shell-size: {violations.Count} script(s) over the limit.");
-return 0;

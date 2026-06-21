@@ -1,5 +1,5 @@
-using System.Diagnostics;
 using System.Text.RegularExpressions;
+using VisualRelay.Guards;
 
 namespace VisualRelay.Tests;
 
@@ -14,31 +14,20 @@ public sealed partial class SplitGuardVerificationTests
     private static string TestsDir => Path.Combine(RepoRoot, "tests", "VisualRelay.Tests");
 
     /// <summary>
-    /// The file-size guard script must exit 0.  Before the split it exits 1
-    /// with 12+ violations; after the split every .cs file is ≤ 300 lines.
+    /// The C# file-size guard must report zero violations on the live tree at
+    /// the 300-line limit — the same gate the Cli <c>check</c> now runs (porting
+    /// the retired <c>check-file-size.sh</c>). Before the split it found 12+;
+    /// after the split every src/tests/tools *.cs/*.axaml file is ≤ 300 lines.
     /// </summary>
     [Fact]
-    public void GuardScript_ExitsZero()
+    public void FileSizeGuard_ReportsNoViolations()
     {
-        var guardPath = Path.Combine(RepoRoot, "tools", "guards", "check-file-size.sh");
-        Assert.True(File.Exists(guardPath), $"guard script not found at {guardPath}");
+        string[] roots = ["src", "tests", "tools"];
+        var violations = FileSizeGuard.Enumerate(RepoRoot, roots, 300);
 
-        var startInfo = new ProcessStartInfo("/bin/bash", guardPath)
-        {
-            WorkingDirectory = RepoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            Environment = { ["VISUAL_RELAY_FILE_LINE_LIMIT"] = "300" },
-        };
-
-        using var process = Process.Start(startInfo)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(10_000);
-
-        Assert.True(process.ExitCode == 0,
-            $"guard exited {process.ExitCode}, expected 0.\nstderr:\n{stderr}\nstdout:\n{stdout}");
+        Assert.True(violations.Count == 0,
+            "file-size guard found violations:\n" +
+            string.Join("\n", violations.Select(v => $"{v.Path}: {v.Lines} lines (limit {v.Limit})")));
     }
 
     /// <summary>

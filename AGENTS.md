@@ -21,8 +21,8 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
   `./visual-relay test`, `./visual-relay launch`.
 - Run the full gate before considering work done: `./visual-relay check`
   (file-size guard, format verification, build, tests, screenshot render).
-- Keep C# and Avalonia XAML source files under 300 lines
-  (`tools/guards/check-file-size.sh`).
+- Keep C# and Avalonia XAML source files under 300 lines (the C# file-size guard
+  in `tools/VisualRelay.Guards`, run by `./visual-relay check`).
 - If `./visual-relay test` hangs (sits at `Testing (NNNs)` with nothing completing), it's a
   deadlock, not a slow test. Find the culprit with
   `./visual-relay test --blame-hang --blame-hang-timeout 30s`. See `TROUBLESHOOTING.md`.

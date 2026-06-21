@@ -23,7 +23,7 @@ var paths = RepoPaths.Resolve();
 return cmd switch
 {
     "launch" or "run" => LaunchCommand.Run(paths, rest),
-    "build" => BuildCommand.Run(paths, rest),
+    "build" => await BuildCommand.RunAsync(paths, rest),
     "test" => await TestCommand.RunAsync(paths, rest),
     "format" => FormatCommand.Run(paths, rest),
     "screenshot" => ScreenshotCommand.Run(paths),

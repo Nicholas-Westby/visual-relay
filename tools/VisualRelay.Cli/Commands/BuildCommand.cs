@@ -1,14 +1,14 @@
 namespace VisualRelay.Cli.Commands;
 
 /// <summary>
-/// <c>build</c>: runs the source-enumeration guard, then builds the solution
+/// <c>build</c>: runs the C# source-enumeration guard, then builds the solution
 /// single-threaded with shared compilation off (the launcher's <c>build</c> case).
 /// </summary>
 public static class BuildCommand
 {
-    public static int Run(RepoPaths paths, IReadOnlyList<string> args)
+    public static async Task<int> RunAsync(RepoPaths paths, IReadOnlyList<string> args)
     {
-        var guard = ProcessLauncher.Run("bash", [paths.Guard("guard-source-enumeration.sh")], paths.Root);
+        var guard = await Gates.GuardRunner.SourceEnumerationAsync(paths);
         if (guard != 0)
             return guard;
 

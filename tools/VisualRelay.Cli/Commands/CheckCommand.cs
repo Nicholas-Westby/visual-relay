@@ -11,10 +11,10 @@ public static class CheckCommand
 {
     public static async Task<int> RunAsync(RepoPaths paths)
     {
-        var rc = ProcessLauncher.Run("bash", [paths.Guard("guard-source-enumeration.sh")], paths.Root);
+        var rc = await Gates.GuardRunner.SourceEnumerationAsync(paths);
         if (rc != 0) return rc;
 
-        rc = ProcessLauncher.Run("bash", [paths.Guard("check-file-size.sh")], paths.Root);
+        rc = Gates.GuardRunner.FileSize(paths);
         if (rc != 0) return rc;
 
         rc = ProcessLauncher.Run(ProcessLauncher.Dotnet, ["format", paths.Solution, "--verify-no-changes"], paths.Root);
@@ -24,7 +24,7 @@ public static class CheckCommand
             ["build", paths.Solution, "-m:1", "-p:UseSharedCompilation=false"], paths.Root);
         if (rc != 0) return rc;
 
-        rc = ProcessLauncher.Run("bash", [paths.Guard("inspect-code.sh")], paths.Root);
+        rc = Gates.InspectCodeGate.Run(paths);
         if (rc != 0) return rc;
 
         rc = await RunWatchedTestsAsync(paths);

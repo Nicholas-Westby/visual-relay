@@ -1,21 +1,100 @@
 <Project>
-  <!-- Guard: detect stale virtio-fs readdir cache before compiling.
-       Runs once per project but the guard script is cheap (~tens of ms).
-       Compares git ls-files vs find; exits 2 when the visible-on-disk
-       count is far below the tracked count, failing the build.           -->
+  <!-- Guard: detect a stale virtio-fs readdir cache before compiling. Runs once
+       per project, before CoreCompile, WITHOUT a pre-built assembly — so it is an
+       inline MSBuild C# task (RoslynCodeTaskFactory) rather than a reference to
+       VisualRelay.Guards (which isn't compiled yet at this point). The body
+       mirrors SourceEnumerationGuard: count git-tracked *.cs/*.axaml vs files
+       visible on disk under src/tests/tools (excluding bin/obj); fail when the
+       visible count is 0 or below 50% of tracked. Keep this in lockstep with
+       tools/VisualRelay.Guards/SourceEnumerationGuard.cs (the small duplication
+       is deliberate — the class is unit-tested; this is the build-time mirror). -->
   <PropertyGroup>
-    <GuardSourceEnumerationScript>$(MSBuildThisFileDirectory)tools/guards/guard-source-enumeration.sh</GuardSourceEnumerationScript>
     <GuardSourceEnumeration Condition="'$(GuardSourceEnumeration)' == ''">true</GuardSourceEnumeration>
+    <GuardSourceEnumerationRoot Condition="'$(GuardSourceEnumerationRoot)' == ''">$(MSBuildThisFileDirectory)</GuardSourceEnumerationRoot>
   </PropertyGroup>
+
+  <UsingTask TaskName="GuardSourceEnumerationTask"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <RepoRoot ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Linq" />
+      <Using Namespace="System.Diagnostics" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        string[] patterns = { "*.cs", "*.axaml" };
+        string[] scanDirs = { "src", "tests", "tools" };
+        const double minRatio = 0.50;
+
+        Func<string, bool> isArtifact = p =>
+            p.Replace('\\', '/').Contains("/bin/") || p.Replace('\\', '/').Contains("/obj/");
+
+        // 1. git-tracked count (ground truth).
+        int tracked = 0;
+        foreach (var pat in patterns)
+        {
+            var psi = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = RepoRoot,
+                Arguments = "ls-files \"" + pat + "\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+            };
+            psi.EnvironmentVariables.Remove("DEVELOPER_DIR");
+            psi.EnvironmentVariables.Remove("SDKROOT");
+            try
+            {
+                using var proc = Process.Start(psi);
+                var outp = proc.StandardOutput.ReadToEnd();
+                proc.WaitForExit();
+                if (proc.ExitCode == 0)
+                    tracked += outp.Split('\n').Count(l => l.Trim().Length > 0);
+            }
+            catch { /* git unavailable: leave tracked as-is */ }
+        }
+
+        // 2. visible-on-disk count under the scan dirs, excluding bin/obj.
+        int visible = 0;
+        foreach (var dir in scanDirs)
+        {
+            var dirPath = Path.Combine(RepoRoot, dir);
+            if (!Directory.Exists(dirPath)) continue;
+            foreach (var pat in patterns)
+                visible += Directory.EnumerateFiles(dirPath, pat, SearchOption.AllDirectories)
+                    .Count(f => !isArtifact(f));
+        }
+
+        // 3. compare (tracked == 0 ⇒ nothing to guard).
+        if (tracked > 0)
+        {
+            double ratio = (double)visible / tracked;
+            if (visible == 0 || ratio < minRatio)
+            {
+                int pct = (int)Math.Round(ratio * 100);
+                string detail = visible == 0
+                    ? "0 files are visible on disk (excluding obj/ / bin/)."
+                    : visible + " of " + tracked + " files visible (~" + pct + "%, below the 50% threshold).";
+                Log.LogError(
+                    "guard-source-enumeration: STALE VIRTIO-FS / READDIR CACHE DETECTED. " +
+                    "git tracks " + tracked + " source file(s) but " + detail + " " +
+                    "MSBuild's **/*.cs glob would compile an empty/partial assembly. " +
+                    "FIX: remount the shared filesystem (claude-vm/fix-cache.sh, or " +
+                    "diskutil unmount then mount -t virtiofs, or restart the VM). " +
+                    "NOTE: rm -rf obj bin will NOT help — the cache is in the guest kernel.");
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
 
   <Target Name="GuardSourceEnumeration"
           Condition="'$(GuardSourceEnumeration)' == 'true'"
           BeforeTargets="CoreCompile">
-    <Exec Command="bash &quot;$(GuardSourceEnumerationScript)&quot;"
-          WorkingDirectory="$(MSBuildThisFileDirectory)"
-          IgnoreExitCode="false"
-          StandardErrorImportance="high"
-          StandardOutputImportance="low" />
+    <GuardSourceEnumerationTask RepoRoot="$(GuardSourceEnumerationRoot)" />
   </Target>
 
   <Target Name="AvaloniaStats" />

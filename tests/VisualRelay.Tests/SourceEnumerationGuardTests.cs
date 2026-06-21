@@ -1,30 +1,31 @@
-using System.Diagnostics;
+using VisualRelay.Core.Execution;
+using VisualRelay.Guards;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Tests for <c>tools/guards/guard-source-enumeration.sh</c> —
-/// the pre-build check that detects a stale virtio-fs readdir cache
-/// by comparing git-tracked sources against files visible on disk.
+/// Tests for <see cref="SourceEnumerationGuard"/> — the C# port of
+/// <c>tools/guards/guard-source-enumeration.sh</c>. The pre-build check detects a
+/// stale virtio-fs readdir cache by comparing git-tracked sources against files
+/// visible on disk under src/tests/tools (excluding bin/obj). Exit 0 when intact;
+/// exit 2 when the visible count is far below the tracked count (0, or &lt; 50%).
 /// </summary>
 public sealed class SourceEnumerationGuardTests
 {
-    private static string GuardScriptPath =>
-        Path.Combine(RepoSetup.Root, "tools", "guards", "guard-source-enumeration.sh");
+    private static readonly IGitInvoker Git = new GitInvoker();
 
     /// <summary>
-    /// On an intact repo, the guard exits 0 and the visible count matches
-    /// the git-tracked count.
+    /// On an intact repo, the guard exits 0 and emits no remedy message.
     /// </summary>
     [Fact]
-    public void IntactRepo_GuardPasses()
+    public async Task IntactRepo_GuardPasses()
     {
         using var repo = CreateRepoWithSources(["src/App.cs", "src/Lib.cs", "tests/App.Tests.cs"]);
 
-        var (exitCode, stderr) = RunGuard(repo.Root);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(0, exitCode);
-        Assert.Empty(stderr);
+        Assert.Empty(message);
     }
 
     /// <summary>
@@ -32,7 +33,7 @@ public sealed class SourceEnumerationGuardTests
     /// exits 2 with the cause+remedy message.
     /// </summary>
     [Fact]
-    public void ZeroVisible_GuardFailsWithRemedy()
+    public async Task ZeroVisible_GuardFailsWithRemedy()
     {
         using var repo = CreateRepoWithSources(["src/App.cs", "src/Lib.cs"]);
 
@@ -42,14 +43,14 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, stderr) = RunGuard(repo.Root);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(2, exitCode);
-        Assert.Contains("STALE VIRTIO-FS", stderr, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("READDIR CACHE", stderr, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("claude-vm/fix-cache.sh", stderr, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("diskutil unmount", stderr, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("rm -rf obj bin", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("READDIR CACHE", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("claude-vm/fix-cache.sh", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("diskutil unmount", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("rm -rf obj bin", message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -57,7 +58,7 @@ public sealed class SourceEnumerationGuardTests
     /// and reports the percentage.
     /// </summary>
     [Fact]
-    public void PartialVisible_BelowThreshold_GuardFails()
+    public async Task PartialVisible_BelowThreshold_GuardFails()
     {
         // 6 tracked, delete 5 → 1 visible (16%) → below 50% threshold.
         using var repo = CreateRepoWithSources([
@@ -72,12 +73,12 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, stderr) = RunGuard(repo.Root);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(2, exitCode);
-        Assert.Contains("STALE VIRTIO-FS", stderr, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("%", stderr, StringComparison.Ordinal); // reports the percentage
-        Assert.Contains("claude-vm/fix-cache.sh", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("%", message, StringComparison.Ordinal); // reports the percentage
+        Assert.Contains("claude-vm/fix-cache.sh", message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -85,7 +86,7 @@ public sealed class SourceEnumerationGuardTests
     /// passes (false positives are worse than false negatives for this check).
     /// </summary>
     [Fact]
-    public void PartialVisible_AboveThreshold_GuardPasses()
+    public async Task PartialVisible_AboveThreshold_GuardPasses()
     {
         // 4 tracked, delete 1 → 3 visible (75%) → above 50% threshold.
         using var repo = CreateRepoWithSources([
@@ -95,7 +96,7 @@ public sealed class SourceEnumerationGuardTests
         var allFiles = Directory.GetFiles(repo.Root, "*.cs", SearchOption.AllDirectories);
         File.Delete(allFiles[0]); // delete 1
 
-        var (exitCode, _) = RunGuard(repo.Root);
+        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(0, exitCode);
     }
@@ -105,7 +106,7 @@ public sealed class SourceEnumerationGuardTests
     /// matching the existing check-file-size.sh convention.
     /// </summary>
     [Fact]
-    public void ExcludesObjAndBinFromVisibleCount()
+    public async Task ExcludesObjAndBinFromVisibleCount()
     {
         using var repo = CreateRepoWithSources(["src/App.cs"]);
 
@@ -118,7 +119,7 @@ public sealed class SourceEnumerationGuardTests
         File.WriteAllText(Path.Combine(objDir, "generated.cs"), "// generated");
         File.WriteAllText(Path.Combine(binDir, "leftover.cs"), "// leftover");
 
-        var (exitCode, _) = RunGuard(repo.Root);
+        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(0, exitCode);
     }
@@ -128,7 +129,7 @@ public sealed class SourceEnumerationGuardTests
     /// also globs them implicitly and they are affected by the same readdir bug.
     /// </summary>
     [Fact]
-    public void CoversAxamlFiles()
+    public async Task CoversAxamlFiles()
     {
         using var repo = CreateRepoWithSources(["src/App.cs", "src/MainWindow.axaml"]);
 
@@ -139,16 +140,16 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, stderr) = RunGuard(repo.Root);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
 
         Assert.Equal(2, exitCode);
-        Assert.Contains("STALE VIRTIO-FS", stderr, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
-    /// Creates a temp git repo under <c>src/</c> (and optionally
-    /// <c>tests/</c>, <c>tools/</c>) with the given relative file paths,
-    /// commits them, and returns a disposable wrapper.
+    /// Creates a temp git repo with the given relative file paths under
+    /// <c>src/</c> (and optionally <c>tests/</c>, <c>tools/</c>), commits them,
+    /// and returns a disposable wrapper.
     /// </summary>
     private static TestRepo CreateRepoWithSources(string[] files)
     {
@@ -170,73 +171,11 @@ public sealed class SourceEnumerationGuardTests
         return new TestRepo(repo);
     }
 
-    /// <summary>
-    /// Runs the guard script in the context of the given repo root.
-    /// The script resolves the repo from its own path, so we symlink or
-    /// copy it into the temp repo's <c>tools/guards/</c> so it walks the
-    /// right tree.
-    /// </summary>
-    private static (int ExitCode, string Stderr) RunGuard(string repoRoot)
-    {
-        // Place a copy of the guard script in the fixture repo so it
-        // resolves repo_root as the fixture root (tools/guards/ → ../..).
-        var guardDir = Path.Combine(repoRoot, "tools", "guards");
-        Directory.CreateDirectory(guardDir);
-        var destScript = Path.Combine(guardDir, "guard-source-enumeration.sh");
-        File.Copy(GuardScriptPath, destScript, overwrite: true);
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(destScript,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-
-        var startInfo = new ProcessStartInfo("bash")
-        {
-            ArgumentList = { destScript },
-            WorkingDirectory = repoRoot,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        // Strip DEVELOPER_DIR/SDKROOT so xcrun cannot resurrect a stale nix-store path.
-        startInfo.Environment.Remove("DEVELOPER_DIR");
-        startInfo.Environment.Remove("SDKROOT");
-
-        using var process = Process.Start(startInfo)!;
-        process.WaitForExit(milliseconds: 10_000);
-        var stderr = process.StandardError.ReadToEnd();
-        return (process.ExitCode, stderr);
-    }
-
-    /// <summary>
-    /// Wraps <see cref="TestRepository"/> to guarantee the guard script copy
-    /// (which may be read-only after chmod) is cleaned up on disposal.
-    /// </summary>
+    /// <summary>Wraps <see cref="TestRepository"/> for disposal.</summary>
     private sealed class TestRepo(TestRepository repo) : IDisposable
     {
         public string Root => repo.Root;
 
-        public void Dispose()
-        {
-            // Best-effort: ensure copied scripts are deletable on Unix.
-            var guardDir = Path.Combine(repo.Root, "tools", "guards");
-            if (Directory.Exists(guardDir) && !OperatingSystem.IsWindows())
-            {
-                foreach (var f in Directory.GetFiles(guardDir))
-                {
-                    try
-                    {
-                        File.SetUnixFileMode(f,
-                            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-                    }
-                    catch
-                    {
-                        // Best-effort.
-                    }
-                }
-            }
-
-            repo.Dispose();
-        }
+        public void Dispose() => repo.Dispose();
     }
 }
