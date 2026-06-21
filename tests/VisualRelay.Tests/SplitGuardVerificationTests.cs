@@ -113,7 +113,11 @@ public sealed partial class SplitGuardVerificationTests
         // 5 facts to the GitCommitterTests family (GitCommitterTests.RunBaseSquash.cs)
         // and 1 to the RelayDriverGitCommitTests family
         // (RelayDriverGitCommitTests.SelfCommitSquash.cs).
-        const int baseline = 156;
+        // Bumped 156→160 on 2026-06-21: the squash data-loss guards added 4 facts
+        // to the GitCommitterTests family (GitCommitterTests.RunBaseSquashGuards.cs):
+        // sealed-commit-in-range skip + only-bare control, all-candidates-rejected
+        // HEAD restore, and committed-only-content preservation.
+        const int baseline = 160;
 
         string[] prefixes =
         [

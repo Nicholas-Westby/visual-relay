@@ -2,12 +2,6 @@ namespace VisualRelay.Core.Execution;
 
 internal static partial class GitCommitter
 {
-    // Visual Relay's own run artifacts. These are never auto-committed (the
-    // deliberate proof subset is force-added via proofFiles); everything else the
-    // run authors is fair game. Auto-include must stay repo-agnostic — it must NOT
-    // assume a src/tests/tools layout, since Visual Relay runs on any repo.
-    private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
-
     public static async Task<GitCommitResult> CommitAsync(
         string rootPath,
         string taskId,
@@ -33,15 +27,32 @@ internal static partial class GitCommitter
         // RELAY_COMMIT_TOKEN, so they land BARE — no Task:/Relay-Seal: trailers)
         // into the single sealed commit below: soft-reset to the run-base so every
         // change since run-start stays staged with the run-base as parent. No-op
-        // when HEAD is already the run-base (the normal path). See .Squash.cs.
+        // when HEAD is already the run-base (the normal path) or when the range
+        // holds a sealed commit (never rewind another task's seal). See .Squash.cs.
         var squash = await SquashInRunCommitsAsync(gi, rootPath, runBaseSha, cancellationToken);
-        if (squash is not null)
-            return squash;
+        if (squash.Failure is not null)
+            return squash.Failure;
+        // Non-null only when a soft-reset rewound HEAD: the pre-squash sha to
+        // restore on any failure path below so the agent's commits are not lost.
+        var preSquashHead = squash.OrigHead;
+
+        // FIX 2: ANY failure return after the squash rewound HEAD must first restore
+        // HEAD to its pre-squash sha — otherwise the agent's self-commits exist only
+        // in the (soon-discarded) index and are lost. Route every post-squash
+        // failure through this so the rollback is total, not just the all-rejected
+        // path. When no squash happened (preSquashHead is null) this is a byte-for-
+        // byte no-op: it returns the same Failed result and touches nothing.
+        async Task<GitCommitResult> FailAsync(string error)
+        {
+            if (preSquashHead is not null)
+                await RestoreHeadAfterFailedSquashAsync(gi, rootPath, preSquashHead, cancellationToken);
+            return GitCommitResult.Failed(error);
+        }
 
         var reset = await GitAsync(gi, rootPath, ["reset", "-q"], cancellationToken);
         if (reset.ExitCode != 0)
         {
-            return GitCommitResult.Failed($"git reset failed (git exit {reset.ExitCode}): {reset.Output.Trim()}");
+            return await FailAsync($"git reset failed (git exit {reset.ExitCode}): {reset.Output.Trim()}");
         }
         IReadOnlyList<string> manifestFilesToStage;
         try
@@ -50,7 +61,7 @@ internal static partial class GitCommitter
         }
         catch (InvalidOperationException ex)
         {
-            return GitCommitResult.Failed(ex.Message);
+            return await FailAsync(ex.Message);
         }
 
         // Pre-check: reject gitignored manifest entries before git add buries
@@ -64,7 +75,7 @@ internal static partial class GitCommitter
             {
                 var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
                 var q = string.Join(", ", ignored.Select(p => $"`{p}`"));
-                return GitCommitResult.Failed(
+                return await FailAsync(
                     ignored.Length == 1
                         ? $"manifest contains gitignored path: {q}"
                         : $"manifest contains gitignored paths: {q}");
@@ -76,7 +87,7 @@ internal static partial class GitCommitter
             var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
             if (add.ExitCode != 0)
             {
-                return GitCommitResult.Failed($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
+                return await FailAsync($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
             }
         }
 
@@ -88,7 +99,7 @@ internal static partial class GitCommitter
         var addTracked = await GitAsync(gi, rootPath, ["add", "-u"], cancellationToken);
         if (addTracked.ExitCode != 0)
         {
-            return GitCommitResult.Failed($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
+            return await FailAsync($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
         }
 
         // Proof files (ledger/seals/manifest) live under .relay/, which the
@@ -100,7 +111,7 @@ internal static partial class GitCommitter
             var addProof = await GitAsync(gi, rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
             if (addProof.ExitCode != 0)
             {
-                return GitCommitResult.Failed($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
+                return await FailAsync($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
             }
         }
 
@@ -130,9 +141,22 @@ internal static partial class GitCommitter
                 var addNew = await GitAsync(gi, rootPath, ["add", "--", .. newAuthored], cancellationToken);
                 if (addNew.ExitCode != 0)
                 {
-                    return GitCommitResult.Failed($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
+                    return await FailAsync($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
                 }
             }
+        }
+
+        // FIX 3: the staging above rebuilds the index from the WORKING TREE, which
+        // misses paths that exist only in the rewound commits' tree (e.g. an
+        // index-only merge among the agent's self-commits, or a committed file the
+        // agent later removed from the working tree without staging the delete). If
+        // a squash rewound HEAD, re-stage any such committed-only path from the
+        // pre-squash tree so no tracked change is silently dropped from the seal.
+        if (preSquashHead is not null)
+        {
+            var stageFail = await StageCommittedOnlyContentAsync(gi, rootPath, runBaseSha!, preSquashHead, cancellationToken);
+            if (stageFail is not null)
+                return await FailAsync(stageFail.Error ?? "squash content-preservation failed");
         }
 
         string? lastError = null;
@@ -164,7 +188,10 @@ internal static partial class GitCommitter
             lastError = $"(git exit {attempt.ExitCode}): {attempt.Output.Trim()}";
         }
 
-        return GitCommitResult.Failed($"commit rejected: {lastError}");
+        // Every candidate was rejected by a target-repo hook. FailAsync restores
+        // HEAD when a squash rewound it (FIX 2), so the agent's self-commits are
+        // reinstated instead of dropped on the next worktree reset.
+        return await FailAsync($"commit rejected: {lastError}");
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> GitAsync(
@@ -220,80 +247,5 @@ internal static partial class GitCommitter
         }
 
         return files;
-    }
-
-    /// <summary>
-    /// Captures the set of untracked, non-ignored files at the start of a run.
-    /// Uses <c>git ls-files --others --exclude-standard</c>, which respects
-    /// <c>.gitignore</c>, <c>.git/info/exclude</c>, and the global gitignore.
-    /// </summary>
-    public static async Task<IReadOnlySet<string>> CaptureUntrackedSnapshotAsync(
-        string rootPath,
-        CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
-    {
-        var gi = gitInvoker ?? new GitInvoker();
-        var result = await GitAsync(gi, rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException($"git ls-files failed: {result.Output.Trim()}");
-        }
-
-        if (string.IsNullOrWhiteSpace(result.Output))
-            return new HashSet<string>(StringComparer.Ordinal);
-
-        var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Length > 0)
-                set.Add(trimmed);
-        }
-
-        return set;
-    }
-
-    private static bool IsInternalArtifact(string relativePath)
-    {
-        foreach (var prefix in InternalArtifactPrefixes)
-            if (relativePath.StartsWith(prefix, StringComparison.Ordinal)
-                || string.Equals(relativePath, prefix.TrimEnd('/'), StringComparison.Ordinal))
-                return true;
-        return false;
-    }
-
-    private static bool IsUnderTasksDir(string rootPath, string relativePath, string? tasksDir)
-    {
-        if (string.IsNullOrEmpty(tasksDir))
-            return false;
-        var fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
-        var dirFullPath = Path.GetFullPath(Path.Combine(rootPath, tasksDir));
-        return fullPath.StartsWith(dirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(fullPath, dirFullPath, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>
-    /// Post-commit: returns any untracked, non-internal files absent from
-    /// <paramref name="preRunUntracked"/> — files authored but not staged.
-    /// </summary>
-    public static async Task<IReadOnlyList<string>> FindUncommittedAuthoredFilesAsync(
-        string rootPath,
-        IReadOnlySet<string> preRunUntracked,
-        string? tasksDir,
-        CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
-    {
-        var gi = gitInvoker ?? new GitInvoker();
-        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi);
-        var missed = new List<string>();
-        foreach (var path in currentUntracked)
-        {
-            if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path) && !IsUnderTasksDir(rootPath, path, tasksDir))
-            {
-                missed.Add(path);
-            }
-        }
-
-        return missed;
     }
 }
