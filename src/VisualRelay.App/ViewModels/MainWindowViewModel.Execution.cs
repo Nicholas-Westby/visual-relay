@@ -101,6 +101,14 @@ public partial class MainWindowViewModel
             // aligned with any in-session reorder not yet reloaded — idempotent when
             // they already match.
             controller.ApplyOrder(Tasks.Select(t => t.Id).ToList());
+            // Remove any task that is currently being rewritten — its on-disk spec is
+            // not finalised until the rewrite completes, so it must not be executed.
+            var rewritingSnapshot = new HashSet<string>(_rewritingTaskIds, StringComparer.Ordinal);
+            for (var i = controller.Tasks.Count - 1; i >= 0; i--)
+            {
+                if (rewritingSnapshot.Contains(controller.Tasks[i].Id))
+                    controller.Tasks.RemoveAt(i);
+            }
             // Wire pause.
             if (PauseRequested)
                 controller.RequestPause();

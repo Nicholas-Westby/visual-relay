@@ -104,6 +104,8 @@ public partial class MainWindowViewModel
         _runningStageNumbers[task.Id] = null;
         _runningStageNames[task.Id] = null;
         _runStartedAt[task.Id] = DateTimeOffset.UtcNow;
+        _rewriteUndo.Remove(task.Id);
+        RaiseRewriteStateChanged();
         ClearSelectedTaskErrorForRunStart(task.Id);
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
@@ -189,6 +191,20 @@ public partial class MainWindowViewModel
                     task.RunningElapsedLabel = ElapsedFormatter.Label(now - startedAt);
             }
         }
+
+        // Update elapsed for every currently-rewriting task row.
+        foreach (var taskId in _rewritingTaskIds)
+        {
+            if (_rewriteStartedAt.TryGetValue(taskId, out var startedAt))
+            {
+                var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+                if (task is not null)
+                    task.RewriteElapsedLabel = ElapsedFormatter.Label(now - startedAt);
+            }
+        }
+
+        // Let the toolbar stopwatch binding see the latest elapsed every tick.
+        OnPropertyChanged(nameof(SelectedTaskRewriteElapsed));
 
         // Update the active stage card's elapsed (each running stage tracks its
         // own start, set on stage_start; non-running stages are a no-op).

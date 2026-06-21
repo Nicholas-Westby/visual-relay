@@ -38,6 +38,9 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
         "follow-running" => viewModel.FollowRunningTaskCommand,
         "start-backend" => viewModel.StartBackendCommand,
         "edit" => viewModel.EditSelectedTaskCommand,
+        "rewrite-selected" => viewModel.RewriteSelectedTaskCommand,
+        "cancel-rewrite" => viewModel.CancelRewriteSelectedCommand,
+        "revert-rewrite" => viewModel.RevertRewriteSelectedCommand,
         _ => null
     };
 

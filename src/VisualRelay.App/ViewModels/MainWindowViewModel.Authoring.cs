@@ -35,6 +35,12 @@ public partial class MainWindowViewModel
             return false;
         }
 
+        if (_rewritingTaskIds.Contains(SelectedTask.Id))
+        {
+            EditBlockedReason = "Cannot edit a task while it's being rewritten.";
+            return false;
+        }
+
         if (SelectedTask.IsArchived)
         {
             EditBlockedReason = "Cannot edit an archived task.";
@@ -60,6 +66,8 @@ public partial class MainWindowViewModel
         }
 
         await RelayTaskWriter.SaveAsync(SelectedTask.Task, EditBuffer);
+        _rewriteUndo.Remove(SelectedTask.Id);
+        RaiseRewriteStateChanged();
         IsEditingMarkdown = false;
 
         // Reload the selected task to refresh markdown and context.

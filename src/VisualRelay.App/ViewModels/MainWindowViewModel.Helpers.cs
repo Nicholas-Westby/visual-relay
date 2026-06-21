@@ -201,7 +201,7 @@ public partial class MainWindowViewModel
 
     private bool CanRefresh() => !IsBusy && Directory.Exists(RootPath);
     private bool CanToggleArchive() => Directory.Exists(RootPath);
-    private bool CanRunSelected() => !IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived;
+    private bool CanRunSelected() => !IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived && !_rewritingTaskIds.Contains(SelectedTask.Id);
     private bool CanDrain() => !IsBusy && !PauseRequested && !ShowArchive && Tasks.Any(task => !task.NeedsReview);
 
     private void RebuildAttachments(TaskRowViewModel? task)

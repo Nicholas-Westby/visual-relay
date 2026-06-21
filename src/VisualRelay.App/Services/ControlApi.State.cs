@@ -98,6 +98,7 @@ public sealed partial class ControlApi
     private static readonly string[] IcommandNames =
     [
         "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
-        "archive-toggle", "new-task", "follow-running", "start-backend", "edit"
+        "archive-toggle", "new-task", "follow-running", "start-backend", "edit",
+        "rewrite-selected", "cancel-rewrite", "revert-rewrite"
     ];
 }

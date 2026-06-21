@@ -178,6 +178,14 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(TurnBudgetLabel));
         OnPropertyChanged(nameof(CanToggleTurnBudget));
 
+        // Notify rewrite-related bind targets on task selection change.
+        OnPropertyChanged(nameof(IsSelectedTaskRewriting));
+        OnPropertyChanged(nameof(SelectedTaskRewriteElapsed));
+        OnPropertyChanged(nameof(SelectedTaskHasRewriteUndo));
+        OnPropertyChanged(nameof(CanRewriteSelectedPublic));
+        RewriteSelectedTaskCommand.NotifyCanExecuteChanged();
+        RevertRewriteSelectedCommand.NotifyCanExecuteChanged();
+
         // Capture the task so tests can await it deterministically
         // (no 1 000 ms wall-clock budget — the real operation decides).
         // Faults are surfaced to StatusText (the VM's operation-error

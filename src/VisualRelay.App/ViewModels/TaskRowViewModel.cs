@@ -26,6 +26,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     private string? _runningStageName;
     private string? _planningLabel;
     private string _runningElapsedLabel = string.Empty;
+    private string _rewriteElapsedLabel = string.Empty;
 
     public RelayTaskItem Task { get; internal set; } = task;
     public string Id => Task.Id;
@@ -40,7 +41,9 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         ? string.IsNullOrEmpty(_runningElapsedLabel)
             ? RunningStepLabel
             : $"{RunningStepLabel} · {_runningElapsedLabel}"
-        : Task.MetricsLine;
+        : !string.IsNullOrEmpty(_rewriteElapsedLabel)
+            ? $"Rewriting · {_rewriteElapsedLabel}"
+            : Task.MetricsLine;
     public string RunningStepLabel => _runningStageNumber is { } number
         ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
         : "Starting task";
@@ -50,6 +53,18 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         set
         {
             if (SetProperty(ref _runningElapsedLabel, value))
+            {
+                OnPropertyChanged(nameof(MetricsLine));
+            }
+        }
+    }
+
+    public string RewriteElapsedLabel
+    {
+        get => _rewriteElapsedLabel;
+        set
+        {
+            if (SetProperty(ref _rewriteElapsedLabel, value))
             {
                 OnPropertyChanged(nameof(MetricsLine));
             }
@@ -128,11 +143,13 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         _runningStageNumber = null;
         _runningStageName = null;
         _runningElapsedLabel = string.Empty;
+        _rewriteElapsedLabel = string.Empty;
         _planningLabel = null;
         _planned = false;
         IsRunning = false;
         OnPropertyChanged(nameof(RunningStepLabel));
         OnPropertyChanged(nameof(RunningElapsedLabel));
+        OnPropertyChanged(nameof(RewriteElapsedLabel));
         OnPropertyChanged(nameof(MetricsLine));
         OnPropertyChanged(nameof(PhaseLabel));
     }
