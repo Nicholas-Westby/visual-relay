@@ -1,0 +1,1 @@
+The README.md file is quite verbose. Shorten it so that it is practical for someone just encountering the project. If there is some info that is still accurate and worth keeping, move it to some other file (e.g., PROJECT.md or something).
