@@ -124,7 +124,11 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 149→150 on 2026-06-22: surfacing the real model-backend cause on a
         // swival nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
         // NotPromptEcho to the SwivalSubagentRunnerTests family.
-        const int baseline = 150;
+        // Bumped 150→152 on 2026-06-22: the improve-live-tiers-ui task added two
+        // TierRows_* [Fact]s to the BackendConfigGeneratorTests family
+        // (BackendConfigGeneratorTests.cs: TierRows_HfOnlyAndDeepSeek,
+        // TierRows_ClaudePresentAndEmptyKeys).
+        const int baseline = 152;
 
         string[] prefixes =
         [

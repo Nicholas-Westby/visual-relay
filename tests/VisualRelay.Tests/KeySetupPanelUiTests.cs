@@ -6,6 +6,7 @@ using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 using VisualRelay.Core.Configuration;
+using Ellipse = Avalonia.Controls.Shapes.Ellipse;
 
 namespace VisualRelay.Tests;
 
@@ -169,15 +170,57 @@ public sealed class KeySetupPanelUiTests
         var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
         await vm.LoadInitialAsync();
         Assert.True(vm.IsHuggingFaceConfigured);
-        Assert.Contains("fallback", vm.LitTiersSummary!, StringComparison.Ordinal);
-        Assert.Contains("HF_TOKEN", vm.LitTiersSummary!, StringComparison.Ordinal);
-        Assert.Contains("claude→(absent)", vm.LitTiersSummary!, StringComparison.Ordinal);
 
+        // Structured row assertions — HF only.
+        var rows = vm.LitTierRows;
+        Assert.NotEmpty(rows);
+
+        var cheapRow = rows.First(r => r.Tier == "cheap");
+        Assert.True(cheapRow.KeyPresent); // HF_TOKEN present
+        Assert.Equal("Hugging Face", cheapRow.ProviderName);
+
+        var claudeRow = rows.First(r => r.Tier == "claude");
+        Assert.False(claudeRow.KeyPresent);
+        Assert.Equal("(key missing)", claudeRow.Model);
+        Assert.Equal("Anthropic", claudeRow.ProviderName);
+
+        // After adding DeepSeek, balanced resolves to a DeepSeek model.
         KeyEnvFile.Upsert(Path.Combine(repo.Root, "visual-relay", ".env"),
             "DEEPSEEK_API_KEY", "sk-deepseek-xyz");
         await vm.RefreshKeyStatesAsync();
-        Assert.Contains("DEEPSEEK_API_KEY", vm.LitTiersSummary!, StringComparison.Ordinal);
-        Assert.Contains("deepseek", vm.LitTiersSummary!, StringComparison.OrdinalIgnoreCase);
+
+        rows = vm.LitTierRows;
+        var balancedRow = rows.First(r => r.Tier == "balanced");
+        Assert.True(balancedRow.KeyPresent);
+        Assert.Equal("DeepSeek", balancedRow.ProviderName);
+        Assert.Contains("deepseek", balancedRow.Model, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [AvaloniaFact]
+    public async Task LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc\n");
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show(); Dispatcher.UIThread.RunJobs();
+        var dialog = OpenSettings(window);
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
+        var itemsControl = panel.FindControl<ItemsControl>("LitTierItems")!;
+        Assert.NotNull(itemsControl);
+        var grids = itemsControl.GetVisualDescendants().OfType<Grid>().ToList();
+        Assert.Equal(6, grids.Count);
+        Assert.Contains(grids, g => g.GetVisualDescendants().OfType<TextBlock>()
+            .Any(tb => tb.Text == "(key missing)"));
+        foreach (var grid in grids)
+        {
+            var dots = grid.GetVisualDescendants().OfType<Ellipse>().ToList();
+            Assert.True(dots.Count == 2 && (dots[0].IsVisible ^ dots[1].IsVisible));
+        }
+        dialog.Close(); Dispatcher.UIThread.RunJobs();
     }
 
     [Fact]

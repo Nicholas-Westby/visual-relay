@@ -69,6 +69,75 @@ public static class BackendConfigGenerator
         ],
     };
 
+    /// <summary>Env-var → human-readable provider name.</summary>
+    private static readonly IReadOnlyDictionary<string, string> ProviderNames = new Dictionary<string, string>
+    {
+        ["HF_TOKEN"] = "Hugging Face",
+        ["DEEPSEEK_API_KEY"] = "DeepSeek",
+        ["MOONSHOT_API_KEY"] = "Moonshot",
+        ["ANTHROPIC_API_KEY"] = "Anthropic",
+        ["OPENAI_API_KEY"] = "OpenAI",
+    };
+
+    /// <summary>Model name → required env var (excluding "fallback" alias).</summary>
+    private static readonly IReadOnlyDictionary<string, string> ModelToKey = Chains.Values
+        .SelectMany(c => c)
+        .Where(c => c.Model != "fallback")
+        .DistinctBy(c => c.Model)
+        .ToDictionary(c => c.Model, c => c.RequiredKey);
+
+    /// <summary>Structured per-tier row for UI rendering.</summary>
+    public sealed record TierConfigRow(
+        string Tier,
+        string Model,
+        string ProviderName,
+        string RequiredKey,
+        bool KeyPresent,
+        string? FallbackChainText);
+
+    /// <summary>
+    /// Returns one row per tier with the resolved model, provider, and
+    /// key-present status for UI display.
+    /// </summary>
+    public static IReadOnlyList<TierConfigRow> GetTierRows(ISet<string> presentKeys)
+    {
+        var (aliases, fallbacks) = ResolveTiers(presentKeys);
+        var rows = new List<TierConfigRow>();
+
+        foreach (var tier in Chains.Keys)
+        {
+            if (tier == "claude" && !aliases.ContainsKey("claude"))
+            {
+                rows.Add(new TierConfigRow(
+                    Tier: "claude",
+                    Model: "(key missing)",
+                    ProviderName: "Anthropic",
+                    RequiredKey: "ANTHROPIC_API_KEY",
+                    KeyPresent: false,
+                    FallbackChainText: null));
+                continue;
+            }
+
+            if (!aliases.TryGetValue(tier, out var model))
+                continue;
+
+            var requiredKey = model == "fallback" ? "HF_TOKEN" : ModelToKey[model];
+            var chainText = fallbacks.TryGetValue(tier, out var fb) && fb.Count > 0
+                ? string.Join(", ", fb)
+                : null;
+
+            rows.Add(new TierConfigRow(
+                Tier: tier,
+                Model: model,
+                ProviderName: ProviderNames[requiredKey],
+                RequiredKey: requiredKey,
+                KeyPresent: presentKeys.Contains(requiredKey),
+                FallbackChainText: chainText));
+        }
+
+        return rows;
+    }
+
     /// <summary>
     /// Generates a LiteLLM config YAML from <paramref name="templatePath"/>,
     /// rewriting aliases and fallbacks so every tier points at the best model
@@ -97,7 +166,55 @@ public static class BackendConfigGenerator
             throw new InvalidOperationException(
                 "Template is missing required sections (model_group_alias / litellm_settings).");
 
-        // Resolve aliases and fallbacks from the candidate chains.
+        var (aliases, fallbacks) = ResolveTiers(presentKeys);
+
+        // Reassemble the YAML: verbatim prefix + generated aliases/fallbacks + verbatim suffix.
+        var result = new List<string>(lines.Length);
+
+        // Everything before model_group_alias (model_list, stream_timeout).
+        for (var i = 0; i < aliasStart; i++)
+            result.Add(lines[i]);
+
+        // Generated model_group_alias block.
+        result.Add("  model_group_alias:");
+        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
+            result.Add($"    {tier}: {model}");
+        result.Add("");
+
+        // Generated fallbacks block.
+        result.Add("  fallbacks:");
+        foreach (var (tier, chain) in fallbacks.OrderBy(f => f.Key, StringComparer.Ordinal))
+            result.Add($"    - {tier}: [{string.Join(", ", chain)}]");
+        result.Add("");
+
+        // Everything from litellm_settings onward.
+        for (var i = litellmStart; i < lines.Length; i++)
+            result.Add(lines[i]);
+
+        var yaml = string.Join("\n", result) + "\n";
+
+        // One-line summary for stderr / logs.
+        var tierResolutions = new List<string>();
+        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
+            tierResolutions.Add($"{tier}→{model}");
+        if (!aliases.ContainsKey("claude"))
+            tierResolutions.Add("claude→(absent)");
+
+        var keysDetected = presentKeys.OrderBy(k => k, StringComparer.Ordinal).ToList();
+        var summary = keysDetected.Count > 0
+            ? $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: {string.Join(", ", keysDetected)}"
+            : $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: (none)";
+
+        return (yaml, summary);
+    }
+
+    /// <summary>
+    /// Resolves aliases and fallbacks from the candidate chains for the
+    /// given set of present keys.
+    /// </summary>
+    private static (Dictionary<string, string> Aliases, Dictionary<string, List<string>> Fallbacks)
+        ResolveTiers(ISet<string> presentKeys)
+    {
         var aliases = new Dictionary<string, string>();
         var fallbacks = new Dictionary<string, List<string>>();
 
@@ -150,43 +267,6 @@ public static class BackendConfigGenerator
                 fallbacks[tier] = chain;
         }
 
-        // Reassemble the YAML: verbatim prefix + generated aliases/fallbacks + verbatim suffix.
-        var result = new List<string>(lines.Length);
-
-        // Everything before model_group_alias (model_list, stream_timeout).
-        for (var i = 0; i < aliasStart; i++)
-            result.Add(lines[i]);
-
-        // Generated model_group_alias block.
-        result.Add("  model_group_alias:");
-        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
-            result.Add($"    {tier}: {model}");
-        result.Add("");
-
-        // Generated fallbacks block.
-        result.Add("  fallbacks:");
-        foreach (var (tier, chain) in fallbacks.OrderBy(f => f.Key, StringComparer.Ordinal))
-            result.Add($"    - {tier}: [{string.Join(", ", chain)}]");
-        result.Add("");
-
-        // Everything from litellm_settings onward.
-        for (var i = litellmStart; i < lines.Length; i++)
-            result.Add(lines[i]);
-
-        var yaml = string.Join("\n", result) + "\n";
-
-        // One-line summary for stderr / logs.
-        var tierResolutions = new List<string>();
-        foreach (var (tier, model) in aliases.OrderBy(a => a.Key, StringComparer.Ordinal))
-            tierResolutions.Add($"{tier}→{model}");
-        if (!aliases.ContainsKey("claude"))
-            tierResolutions.Add("claude→(absent)");
-
-        var keysDetected = presentKeys.OrderBy(k => k, StringComparer.Ordinal).ToList();
-        var summary = keysDetected.Count > 0
-            ? $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: {string.Join(", ", keysDetected)}"
-            : $"backend: config generated — {string.Join(", ", tierResolutions)}; keys: (none)";
-
-        return (yaml, summary);
+        return (aliases, fallbacks);
     }
 }

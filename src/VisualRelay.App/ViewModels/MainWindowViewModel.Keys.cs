@@ -84,9 +84,17 @@ public partial class MainWindowViewModel
     /// <summary>
     /// Human-readable summary of tier→model resolutions given present keys,
     /// produced by <see cref="BackendConfigGenerator.Generate"/>.
+    /// Retained for logging/diagnostics; the Live Tiers UI binds to
+    /// <see cref="LitTierRows"/> instead.
     /// </summary>
     [ObservableProperty]
     private string? _litTiersSummary;
+
+    /// <summary>
+    /// Structured per-tier rows for the Live Tiers UI, populated by
+    /// <see cref="RefreshLitTiers"/> from <see cref="BackendConfigGenerator.GetTierRows"/>.
+    /// </summary>
+    public ObservableCollection<BackendConfigGenerator.TierConfigRow> LitTierRows { get; } = [];
 
     /// <summary>Remediation message shown when HF_TOKEN is missing.</summary>
     public string HfGateMessage => IsHuggingFaceConfigured
@@ -189,10 +197,15 @@ public partial class MainWindowViewModel
             {
                 LitTiersSummary = "(template not found)";
             }
+
+            LitTierRows.Clear();
+            foreach (var row in BackendConfigGenerator.GetTierRows(presentKeys))
+                LitTierRows.Add(row);
         }
         catch
         {
             LitTiersSummary = "(unavailable)";
+            LitTierRows.Clear();
         }
     }
 

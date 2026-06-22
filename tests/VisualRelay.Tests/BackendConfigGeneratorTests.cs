@@ -234,4 +234,52 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.False(aliases.ContainsKey("claude"));
     }
 
+    // ── 8. Tier rows ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TierRows_HfOnlyAndDeepSeek()
+    {
+        var hf = new HashSet<string> { "HF_TOKEN" };
+        var hfRows = BackendConfigGenerator.GetTierRows(hf);
+        Assert.Equal(6, hfRows.Count);
+        var cheap = hfRows.First(r => r.Tier == "cheap");
+        Assert.Equal("fallback", cheap.Model);
+        Assert.Equal("Hugging Face", cheap.ProviderName);
+        Assert.True(cheap.KeyPresent);
+        var claude = hfRows.First(r => r.Tier == "claude");
+        Assert.Equal("(key missing)", claude.Model);
+        Assert.False(claude.KeyPresent);
+
+        var ds = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
+        var dsRows = BackendConfigGenerator.GetTierRows(ds);
+        var cheapDs = dsRows.First(r => r.Tier == "cheap");
+        Assert.Equal("deepseek-v4-flash", cheapDs.Model);
+        Assert.Equal("DeepSeek", cheapDs.ProviderName);
+        Assert.True(cheapDs.KeyPresent);
+        var balanced = dsRows.First(r => r.Tier == "balanced");
+        Assert.Equal("deepseek-v4-pro", balanced.Model);
+        Assert.Equal("DeepSeek", balanced.ProviderName);
+    }
+
+    [Fact]
+    public void TierRows_ClaudePresentAndEmptyKeys()
+    {
+        var ha = new HashSet<string> { "HF_TOKEN", "ANTHROPIC_API_KEY" };
+        var haRows = BackendConfigGenerator.GetTierRows(ha);
+        var claude = haRows.First(r => r.Tier == "claude");
+        Assert.Equal("claude-opus-1m", claude.Model);
+        Assert.Equal("Anthropic", claude.ProviderName);
+        Assert.True(claude.KeyPresent);
+        foreach (var row in haRows.Where(r => r.Tier != "claude"))
+            Assert.NotNull(row.FallbackChainText);
+
+        var empty = new HashSet<string>();
+        var emptyRows = BackendConfigGenerator.GetTierRows(empty);
+        foreach (var row in emptyRows.Where(r => r.Tier != "claude"))
+            Assert.False(row.KeyPresent);
+        var claudeE = emptyRows.First(r => r.Tier == "claude");
+        Assert.False(claudeE.KeyPresent);
+        Assert.Equal("(key missing)", claudeE.Model);
+    }
+
 }
