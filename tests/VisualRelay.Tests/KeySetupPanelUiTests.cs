@@ -175,11 +175,11 @@ public sealed class KeySetupPanelUiTests
         var rows = vm.LitTierRows;
         Assert.NotEmpty(rows);
 
-        var cheapRow = rows.First(r => r.Tier == "cheap");
+        var cheapRow = rows.First(row => row.Tier == "cheap");
         Assert.True(cheapRow.KeyPresent); // HF_TOKEN present
         Assert.Equal("Hugging Face", cheapRow.ProviderName);
 
-        var claudeRow = rows.First(r => r.Tier == "claude");
+        var claudeRow = rows.First(row => row.Tier == "claude");
         Assert.False(claudeRow.KeyPresent);
         Assert.Equal("(key missing)", claudeRow.Model);
         Assert.Equal("Anthropic", claudeRow.ProviderName);
@@ -190,7 +190,7 @@ public sealed class KeySetupPanelUiTests
         await vm.RefreshKeyStatesAsync();
 
         rows = vm.LitTierRows;
-        var balancedRow = rows.First(r => r.Tier == "balanced");
+        var balancedRow = rows.First(row => row.Tier == "balanced");
         Assert.True(balancedRow.KeyPresent);
         Assert.Equal("DeepSeek", balancedRow.ProviderName);
         Assert.Contains("deepseek", balancedRow.Model, StringComparison.OrdinalIgnoreCase);

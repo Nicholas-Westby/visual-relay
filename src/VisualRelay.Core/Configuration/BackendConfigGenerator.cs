@@ -91,7 +91,6 @@ public static class BackendConfigGenerator
         string Tier,
         string Model,
         string ProviderName,
-        string RequiredKey,
         bool KeyPresent,
         string? FallbackChainText);
 
@@ -112,7 +111,6 @@ public static class BackendConfigGenerator
                     Tier: "claude",
                     Model: "(key missing)",
                     ProviderName: "Anthropic",
-                    RequiredKey: "ANTHROPIC_API_KEY",
                     KeyPresent: false,
                     FallbackChainText: null));
                 continue;
@@ -130,7 +128,6 @@ public static class BackendConfigGenerator
                 Tier: tier,
                 Model: model,
                 ProviderName: ProviderNames[requiredKey],
-                RequiredKey: requiredKey,
                 KeyPresent: presentKeys.Contains(requiredKey),
                 FallbackChainText: chainText));
         }
