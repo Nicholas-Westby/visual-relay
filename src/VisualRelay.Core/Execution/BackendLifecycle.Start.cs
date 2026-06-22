@@ -156,8 +156,8 @@ public sealed partial class BackendLifecycle
 
     // Loads provider keys with process-env-wins precedence (the process env is
     // already inherited by the spawned child, so we only return the file-sourced
-    // additions): user-level ~/.config/visual-relay/.env, then repo .env (dev
-    // fallback). Reuses KeyEnvFile so the parsing matches the GUI/settings panel.
+    // additions): user-level ~/.config/visual-relay/.env only. Reuses
+    // KeyEnvFile so the parsing matches the GUI/settings panel.
     private Dictionary<string, string> LoadProviderKeys()
     {
         var keys = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -167,16 +167,6 @@ public sealed partial class BackendLifecycle
         {
             _log($"loading provider keys from {userEnv}");
             Merge(keys, KeyEnvFile.GetUnsetKeysPublic(userEnv));
-        }
-
-        if (_options.RepoRoot is { } root)
-        {
-            var repoEnv = Path.Combine(root, ".env");
-            if (File.Exists(repoEnv))
-            {
-                _log($"loading provider keys from {repoEnv} (dev fallback)");
-                Merge(keys, KeyEnvFile.GetUnsetKeysPublic(repoEnv));
-            }
         }
 
         return keys;

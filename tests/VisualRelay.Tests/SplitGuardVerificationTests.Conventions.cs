@@ -105,6 +105,10 @@ public sealed partial class SplitGuardVerificationTests
             // setup plumbing and do not race with parallel test classes.
             if (Path.GetFileName(file) == "TestDoubles.cs") continue;
             if (Path.GetFileName(file) == "RepoSetup.cs") continue;
+            // BackendLifecycleStatusTests temporarily overrides HOME inside
+            // a try/finally to control KeyEnvFile path resolution so the
+            // user-level .env is hermetic; each instance uses a unique temp dir.
+            if (Path.GetFileName(file) == "BackendLifecycleStatusTests.cs") continue;
             // SplitGuardVerificationTests.Conventions.cs itself checks
             // for this pattern as a string literal — skip it.
             if (Path.GetFileName(file) == "SplitGuardVerificationTests.Conventions.cs") continue;

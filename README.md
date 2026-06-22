@@ -100,15 +100,9 @@ mkdir -p ~/.config/visual-relay
 # (see .env.example for the full key set)
 ```
 
-**Dev-only fallback** (source checkout):
+**Precedence**: an exported environment variable overrides the user-level file. The in-app key panel reads and writes the user-level path.
 
-```bash
-cp .env.example .env   # repo-root .env, git-ignored
-```
-
-**Precedence**: an exported environment variable overrides both files; the user-level file overrides the repo file. The in-app key panel reads and writes the user-level path.
-
-`VisualRelay.Backend start` loads keys from both locations automatically. Before launching LiteLLM it **generates a key-aware config** at `$XDG_DATA_HOME/visual-relay/scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. Config generation is bounded by a timeout; on timeout or any failure it falls back to the static template so a wedged generator never blocks startup.
+`VisualRelay.Backend start` loads keys from the user-level file automatically. Before launching LiteLLM it **generates a key-aware config** at `$XDG_DATA_HOME/visual-relay/scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. Config generation is bounded by a timeout; on timeout or any failure it falls back to the static template so a wedged generator never blocks startup.
 
 ## Sandbox
 

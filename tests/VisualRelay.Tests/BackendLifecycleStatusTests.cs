@@ -176,6 +176,84 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         Assert.Contains(log, l => l.Contains("already healthy"));
     }
 
+    // ── Provider-key loading: user-level .env only (no repo .env) ────────
+
+    [Fact]
+    public async Task Start_LoadsUserLevelKeys_ButNotRepoRootKeys()
+    {
+        if (OperatingSystem.IsWindows())
+            return; // POSIX shell stubs; the proxy only runs on macOS/Linux.
+
+        // ── set up user-level .env in the temp home ──────────────────────
+        var userEnvDir = Path.Combine(_home, ".config", "visual-relay");
+        Directory.CreateDirectory(userEnvDir);
+        var userEnv = Path.Combine(userEnvDir, ".env");
+        await File.WriteAllTextAsync(userEnv, "USER_LEVEL_KEY=from_user_env\n");
+
+        // ── set up a repo root with the static template AND a repo .env ──
+        var (repoRoot, _) = WriteStaticTemplate();
+        var repoEnv = Path.Combine(repoRoot, ".env");
+        await File.WriteAllTextAsync(repoEnv, "REPO_ROOT_KEY=from_repo_env\n");
+
+        // ── litellm stub that captures its environment then exits ────────
+        var paths = Paths();
+        Directory.CreateDirectory(Path.Combine(paths.VenvDir, "bin"));
+        var envLog = Path.Combine(_home, "litellm-env.txt");
+
+        if (!TryMakeExecutable(() =>
+            {
+                File.WriteAllText(paths.VenvLitellm,
+                    $"#!/bin/bash\nenv > '{envLog}'\nexit 0\n");
+                if (!OperatingSystem.IsWindows())
+                    File.SetUnixFileMode(paths.VenvLitellm,
+                        UnixFileMode.UserRead | UnixFileMode.UserExecute | UnixFileMode.UserWrite);
+            }))
+        {
+            return; // sandbox denies the chmod this real-spawn check requires
+        }
+
+        // ── temporarily point HOME at the temp dir so LoadProviderKeys ──
+        // ── resolves the user-level .env from the same temp home        ──
+        var originalHome = Environment.GetEnvironmentVariable("HOME");
+        Environment.SetEnvironmentVariable("HOME", _home);
+        try
+        {
+            var options = new BackendStartOptions
+            {
+                RepoRoot = repoRoot,
+                ReadyTimeout = TimeSpan.FromSeconds(3),
+            };
+
+            var lifecycle = new BackendLifecycle(
+                paths,
+                options,
+                _ => { },
+                healthCheck: _ => Task.FromResult(false),
+                ensureVenv: (_, _) => new BackendVenv.Result(paths.VenvLitellm));
+
+            await lifecycle.StartAsync();
+
+            // Give the stub a beat to write its env dump.
+            for (var i = 0; i < 50 && !File.Exists(envLog); i++)
+                await Task.Delay(50);
+
+            Assert.True(File.Exists(envLog), "litellm stub never ran (no env captured)");
+            var env = await File.ReadAllLinesAsync(envLog);
+
+            // User-level key: MUST be loaded.
+            Assert.Contains("USER_LEVEL_KEY=from_user_env", env);
+            // Repo-root key: must NOT be loaded (the bug fix).
+            Assert.DoesNotContain("REPO_ROOT_KEY=from_repo_env", env);
+        }
+        finally
+        {
+            if (originalHome is null)
+                Environment.SetEnvironmentVariable("HOME", null);
+            else
+                Environment.SetEnvironmentVariable("HOME", originalHome);
+        }
+    }
+
     // Copies the repo's real static litellm template into a temp repo so the
     // in-process generator (BackendConfigGenerator) has its required sections.
     private (string RepoRoot, string Template) WriteStaticTemplate()

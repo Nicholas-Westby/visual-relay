@@ -7,8 +7,7 @@ namespace VisualRelay.Core.Configuration;
 /// <c>$XDG_CONFIG_HOME/visual-relay/.env</c> (falling back to
 /// <c>$HOME/.config/visual-relay/.env</c>).
 ///
-/// Resolution precedence: <b>process env &gt; user-level .env &gt; repo .env</b>
-/// (the repo .env is a dev-only fallback and is handled in backend.sh, not here).
+/// Resolution precedence: <b>process env &gt; user-level .env</b>.
 ///
 /// Environment accessor seam: every env-dependent method accepts an optional
 /// <see cref="IEnvironmentAccessor"/> parameter. When null (default), the real
