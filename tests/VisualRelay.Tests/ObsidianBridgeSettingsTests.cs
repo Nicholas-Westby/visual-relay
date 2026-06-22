@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text.Json;
 using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;

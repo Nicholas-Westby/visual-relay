@@ -60,11 +60,11 @@ public static class ObsidianBridgeSettings
             // Process-env-wins for each key: check the accessor/process env
             // first, then fall back to the .env file.
             var enabledStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_ENABLED", accessor)
-                ?? (envDict.TryGetValue("VR_OBSIDIAN_ENABLED", out var ev) ? ev : null);
+                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_ENABLED");
             var vaultRootStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_VAULT_ROOT", accessor)
-                ?? (envDict.TryGetValue("VR_OBSIDIAN_VAULT_ROOT", out var vr) ? vr : null);
+                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_VAULT_ROOT");
             var pollStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_POLL_SECONDS", accessor)
-                ?? (envDict.TryGetValue("VR_OBSIDIAN_POLL_SECONDS", out var ps) ? ps : null);
+                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_POLL_SECONDS");
 
             // Parse with safe defaults.
             var enabled = bool.TryParse(enabledStr, out var e) && e;
