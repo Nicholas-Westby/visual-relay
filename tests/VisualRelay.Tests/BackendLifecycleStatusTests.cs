@@ -247,10 +247,7 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         }
         finally
         {
-            if (originalHome is null)
-                Environment.SetEnvironmentVariable("HOME", null);
-            else
-                Environment.SetEnvironmentVariable("HOME", originalHome);
+            Environment.SetEnvironmentVariable("HOME", originalHome);
         }
     }
 
