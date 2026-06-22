@@ -3,19 +3,18 @@ using System.Text.Json;
 namespace VisualRelay.Core.Configuration;
 
 /// <summary>
-/// Per-machine settings for the Obsidian task bridge. Settings are stored at
-/// <c>$XDG_CONFIG_HOME/visual-relay/obsidian.json</c> (falling back to
-/// <c>$HOME/.config/visual-relay/obsidian.json</c>) so the iCloud vault path
-/// stays out of the in-repo <c>.relay/config.json</c> (which is shared with a VM).
+/// Per-machine settings for the Obsidian task bridge. Settings are stored as
+/// keys in the user-level <c>.env</c> file at
+/// <c>$XDG_CONFIG_HOME/visual-relay/.env</c> (falling back to
+/// <c>$HOME/.config/visual-relay/.env</c>) so the iCloud vault path stays out
+/// of the in-repo <c>.relay/config.json</c> (which is shared with a VM).
 ///
-/// Mirrors the <see cref="KeyEnvFile"/> pattern: XDG resolution, an
+/// Uses the <see cref="KeyEnvFile"/> infrastructure for XDG resolution,
 /// <see cref="IEnvironmentAccessor"/> seam, and Unix permission hardening.
+/// Migrates a legacy <c>obsidian.json</c> on first load.
 /// </summary>
 public static class ObsidianBridgeSettings
 {
-    private const string DirName = "visual-relay";
-    private const string FileName = "obsidian.json";
-
     /// <summary>
     /// Minimum allowed bridge poll interval (seconds). Enforced both on
     /// <see cref="Load"/> and at every live set (the VM property setter) so a
@@ -27,34 +26,12 @@ public static class ObsidianBridgeSettings
     private static readonly string DefaultVaultRootTemplate =
         "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/";
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        WriteIndented = true
-    };
-
-    // ── Path resolution (testable) ───────────────────────────────────────
-
-    /// <summary>
-    /// Resolves the settings path given explicit directory overrides (for testability).
-    /// Mirrors <see cref="KeyEnvFile.ResolvePath(string?,string?)"/>.
-    /// </summary>
-    internal static string ResolvePath(string? xdgConfigHome, string? home)
-    {
-        var configDir = XdgConfig.ResolveConfigDir(xdgConfigHome, home);
-        return Path.Combine(configDir, DirName, FileName);
-    }
-
-    private static string ResolvePath(IEnvironmentAccessor? accessor = null) =>
-        ResolvePath(
-            KeyEnvFile.GetEnv("XDG_CONFIG_HOME", accessor),
-            KeyEnvFile.GetEnv("HOME", accessor));
-
     // ── Load ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Reads the bridge settings from the user-level XDG config file.
+    /// Reads the bridge settings from the user-level <c>.env</c> file.
     /// Returns defaults when the file is missing or malformed.
+    /// Migrates a legacy <c>obsidian.json</c> on first load.
     /// </summary>
     public static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor = null)
     {
@@ -72,46 +49,39 @@ public static class ObsidianBridgeSettings
             return defaults;
         }
 
-        string filePath;
         try
         {
-            filePath = ResolvePath(accessor);
+            // One-time migration from legacy obsidian.json (best-effort).
+            TryMigrateFromObsidianJson(accessor);
+
+            // Read the user-level .env file.
+            var envDict = KeyEnvFile.Read(accessor);
+
+            // Process-env-wins for each key: check the accessor/process env
+            // first, then fall back to the .env file.
+            var enabledStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_ENABLED", accessor)
+                ?? (envDict.TryGetValue("VR_OBSIDIAN_ENABLED", out var ev) ? ev : null);
+            var vaultRootStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_VAULT_ROOT", accessor)
+                ?? (envDict.TryGetValue("VR_OBSIDIAN_VAULT_ROOT", out var vr) ? vr : null);
+            var pollStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_POLL_SECONDS", accessor)
+                ?? (envDict.TryGetValue("VR_OBSIDIAN_POLL_SECONDS", out var ps) ? ps : null);
+
+            // Parse with safe defaults.
+            var enabled = bool.TryParse(enabledStr, out var e) && e;
+
+            var vaultRoot = !string.IsNullOrWhiteSpace(vaultRootStr)
+                ? ExpandTilde(vaultRootStr, home)
+                : defaultVaultRoot;
+
+            var pollSeconds = int.TryParse(pollStr, out var p) ? p : 60;
+            if (pollSeconds < MinPollSeconds)
+                pollSeconds = MinPollSeconds;
+
+            return new ObsidianBridgeConfig(enabled, vaultRoot, pollSeconds);
         }
         catch (InvalidOperationException)
         {
             // Neither XDG_CONFIG_HOME nor HOME is set — can't resolve path.
-            return defaults;
-        }
-
-        if (!File.Exists(filePath))
-        {
-            return defaults;
-        }
-
-        try
-        {
-            var json = File.ReadAllText(filePath);
-            var loaded = JsonSerializer.Deserialize<ObsidianBridgeConfigDto>(json, JsonOptions);
-            if (loaded is null)
-            {
-                return defaults;
-            }
-
-            // Expand ~ in vault root.
-            var vaultRoot = loaded.VaultRoot ?? defaultVaultRoot;
-            vaultRoot = ExpandTilde(vaultRoot, home);
-
-            var pollSeconds = loaded.PollSeconds ?? 60;
-            if (pollSeconds < MinPollSeconds)
-                pollSeconds = MinPollSeconds;
-
-            return new ObsidianBridgeConfig(
-                Enabled: loaded.Enabled ?? false,
-                VaultRoot: vaultRoot,
-                PollSeconds: pollSeconds);
-        }
-        catch (JsonException)
-        {
             return defaults;
         }
     }
@@ -119,46 +89,93 @@ public static class ObsidianBridgeSettings
     // ── Save ──────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Writes the bridge settings to the user-level XDG config file.
-    /// Creates the parent directory with <c>0700</c> and the file with <c>0600</c>.
+    /// Writes the bridge settings to the user-level <c>.env</c> file via
+    /// three surgical <see cref="KeyEnvFile.Upsert"/> calls.
+    /// <see cref="KeyEnvFile.Upsert"/> creates the parent directory with
+    /// <c>0700</c> and the file with <c>0600</c>.
     /// </summary>
     public static void Save(ObsidianBridgeConfig settings, IEnvironmentAccessor? accessor = null)
     {
-        string filePath;
         try
         {
-            filePath = ResolvePath(accessor);
+            KeyEnvFile.Upsert(
+                "VR_OBSIDIAN_ENABLED",
+                settings.Enabled ? "true" : "false",
+                accessor);
+            KeyEnvFile.Upsert(
+                "VR_OBSIDIAN_VAULT_ROOT",
+                settings.VaultRoot,
+                accessor);
+            KeyEnvFile.Upsert(
+                "VR_OBSIDIAN_POLL_SECONDS",
+                settings.PollSeconds.ToString(),
+                accessor);
         }
         catch (InvalidOperationException)
         {
             // Nowhere to save — bail.
-            return;
         }
+    }
 
-        var dir = Path.GetDirectoryName(filePath);
-        if (dir is not null && !Directory.Exists(dir))
+    // ── Migration ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Best-effort migration from a legacy <c>obsidian.json</c> into the
+    /// user-level <c>.env</c>. Only imports keys that are not already present
+    /// in the <c>.env</c> file, then deletes <c>obsidian.json</c>.
+    /// Swallows all exceptions — on failure the legacy file is left untouched.
+    /// </summary>
+    private static void TryMigrateFromObsidianJson(IEnvironmentAccessor? accessor)
+    {
+        try
         {
-            Directory.CreateDirectory(dir);
-            if (!OperatingSystem.IsWindows())
+            var xdgConfigHome = KeyEnvFile.GetEnv("XDG_CONFIG_HOME", accessor);
+            var home = KeyEnvFile.GetEnv("HOME", accessor);
+            var configDir = XdgConfig.ResolveConfigDir(xdgConfigHome, home);
+            var obsidianPath = Path.Combine(configDir, "visual-relay", "obsidian.json");
+
+            if (!File.Exists(obsidianPath))
+                return;
+
+            var json = File.ReadAllText(obsidianPath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            // Read current .env state so we only import unset keys.
+            var envDict = KeyEnvFile.Read(accessor);
+
+            if (!envDict.ContainsKey("VR_OBSIDIAN_ENABLED")
+                && root.TryGetProperty("enabled", out var enabledProp))
             {
-                File.SetUnixFileMode(dir,
-                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                if (enabledProp.ValueKind == JsonValueKind.True)
+                    KeyEnvFile.Upsert("VR_OBSIDIAN_ENABLED", "true", accessor);
+                else if (enabledProp.ValueKind == JsonValueKind.False)
+                    KeyEnvFile.Upsert("VR_OBSIDIAN_ENABLED", "false", accessor);
             }
+
+            if (!envDict.ContainsKey("VR_OBSIDIAN_VAULT_ROOT")
+                && root.TryGetProperty("vaultRoot", out var vaultProp)
+                && vaultProp.ValueKind == JsonValueKind.String)
+            {
+                var val = vaultProp.GetString();
+                if (!string.IsNullOrWhiteSpace(val))
+                    KeyEnvFile.Upsert("VR_OBSIDIAN_VAULT_ROOT", val, accessor);
+            }
+
+            if (!envDict.ContainsKey("VR_OBSIDIAN_POLL_SECONDS")
+                && root.TryGetProperty("pollSeconds", out var pollProp)
+                && pollProp.ValueKind == JsonValueKind.Number
+                && pollProp.TryGetInt32(out var pollVal))
+            {
+                KeyEnvFile.Upsert("VR_OBSIDIAN_POLL_SECONDS", pollVal.ToString(), accessor);
+            }
+
+            // Migration succeeded — delete the legacy file.
+            File.Delete(obsidianPath);
         }
-
-        var dto = new ObsidianBridgeConfigDto
+        catch
         {
-            Enabled = settings.Enabled,
-            VaultRoot = settings.VaultRoot,
-            PollSeconds = settings.PollSeconds
-        };
-        var json = JsonSerializer.Serialize(dto, JsonOptions);
-        File.WriteAllText(filePath, json);
-
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(filePath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            // Best-effort: leave obsidian.json on any failure.
         }
     }
 
@@ -184,15 +201,6 @@ public static class ObsidianBridgeSettings
             return Path.Combine(home, path[2..]);
 
         return path;
-    }
-
-    // ── DTO for serialisation ─────────────────────────────────────────────
-
-    private sealed class ObsidianBridgeConfigDto
-    {
-        public bool? Enabled { get; init; }
-        public string? VaultRoot { get; init; }
-        public int? PollSeconds { get; init; }
     }
 }
 

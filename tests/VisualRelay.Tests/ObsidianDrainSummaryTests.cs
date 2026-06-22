@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 ///
 /// A sandboxed <see cref="DictionaryEnvironmentAccessor"/> (temp HOME) is injected
 /// so toggling the bridge settings persists into a throwaway config, never the
-/// user's real ~/.config/visual-relay/obsidian.json.
+/// user's real ~/.config/visual-relay/.env.
 /// </summary>
 [Collection("Headless")]
 public sealed class ObsidianDrainSummaryTests : IDisposable

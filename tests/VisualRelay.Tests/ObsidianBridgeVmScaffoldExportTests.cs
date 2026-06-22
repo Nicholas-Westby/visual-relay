@@ -1,5 +1,6 @@
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
@@ -50,10 +51,15 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
             """{"testCmd": "true", "logSources": []}""");
 
         env["HOME"] = _tempHome;
-        var settingsDir = Path.Combine(_tempHome, ".config", "visual-relay");
-        Directory.CreateDirectory(settingsDir);
-        File.WriteAllText(Path.Combine(settingsDir, "obsidian.json"),
-            $$"""{"enabled": {{(bridgeEnabled ? "true" : "false")}}, "vaultRoot": "{{vaultRoot.Replace("\\", "/")}}", "pollSeconds": 60}""");
+        KeyEnvFile.Upsert("VR_OBSIDIAN_ENABLED",
+            bridgeEnabled ? "true" : "false",
+            env);
+        KeyEnvFile.Upsert("VR_OBSIDIAN_VAULT_ROOT",
+            vaultRoot.Replace("\\", "/"),
+            env);
+        KeyEnvFile.Upsert("VR_OBSIDIAN_POLL_SECONDS",
+            "60",
+            env);
 
         return new MainWindowViewModel(environmentAccessor: env) { RootPath = repoRoot };
     }
