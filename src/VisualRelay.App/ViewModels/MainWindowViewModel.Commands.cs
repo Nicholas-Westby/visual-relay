@@ -34,9 +34,7 @@ public partial class MainWindowViewModel
         await RefreshBackendStatusAsync();
     }
 
-    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests
-    /// drive the wiring hermetically. Production runs the shared
-    /// <see cref="BackendLifecycle"/> with diagnostics routed to Trace.</summary>
+    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests drive the wiring hermetically. Production runs the shared <see cref="BackendLifecycle"/> with diagnostics routed to Trace.</summary>
     internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>
         new BackendLifecycle(
             options: BackendStartOptions.FromEnvironment() with
@@ -49,9 +47,7 @@ public partial class MainWindowViewModel
     [RelayCommand(CanExecute = nameof(CanStartBackend))]
     private async Task StartBackendAsync()
     {
-        // Best-effort one-click recovery: run the SHARED C# backend lifecycle off
-        // the UI thread (same code VisualRelay.Backend + the launcher use), never
-        // throw, then re-probe so the dot reflects the result.
+        // Best-effort one-click recovery: run the SHARED C# backend lifecycle off the UI thread (same code VisualRelay.Backend + the launcher use), never throw, then re-probe so the dot reflects the result.
         try
         {
             await BackendLifecycleFactory().StartAsync();

@@ -1,4 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
+using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;
@@ -41,4 +44,28 @@ public partial class MainWindowViewModel
 
     /// <summary>Marks the settings modal as closed (mirrors the window closing).</summary>
     public void CloseSettings() => IsSettingsOpen = false;
+
+    [RelayCommand]
+    private void RevealSettingsFile()
+    {
+        var path = KeyEnvFile.ResolvePathForCurrentUser();
+        if (File.Exists(path))
+        {
+            FileReveal.Reveal(path);
+            return;
+        }
+
+        // If no key has ever been saved, .env and its parent directory don't
+        // exist yet. Create the config directory (0700 to match Upsert since
+        // .env holds API keys) so the OS file manager opens a real location.
+        var dir = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(dir);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(dir,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+
+        FileReveal.Reveal(dir);
+    }
 }

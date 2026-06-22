@@ -215,4 +215,32 @@ public sealed class SettingsPanelUiTests
         var settingsButton = topBar.FindControl<Button>("SettingsButton");
         Assert.NotNull(settingsButton);
     }
+
+    [AvaloniaFact]
+    public async Task SettingsPanelHasRevealSettingsFileButton()
+    {
+        EnsureNoUserEnv();
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: true);
+        repo.WriteTask("alpha", "# Alpha\n");
+        using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
+
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var dialog = OpenSettings(window);
+        Assert.True(vm.IsSettingsOpen);
+
+        var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
+
+        var revealButton = panel.FindControl<Button>("RevealSettingsFileButton");
+        Assert.NotNull(revealButton);
+        Assert.NotNull(revealButton.Command);
+
+        dialog.Close();
+        Dispatcher.UIThread.RunJobs();
+    }
 }
