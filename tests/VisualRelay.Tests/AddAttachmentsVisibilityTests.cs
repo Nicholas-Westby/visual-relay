@@ -89,7 +89,7 @@ public sealed class AddAttachmentsVisibilityTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
-            ShowConfirmationAsync = (_, _) => Task.FromResult(true)
+            ShowConfirmationAsync = (_, _, _) => Task.FromResult(true)
         };
         await viewModel.LoadInitialAsync();
 
@@ -206,7 +206,7 @@ public sealed class AddAttachmentsVisibilityTests
         var viewModel = new MainWindowViewModel
         {
             RootPath = repo.Root,
-            ShowConfirmationAsync = (_, _) => Task.FromResult(true)
+            ShowConfirmationAsync = (_, _, _) => Task.FromResult(true)
         };
         await viewModel.LoadInitialAsync();
 
@@ -221,6 +221,39 @@ public sealed class AddAttachmentsVisibilityTests
 
         Assert.NotEqual("stale message from a prior operation", viewModel.StatusText);
         Assert.Contains("pending", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The destructive attachment-removal confirmation keeps a "Delete" confirm
+    /// label (the shared dialog must not reuse a misleading non-destructive one).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task RemoveAttachment_UsesDeleteConfirmLabel()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteNestedTask("zeta", "# Zeta\n", ("drop.txt", "drop"));
+
+        string? capturedConfirmLabel = null;
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            ShowConfirmationAsync = (_, _, confirmLabel) =>
+            {
+                capturedConfirmLabel = confirmLabel;
+                return Task.FromResult(true);
+            }
+        };
+        await viewModel.LoadInitialAsync();
+
+        viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "zeta");
+        Dispatcher.UIThread.RunJobs();
+
+        var dropPath = Path.Combine(repo.Root, "llm-tasks", "zeta", "drop.txt");
+        await viewModel.RemoveAttachmentCommand.ExecuteAsync(dropPath);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Delete", capturedConfirmLabel);
     }
 
     /// <summary>

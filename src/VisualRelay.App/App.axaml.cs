@@ -32,7 +32,8 @@ public partial class App : Application
             var viewModel = new MainWindowViewModel();
             viewModel.UseFolderPicker(new AvaloniaFolderPicker(window));
             viewModel.UseFilePicker(new AvaloniaFilePicker(window));
-            viewModel.ShowConfirmationAsync = (title, message) => ShowConfirmationAsync(window, title, message);
+            viewModel.ShowConfirmationAsync = (title, message, confirmLabel) =>
+                ShowConfirmationAsync(window, title, message, confirmLabel);
             window.DataContext = viewModel;
             desktop.MainWindow = window;
             _ = viewModel.LoadInitialAsync();
@@ -66,7 +67,7 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
     }
 
-    private static async Task<bool> ShowConfirmationAsync(Window owner, string title, string message)
+    private static async Task<bool> ShowConfirmationAsync(Window owner, string title, string message, string confirmLabel)
     {
         var tcs = new TaskCompletionSource<bool>();
         var dialog = new Window
@@ -110,9 +111,13 @@ public partial class App : Application
                             },
                             new Button
                             {
-                                Content = "Delete",
-                                Width = 80,
-                                Height = 32
+                                Content = confirmLabel,
+                                // Grow to fit a longer label (e.g. "Rewrite and
+                                // Replace") rather than clipping at a fixed width.
+                                MinWidth = 80,
+                                Padding = new Thickness(12, 0),
+                                Height = 32,
+                                HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center
                             }
                         }
                     }
@@ -124,10 +129,10 @@ public partial class App : Application
         var grid = (Grid)dialog.Content;
         var buttons = (StackPanel)grid.Children[1];
         var cancelBtn = (Button)buttons.Children[0];
-        var deleteBtn = (Button)buttons.Children[1];
+        var confirmBtn = (Button)buttons.Children[1];
 
         cancelBtn.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
-        deleteBtn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
+        confirmBtn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };
         dialog.Closed += (_, _) => tcs.TrySetResult(false);
 
         await dialog.ShowDialog(owner);

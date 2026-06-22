@@ -28,6 +28,32 @@ public sealed class RewriteMutualExclusionTests
     private static TaskRowViewModel Row(MainWindowViewModel vm, string id) =>
         vm.Tasks.First(t => t.Id == id);
 
+    // ── Confirm-button label per call site ─────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task RewriteConfirmation_UsesRewriteAndReplaceConfirmLabel()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteNestedTask("subject", "# Subject\n");
+
+        string? capturedConfirmLabel = null;
+        var vm = NewViewModel(repo);
+        // Capture the confirm label, then cancel so no runner is needed.
+        vm.ShowConfirmationAsync = (_, _, confirmLabel) =>
+        {
+            capturedConfirmLabel = confirmLabel;
+            return Task.FromResult(false);
+        };
+        await vm.LoadInitialAsync();
+        vm.SelectedTask = Row(vm, "subject");
+
+        await vm.RewriteSelectedTaskCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Rewrite and Replace", capturedConfirmLabel);
+    }
+
     // ── FIX 5: CanRewriteSelected rules ─────────────────────────────────────
 
     [Fact]

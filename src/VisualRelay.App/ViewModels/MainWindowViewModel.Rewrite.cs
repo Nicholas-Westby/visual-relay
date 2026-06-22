@@ -32,7 +32,8 @@ public partial class MainWindowViewModel
         {
             var confirmed = await ShowConfirmationAsync(
                 "Rewrite with AI",
-                "Replace this task's spec with an AI-researched rewrite? The current text is kept so you can revert.");
+                "Replace this task's spec with an AI-researched rewrite? The current text is kept so you can revert.",
+                "Rewrite and Replace");
             if (!confirmed)
                 return;
         }

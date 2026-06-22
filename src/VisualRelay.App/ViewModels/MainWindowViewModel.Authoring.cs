@@ -187,7 +187,7 @@ public partial class MainWindowViewModel
         }
 
         var fileName = Path.GetFileName(filePath);
-        return await ShowConfirmationAsync("Remove Attachment", $"Delete \"{fileName}\"? This cannot be undone.");
+        return await ShowConfirmationAsync("Remove Attachment", $"Delete \"{fileName}\"? This cannot be undone.", "Delete");
     }
 
     [RelayCommand]
