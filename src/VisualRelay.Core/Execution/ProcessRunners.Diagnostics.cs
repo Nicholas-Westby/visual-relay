@@ -69,7 +69,16 @@ public sealed partial class SwivalSubagentRunner
     /// failure, capped to <paramref name="tailChars"/>. Returns
     /// <see cref="NoDiagnosticOutput"/> when the output is nothing but noise/empty.
     /// </summary>
-    internal static string ExtractFailureReason(string output, int tailChars = 600)
+    internal static string ExtractFailureReason(string output, int tailChars = 600) =>
+        DistillFailure(output, tailChars).Reason;
+
+    // Shared core for ExtractFailureReason and BuildNonzeroExitReason. Returns the
+    // distilled reason AND whether it anchored on a genuine failure marker
+    // (strong/weak signal) rather than falling back to the tail / placeholder. The
+    // flag is what BuildNonzeroExitReason uses to decide whether swival's own output
+    // is diagnostic, or whether it must consult the proxy log instead of echoing a
+    // tail that is really just the prompt.
+    private static (string Reason, bool HasMarker) DistillFailure(string output, int tailChars)
     {
         var lines = output.Replace("\r\n", "\n").Split('\n');
         var kept = new List<string>(lines.Length);
@@ -104,7 +113,7 @@ public sealed partial class SwivalSubagentRunner
         }
 
         if (kept.Count == 0)
-            return NoDiagnosticOutput;
+            return (NoDiagnosticOutput, false);
 
         // Strong signal wins outright; the weak keyword pass is only a fallback so
         // benign pre-failure lines (e.g. "… 0 errors") can never lead the reason
@@ -117,7 +126,75 @@ public sealed partial class SwivalSubagentRunner
         var relevant = firstFailure >= 0
             ? string.Join('\n', kept.Skip(firstFailure))
             : string.Join('\n', kept);
-        return TrimForTail(relevant, tailChars);
+        return (TrimForTail(relevant, tailChars), firstFailure >= 0);
+    }
+
+    // Leads the reason when swival yields no usable diagnostic and the failure is
+    // (or is presumed) a model-backend error — see BuildNonzeroExitReason.
+    private const string ModelCallFailedPrefix = "model call failed";
+
+    /// <summary>
+    /// Builds the user-facing reason for a swival nonzero exit. When swival's output
+    /// is a usable diagnostic (a failure marker, or a real non-echo line) it is
+    /// surfaced and the proxy is NOT consulted (so the result never depends on machine
+    /// proxy state). Only when swival yields no usable diagnostic — its tail is the
+    /// echoed PROMPT (the ground-truth incident) or the no-output placeholder — does it
+    /// consult the litellm proxy log for a model-backend error (auth / HTTP / rate-limit)
+    /// and lead with "model call failed — &lt;cause&gt;", or, absent a proxy cause, say a
+    /// model call likely failed and point at the proxy log rather than parroting the
+    /// prompt. <paramref name="promptText"/> is the prompt the runner sent (to detect an
+    /// echo); the <paramref name="killedOutputPath"/> breadcrumb is appended when present.
+    /// </summary>
+    internal static string BuildNonzeroExitReason(
+        int exitCode, string swivalOutput, string promptText, string? proxyLogText, string? killedOutputPath)
+    {
+        var (distilled, hasMarker) = DistillFailure(swivalOutput, tailChars: 600);
+
+        string core;
+        if (hasMarker || IsUsableSwivalDiagnostic(distilled, promptText))
+        {
+            // swival's output is a usable diagnostic — surface it, do not consult the proxy.
+            core = $"swival exit {exitCode}: {distilled}";
+        }
+        else
+        {
+            // No usable diagnostic (prompt echo / no output). Surface the real
+            // model-backend cause from the proxy log instead of echoing the prompt.
+            var proxyReason = ExtractProxyLogReason(proxyLogText ?? string.Empty);
+            core = proxyReason is not null
+                ? $"swival exit {exitCode}: {ModelCallFailedPrefix} — {proxyReason}"
+                : $"swival exit {exitCode}: {ModelCallFailedPrefix} — swival produced no diagnostic " +
+                  $"output and the model backend rejected or failed the request. Check the litellm " +
+                  $"proxy log ({BackendPaths.Resolve().LogFile}).";
+        }
+
+        return killedOutputPath is not null ? $"{core} (full output: {killedOutputPath})" : core;
+    }
+
+    // True when swival's distilled tail is a real diagnostic worth surfacing — i.e.
+    // it is neither the no-output placeholder nor merely our own prompt echoed back.
+    // A prompt echo is detected structurally (no machine state): the distilled tail's
+    // non-empty lines all appear in the prompt the runner sent, so swival returned
+    // the prompt instead of a result. Kept conservative — any line NOT from the
+    // prompt makes it a usable diagnostic (so genuine output is never suppressed).
+    private static bool IsUsableSwivalDiagnostic(string distilled, string promptText)
+    {
+        if (string.Equals(distilled, NoDiagnosticOutput, StringComparison.Ordinal))
+            return false;
+        if (string.IsNullOrWhiteSpace(promptText))
+            return true;
+
+        var normalizedPrompt = promptText.Replace("\r\n", "\n");
+        foreach (var line in distilled.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0)
+                continue;
+            if (!normalizedPrompt.Contains(trimmed, StringComparison.Ordinal))
+                return true; // a line swival produced that we did NOT send — a real diagnostic
+        }
+
+        return false; // every surviving line came from our prompt — a prompt echo
     }
 
     // High-confidence markers: when present, anchor here regardless of any earlier
@@ -141,6 +218,71 @@ public sealed partial class SwivalSubagentRunner
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private static bool HasWeakFailureSignal(string line) => WeakFailureKeywords.IsMatch(line);
+
+    /// <summary>
+    /// Consults the litellm proxy-log text for a recent MODEL-BACKEND failure
+    /// (auth / HTTP 4xx-5xx / rate-limit) — the class of error that lives ONLY in
+    /// the proxy log and never reaches swival's own merged stdout/stderr. Used as a
+    /// fallback by the nonzero-exit path when <see cref="ExtractFailureReason"/>
+    /// found no marker in swival's output, so the user sees the real cause (a failed
+    /// model call) instead of a prompt echo. Scans only the tail
+    /// (<paramref name="tailLines"/>) so a long-lived proxy's earlier traffic can't
+    /// resurface a stale error. Returns the most recent failure line(s), or
+    /// <c>null</c> when the tail shows only healthy traffic (so a healthy proxy
+    /// never invents a cause). Pure: text in, text out.
+    /// </summary>
+    internal static string? ExtractProxyLogReason(string proxyLogText, int tailLines = 200, int tailChars = 400)
+    {
+        if (string.IsNullOrWhiteSpace(proxyLogText))
+            return null;
+
+        var lines = proxyLogText.Replace("\r\n", "\n").Split('\n');
+        // Restrict to the recent tail so a long-lived proxy's earlier traffic can't
+        // resurface a stale error, then anchor on the FIRST failure-looking line in
+        // that window: litellm logs the descriptive error (e.g. AuthenticationError)
+        // BEFORE the matching uvicorn access-line status (… "POST …" 401), so
+        // anchoring on the first keeps both the named cause and its status code.
+        var start = Math.Max(0, lines.Length - tailLines);
+        var firstFailure = -1;
+        for (var i = start; i < lines.Length; i++)
+        {
+            if (HasProxyFailureSignal(lines[i]))
+            {
+                firstFailure = i;
+                break;
+            }
+        }
+
+        if (firstFailure < 0)
+            return null;
+
+        // Keep the failure line plus any following lines (a multi-line litellm
+        // traceback + the access-line status) capped to the tail-char budget.
+        var relevant = string.Join('\n', lines.Skip(firstFailure)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0));
+        return TrimForTail(relevant, tailChars);
+    }
+
+    // A proxy-log line that signals a MODEL-BACKEND failure. Anchors on litellm's
+    // own error names and on an HTTP status in the 4xx/5xx range as logged in the
+    // uvicorn access line (… "POST /v1/chat/completions HTTP/1.1" 401). A healthy
+    // "… 200"/"… 204" access line, or an INFO line that merely contains the digits,
+    // is NOT matched — the status regex requires the request-line + quote + space
+    // shape so a random "401" inside a message body can't false-positive.
+    private static bool HasProxyFailureSignal(string line) =>
+        line.Contains("AuthenticationError", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("RateLimitError", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("PermissionDeniedError", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("Invalid credentials", StringComparison.OrdinalIgnoreCase) ||
+        HttpErrorStatusLine.IsMatch(line);
+
+    // Matches the trailing HTTP status of a uvicorn access line, e.g.
+    // …\" HTTP/1.1\" 401  or  …\" HTTP/1.1\\\" 502 — a 4xx or 5xx only. The escaped
+    // closing quote (\" in JSON-encoded logs) plus a space precede the status, so a
+    // success ("… 200") and any bare 3-digit number elsewhere are not matched.
+    private static readonly Regex HttpErrorStatusLine = new(
+        @"HTTP/\d(?:\.\d)?\\?""\s+(?:4\d{2}|5\d{2})\b", RegexOptions.Compiled);
 
     private static readonly Regex VerifiedPacksLine = new(
         @"^Verified\s+\d+\s+pack\(s\)\s*$", RegexOptions.Compiled);

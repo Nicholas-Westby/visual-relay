@@ -28,6 +28,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly string _nonoBinary;
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
     private readonly IGitInvoker? _gitInvoker;
+    private readonly Func<string?> _proxyLogReader;
     public SwivalSubagentRunner(
         RelayConfig config,
         string swivalBinary = "swival",
@@ -38,7 +39,13 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         // unit test can supply a transparent passthrough stub and exercise the
         // always-on nono-wrapped launch path without depending on the real nono's
         // Seatbelt/Landlock startup, rollback preflight, and timing.
-        string? nonoBinary = null)
+        string? nonoBinary = null,
+        // Reads the litellm proxy-log text consulted on a swival nonzero exit when
+        // swival's own output yields no diagnostic (a model-backend error lives only
+        // in the proxy log). Defaults to a best-effort read of the per-machine
+        // BackendPaths log; injectable so a test can supply log content (or none)
+        // without depending on a running proxy.
+        Func<string?>? proxyLogReader = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
@@ -46,6 +53,23 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         _eventSink = eventSink;
         _probe = backendProbe ?? (token => BackendReadinessProbe.CheckWithRetryAsync(ModelBackend.BaseUrl, ProbeTimeout, cancellationToken: token));
         _gitInvoker = gitInvoker;
+        _proxyLogReader = proxyLogReader ?? ReadProxyLogBestEffort;
+    }
+
+    // Default proxy-log reader: best-effort read of the per-machine litellm log.
+    // Never throws — diagnostic enrichment must not break the run; a missing or
+    // unreadable log simply yields null (no proxy reason folded in).
+    private static string? ReadProxyLogBestEffort()
+    {
+        try
+        {
+            var path = BackendPaths.Resolve().LogFile;
+            return File.Exists(path) ? File.ReadAllText(path) : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // Pure swival arguments — no sandbox flags. swival 1.0.25+ does support

@@ -227,11 +227,11 @@ public sealed partial class SwivalSubagentRunner
                     continue;
                 }
 
-                // Retries exhausted — surface the real error: ExtractFailureReason
-                // drops nono's advisory WARN spam (the deny_*/--bypass-protection red
-                // herrings) and keeps the tail. Preserve the full-output breadcrumb.
-                var reason = $"swival exit {result.ExitCode}: {ExtractFailureReason(result.Output)}" +
-                    (killedOutputPath is not null ? $" (full output: {killedOutputPath})" : "");
+                // Retries exhausted — surface the real error. BuildNonzeroExitReason
+                // distills swival's output; when that yields no usable diagnostic (just
+                // the echoed prompt) it folds in the proxy log's model-backend cause.
+                var reason = BuildNonzeroExitReason(
+                    result.ExitCode, result.Output, arguments[^1], _proxyLogReader(), killedOutputPath);
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
             }
 

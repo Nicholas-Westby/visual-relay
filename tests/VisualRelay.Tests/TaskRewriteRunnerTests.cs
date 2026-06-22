@@ -177,6 +177,45 @@ public sealed class TaskRewriteRunnerTests
         }
     }
 
+    [Fact]
+    public async Task Error_PreservesDiagnosticFile_AfterWorktreeRemoved()
+    {
+        // The rewrite worktree is deleted on failure (finally → RemoveAsync), which
+        // also deletes the diagnostic the (full output: …) breadcrumb points at. A
+        // failed rewrite must preserve that diagnostic OUT of the worktree so the
+        // breadcrumb resolves to a file that still exists.
+        var (root, task, config) = SetupRepo();
+        try
+        {
+            var fake = new RewriteDiagnosticFailureRunner();
+
+            var outcome = await TaskRewriteRunner.RunAsync(
+                root, task, config, fake, CancellationToken.None);
+
+            Assert.False(outcome.Changed);
+            Assert.NotNull(outcome.Error);
+            Assert.NotEmpty(fake.DiagnosticRelativePath);
+
+            // The breadcrumb in the surfaced error must point at a file that still
+            // exists (preserved under the main tree, not the deleted worktree).
+            var match = System.Text.RegularExpressions.Regex.Match(
+                outcome.Error!, @"\(full output: (?<path>.+?)\)");
+            Assert.True(match.Success, $"error must keep a (full output: …) breadcrumb: {outcome.Error}");
+            var breadcrumb = match.Groups["path"].Value;
+            Assert.True(File.Exists(breadcrumb),
+                $"preserved diagnostic must exist after worktree removal: {breadcrumb}");
+            Assert.Contains(RewriteDiagnosticFailureRunner.DiagnosticContents,
+                await File.ReadAllTextAsync(breadcrumb), StringComparison.Ordinal);
+
+            // The breadcrumb must NOT point into a (now-deleted) rewrite worktree.
+            Assert.DoesNotContain("rewrite-", breadcrumb, StringComparison.Ordinal);
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(root);
+        }
+    }
+
     // ── Sandbox profile self-heal (FIX 1) ──────────────────────────────────
 
     [Fact]

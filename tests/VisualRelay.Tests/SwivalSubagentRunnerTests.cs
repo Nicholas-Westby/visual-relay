@@ -35,6 +35,45 @@ public sealed partial class SwivalSubagentRunnerTests
     }
 
     [Fact]
+    public async Task RunAsync_ModelAuthFailure_SurfacesProxyAuthCauseNotPromptEcho()
+    {
+        // End-to-end: swival exits nonzero but emits ONLY the echoed prompt (no
+        // failure marker) — the ground-truth model-auth incident. The real 401 lives
+        // in the litellm proxy log, injected via proxyLogReader. The surfaced error
+        // must name the auth/model cause, not parrot the prompt.
+        using var repo = TestRepository.Create();
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-auth-fail",
+            """
+            #!/usr/bin/env bash
+            # Echo the prompt (last arg) back, like swival did in the incident, then fail.
+            last="${@: -1}"
+            printf '%s\n' "$last"
+            exit 1
+            """);
+        const string proxyLog =
+            "{\"message\": \"127.0.0.1:54606 - \\\"POST /v1/chat/completions HTTP/1.1\\\" 200\"}\n" +
+            "{\"message\": \"litellm.AuthenticationError: HuggingfaceException - " +
+            "Invalid credentials in Authorization header\", \"level\": \"ERROR\"}\n" +
+            "{\"message\": \"127.0.0.1:54606 - \\\"POST /v1/chat/completions HTTP/1.1\\\" 401\"}";
+        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root),
+            proxyLogReader: () => proxyLog);
+
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
+
+        Assert.False(result.IsValid);
+        Assert.NotNull(result.Error);
+        Assert.Contains("AuthenticationError", result.Error, StringComparison.Ordinal);
+        Assert.Contains("model call failed", result.Error, StringComparison.OrdinalIgnoreCase);
+        // The auth hint (from ErrorHintClassifier) is appended because the reason now names the auth error.
+        Assert.Contains("provider key", result.Error, StringComparison.OrdinalIgnoreCase);
+        // It must NOT lead with / echo the prompt scaffold.
+        Assert.DoesNotContain("## Task input", result.Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunAsync_PublishesTraceEntriesFromSwivalJsonl()
     {
         using var repo = TestRepository.Create();

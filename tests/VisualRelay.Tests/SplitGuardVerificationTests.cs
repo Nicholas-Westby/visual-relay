@@ -121,7 +121,10 @@ public sealed partial class SplitGuardVerificationTests
         // retired the bash BypassSandbox_ReadsConfigFromScriptDir fact from the
         // Installer5LauncherTests family. Its replacement (a stale-key still-requires-
         // nono regression) lives in the non-oversized CliNonoGateTests suite.
-        const int baseline = 149;
+        // Bumped 149→150 on 2026-06-22: surfacing the real model-backend cause on a
+        // swival nonzero exit added RunAsync_ModelAuthFailureSurfacesProxyAuthCause-
+        // NotPromptEcho to the SwivalSubagentRunnerTests family.
+        const int baseline = 150;
 
         string[] prefixes =
         [

@@ -117,7 +117,14 @@ public static class TaskRewriteRunner
 
             if (!result.IsValid)
             {
-                return new RewriteOutcome(false, result.Error ?? "Rewrite failed: model returned invalid result.");
+                // The worktree (and its .relay diagnostics) is deleted by the finally
+                // below, which would orphan the (full output: …) breadcrumb in the
+                // error. Preserve the rewrite diagnostics under the task's own .relay
+                // in the main tree and repoint the breadcrumb so it still resolves.
+                var error = PreserveDiagnosticsAndRepoint(
+                    rootPath, worktreePath, task.Id,
+                    result.Error ?? "Rewrite failed: model returned invalid result.");
+                return new RewriteOutcome(false, error);
             }
 
             // On success: copy only the task folder back to the main tree.
@@ -179,6 +186,39 @@ public static class TaskRewriteRunner
         foreach (var dir in Directory.GetDirectories(sourceDir))
         {
             CopyDirectoryRecursive(dir, Path.Combine(destDir, Path.GetFileName(dir)));
+        }
+    }
+
+    /// <summary>
+    /// Copies the rewrite's diagnostics (the runner writes them under
+    /// <c>{worktree}/.relay/{taskId}</c>: <c>rewrite/rewrite.log</c> and the
+    /// <c>stage0-attempt*.killed-output.txt</c> the breadcrumb points at) into the
+    /// matching <c>.relay/{taskId}</c> in the MAIN tree, then repoints any
+    /// <c>(full output: …)</c> breadcrumb in <paramref name="error"/> from the
+    /// (about-to-be-deleted) worktree to the preserved location. Best-effort: a copy
+    /// failure must never mask the real error, so the original text is returned
+    /// unchanged. Rewrite is stage 0, so these names never collide with a real run's
+    /// stage 1-11 artifacts under the same folder.
+    /// </summary>
+    private static string PreserveDiagnosticsAndRepoint(
+        string rootPath, string worktreePath, string taskId, string error)
+    {
+        try
+        {
+            var src = Path.Combine(worktreePath, ".relay", taskId);
+            if (!Directory.Exists(src))
+                return error;
+
+            var dest = Path.Combine(rootPath, ".relay", taskId);
+            CopyDirectoryRecursive(src, dest);
+
+            // Repoint the breadcrumb: the runner baked the worktree path into the
+            // error; the preserved copy lives at the same relative path under root.
+            return error.Replace(src, dest, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return error;
         }
     }
 }
