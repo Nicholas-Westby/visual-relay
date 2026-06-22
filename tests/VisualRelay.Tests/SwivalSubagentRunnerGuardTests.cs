@@ -45,7 +45,8 @@ public sealed partial class SwivalSubagentRunnerGuardTests
             {
                 Interlocked.Increment(ref callCount);
                 return Task.FromResult(new BackendReadiness(true, null));
-            });
+            },
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
