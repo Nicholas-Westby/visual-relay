@@ -1,6 +1,6 @@
 # Visual Relay
 
-Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It brings a staged task pipeline into a modern dark GUI for choosing a repository root, inspecting the task queue, reordering work, pausing at safe boundaries, and drilling into stages, logs, and LLM command traces.
+Visual Relay is an Avalonia desktop control room for Relay-style LLM task processing. It brings a staged task pipeline into a modern dark GUI: choose a repository root, inspect and reorder the task queue, pause at safe boundaries, and drill into stages, logs, and live LLM command traces.
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
 
@@ -18,155 +18,52 @@ cd visual-relay
 ```
 
 `./visual-relay` is a tiny launcher that provisions its own toolchain via
-[Nix](https://nixos.org). On first run it enters a **nix devshell** that supplies
-`dotnet`, `python3.13`, `uv`, and `nono` from the Nix store — zero global installs and
-no separate shell step. `uv` provisions LiteLLM for the model backend on first launch;
-`nono` provides OS-level sandboxing (Seatbelt on macOS, Landlock on Linux) for Swival
-subagents. The sandbox is always on and `nono` is a hard requirement; there is no opt-out.
+[Nix](https://nixos.org): on first run it enters a **nix devshell** supplying `dotnet`,
+`python3.13`, `uv`, and `nono` from the Nix store — zero global installs. `uv` provisions the
+LiteLLM model backend on first launch; `nono` provides OS-level sandboxing (Seatbelt on macOS,
+Landlock on Linux) for Swival subagents. The sandbox is always on; `nono` is a hard requirement.
 
 **No Nix yet?** On an interactive terminal the launcher offers a single `[y/N]` prompt to
-install [Determinate Nix](https://determinate.systems/nix) (the only global change;
-everything else stays in the Nix store and per-user data dirs). An explicit `y` runs the
-official installer and re-enters through `nix develop` — one keystroke to a fully
-provisioned sandbox. A `n`, Enter, or a non-interactive context (CI, piped invocation)
-prints a manual one-liner and exits; nothing global is ever installed without explicit
-per-invocation consent. There is no `--yes` flag, no config key to pre-approve, and no
-persisted "already asked" state.
+install [Determinate Nix](https://determinate.systems/nix) (the only global change) and re-enters
+through `nix develop`. A `n`/Enter or any non-interactive context (CI, piped) prints a manual
+one-liner and exits — nothing global is installed without explicit per-invocation consent.
 
-This is a terminal app for developers; there is no `.app` bundle to double-click.
-
-The app opens with a native folder picker button. Point it at a repo containing
-`llm-tasks/` directories. To prepare your own repository, run `./visual-relay init` in it
-first (it auto-detects your test command and writes `.relay/config.json`), then
-`./visual-relay launch`.
-
-Common commands:
-
-```bash
-./visual-relay build
-./visual-relay test
-./visual-relay check
-./visual-relay install-hooks
-```
-
-See [AGENTS.md](AGENTS.md) for contributor dev tooling (the `sample` tooling,
-`run-task`, `screenshot`) — those are source-checkout-only and will not ship in the
-Homebrew formula.
+This is a terminal app for developers; there is no `.app` bundle to double-click. To prepare your
+own repository, run `./visual-relay init` in it first (it auto-detects your test command and
+writes `.relay/config.json`), then `./visual-relay launch` and point the folder picker at a repo
+containing `llm-tasks/`. Common commands: `build`, `test`, `check`, `install-hooks`. See
+[AGENTS.md](AGENTS.md) for contributor dev tooling (`sample`, `run-task`, `screenshot`) — those
+are source-checkout-only and will not ship in the Homebrew formula.
 
 ### Homebrew (coming once released)
 
-A self-contained Homebrew formula is planned so you can install without a source checkout
-or .NET SDK:
+A self-contained Homebrew formula is planned so you can install without a source checkout or
+.NET SDK. It is **not yet published**, so this will not work today — use the `./visual-relay`
+source checkout above until a release lands:
 
 ```bash
 # Not yet available — coming once the first release is published.
 brew install nicholas-westby/tap/visual-relay
 ```
 
-The formula is **not yet published**, so this command will not work today; use the
-`./visual-relay` source checkout above until a release lands. When it ships it will pull
-`uv` and `nono` automatically and need **no .NET SDK or runtime**.
-
 > **Once published, install via `brew` or `curl`, never download a `.tar.gz` through a
-> browser.** A browser download re-applies the `com.apple.quarantine` attribute, which
-> triggers Gatekeeper. Installing via a Homebrew **formula** (not a cask) uses
-> `curl` + `tar` internally — neither sets the quarantine flag — so `visual-relay launch`
-> will run with **no Gatekeeper prompt and no notarization**.
+> browser.** A browser download re-applies `com.apple.quarantine`, triggering Gatekeeper.
+> A Homebrew **formula** (not a cask) uses `curl` + `tar` internally — neither sets the
+> quarantine flag — so `visual-relay launch` runs with no Gatekeeper prompt and no notarization.
 
 <!-- END install section -->
 
-## Model Backend
+## What it does
 
-Every Visual Relay profile targets a local OpenAI-compatible proxy (LiteLLM) at `http://127.0.0.1:4000`. Visual Relay owns this proxy's lifecycle, so `./visual-relay launch` auto-starts it before opening the app: the launch hook runs the `VisualRelay.Backend start` tool best-effort, and the app's GUI shares the same C# lifecycle for its one-click recovery. When the backend is already healthy this is a fast no-op, and if it cannot start the app still launches and the in-app pre-flight probe surfaces the down backend.
+- Runs `llm-tasks/` one task at a time through the staged Relay pipeline, writing ledger,
+  manifest, seal, event, report, and trace artifacts.
+- Presents a dense, dark command-center GUI: native root selection, queue/archive controls,
+  per-stage status, structured run logs, and stage cards that double as log filters.
+- Streams Swival trace events live into the GUI as assistant text, tool calls, tool results,
+  and thinking records.
+- Estimates time and rounded dollar cost per task and per stage from Swival reports.
 
-On first start the tool provisions LiteLLM itself — there is no manual install step. It uses [`uv`](https://docs.astral.sh/uv/) to create a virtualenv at `$XDG_DATA_HOME/visual-relay/backend-venv` (default `~/.local/share/visual-relay/backend-venv`) pinned to Python 3.13 (LiteLLM's `uvloop` crashes on 3.14+) and installs `litellm[proxy]` into it; `uv` fetches the pinned Python automatically. The venv lives under the user's XDG data home (never the repo tree, so host and VM each own their own) and is reused on later starts, so only the first launch pays the install cost. The single prerequisite is `uv` on `PATH` (`curl -LsSf https://astral.sh/uv/install.sh | sh`); if a `litellm` is already on `PATH` and `uv` is absent, the tool falls back to that.
-
-Manage the proxy directly with:
-
-```bash
-VisualRelay.Backend start    # idempotent; brings the proxy up on 127.0.0.1:4000 and waits for /health/readiness
-VisualRelay.Backend status   # reports up/down
-VisualRelay.Backend stop     # SIGTERM then SIGKILL, and removes the PID file
-```
-
-(From a source checkout: `dotnet run --project tools/VisualRelay.Backend -- {start|stop|status}`.)
-
-`start` is re-runnable any time: a healthy instance exits 0 with no duplicate process, a stale PID file is cleaned up automatically, and after launching it polls `/health/readiness` (up to ~30s) before returning. `stop` always removes the PID file, even after an abrupt kill, so the next `start` is never blocked by a stale pidfile. The PID and log files live under `$XDG_DATA_HOME/visual-relay/scratch/` (`litellm.pid`, `litellm.log`).
-
-### Provider keys
-
-The proxy config `tools/backend/litellm-config.yaml` defines the model aliases the profiles reference (`cheap`, `balanced`, `frontier`, `vision`, `claude`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`, `glm-5.2`, `fallback`). No secrets are committed: every key is read from the environment via `os.environ/<KEY>`.
-
-The **`fallback`** tier is the always-available floor: it resolves to `hf-qwen3-coder-next` (Hugging Face Novita Qwen3-Coder-480B, ~$0.38/$1.55 per 1M tokens in/out) and requires only `HF_TOKEN`. Every other tier can fall through to it when its provider keys are absent. Override the default model via `tierProfiles.fallback` in `.relay/config.json`.
-
-**Primary location** (always writable, even for brew-installed copies):
-
-```bash
-mkdir -p ~/.config/visual-relay
-# then create ~/.config/visual-relay/.env with KEY=VALUE lines
-# (see .env.example for the full key set)
-```
-
-**Precedence**: an exported environment variable overrides the user-level file. The in-app key panel reads and writes the user-level path.
-
-`VisualRelay.Backend start` loads keys from the user-level file automatically. Before launching LiteLLM it **generates a key-aware config** at `$XDG_DATA_HOME/visual-relay/scratch/litellm-config.generated.yaml`: each tier alias points directly at the best model whose provider key is present, so missing keys never incur an auth-error retry on the dead primary. The static `litellm-config.yaml` remains the single source of truth for provider routes and settings — only the alias and fallback assignments are rewritten. Config generation is bounded by a timeout; on timeout or any failure it falls back to the static template so a wedged generator never blocks startup.
-
-## Sandbox
-
-Every Swival subagent runs under **nono** OS-level sandboxing by default (Seatbelt on macOS,
-Landlock on Linux). The sandbox confines writes and deletes to the target workspace while
-leaving reads, network, and all tools — including Playwright/Chromium — unrestricted. This is
-**accident containment**, not defense against a malicious agent: a stray `rm -rf` or `mv`
-outside the workspace is blocked by the OS.
-
-The sandbox is **always on** — there is no opt-out. Every Swival subagent and every
-verification command runs under nono with the `vr-guard` profile, and `nono` is a hard,
-always-required dependency.
-
-The `vr-guard` profile ships embedded in Visual Relay, which **owns and self-heals** it at
-`${XDG_CONFIG_HOME:-$HOME/.config}/visual-relay/vr-guard.json` (beside VR's `.env`) — the file is
-rewritten to match the shipped content at the start of every run, so it can never go stale, and
-nono loads it by absolute path. A missing nono binary is a hard error.
-The profile grants per-ecosystem toolchain cache paths (.NET, Swift, Node, Python, Go, Rust)
-so package-manager writes (`dotnet restore`, `swift build`, `npm install`, `pip install`,
-`go build`, `cargo build`) succeed inside the sandbox.  The destructive surface — Documents,
-Desktop, Pictures, credentials, shell history, browser data — stays denied.
-
-For exotic toolchains whose cache paths the baseline profile does not cover, add a
-`sandboxExtraAllowPaths` array to `.relay/config.json`:
-
-```json
-{
-  "testCmd": "dotnet test",
-  "sandboxExtraAllowPaths": ["~/.cache/exotic-tool"]
-}
-```
-
-Each entry is appended as `-a <path>` to both the Swival and verification nono invocations.
-Entries are validated at config load: `..` (path traversal) is rejected; `~` and `$HOME`
-are expanded; and each path must resolve under `$HOME` or the workspace root.
-
-## What It Does
-
-- Discovers `llm-tasks` while skipping `DONE-*`, `IGNORE-*`, `_ideation`, and `completed`; tasks marked `NEEDS-REVIEW` stay visible in the GUI with their review reason.
-- Loads `.relay/config.json` and keeps Relay defaults for stages, tier profiles, test commands, and verify limits.
-- Runs one task at a time through the Relay stage model with `.relay/ACTIVE`, ledger, manifest, seal, event, report, and trace artifacts.
-- Shows native root selection, queue/archive controls, task markdown/context, stage status, structured run logs, and parsed LLM tool calls in a dense command-center layout.
-- Streams Swival trace events into the GUI as assistant text, tool calls, tool results, and thinking records.
-- Estimates time and rounded dollar cost per task and per stage from Swival reports, using Relay's current pricing model.
-- Lets stage cards act as log filters: click a stage for that step's events/traces, click it again to return to the full task log.
-- Marks committed tasks `DONE-` and archives batch tasks under `llm-tasks/completed/batch-N`.
-- Uses Verify-supplied Conventional Commit subjects when available and allows the final staged set to be a subset of the manifest, matching current Relay behavior.
-- Owns Swival execution directly, including temporary profile generation for the local LiteLLM proxy.
-- Supports mocked execution in tests and real Swival/test command execution in the app and `run-task` smoke command.
-
-## Development Rails
-
-- `Directory.Build.props` enables nullable, latest analyzers, code style checks, and warnings as errors.
-- `.githooks/commit-msg` enforces a full Conventional Commit ruleset (a C# validator: fixed type set, 72-char subject, lowercase after prefix, no em dashes, ≤3 hyphen-bullet body) after `./visual-relay install-hooks`; see [docs/commit-messages.md](docs/commit-messages.md).
-- The C# file-size guard in `tools/VisualRelay.Guards` keeps C# and Avalonia XAML source files under 300 lines by default.
-- `tools/VisualRelay.Screenshots` renders the README screenshots through Avalonia Headless at desktop and compact widths.
-- `tools/VisualRelay.SampleTasks` (dev-only, not shipped in brew) regenerates a sample tasks repo for repeatable demos — see [AGENTS.md](AGENTS.md).
+See [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and the 11-stage Relay mapping.
 
 ## Tests
 
@@ -174,6 +71,12 @@ are expanded; and each path must resolve under `$HOME` or the workspace root.
 ./visual-relay check
 ```
 
-The current automated coverage includes config loading, task discovery, archive listing, cost estimation, review-marker surfacing, nested task context, queue reordering, pause-at-boundary, stage log filtering, trace parsing, Swival profile/trace handling, crash flagging, and mocked staged driver artifacts.
+Runs the file-size guard, format verification, build, the test suite, and the README
+screenshot render.
 
-Real smoke last run (source-checkout dev tooling, see [AGENTS.md](AGENTS.md)): `./visual-relay run-task` completed stages 1-11, streamed trace events, ran the Python tests red/green, committed `81013f0`, and archived the nested task folder under `llm-tasks/completed/batch-1`.
+## Learn more
+
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) — model backend (LiteLLM proxy lifecycle) and the nono sandbox.
+- [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — diagnosing the dev loop and test hangs.
+- [.env.example](.env.example) — provider keys, locations, and resolution precedence.
+- [AGENTS.md](AGENTS.md) — contributing, the control API, and dev-only tooling.
