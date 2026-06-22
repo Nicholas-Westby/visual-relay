@@ -82,4 +82,70 @@ public sealed class ConfigInitEmptyStateUiTests
         Assert.False(initBorder.IsVisible);
         Assert.True(taskList.IsVisible);
     }
+
+    /// <summary>
+    /// Mirrors the real startup order: the VM is constructed with an empty
+    /// RootPath, the window (and thus the bootstrap button binding) is created,
+    /// and only later is RootPath set to an existing directory.  This reproduces
+    /// the stale-CanExecute bug — <c>CanBootstrapProject()</c> evaluates
+    /// <c>Directory.Exists("")</c> once and is never re-queried because neither
+    /// <c>_rootPath</c> nor <c>_isBusy</c> carries
+    /// <c>[NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]</c>.
+    /// Fails today (button stuck disabled); passes once the notify attributes
+    /// are added.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task BootstrapButton_EnablesAfterRootPathSet_WhenMirroringRealInitOrder()
+    {
+        // ── Arrange: config-less repo with one task ──
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+
+        // CRUX: construct VM WITHOUT RootPath (default empty).  In the real app
+        // the window + bindings exist before LoadInitialAsync or BrowseAsync
+        // sets RootPath, so the bootstrap button’s CanExecute is evaluated when
+        // Directory.Exists("") = false and never re-queried.
+        var viewModel = new MainWindowViewModel();
+        // viewModel.RootPath is empty at this point.
+
+        // ── Show the real window (button binds while RootPath is empty) ──
+        var window = new MainWindow
+        {
+            DataContext = viewModel,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        // ── Now set RootPath to an existing directory (mirrors live BrowseAsync
+        //    or LoadInitialAsync discovering an existing folder) ──
+        viewModel.RootPath = repo.Root;
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization,
+            "NeedsInitialization must be true so the init card (and its buttons) are realized");
+        Dispatcher.UIThread.RunJobs();
+
+        // Resolve QueuePanel from the visual tree
+        var queuePanel = window.GetVisualDescendants().OfType<QueuePanel>().Single();
+
+        // ── Sanity: empty-state Border visible ──
+        var initBorder = queuePanel.FindControl<Border>("InitEmptyState");
+        Assert.NotNull(initBorder);
+        Assert.True(initBorder.IsVisible);
+
+        // ── Find the "Set up empty project" button by content (no x:Name) ──
+        var allButtons = queuePanel.GetVisualDescendants().OfType<Button>().ToList();
+        var bootstrapButton = allButtons.FirstOrDefault(
+            b => b.Content?.ToString() == "Set up empty project");
+        Assert.NotNull(bootstrapButton);
+
+        // ── Assert: button should be enabled now that RootPath points at an
+        //    existing directory.  Fails today because CanExecute was frozen at
+        //    startup (Directory.Exists("") = false) and never re-evaluated. ──
+        Assert.True(bootstrapButton.IsEffectivelyEnabled,
+            "Bootstrap button should be enabled after RootPath is set to an existing directory; "
+            + "it was frozen disabled because CanExecute was evaluated once at startup "
+            + "(when RootPath was empty) and never re-queried.");
+    }
 }

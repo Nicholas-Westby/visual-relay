@@ -94,6 +94,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
     [NotifyPropertyChangedFor(nameof(RootName))]
     [NotifyPropertyChangedFor(nameof(RootParentPath))]
     [NotifyPropertyChangedFor(nameof(WindowTitle))]
@@ -194,6 +195,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
