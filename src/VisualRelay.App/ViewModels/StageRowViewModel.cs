@@ -34,17 +34,38 @@ public sealed class StageRowViewModel : ViewModelBase
     public string Tier { get; }
     public IRelayCommand<StageRowViewModel>? SelectCommand { get; }
     public string Ordinal => Number.ToString("00");
-    public string StatusLabel => Status == "Done" ? "Complete" : Status;
 
-    // The leading duration token: while Running, show the live per-second
-    // elapsed (so the card visibly ticks); otherwise the recorded/final
-    // DurationLabel. A running stage has no final duration yet, and the
-    // tick never touches DurationLabel, so the stage_done value is preserved.
-    private string LeadingDurationToken =>
-        Status == "Running" && !string.IsNullOrEmpty(ElapsedLabel) ? ElapsedLabel : DurationLabel;
-    public string MetricLabel => (CostLabel == "No cost yet" ? LeadingDurationToken : $"{LeadingDurationToken}  {CostLabel}")
-        + (string.IsNullOrEmpty(TurnsLabel) ? string.Empty : $"  {TurnsLabel}")
-        + (string.IsNullOrEmpty(TestDurationLabel) ? string.Empty : $"  test {TestDurationLabel}");
+    // The duration lives on the status row, freeing the fixed-width metrics line
+    // to carry only cost + turns + test (which the 165 px card can show in full).
+    // Running shows the live, per-second elapsed so the card visibly ticks; a
+    // finished stage reads "Completed in 17s" (just "Complete" when no duration
+    // was recorded), and other statuses pass through unchanged.
+    public string StatusLabel => Status switch
+    {
+        "Running" => string.IsNullOrEmpty(ElapsedLabel) ? "Running" : $"Running {ElapsedLabel}",
+        "Done" => HasRecordedDuration ? $"Completed in {DurationLabel}" : "Complete",
+        _ => Status
+    };
+
+    // True once a real duration has been recorded (not the "No run yet"
+    // placeholder / empty), so StatusLabel knows whether to show it.
+    private bool HasRecordedDuration =>
+        !string.IsNullOrEmpty(DurationLabel) && DurationLabel != "No run yet";
+
+    // The metrics line: cost + turns + test, joined by two spaces with empties
+    // dropped. The duration token now lives on the status row, so a long
+    // completed card no longer overflows the fixed 165 px width.
+    public string MetricLabel => string.Join("  ", MetricTokens());
+
+    private IEnumerable<string> MetricTokens()
+    {
+        if (CostLabel != "No cost yet")
+            yield return CostLabel;
+        if (!string.IsNullOrEmpty(TurnsLabel))
+            yield return TurnsLabel;
+        if (!string.IsNullOrEmpty(TestDurationLabel))
+            yield return $"test {TestDurationLabel}";
+    }
     public IBrush AccentBrush => Status switch
     {
         "Done" => SuccessBrush,
@@ -72,7 +93,8 @@ public sealed class StageRowViewModel : ViewModelBase
             if (SetProperty(ref _status, value))
             {
                 // Leaving Running (e.g. stage_done/flag) ends live ticking; drop
-                // the elapsed so MetricLabel falls back to the final DurationLabel.
+                // the elapsed so the status row reverts from the live tick to the
+                // final "Completed in {DurationLabel}".
                 if (value != "Running")
                 {
                     _runningSince = null;
@@ -84,7 +106,6 @@ public sealed class StageRowViewModel : ViewModelBase
                 OnPropertyChanged(nameof(BorderBrush));
                 OnPropertyChanged(nameof(CardBorderThickness));
                 OnPropertyChanged(nameof(CardShadow));
-                OnPropertyChanged(nameof(MetricLabel));
             }
         }
     }
@@ -102,7 +123,7 @@ public sealed class StageRowViewModel : ViewModelBase
         {
             if (SetProperty(ref _elapsedLabel, value))
             {
-                OnPropertyChanged(nameof(MetricLabel));
+                OnPropertyChanged(nameof(StatusLabel));
             }
         }
     }
@@ -154,7 +175,9 @@ public sealed class StageRowViewModel : ViewModelBase
         {
             if (SetProperty(ref _durationLabel, value))
             {
-                OnPropertyChanged(nameof(MetricLabel));
+                // The duration now renders on the status row ("Completed in 17s"),
+                // not in the metrics line.
+                OnPropertyChanged(nameof(StatusLabel));
             }
         }
     }

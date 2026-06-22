@@ -48,9 +48,12 @@ public sealed partial class MainWindowViewModelTests
         await viewModel.LastSelectionLoad!;
 
         Assert.Equal(11, viewModel.Stages.Count);
-        Assert.All(viewModel.Stages, stage => Assert.Equal("Complete", stage.StatusLabel));
         Assert.All(viewModel.Stages, stage => Assert.Equal("Done", stage.Status));
-        // Commit stage (11) has no report but its status comes from the record.
+        // A completed stage with a recorded duration reads "Completed in 1s";
+        // stages 1-10 each have a report so all carry a duration.
+        for (var i = 0; i < 10; i++)
+            Assert.Equal("Completed in 1s", viewModel.Stages[i].StatusLabel);
+        // Commit stage (11) has no report (no duration) so it stays "Complete".
         Assert.Equal("Complete", viewModel.Stages[10].StatusLabel);
         Assert.False(viewModel.HasSelectedTaskError);
     }
@@ -108,11 +111,11 @@ public sealed partial class MainWindowViewModelTests
         await viewModel.LastSelectionLoad!;
 
         Assert.Equal(11, viewModel.Stages.Count);
-        // Stages 1-3: Done / Complete
+        // Stages 1-3: Done; each has a report so the status row shows the duration.
         for (var i = 0; i < 3; i++)
         {
             Assert.Equal("Done", viewModel.Stages[i].Status);
-            Assert.Equal("Complete", viewModel.Stages[i].StatusLabel);
+            Assert.Equal("Completed in 1s", viewModel.Stages[i].StatusLabel);
         }
         // Stage 4: Flagged
         Assert.Equal("Flagged", viewModel.Stages[3].Status);
