@@ -24,7 +24,8 @@ internal sealed class ActivityWatchdog
 {
     public enum Outcome { Disarmed, FiredStall, FiredAbsoluteCeiling, FiredSocketWedge }
 
-    public readonly record struct Result(Outcome Outcome, string LastPulseSource, long SilenceMs);
+    public readonly record struct Result(
+        Outcome Outcome, string LastPulseSource, long SilenceMs, long SubtreeIdleForMs = 0);
 
     /// <summary>One CPU/socket sample from <see cref="ProcessCapture"/> (the seam
     /// that knows the agent's pid). <paramref name="SubtreeIdle"/> is true when the
@@ -51,6 +52,15 @@ internal sealed class ActivityWatchdog
     // first real-output pulse re-seeds it.
     private long _lastRealOutputTimestamp;
 
+    // Time the agent subtree was last observed BUSY (a wedge sample with
+    // SubtreeIdle == false). The socket-wedge gate requires SUSTAINED idleness —
+    // continuous idle for the whole inactivity window — so a single transient idle
+    // sample (a working agent between/within model turns) does NOT count as wedged.
+    // This is what honors the cpu-pulse liveness signal on the wedge path: any CPU
+    // burst within the window pushes this forward and disarms the wedge. Seeded at
+    // start so the gate cannot fire before a full window of idleness has elapsed.
+    private long _lastSubtreeBusyTimestamp;
+
     // Latest wedge sample from ProcessCapture (pid-scoped CPU + backend socket).
     // Defaults to "not idle, no socket" so the wedge path is inert until the first
     // real sample arrives — a missing sampler can never trigger a kill.
@@ -75,6 +85,7 @@ internal sealed class ActivityWatchdog
         _startTimestamp = Stopwatch.GetTimestamp();
         _lastPulseTimestamp = _startTimestamp;
         _lastRealOutputTimestamp = _startTimestamp;
+        _lastSubtreeBusyTimestamp = _startTimestamp;
         _lastHeartbeatTimestamp = _startTimestamp;
     }
 
@@ -107,26 +118,36 @@ internal sealed class ActivityWatchdog
         lock (_lock)
         {
             _lastWedgeSample = sample;
+            // Any busy sample resets the sustained-idle clock the wedge gate reads,
+            // so a bursty/working agent (CPU active at any point in the window) is
+            // never socket-wedge-killed even while its trace view is frozen.
+            if (!sample.SubtreeIdle)
+                _lastSubtreeBusyTimestamp = Stopwatch.GetTimestamp();
         }
     }
 
     /// <summary>
     /// Pure socket-wedge decision, exposed for hermetic unit testing of the exact
-    /// production gate. Fires ONLY when all three hold: (1) the agent has produced
-    /// no real output (stdout/stderr/trace) for at least the full inactivity window
-    /// — cpu pulses do not reset this clock; (2) the agent process subtree is idle
-    /// (sub-epsilon CPU over the last sample window); (3) a backend socket is still
-    /// ESTABLISHED. This is strictly additive: it can only fire inside a sustained
-    /// silence the inactivity timeout already covers, and a healthy agent (recent
-    /// output, OR a busy subtree, OR no open backend socket) fails at least one gate.
+    /// production gate. Fires ONLY when all FOUR hold: (1) the agent has produced no
+    /// real output (stdout/stderr/trace) for at least the full inactivity window —
+    /// cpu pulses do not reset this clock; (2) the agent process subtree has been
+    /// SUSTAINED-idle for at least the full inactivity window — a single recent idle
+    /// sample is NOT enough, so any CPU burst within the window (a working agent
+    /// between/within model turns) disarms the gate and the cpu-pulse liveness signal
+    /// is honored here too; (3) the latest sample still reads idle; (4) a backend
+    /// socket is still ESTABLISHED. Strictly additive: it can only fire inside a
+    /// sustained silence the inactivity timeout already covers, and a healthy agent
+    /// (recent output, OR a recent CPU burst, OR no open backend socket) fails a gate.
     /// </summary>
     internal static bool TryDecideSocketWedge(
         bool firstPulseReceived,
         long realOutputSilenceMs,
+        long subtreeIdleForMs,
         int inactivityTimeoutMs,
         WedgeSample sample) =>
         firstPulseReceived
         && realOutputSilenceMs >= inactivityTimeoutMs
+        && subtreeIdleForMs >= inactivityTimeoutMs
         && sample is { SubtreeIdle: true, BackendSocketEstablished: true };
 
     /// <summary>
@@ -152,6 +173,8 @@ internal sealed class ActivityWatchdog
             bool firedWedge;
             string lastSource;
             long silenceMs;
+            long realOutputSilenceMs;
+            long subtreeIdleForMs;
             long nowTicks;
             long heartbeatDeadlineMs;
 
@@ -160,7 +183,8 @@ internal sealed class ActivityWatchdog
                 nowTicks = Stopwatch.GetTimestamp();
                 var elapsedMs = TicksToMs(nowTicks - _startTimestamp);
                 silenceMs = TicksToMs(nowTicks - _lastPulseTimestamp);
-                var realOutputSilenceMs = TicksToMs(nowTicks - _lastRealOutputTimestamp);
+                realOutputSilenceMs = TicksToMs(nowTicks - _lastRealOutputTimestamp);
+                subtreeIdleForMs = TicksToMs(nowTicks - _lastSubtreeBusyTimestamp);
                 lastSource = _lastPulseSource;
 
                 // Check absolute ceiling first (it wins when set).
@@ -178,9 +202,11 @@ internal sealed class ActivityWatchdog
                 }
 
                 // Additive: a cpu-pulse-masked wedge (real output silent past the
-                // inactivity window, agent subtree idle, backend socket ESTABLISHED).
+                // inactivity window, agent subtree SUSTAINED-idle for the whole
+                // window, backend socket ESTABLISHED).
                 firedWedge = TryDecideSocketWedge(
-                    _firstPulseReceived, realOutputSilenceMs, _inactivityTimeoutMs, _lastWedgeSample);
+                    _firstPulseReceived, realOutputSilenceMs, subtreeIdleForMs,
+                    _inactivityTimeoutMs, _lastWedgeSample);
 
                 // Snapshot the deadline for heartbeat logging (outside lock).
                 heartbeatDeadlineMs = !_firstPulseReceived
@@ -196,7 +222,12 @@ internal sealed class ActivityWatchdog
                 var outcome = firedCeiling ? Outcome.FiredAbsoluteCeiling
                     : firedStall ? Outcome.FiredStall
                     : Outcome.FiredSocketWedge;
-                return new Result(outcome, lastSource, silenceMs);
+                // For the wedge outcome, report real-output silence (≈ the inactivity
+                // window) — NOT silenceMs, which the cpu pulse keeps at ~one sample and
+                // which made the autopsy read like a "4s kill" — plus sustained-idle.
+                return outcome == Outcome.FiredSocketWedge
+                    ? new Result(outcome, lastSource, realOutputSilenceMs, subtreeIdleForMs)
+                    : new Result(outcome, lastSource, silenceMs);
             }
 
             // Emit a diagnostic heartbeat line every ~60 s so the watchdog's

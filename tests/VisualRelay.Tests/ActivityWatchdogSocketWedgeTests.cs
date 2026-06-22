@@ -16,7 +16,7 @@ namespace VisualRelay.Tests;
 /// wedge is now caught AND that a healthy agent (recent output, OR a busy subtree,
 /// OR no open backend socket) is NOT false-killed.
 /// </summary>
-public sealed class ActivityWatchdogSocketWedgeTests
+public sealed partial class ActivityWatchdogSocketWedgeTests
 {
     // A background "cpu" pulse pump: keeps resetting the ordinary inactivity
     // deadline (exactly what masked the wedge in production) until cancelled. The
@@ -36,24 +36,32 @@ public sealed class ActivityWatchdogSocketWedgeTests
     // ── (A) Pure decision gate — the exact production algorithm ────────────────
 
     /// <summary>
-    /// All three gates must hold to declare a wedge: real-output silence ≥ the
-    /// inactivity window, an idle agent subtree, and an ESTABLISHED backend socket.
-    /// Anything less (recent output, busy subtree, no socket, or before first
-    /// output) must NOT fire — proving the detector is strictly additive.
+    /// FOUR gates must hold to declare a wedge: real-output silence ≥ the inactivity
+    /// window, the agent subtree SUSTAINED-idle for ≥ the inactivity window (a single
+    /// idle sample window is NOT enough — a bursty/working agent shows transient idle
+    /// windows between model turns), an ESTABLISHED backend socket, and first output
+    /// seen. Anything less (recent output, recently-busy subtree, no socket, or before
+    /// first output) must NOT fire — proving the detector is strictly additive and the
+    /// cpu-pulse liveness signal is honored on this path too.
     /// </summary>
     [Theory]
-    // firstPulse, silenceMs, inactivityMs, subtreeIdle, socket, expectWedge
-    [InlineData(true, 6_000, 6_000, true, true, true)]    // exact wedge — fires
-    [InlineData(true, 9_999, 6_000, true, true, true)]    // well past window — fires
-    [InlineData(true, 5_999, 6_000, true, true, false)]   // silence just under window
-    [InlineData(true, 60_000, 6_000, false, true, false)] // subtree BUSY — healthy, no kill
-    [InlineData(true, 60_000, 6_000, true, false, false)] // no backend socket — no kill
-    [InlineData(false, 60_000, 6_000, true, true, false)] // before first output — no kill
+    // firstPulse, silenceMs, inactivityMs, subtreeIdleForMs, subtreeIdle, socket, expectWedge
+    [InlineData(true, 6_000, 6_000, 6_000, true, true, true)]    // exact wedge — fires
+    [InlineData(true, 9_999, 6_000, 9_999, true, true, true)]    // well past window — fires
+    [InlineData(true, 5_999, 6_000, 5_999, true, true, false)]   // silence just under window
+    [InlineData(true, 60_000, 6_000, 60_000, false, true, false)] // subtree BUSY now — no kill
+    [InlineData(true, 60_000, 6_000, 60_000, true, false, false)] // no backend socket — no kill
+    [InlineData(false, 60_000, 6_000, 60_000, true, true, false)] // before first output — no kill
+    // INCIDENT shape: real-output silent + latest sample idle + socket up, BUT a CPU
+    // burst happened within the window (sustained-idle < window) — healthy, no kill.
+    [InlineData(true, 60_000, 6_000, 2_000, true, true, false)]
+    [InlineData(true, 60_000, 6_000, 5_999, true, true, false)]  // sustained-idle just under window
     public void TryDecideSocketWedge_FiresOnlyWhenAllGatesHold(
-        bool firstPulse, long silenceMs, int inactivityMs, bool subtreeIdle, bool socket, bool expectWedge)
+        bool firstPulse, long silenceMs, int inactivityMs, long subtreeIdleForMs,
+        bool subtreeIdle, bool socket, bool expectWedge)
     {
         var decided = ActivityWatchdog.TryDecideSocketWedge(
-            firstPulse, silenceMs, inactivityMs,
+            firstPulse, silenceMs, subtreeIdleForMs, inactivityMs,
             new ActivityWatchdog.WedgeSample(subtreeIdle, socket));
 
         Assert.Equal(expectWedge, decided);
@@ -98,6 +106,13 @@ public sealed class ActivityWatchdogSocketWedgeTests
         // upper bound for the 200 ms poll loop + scheduling jitter.
         Assert.True(sw.ElapsedMilliseconds < inactivityMs + 3_000,
             $"socket-wedge fired too late: {sw.ElapsedMilliseconds}ms (window {inactivityMs}ms)");
+        // The wedge autopsy must report real-output silence (≥ the window), NOT the
+        // ~one-sample silence-since-any-pulse the cpu pump keeps at a few ms — the
+        // 2026-06-21 incident's "4s kill" autopsy came from that misreport.
+        Assert.True(result.SilenceMs >= inactivityMs,
+            $"wedge SilenceMs should report real-output silence ≥ {inactivityMs}ms, got {result.SilenceMs}ms");
+        Assert.True(result.SubtreeIdleForMs >= inactivityMs,
+            $"wedge should report sustained-idle ≥ {inactivityMs}ms, got {result.SubtreeIdleForMs}ms");
     }
 
     /// <summary>

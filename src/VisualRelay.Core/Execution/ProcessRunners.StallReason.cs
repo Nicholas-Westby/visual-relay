@@ -17,8 +17,8 @@ public sealed partial class SwivalSubagentRunner
         {
             return $"persistent model-backend stall: swival socket-wedged — no real output " +
                 $"(stdout/stderr/trace) for {wdResult.SilenceMs}ms while the agent subtree sat " +
-                $"idle (~0 CPU) with an ESTABLISHED connection to the model backend " +
-                $"(inactivity window={inactivityMs}ms). " +
+                $"sustained-idle (~0 CPU) for {wdResult.SubtreeIdleForMs}ms with an ESTABLISHED " +
+                $"connection to the model backend (inactivity window={inactivityMs}ms). " +
                 $"{maxStallAttempts} attempts exhausted.";
         }
 
