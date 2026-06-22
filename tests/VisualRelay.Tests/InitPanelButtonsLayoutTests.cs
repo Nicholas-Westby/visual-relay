@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Headless;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
