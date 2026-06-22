@@ -1,10 +1,12 @@
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Tests for README.md and AGENTS.md changes in installer-5:
-/// user Install section with brew command, removal of dev-only sample-tasks
-/// references from user docs, and sample-tasks documentation in contributor docs.
-/// These must FAIL before the implementation lands.
+/// Tests for README.md and AGENTS.md install documentation. The recommended
+/// install path is a source checkout driven by <c>./visual-relay</c> (which
+/// bootstraps nix / Determinate Nix and provisions <c>uv</c>/<c>nono</c>);
+/// Homebrew is demoted to a "coming once released" note because the formula
+/// is not published yet. AGENTS.md still documents the dev-only sample tooling
+/// that the (future) Homebrew formula will not ship.
 /// </summary>
 public sealed class Installer5DocsTests
 {
@@ -25,28 +27,91 @@ public sealed class Installer5DocsTests
     {
         var content = ReadReadme();
 
-        // README must have a dedicated "## Install" section (or similar)
-        // before the "## Run" section, with brew install instructions.
+        // README must have a dedicated "## Install" section.
         Assert.Contains("## Install", content, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Readme_InstallSection_ContainsBrewInstallCommand()
+    public void Readme_InstallSection_LeadsWithSourceCheckout()
     {
         var content = ReadReadme();
+        var installSection = ExtractSection(content, "## Install");
 
-        // The install section must contain the full brew install command.
-        Assert.Contains("brew install", content, StringComparison.Ordinal);
-        Assert.Contains("nicholas-westby/tap/visual-relay", content, StringComparison.Ordinal);
+        // The recommended path is a clone + ./visual-relay run, so the wrapper
+        // invocation must be documented in the Install section itself.
+        Assert.Contains("./visual-relay", installSection, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void Readme_InstallSection_MentionsNoSdkRequired()
+    public void Readme_InstallSection_DocumentsNixBootstrap()
+    {
+        var content = ReadReadme();
+        var installSection = ExtractSection(content, "## Install");
+
+        // The primary path must describe the nix / Determinate-Nix bootstrap
+        // that ./visual-relay performs on a source checkout.
+        Assert.Contains("nix", installSection, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Determinate", installSection, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Readme_InstallSection_DocumentsUvAndNonoPrereqs()
+    {
+        var content = ReadReadme();
+        var installSection = ExtractSection(content, "## Install");
+
+        // The devshell provisions uv (LiteLLM backend) and nono (sandbox); both
+        // must be named as prerequisites the bootstrap provides.
+        Assert.Contains("uv", installSection, StringComparison.Ordinal);
+        Assert.Contains("nono", installSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_SourceCheckoutPath_PrecedesBrew()
     {
         var content = ReadReadme();
 
-        // The install section must communicate that no .NET SDK is needed.
-        Assert.Contains(".NET", content, StringComparison.Ordinal);
+        var checkoutIdx = content.IndexOf("./visual-relay", StringComparison.Ordinal);
+        var brewIdx = content.IndexOf("brew install", StringComparison.Ordinal);
+
+        // The clone + ./visual-relay path is the primary recommendation, so it
+        // must appear before any brew install reference.
+        Assert.True(checkoutIdx >= 0, "README must document the ./visual-relay launcher");
+        Assert.True(brewIdx >= 0, "README must still mention the future brew install");
+        Assert.True(
+            checkoutIdx < brewIdx,
+            "The ./visual-relay source-checkout path must precede the brew install reference");
+    }
+
+    [Fact]
+    public void Readme_BrewInstall_IsMarkedNotYetAvailable()
+    {
+        var content = ReadReadme();
+
+        var brewIdx = content.IndexOf("brew install", StringComparison.Ordinal);
+        Assert.True(brewIdx >= 0, "README must still mention the future brew install");
+
+        // The brew command is demoted: a window around it must flag that it is
+        // not yet available / coming once a release is published, so nobody runs
+        // a brew install that 404s today.
+        var windowStart = Math.Max(0, brewIdx - 400);
+        var window = content.Substring(windowStart, Math.Min(content.Length - windowStart, 800));
+        Assert.True(
+            window.Contains("not yet", StringComparison.OrdinalIgnoreCase) ||
+            window.Contains("once ", StringComparison.OrdinalIgnoreCase) ||
+            window.Contains("coming", StringComparison.OrdinalIgnoreCase) ||
+            window.Contains("not available", StringComparison.OrdinalIgnoreCase),
+            "The brew install must be clearly marked as not yet available / coming once released");
+    }
+
+    [Fact]
+    public void Readme_BrewInstall_ReferencesTheTap()
+    {
+        var content = ReadReadme();
+
+        // The future brew command still names the tap formula.
+        Assert.Contains("brew install", content, StringComparison.Ordinal);
+        Assert.Contains("nicholas-westby/tap/visual-relay", content, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -54,14 +119,12 @@ public sealed class Installer5DocsTests
     {
         var content = ReadReadme();
 
-        // Must warn users to install via brew or curl, never browser download
-        // (which re-applies the quarantine attribute).
-        var installSection = ExtractSection(content, "## Install");
+        // The quarantine/browser-download caveat (relevant to the future brew
+        // tarball) must still be explained somewhere in the README.
         Assert.True(
-            installSection.Contains("browser", StringComparison.OrdinalIgnoreCase) ||
-            installSection.Contains("curl", StringComparison.OrdinalIgnoreCase) ||
-            installSection.Contains("quarantine", StringComparison.OrdinalIgnoreCase),
-            "Install section must warn against browser downloads (quarantine re-application)");
+            content.Contains("browser", StringComparison.OrdinalIgnoreCase) ||
+            content.Contains("quarantine", StringComparison.OrdinalIgnoreCase),
+            "README must warn against browser downloads (quarantine re-application)");
     }
 
     [Fact]
@@ -129,11 +192,11 @@ public sealed class Installer5DocsTests
     // ── README: init and launch documented for users ─────────────────────
 
     [Fact]
-    public void Readme_DocumentsInitAndLaunchForUsers()
+    public void Readme_DocumentsLaunchForUsers()
     {
         var content = ReadReadme();
 
-        // The shipped commands (init, launch) must be documented for users.
+        // The shipped commands (launch, init) must still be documented.
         Assert.Contains("launch", content, StringComparison.Ordinal);
         Assert.Contains("init", content, StringComparison.Ordinal);
     }

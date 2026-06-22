@@ -6,40 +6,39 @@ Visual Relay is an Avalonia desktop control room for Relay-style LLM task proces
 
 ## Install
 
-```bash
-brew install nicholas-westby/tap/visual-relay
-```
+<!-- BEGIN install section (self-contained; sibling tasks may shorten the README) -->
 
-This installs a self-contained Visual Relay — **no .NET SDK or runtime required**. The
-only prerequisites are `uv` and `nono` (both pulled automatically by Homebrew):
-`uv` provisions LiteLLM for the model backend on first launch; `nono` provides
-OS-level sandboxing (Seatbelt on macOS, Landlock on Linux) for Swival subagents.
-
-> **Important**: install via `brew` or `curl`, never download a `.tar.gz` through a
-> browser. A browser download re-applies the `com.apple.quarantine` attribute, which
-> triggers Gatekeeper. Installing via a Homebrew **formula** (not a cask) uses
-> `curl` + `tar` internally — neither sets the quarantine flag — so `visual-relay
-> launch` runs with **no Gatekeeper prompt and no notarization**. This is a terminal
-> app for developers; there is no `.app` bundle to double-click.
-
-After installing, run `visual-relay init` in your own repository (it auto-detects
-your test command and writes `.relay/config.json`), then `visual-relay launch`.
-
-## Run (source checkout)
-
-If you are working from a source clone instead, use the launcher from the repo root:
+The recommended way to run Visual Relay is to **clone the repo and launch it with the
+`./visual-relay` wrapper** — one command bootstraps everything else:
 
 ```bash
+git clone https://github.com/Nicholas-Westby/visual-relay.git
+cd visual-relay
 ./visual-relay launch
 ```
 
-The launcher requires `nono` for sandboxed Swival execution (install via `brew install nono`
-or from https://github.com/jedisct1/nono). If Nix is installed, `nono` (and all other
-prerequisites) are provided automatically by the devshell — no global install required.
-The sandbox is always on and `nono` is a hard requirement; there is no opt-out.
+`./visual-relay` is a tiny launcher that provisions its own toolchain via
+[Nix](https://nixos.org). On first run it enters a **nix devshell** that supplies
+`dotnet`, `python3.13`, `uv`, and `nono` from the Nix store — zero global installs and
+no separate shell step. `uv` provisions LiteLLM for the model backend on first launch;
+`nono` provides OS-level sandboxing (Seatbelt on macOS, Landlock on Linux) for Swival
+subagents. The sandbox is always on and `nono` is a hard requirement; there is no opt-out.
+
+**No Nix yet?** On an interactive terminal the launcher offers a single `[y/N]` prompt to
+install [Determinate Nix](https://determinate.systems/nix) (the only global change;
+everything else stays in the Nix store and per-user data dirs). An explicit `y` runs the
+official installer and re-enters through `nix develop` — one keystroke to a fully
+provisioned sandbox. A `n`, Enter, or a non-interactive context (CI, piped invocation)
+prints a manual one-liner and exits; nothing global is ever installed without explicit
+per-invocation consent. There is no `--yes` flag, no config key to pre-approve, and no
+persisted "already asked" state.
+
+This is a terminal app for developers; there is no `.app` bundle to double-click.
 
 The app opens with a native folder picker button. Point it at a repo containing
-`llm-tasks/` directories.
+`llm-tasks/` directories. To prepare your own repository, run `./visual-relay init` in it
+first (it auto-detects your test command and writes `.relay/config.json`), then
+`./visual-relay launch`.
 
 Common commands:
 
@@ -50,23 +49,31 @@ Common commands:
 ./visual-relay install-hooks
 ```
 
-The launcher uses existing tools when available. If any required tool (`dotnet`, `nono`,
-`uv`) is missing and `nix` is installed, it automatically re-enters the command through
-`nix develop` — everything is provisioned from the Nix store with zero global installs
-and no separate shell step.
-
-**No Nix?** On an interactive terminal the launcher offers a single `[y/N]` prompt to
-install [Determinate Nix](https://determinate.systems/nix) (the only global change;
-everything else stays in the Nix store and per-user data dirs). An explicit `y` runs the
-official installer and re-enters through `nix develop` — one keystroke to a fully
-provisioned sandbox. A `n`, Enter, or a non-interactive context (CI, piped invocation)
-prints a manual one-liner alongside the existing tool-missing messages and exits; nothing
-global is ever installed without explicit per-invocation consent. There is no `--yes`
-flag, no config key to pre-approve, and no persisted "already asked" state.
-
 See [AGENTS.md](AGENTS.md) for contributor dev tooling (the `sample` tooling,
-`run-task`, `screenshot`) — those are source-checkout-only and not shipped in the
+`run-task`, `screenshot`) — those are source-checkout-only and will not ship in the
 Homebrew formula.
+
+### Homebrew (coming once released)
+
+A self-contained Homebrew formula is planned so you can install without a source checkout
+or .NET SDK:
+
+```bash
+# Not yet available — coming once the first release is published.
+brew install nicholas-westby/tap/visual-relay
+```
+
+The formula is **not yet published**, so this command will not work today; use the
+`./visual-relay` source checkout above until a release lands. When it ships it will pull
+`uv` and `nono` automatically and need **no .NET SDK or runtime**.
+
+> **Once published, install via `brew` or `curl`, never download a `.tar.gz` through a
+> browser.** A browser download re-applies the `com.apple.quarantine` attribute, which
+> triggers Gatekeeper. Installing via a Homebrew **formula** (not a cask) uses
+> `curl` + `tar` internally — neither sets the quarantine flag — so `visual-relay launch`
+> will run with **no Gatekeeper prompt and no notarization**.
+
+<!-- END install section -->
 
 ## Model Backend
 
