@@ -15,17 +15,41 @@ public sealed class StageDetailViewModelTests
     private static StageRowViewModel MakeDriverStage() => new(RelayStages.All[10]);
 
     [Fact]
-    public void Load_NullStageOrMissingDirectory_AllStatesNoStage()
+    public void Load_NullStage_AllStatesNoStage()
     {
         var vm = new StageDetailViewModel();
         vm.Load(null, "/some/dir");
         AssertAllStates(vm, StageDetailState.NoStage);
+        Assert.Empty(vm.SystemPromptText);
+        Assert.Empty(vm.Header);
+    }
 
-        vm.Load(MakeStage(1, "Ideate", "cheap"), null);
-        AssertAllStates(vm, StageDetailState.NoStage);
+    [Fact]
+    public void Load_ValidStageNullDirectory_ShowsStaticSystemPrompt_InputNotStarted_OutputNotComplete()
+    {
+        var vm = new StageDetailViewModel();
+        var stage = MakeStage(1, "Ideate", "cheap");
+        vm.Load(stage, null);
+        Assert.Equal(StageDetailState.Ready, vm.SystemState);
+        Assert.Equal(RelayStages.All[0].SystemPrompt, vm.SystemPromptText);
+        Assert.Equal(StageDetailState.NotStarted, vm.InputState);
+        Assert.Equal(StageDetailState.NotComplete, vm.OutputState);
+        Assert.Contains("Stage 01 (Ideate)", vm.Header);
+        Assert.DoesNotContain("attempt", vm.Header);
+    }
 
-        vm.Load(MakeStage(1, "Ideate", "cheap"), "/nonexistent/path/12345");
-        AssertAllStates(vm, StageDetailState.NoStage);
+    [Fact]
+    public void Load_ValidStageNonexistentDirectory_ShowsStaticSystemPrompt_InputNotStarted_OutputNotComplete()
+    {
+        var vm = new StageDetailViewModel();
+        var stage = MakeStage(1, "Ideate", "cheap");
+        vm.Load(stage, "/nonexistent/path/12345");
+        Assert.Equal(StageDetailState.Ready, vm.SystemState);
+        Assert.Equal(RelayStages.All[0].SystemPrompt, vm.SystemPromptText);
+        Assert.Equal(StageDetailState.NotStarted, vm.InputState);
+        Assert.Equal(StageDetailState.NotComplete, vm.OutputState);
+        Assert.Contains("Stage 01 (Ideate)", vm.Header);
+        Assert.DoesNotContain("attempt", vm.Header);
     }
 
     [Fact]

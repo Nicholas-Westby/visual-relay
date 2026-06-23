@@ -96,7 +96,7 @@ public partial class StageDetailViewModel : ViewModelBase
     /// </summary>
     public void Load(StageRowViewModel? stage, string? taskDirectory)
     {
-        if (stage is null || string.IsNullOrEmpty(taskDirectory) || !Directory.Exists(taskDirectory))
+        if (stage is null)
         {
             SetAllStates(StageDetailState.NoStage);
             ClearContent();
@@ -110,6 +110,25 @@ public partial class StageDetailViewModel : ViewModelBase
             SetAllStates(StageDetailState.DriverStage);
             ClearContent();
             Header = $"Stage {stage.Ordinal} ({stage.Name})";
+            return;
+        }
+
+        if (string.IsNullOrEmpty(taskDirectory) || !Directory.Exists(taskDirectory))
+        {
+            // ── System prompt (static fallback) ─────────────────────
+            LoadSystemPrompt(null, stage);
+
+            // ── Input / Output ──────────────────────────────────────
+            InputSections = [];
+            InputPromptRawText = "";
+            IsInputRawText = false;
+            InputState = StageDetailState.NotStarted;
+            OutputFields = [];
+            RawJson = "";
+            OutputState = StageDetailState.NotComplete;
+
+            // ── Header ──────────────────────────────────────────────
+            Header = BuildHeader(stage, null);
             return;
         }
 
