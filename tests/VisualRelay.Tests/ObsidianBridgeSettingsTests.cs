@@ -35,7 +35,7 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
     public void Load_NoEnvFile_ReturnsDefaults()
     {
         _env["HOME"] = _tempHome;
-        _env["XDG_CONFIG_HOME"] = null;
+        _env["XDG_CONFIG_HOME"] = "";
 
         var config = ObsidianBridgeSettings.Load(_env);
 
@@ -59,14 +59,21 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
     [Fact]
     public void Load_WhenHomeIsUnset_ReturnsDisabledAndKeepsDefaults()
     {
-        _env["HOME"] = null;
-        _env["XDG_CONFIG_HOME"] = null;
+        // Empty string (not null) keeps the injected accessor authoritative — a null is REMOVED from
+        // DictionaryEnvironmentAccessor and would fall back to the real process value (the hermeticity
+        // bug). HOME and XDG_CONFIG_HOME both need "" so neither leaks the real env via KeyEnvFile.GetEnv.
+        _env["HOME"] = "";
+        _env["XDG_CONFIG_HOME"] = "";
 
         // Must degrade gracefully: disabled, default vault root with "~" unexpanded,
         // default poll seconds. Should not throw.
         var config = ObsidianBridgeSettings.Load(_env);
 
         Assert.False(config.Enabled);
+        // "Keeps defaults": HOME unset means the tilde stays unexpanded (no real-HOME leak).
+        Assert.Equal(
+            "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/",
+            config.VaultRoot);
         Assert.Equal(60, config.PollSeconds);
     }
 
