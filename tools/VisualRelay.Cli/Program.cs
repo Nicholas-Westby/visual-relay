@@ -9,6 +9,8 @@ using VisualRelay.Core.Execution;
 // bash. Arg dispatch mirrors tools/VisualRelay.RunTask/Program.cs: cmd → handler,
 // usage to stderr, numeric exit codes.
 
+Console.Error.WriteLine($"Visual Relay version: {VisualRelay.Domain.VersionHelper.ReadInformationalVersion()}");
+
 var cmd = args.Length > 0 ? args[0] : "launch";
 var rest = args.Length > 1 ? args[1..] : [];
 
@@ -34,6 +36,7 @@ return cmd switch
     "gen-backend-config" => PassthroughCommand.GenBackendConfig(paths, rest),
     "guards" => PassthroughCommand.Guards(paths, rest),
     "install-hooks" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),
+    "bump-version" => BumpVersionCommand.Run(paths),
     _ => Unknown(),
 };
 

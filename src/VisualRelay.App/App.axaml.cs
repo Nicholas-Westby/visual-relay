@@ -22,6 +22,7 @@ public partial class App : Application
         // published launch shows the product name. (The .app bundle independently
         // sets CFBundleName via tools/VisualRelay.Packaging.)
         Name = "Visual Relay";
+        System.Diagnostics.Debug.WriteLine($"Visual Relay version: {Domain.VersionHelper.ReadInformationalVersion()}");
     }
 
     public override void OnFrameworkInitializationCompleted()

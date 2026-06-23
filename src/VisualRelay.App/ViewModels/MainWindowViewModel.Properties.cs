@@ -5,6 +5,16 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    public string Version
+    {
+        get
+        {
+            var info = VersionHelper.ReadInformationalVersion();
+            var plus = info.IndexOf('+');
+            return plus >= 0 ? $"v{info[..plus]}" : $"v{info}";
+        }
+    }
+
     public string RootName => RootFolderDisplay.Name(RootPath);
     public string RootParentPath => RootFolderDisplay.Parent(RootPath);
     public string WindowTitle => $"Visual Relay - {RootName}";

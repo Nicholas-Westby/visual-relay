@@ -5,6 +5,7 @@ using VisualRelay.Core.Queue;
 using VisualRelay.DrainQueue;
 
 // ── Parse args ──
+Console.Error.WriteLine($"Visual Relay drain version: {VisualRelay.Domain.VersionHelper.ReadInformationalVersion()}");
 var (parseResult, parseError) = ArgParser.Parse(args);
 if (parseError is not null)
 {

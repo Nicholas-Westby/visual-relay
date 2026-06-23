@@ -26,6 +26,7 @@ public static class DrainSummaryLog
         var path = Path.Combine(dir, $"{runId}.log");
 
         var line = $"{DateTimeOffset.UtcNow:O} {phase,-7} {taskId} {milestone}";
+        line += $" version={Domain.VersionHelper.ReadInformationalVersion()}";
         if (!string.IsNullOrWhiteSpace(detail))
             line += $" ({detail})";
         line += Environment.NewLine;

@@ -57,7 +57,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             EnsureTaskInputHash(statusEntries, input.Markdown);
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-            var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl };
+            var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl, ["version"] = VersionHelper.ReadInformationalVersion() };
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
 
