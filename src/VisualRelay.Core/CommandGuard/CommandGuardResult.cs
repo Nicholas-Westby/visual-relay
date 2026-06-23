@@ -24,15 +24,22 @@ public sealed class CommandGuardResult
     /// </summary>
     public object? Command { get; }
 
+    /// <summary>
+    /// Human-readable reason for a deny verdict. <c>null</c> for allow verdicts.
+    /// </summary>
+    public string? Reason { get; }
+
     public bool IsAllow => Action == "allow";
+    public bool IsDeny => Action == "deny";
     public bool IsPassThrough => IsAllow && Mode is null;
     public bool IsRewritten => IsAllow && Mode is not null;
 
-    private CommandGuardResult(string action, string? mode, object? command)
+    private CommandGuardResult(string action, string? mode, object? command, string? reason = null)
     {
         Action = action;
         Mode = mode;
         Command = command;
+        Reason = reason;
     }
 
     /// <summary>Pass-through: let the original command proceed unchanged.</summary>
@@ -41,4 +48,11 @@ public sealed class CommandGuardResult
     /// <summary>Rewrite the command before execution.</summary>
     public static CommandGuardResult AllowRewritten(string mode, object command) =>
         new("allow", mode, command);
+
+    /// <summary>
+    /// Deny the command. Swival will block execution and show
+    /// <paramref name="reason"/> to the agent.
+    /// </summary>
+    public static CommandGuardResult Deny(string reason) =>
+        new("deny", null, null, reason);
 }

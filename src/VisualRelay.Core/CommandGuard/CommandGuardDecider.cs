@@ -11,10 +11,18 @@ public static partial class CommandGuardDecider
 {
     /// <summary>
     /// Decides the verdict for a swival command-middleware payload.
-    /// On ANY internal error, returns <see cref="CommandGuardResult.Allow"/>
-    /// (fail-open — never break the agent).
+    /// On internal error, fails OPEN for non-commit commands and fails
+    /// CLOSED (deny) for git commit commands when <paramref name="rawJson"/>
+    /// is supplied so the payload can be identified.
     /// </summary>
-    public static CommandGuardResult Decide(JsonElement payload)
+    /// <param name="payload">The swival middleware JSON payload.</param>
+    /// <param name="rawJson">
+    /// The raw JSON string (available from Program.cs stdin). Used only in
+    /// the catch path for fail-closed git-commit detection. Optional;
+    /// callers that don't have the raw string (unit tests without it) get
+    /// fail-open unconditionally.
+    /// </param>
+    public static CommandGuardResult Decide(JsonElement payload, string? rawJson = null)
     {
         try
         {
@@ -37,8 +45,32 @@ public static partial class CommandGuardDecider
         }
         catch
         {
+            // Fail-closed for git commit: a broken guard must not silently
+            // re-enable the hook-bypass it exists to block.  Non-git commands
+            // still fail-open so the agent's other work isn't wedged.
+            if (rawJson is not null && LooksLikeGitCommitFromJson(rawJson))
+                return CommandGuardResult.Deny("command-guard internal error for git commit");
+
             return CommandGuardResult.Allow;
         }
+    }
+
+    /// <summary>
+    /// Best-effort check: does <paramref name="rawJson"/> look like a
+    /// git-commit command?  Scans the raw JSON string for <c>git</c>
+    /// near <c>commit</c> as plain substrings (not quoted JSON tokens)
+    /// so both argv-mode and shell-mode payloads are detected.
+    /// Only used in the catch path when the payload is not safely
+    /// inspectable.
+    /// </summary>
+    private static bool LooksLikeGitCommitFromJson(string rawJson)
+    {
+        // Quick substring scan: look for "git" and "commit" as plain
+        // words in the JSON.  Avoids full re-parse in the error path.
+        var gitIdx = rawJson.IndexOf("git", StringComparison.Ordinal);
+        if (gitIdx < 0) return false;
+        var commitIdx = rawJson.IndexOf("commit", StringComparison.Ordinal);
+        return commitIdx >= 0 && Math.Abs(commitIdx - gitIdx) < 200;
     }
 
     // ── argv mode ──────────────────────────────────────────────────────
@@ -86,6 +118,10 @@ public static partial class CommandGuardDecider
         {
             var tok = tokens[i];
 
+            // Defect 5 (deferred): --no-verify is stripped unconditionally
+            // even when it sits in a value position (e.g. git commit -F --no-verify).
+            // Scoping to option position is low-priority; the threat model makes
+            // filenames named --no-verify vanishingly unlikely.
             if (tok == "--no-verify")
             {
                 changed = true;

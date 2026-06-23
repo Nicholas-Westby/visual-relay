@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 namespace VisualRelay.Core.Execution;
 
@@ -8,11 +9,13 @@ namespace VisualRelay.Core.Execution;
 /// swival <c>--command-middleware</c> wrapper can exec it from inside the
 /// nono sandbox.
 ///
-/// <para>Mirrors the pattern of <see cref="NonoProfileEnsurer"/>:
-/// called once at run start in <see cref="RelayDriver"/>. Fail-open: a
-/// missing dotnet or publish failure logs a warning and returns — the
-/// middleware path is only wired when the wrapper exists, so a
-/// missing/broken publish degrades to the squash backstop.</para>
+/// <para>Publishes as a <b>self-contained</b> binary so no .NET runtime
+/// discovery is needed in the sandbox.  Mirrors the pattern of
+/// <see cref="NonoProfileEnsurer"/>: called once at run start in
+/// <see cref="RelayDriver"/>.  Fail-open: a missing dotnet or publish
+/// failure logs a warning and returns — the middleware path is only wired
+/// when the wrapper exists, so a missing/broken publish degrades to the
+/// squash backstop.</para>
 /// </summary>
 public static class CommandGuardEnsurer
 {
@@ -21,8 +24,9 @@ public static class CommandGuardEnsurer
 
     /// <summary>
     /// Publishes <c>tools/VisualRelay.CommandGuard</c> to
-    /// <c>&lt;repoRoot&gt;/command-guard/</c>. Skips the publish when the
-    /// binary is already up to date (project sources older than output).
+    /// <c>&lt;repoRoot&gt;/command-guard/</c> as a self-contained binary.
+    /// Skips the publish when the binary is already up to date (project
+    /// sources older than output).
     /// Returns the path to the published binary, or null when publishing
     /// could not be performed (fail-open: the run continues).
     /// </summary>
@@ -45,13 +49,22 @@ public static class CommandGuardEnsurer
         if (File.Exists(binaryPath) && IsUpToDate(projectDir, binaryPath))
             return binaryPath;
 
-        // Try publishing via dotnet.
+        // Try publishing via dotnet.  Publish self-contained so the
+        // apphost carries its own runtime and needs no DOTNET_ROOT inside
+        // the nono sandbox.
         try
         {
+            var rid = RuntimeInformation.RuntimeIdentifier;
             var startInfo = new ProcessStartInfo
             {
                 FileName = "dotnet",
-                ArgumentList = { "publish", projectDir, "-o", publishDir, "--nologo", "-v", "q" },
+                ArgumentList =
+                {
+                    "publish", projectDir,
+                    "--self-contained", "-r", rid,
+                    "-o", publishDir,
+                    "--nologo", "-v", "q"
+                },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,

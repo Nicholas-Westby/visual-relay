@@ -14,66 +14,29 @@ public static partial class CommandGuardDecider
             return CommandGuardResult.Allow;
 
         var tokens = Tokenize(command);
-        if (tokens.Count == 0 || tokens[0].Text != "git")
+        if (tokens.Count == 0)
             return CommandGuardResult.Allow;
 
-        var stripped = StripShell(tokens, command);
-        if (stripped is null)
-            return CommandGuardResult.Allow;
+        // Split operators and find segments.
+        var subTokens = SplitOperators(tokens);
+        var segments = FindShellSegments(subTokens);
 
-        return CommandGuardResult.AllowRewritten("shell", stripped);
-    }
+        // Collect all edits from all segments, then apply once.
+        var allEdits = new List<(int Start, int EndExcl, string? Replacement)>();
 
-    /// <summary>
-    /// Returns the surgically stripped command string, or null when no
-    /// changes were made.
-    /// </summary>
-    private static string? StripShell(List<ShellToken> tokens, string original)
-    {
-        var textList = tokens.Select(t => t.Text).ToList();
-        var subIdx = FindGitSubcommandIndex(textList);
-        if (subIdx is null)
-            return null;
-
-        var isCommit = subIdx.Value < tokens.Count
-            && tokens[subIdx.Value].Text == "commit";
-
-        var edits = new List<(int Start, int EndExcl, string? Replacement)>();
-
-        for (var i = 0; i < tokens.Count; i++)
+        foreach (var seg in segments)
         {
-            var tok = tokens[i];
-
-            if (tok.Text == "--no-verify")
-            {
-                edits.Add(RemovalRange(tokens, i));
-                continue;
-            }
-
-            if (tok.Text == "-n" && isCommit && i >= subIdx.Value)
-            {
-                edits.Add(RemovalRange(tokens, i));
-                continue;
-            }
-
-            if (isCommit && i >= subIdx.Value
-                && IsCombinedShortFlag(tok.Text) && tok.Text.Contains('n'))
-            {
-                var stripped = StripN(tok.Text);
-                if (stripped.Length == 0)
-                    edits.Add(RemovalRange(tokens, i));
-                else if (stripped != tok.Text)
-                    edits.Add((tok.Start, tok.Start + tok.Length, stripped));
-            }
+            CollectSegmentEdits(subTokens, seg, allEdits);
         }
 
-        if (edits.Count == 0)
-            return null;
+        if (allEdits.Count == 0)
+            return CommandGuardResult.Allow;
 
-        edits.Sort((a, b) => b.Start.CompareTo(a.Start));
+        // Apply edits in descending start order (byte-exact surgical removal).
+        allEdits.Sort((a, b) => b.Start.CompareTo(a.Start));
 
-        var chars = original.ToCharArray();
-        foreach (var (start, endExcl, replacement) in edits)
+        var chars = command.ToCharArray();
+        foreach (var (start, endExcl, replacement) in allEdits)
         {
             var removeLen = endExcl - start;
             if (replacement is null)
@@ -93,18 +56,80 @@ public static partial class CommandGuardDecider
             }
         }
 
-        return new string(chars);
+        return CommandGuardResult.AllowRewritten("shell", new string(chars));
     }
 
     /// <summary>
-    /// Returns the range to remove: from the end of the previous token to
-    /// the end of this token.
+    /// Adds removal/replacement edits for a single segment to
+    /// <paramref name="edits"/>.  Does nothing if the segment is not a
+    /// git commit.
     /// </summary>
-    private static (int Start, int EndExcl, string? Replacement) RemovalRange(
-        List<ShellToken> tokens, int idx)
+    private static void CollectSegmentEdits(
+        List<SubToken> subTokens,
+        (int Start, int EndExcl) segment,
+        List<(int Start, int EndExcl, string? Replacement)> edits)
     {
-        var tok = tokens[idx];
-        var start = idx > 0 ? tokens[idx - 1].Start + tokens[idx - 1].Length : 0;
+        var segStart = segment.Start;
+        var segEnd = segment.EndExcl;
+        if (segStart >= segEnd)
+            return;
+
+        // Skip env-var prefix to find the actual command.
+        var cmdStart = SkipEnvPrefix(subTokens, segStart, segEnd);
+        if (cmdStart >= segEnd)
+            return;
+
+        if (subTokens[cmdStart].Text != "git")
+            return;
+
+        var subIdx = FindGitSubcommandIndexInSubRange(subTokens, cmdStart, segEnd);
+        if (subIdx is null)
+            return;
+
+        var isCommit = subTokens[subIdx.Value].Text == "commit";
+
+        for (var i = segStart; i < segEnd; i++)
+        {
+            var tok = subTokens[i];
+
+            // Defect 5 (deferred): --no-verify is stripped unconditionally
+            // even in value position.  Low priority; see argv path comment.
+            if (tok.Text == "--no-verify")
+            {
+                edits.Add(SubRemovalRange(subTokens, i, segStart));
+                continue;
+            }
+
+            if (tok.Text == "-n" && isCommit && i >= subIdx.Value)
+            {
+                edits.Add(SubRemovalRange(subTokens, i, segStart));
+                continue;
+            }
+
+            if (isCommit && i >= subIdx.Value
+                && IsCombinedShortFlag(tok.Text) && tok.Text.Contains('n'))
+            {
+                var stripped = StripN(tok.Text);
+                if (stripped.Length == 0)
+                    edits.Add(SubRemovalRange(subTokens, i, segStart));
+                else if (stripped != tok.Text)
+                    edits.Add((tok.Start, tok.Start + tok.Length, stripped));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns the range to remove for a sub-token: from the end of the
+    /// previous sub-token (or segment start's sub-token start) to the end
+    /// of this sub-token.
+    /// </summary>
+    private static (int Start, int EndExcl, string? Replacement) SubRemovalRange(
+        List<SubToken> subTokens, int idx, int segStart)
+    {
+        var tok = subTokens[idx];
+        var start = idx > segStart
+            ? subTokens[idx - 1].Start + subTokens[idx - 1].Length
+            : subTokens[segStart].Start;
         var end = tok.Start + tok.Length;
         return (start, end, null);
     }
@@ -115,7 +140,6 @@ public static partial class CommandGuardDecider
     {
         public string Text { get; } = text;
         public int Start { get; } = start;
-        public int Length => Text.Length;
     }
 
     /// <summary>
