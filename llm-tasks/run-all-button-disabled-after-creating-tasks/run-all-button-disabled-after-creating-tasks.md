@@ -1,0 +1,1 @@
+If I open Visual Relay and select a project with no tasks, the "Run All" button is correctly disabled. If I then create tasks, the button does not become enabled. It ought to. Fix.

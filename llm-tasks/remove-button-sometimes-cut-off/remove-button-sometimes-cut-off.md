@@ -1,0 +1,1 @@
+The right of the "Remove" button is sometimes cut off. Fix.
