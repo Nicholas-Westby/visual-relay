@@ -11,7 +11,7 @@ namespace VisualRelay.App.Services;
 /// thread. A startup failure (e.g. port in use) is caught and logged — it never
 /// crashes or blocks app startup.
 /// </summary>
-public sealed partial class ControlServer(ControlApi api, ControlServerOptions options)
+public sealed partial class ControlServer(ControlApi api, ControlServerOptions options) : IDisposable
 {
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
@@ -49,6 +49,9 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
             _listener = null;
         }
     }
+
+    /// <summary>Releases the listener (idempotent; delegates to Stop()).</summary>
+    public void Dispose() => Stop();
 
     /// <summary>Stops the listener and the accept loop. Safe to call when not started.</summary>
     public void Stop()

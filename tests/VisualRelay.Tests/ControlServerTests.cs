@@ -160,6 +160,48 @@ public sealed class ControlServerEndToEndTests
         }
     }
 
+    /// <summary>
+    /// Verifies that the shared headless test app disables the vr-control listener via
+    /// the process environment variable the App reads on boot (VR_CONTROL_DISABLE=1).
+    /// This is a deterministic in-process assertion that no listener will start.
+    /// </summary>
+    [AvaloniaFact]
+    public void HeadlessApp_DisablesControlServer_ViaProcessEnv()
+    {
+        var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
+        Assert.False(options.Enabled,
+            "Headless test app must disable the vr-control listener (VR_CONTROL_DISABLE=1) so booting the App in tests starts no leaked HttpListener.");
+    }
+
+    /// <summary>
+    /// Verifies that ControlServer releases its HttpListener/port when Dispose() is
+    /// called, so a fresh listener can bind the same port immediately after disposal.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ControlServer_Dispose_ReleasesListener()
+    {
+        var port = GetFreePort();
+        var vm = new MainWindowViewModel();
+        var window = new MainWindow { DataContext = vm };
+        var api = new ControlApi(vm, window);
+
+        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        server.Start();
+
+        // Confirm it is listening before dispose.
+        var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        // Dispose must release the port so a fresh listener can bind the same prefix.
+        server.Dispose();
+        using var probe = new HttpListener();
+        probe.Prefixes.Add($"http://127.0.0.1:{port}/");
+        probe.Start(); // throws (failing the test) if Dispose did not release the port
+        Assert.True(probe.IsListening,
+            "Dispose() must release the listener's port so a fresh HttpListener can bind the same prefix.");
+        probe.Stop();
+    }
+
     private static int GetFreePort()
     {
         var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);

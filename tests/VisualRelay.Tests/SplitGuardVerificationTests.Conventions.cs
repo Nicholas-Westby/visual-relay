@@ -112,6 +112,10 @@ public sealed partial class SplitGuardVerificationTests
             // SplitGuardVerificationTests.Conventions.cs itself checks
             // for this pattern as a string literal — skip it.
             if (Path.GetFileName(file) == "SplitGuardVerificationTests.Conventions.cs") continue;
+            // HeadlessTestApp.cs is app-boot setup plumbing (not a test), and sets
+            // VR_CONTROL_DISABLE=1 in BuildAvaloniaApp() so the headless App starts
+            // no listener. Joins the other documented infrastructure exemptions above.
+            if (Path.GetFileName(file) == "HeadlessTestApp.cs") continue;
 
             var content = File.ReadAllText(file);
             if (content.Contains("Environment.SetEnvironmentVariable", StringComparison.Ordinal))
