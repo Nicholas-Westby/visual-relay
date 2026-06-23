@@ -39,6 +39,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             // always on. A write failure throws here — the run must not silently
             // proceed unsandboxed/stale.
             await NonoProfileEnsurer.EnsureAsync(cancellationToken: cancellationToken);
+            // Publish the command-guard middleware binary so swival can strip
+            // git hook-bypass flags. Fail-open: if publish fails, swival
+            // launches without --command-middleware and the squash is the floor.
+            _ = await CommandGuardEnsurer.EnsureAsync(rootPath, cancellationToken);
             var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
             var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);

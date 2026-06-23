@@ -82,8 +82,8 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     {
         var profile = _config.TierProfiles.TryGetValue(invocation.Tier, out var value) ? value : invocation.Tier;
         var commands = resolvedCommands ?? invocation.Stage.Commands;
-        return
-        [
+        var args = new List<string>
+        {
             "-q",
             "--profile", profile,
             "--api-key", "not-needed",
@@ -96,7 +96,21 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
             "--trace-dir", invocation.TraceDirectory,
             "--report", invocation.ReportFile,
             "--max-turns", invocation.MaxTurns.ToString()
-        ];
+        };
+
+        // Wire the command-guard middleware when the wrapper script exists
+        // (the binary is published by CommandGuardEnsurer before run start).
+        // The wrapper is at .githooks/command-guard relative to the repo root,
+        // but swival resolves relative paths against --base-dir, so an
+        // absolute path is safest.
+        var guardPath = Path.Combine(invocation.TargetRoot, ".githooks", "command-guard");
+        if (File.Exists(guardPath))
+        {
+            args.Add("--command-middleware");
+            args.Add(guardPath);
+        }
+
+        return args;
     }
 
     /// <summary>
