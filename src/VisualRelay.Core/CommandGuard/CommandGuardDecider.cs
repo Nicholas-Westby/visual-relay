@@ -70,7 +70,7 @@ public static partial class CommandGuardDecider
     /// Returns the filtered list when stripping was applied, or null when
     /// nothing changed (pass-through).
     /// </summary>
-    internal static string[]? StripArgv(List<string> tokens)
+    private static string[]? StripArgv(List<string> tokens)
     {
         var subIdx = FindGitSubcommandIndex(tokens);
         if (subIdx is null)

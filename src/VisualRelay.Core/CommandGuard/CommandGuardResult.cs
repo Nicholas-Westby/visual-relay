@@ -9,7 +9,7 @@ public sealed class CommandGuardResult
     /// <summary>
     /// Swival action: <c>"allow"</c> or <c>"deny"</c>.
     /// </summary>
-    public string Action { get; }
+    private string Action { get; }
 
     /// <summary>
     /// When rewriting, the mode to emit: <c>"argv"</c> or <c>"shell"</c>.
@@ -25,7 +25,6 @@ public sealed class CommandGuardResult
     public object? Command { get; }
 
     public bool IsAllow => Action == "allow";
-    public bool IsDeny => Action == "deny";
     public bool IsPassThrough => IsAllow && Mode is null;
     public bool IsRewritten => IsAllow && Mode is not null;
 
@@ -42,8 +41,4 @@ public sealed class CommandGuardResult
     /// <summary>Rewrite the command before execution.</summary>
     public static CommandGuardResult AllowRewritten(string mode, object command) =>
         new("allow", mode, command);
-
-    /// <summary>Block the command with a reason shown to the agent.</summary>
-    public static CommandGuardResult Deny(string reason) =>
-        new("deny", null, null);
 }

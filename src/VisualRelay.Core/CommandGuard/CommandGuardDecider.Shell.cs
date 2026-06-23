@@ -28,7 +28,7 @@ public static partial class CommandGuardDecider
     /// Returns the surgically stripped command string, or null when no
     /// changes were made.
     /// </summary>
-    internal static string? StripShell(List<ShellToken> tokens, string original)
+    private static string? StripShell(List<ShellToken> tokens, string original)
     {
         var textList = tokens.Select(t => t.Text).ToList();
         var subIdx = FindGitSubcommandIndex(textList);
@@ -111,18 +111,11 @@ public static partial class CommandGuardDecider
 
     // ── Tokenizer ────────────────────────────────────────────────────
 
-    internal readonly struct ShellToken
+    internal readonly struct ShellToken(string text, int start)
     {
-        public string Text { get; }
-        public int Start { get; }
+        public string Text { get; } = text;
+        public int Start { get; } = start;
         public int Length => Text.Length;
-        public int End => Start + Length;
-
-        public ShellToken(string text, int start)
-        {
-            Text = text;
-            Start = start;
-        }
     }
 
     /// <summary>

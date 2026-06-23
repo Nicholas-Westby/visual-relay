@@ -88,7 +88,7 @@ public static class CommandGuardEnsurer
     /// <summary>
     /// Resolves the expected binary path for the current platform.
     /// </summary>
-    public static string ResolveBinaryPath(string publishDir) =>
+    private static string ResolveBinaryPath(string publishDir) =>
         Path.Combine(publishDir, ProjectName);
 
     private static string? Fallback(string binaryPath) =>

@@ -133,7 +133,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitCommit_NoVerifyIsOnlyArgAfterCommit_Stripped()
     {
-        var payload = Payload("argv", new[] { "git", "commit", "--no-verify" });
+        var payload = Payload("argv", ["git", "commit", "--no-verify"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsRewritten);
         Assert.Equal(new[] { "git", "commit" }, result.Command);
@@ -151,7 +151,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitWithoutSubcommand_Unchanged()
     {
-        var payload = Payload("argv", new[] { "git", "--no-verify" });
+        var payload = Payload("argv", ["git", "--no-verify"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsPassThrough);
     }
@@ -167,7 +167,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitCommit_NoVerifyAtEnd_Stripped()
     {
-        var payload = Payload("argv", new[] { "git", "commit", "-m", "x", "--no-verify" });
+        var payload = Payload("argv", ["git", "commit", "-m", "x", "--no-verify"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsRewritten);
         Assert.Equal(new[] { "git", "commit", "-m", "x" }, result.Command);
@@ -186,7 +186,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitCommit_ShortNAtEnd_Stripped()
     {
-        var payload = Payload("argv", new[] { "git", "commit", "-m", "x", "-n" });
+        var payload = Payload("argv", ["git", "commit", "-m", "x", "-n"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsRewritten);
         Assert.Equal(new[] { "git", "commit", "-m", "x" }, result.Command);
@@ -205,7 +205,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitClone_ShortN_Kept()
     {
-        var payload = Payload("argv", new[] { "git", "clone", "-n", "url" });
+        var payload = Payload("argv", ["git", "clone", "-n", "url"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsPassThrough);
     }
@@ -221,7 +221,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitTag_ShortN_Kept()
     {
-        var payload = Payload("argv", new[] { "git", "tag", "-n", "v1" });
+        var payload = Payload("argv", ["git", "tag", "-n", "v1"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsPassThrough);
     }
@@ -237,7 +237,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitLog_ShortN_Kept()
     {
-        var payload = Payload("argv", new[] { "git", "log", "-n", "5" });
+        var payload = Payload("argv", ["git", "log", "-n", "5"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsPassThrough);
     }
@@ -245,7 +245,7 @@ public sealed partial class CommandGuardDeciderTests
     [Fact]
     public void Edge_Argv_GitLog_LongNoVerify_Stripped()
     {
-        var payload = Payload("argv", new[] { "git", "log", "--no-verify" });
+        var payload = Payload("argv", ["git", "log", "--no-verify"]);
         var result = CommandGuardDecider.Decide(payload);
         Assert.True(result.IsRewritten);
         Assert.Equal(new[] { "git", "log" }, result.Command);
