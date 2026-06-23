@@ -126,6 +126,96 @@ public sealed class FdLeakTests
             "Expected the child to be reaped on normal exit.");
     }
 
+    // ── Inherited-pipe prompt-return test ──────────────────────────────
+
+    /// <summary>
+    /// The inherited-pipe inverse of
+    /// <see cref="ProcessCapture_DetachedChildReapedAfterNormalExit"/>: the forked
+    /// child deliberately INHERITS the parent's stdout/stderr pipe write-ends
+    /// (it does NOT redirect them to /dev/null) and then sleeps for 10 s, while
+    /// the parent prints a sentinel and exits 0 immediately.
+    ///
+    /// With async-read redirected streams, <c>WaitForExitAsync</c> does not complete
+    /// until the pipes hit EOF, and EOF only arrives once every process holding the
+    /// write-end closes it — so the surviving child wedges RunAsync until it finally
+    /// exits (~10 s here) even though the spawned process exited at once. A generous
+    /// 30 s RunAsync timeout keeps the buggy failure a clean, bounded ~10 s return
+    /// (via stream EOF) rather than a hang to the cap.
+    ///
+    /// RED until reap-on-exit + bounded-drain lands; then RunAsync returns in &lt;1 s
+    /// once the parent exits, regardless of the inherited pipe-holder.
+    /// </summary>
+    [Fact]
+    public async Task ProcessCapture_ReturnsPromptlyWhenChildInheritsPipeAndSurvives()
+    {
+        // Process-group reaping via setpgid/kill(-pgid) is POSIX-only.
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
+            !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            return;
+
+        using var repo = TestRepository.Create();
+
+        // Script: set its own process group (so reaping works even when the
+        // parent-side setpgid races), fork a background child that INHERITS
+        // stdout/stderr (no /dev/null redirect — that inherited pipe is the
+        // whole point), then sleep 10 s.  The parent prints a unique sentinel
+        // plus the child PID and falls off the end (exit 0) immediately.
+        //
+        // Perl shebang so the process itself calls setpgid(0,0); perl is
+        // guaranteed on macOS and near-universal on Linux.
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
+            repo.Root,
+            "fork-inherit",
+            "#!/usr/bin/env perl\n" +
+            "use POSIX;\n" +
+            "setpgid(0,0);\n" +
+            "my $pid = fork();\n" +
+            "if ($pid == 0) {\n" +
+            // Intentionally do NOT touch stdio: the child inherits the
+            // parent's stdout/stderr pipe write-ends and holds them open.
+            "    exec('sleep', '10');\n" +
+            "}\n" +
+            "print \"CHILD_PID=$pid\\n\";\n" +
+            "print \"PARENT_DONE\\n\";\n");
+
+        var sw = Stopwatch.StartNew();
+        var (_, output, timedOut) = await ProcessCapture.RunAsync(
+            script,
+            "",
+            repo.Root,
+            // Far above the child's 10 s sleep, so buggy code returns via
+            // stream-EOF at ~10 s (a clean bounded RED) rather than hanging
+            // to this cap; fixed code returns in well under a second.
+            TimeSpan.FromSeconds(30),
+            CancellationToken.None);
+        sw.Stop();
+
+        Assert.False(timedOut,
+            $"RunAsync timed out (elapsed {sw.Elapsed.TotalSeconds:F1}s); expected a prompt return on parent exit.");
+
+        // PRIMARY discriminating assertion: RunAsync must return shortly after
+        // the parent exits — well under the child's 10 s sleep.  Buggy code
+        // blocks on the inherited pipe until the child's sleep ends (~10 s) and
+        // FAILS here; the fix reaps + bounded-drains and returns in <1 s.
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5),
+            $"RunAsync took {sw.Elapsed.TotalSeconds:F1}s to return after the parent exited; " +
+            "expected < 5s. A ~10s return means it blocked on the surviving child's inherited " +
+            "stdout/stderr pipe (WaitForExitAsync waits for stream EOF) instead of ending on " +
+            "process exit.");
+
+        Assert.Contains("PARENT_DONE", output);
+
+        // Secondary: the inherited child should also be reaped on exit. Kept
+        // after the elapsed-time check so the timing assertion is the RED trigger.
+        var childPid = ParseChildPid(output);
+        Assert.True(childPid.HasValue,
+            $"Could not parse CHILD_PID from captured output: '{output}'");
+        await Task.Delay(100);
+        Assert.False(IsProcessAlive(childPid.Value),
+            $"Inherited child PID {childPid} is still alive after ProcessCapture.RunAsync returned. " +
+            "Expected the child to be reaped on normal exit.");
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static int? ParseChildPid(string output)

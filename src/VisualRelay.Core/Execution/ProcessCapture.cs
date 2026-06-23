@@ -11,6 +11,10 @@ internal static class ProcessCapture
     // scheduler dust from an idle-blocked process.
     private const long CpuPulseEpsilonMs = 50;
 
+    // Bound the post-exit stdout/stderr drain so a fully detached pipe-holder
+    // can never wedge the run to the timeout cap (see the reap-then-drain in RunAsync).
+    private const int DrainGraceMs = 4000;
+
     private static readonly string[] LeakedAppleSdkEnvNames = ["DEVELOPER_DIR", "SDKROOT"];
 
     /// <summary>
@@ -120,7 +124,17 @@ internal static class ProcessCapture
         var outputLock = new object();
         process.OutputDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stdout"); } };
         process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { lock (outputLock) { output.AppendLine(e.Data); } onActivity?.Invoke("stderr"); } };
+
+        // Signal the spawned process's OWN exit, independent of stream EOF: with stdout/
+        // stderr read async, WaitForExitAsync waits for reader EOF, which a surviving
+        // descendant holding the inherited pipe write-ends blocks. Race THIS instead.
+        var exitedTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => exitedTcs.TrySetResult();
         process.Start();
+        // Guard the race: the process may have exited before Exited was subscribed.
+        if (process.HasExited)
+            exitedTcs.TrySetResult();
         int? stageGroupId = null;
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
@@ -148,9 +162,10 @@ internal static class ProcessCapture
                 ? killToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already exited */ } })
                 : default;
 
-            var waitTask = process.WaitForExitAsync(cancellationToken);
+            // Propagate cancellation, mirroring the old WaitForExitAsync(cancellationToken).
+            await using var ctReg = cancellationToken.Register(() => exitedTcs.TrySetCanceled(cancellationToken));
 
-            if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(waitTask, Task.Delay(timeout, cancellationToken)) != waitTask)
+            if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, cancellationToken)) != exitedTcs.Task)
             {
                 process.Kill(entireProcessTree: true);
                 if (stageGroupId.HasValue)
@@ -160,14 +175,14 @@ internal static class ProcessCapture
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
-            await waitTask;
-            // Reap survivors via process-group kill.  The wrapper placed the
-            // stage in its own process group at start, so kill(-pgid) targets
-            // exactly this stage's descendants.
+            await exitedTcs.Task;
+            // Process exited: REAP FIRST (process-group kill targets this stage's
+            // descendants, tree-kill backstops) so survivors release the inherited
+            // pipe write-ends, THEN bounded-drain — WaitForExitAsync now EOFs fast.
             if (stageGroupId.HasValue)
-            {
                 try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
-            }
+            try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(DrainGraceMs, CancellationToken.None));
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }
         finally
