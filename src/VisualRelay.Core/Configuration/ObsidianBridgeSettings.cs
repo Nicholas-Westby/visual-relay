@@ -44,46 +44,40 @@ public static class ObsidianBridgeSettings
             PollSeconds: 60);
 
         // If HOME is unset, we can't resolve a config path → return defaults.
+        // This early return is also why no InvalidOperationException guard is
+        // needed below: with HOME set, path resolution can never throw.
         if (string.IsNullOrWhiteSpace(home))
         {
             return defaults;
         }
 
-        try
-        {
-            // One-time migration from legacy obsidian.json (best-effort).
-            TryMigrateFromObsidianJson(accessor);
+        // One-time migration from legacy obsidian.json (best-effort).
+        TryMigrateFromObsidianJson(accessor);
 
-            // Read the user-level .env file.
-            var envDict = KeyEnvFile.Read(accessor);
+        // Read the user-level .env file.
+        var envDict = KeyEnvFile.Read(accessor);
 
-            // Process-env-wins for each key: check the accessor/process env
-            // first, then fall back to the .env file.
-            var enabledStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_ENABLED", accessor)
-                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_ENABLED");
-            var vaultRootStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_VAULT_ROOT", accessor)
-                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_VAULT_ROOT");
-            var pollStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_POLL_SECONDS", accessor)
-                ?? envDict.GetValueOrDefault("VR_OBSIDIAN_POLL_SECONDS");
+        // Process-env-wins for each key: check the accessor/process env
+        // first, then fall back to the .env file.
+        var enabledStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_ENABLED", accessor)
+            ?? envDict.GetValueOrDefault("VR_OBSIDIAN_ENABLED");
+        var vaultRootStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_VAULT_ROOT", accessor)
+            ?? envDict.GetValueOrDefault("VR_OBSIDIAN_VAULT_ROOT");
+        var pollStr = KeyEnvFile.GetEnv("VR_OBSIDIAN_POLL_SECONDS", accessor)
+            ?? envDict.GetValueOrDefault("VR_OBSIDIAN_POLL_SECONDS");
 
-            // Parse with safe defaults.
-            var enabled = bool.TryParse(enabledStr, out var e) && e;
+        // Parse with safe defaults.
+        var enabled = bool.TryParse(enabledStr, out var e) && e;
 
-            var vaultRoot = !string.IsNullOrWhiteSpace(vaultRootStr)
-                ? ExpandTilde(vaultRootStr, home)
-                : defaultVaultRoot;
+        var vaultRoot = !string.IsNullOrWhiteSpace(vaultRootStr)
+            ? ExpandTilde(vaultRootStr, home)
+            : defaultVaultRoot;
 
-            var pollSeconds = int.TryParse(pollStr, out var p) ? p : 60;
-            if (pollSeconds < MinPollSeconds)
-                pollSeconds = MinPollSeconds;
+        var pollSeconds = int.TryParse(pollStr, out var p) ? p : 60;
+        if (pollSeconds < MinPollSeconds)
+            pollSeconds = MinPollSeconds;
 
-            return new ObsidianBridgeConfig(enabled, vaultRoot, pollSeconds);
-        }
-        catch (InvalidOperationException)
-        {
-            // Neither XDG_CONFIG_HOME nor HOME is set — can't resolve path.
-            return defaults;
-        }
+        return new ObsidianBridgeConfig(enabled, vaultRoot, pollSeconds);
     }
 
     // ── Save ──────────────────────────────────────────────────────────────

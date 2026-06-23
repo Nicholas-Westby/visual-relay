@@ -70,10 +70,19 @@ public sealed class InitPanelButtonsLayoutTests
         textBlock.Measure(Size.Infinity);
         var labelDesiredWidth = textBlock.DesiredSize.Width;
 
+        // The bare-text comparison is a near-tautology: the button's outer width
+        // always exceeds the text width by its horizontal padding (~24 px here),
+        // so it would pass even when the content area is too narrow. Account for
+        // the button's own padding so this is a real "label is not clipped" guard:
+        // the arranged width must fit the text PLUS the left/right padding.
+        var horizontalPadding = button.Padding.Left + button.Padding.Right;
+        var requiredWidth = labelDesiredWidth + horizontalPadding;
+
         Assert.True(
-            button.Bounds.Width >= labelDesiredWidth - 1.0,
+            button.Bounds.Width >= requiredWidth - 1.0,
             $"Button '{expectedLabel}' arranged width {button.Bounds.Width:F1} px "
-            + $"should be ≥ label desired width {labelDesiredWidth:F1} px "
-            + $"(label is clipped when the button is too narrow)");
+            + $"should be ≥ label desired width {labelDesiredWidth:F1} px + "
+            + $"horizontal padding {horizontalPadding:F1} px = {requiredWidth:F1} px "
+            + $"(label is clipped when the button content area is too narrow)");
     }
 }

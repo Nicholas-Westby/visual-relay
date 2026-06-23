@@ -25,6 +25,26 @@ public sealed class KeyEnvFileTests
         Assert.StartsWith(home + "/.config/visual-relay/.env", path, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void ResolvePathForCurrentUser_HonorsInjectedAccessorXdgConfigHome()
+    {
+        _env["XDG_CONFIG_HOME"] = "/custom/xdg/config";
+
+        var path = KeyEnvFile.ResolvePathForCurrentUser(_env);
+
+        Assert.StartsWith("/custom/xdg/config/visual-relay/.env", path, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ResolvePathForCurrentUser_HonorsInjectedAccessorHomeFallback()
+    {
+        _env["HOME"] = "/home/seam";
+
+        var path = KeyEnvFile.ResolvePathForCurrentUser(_env);
+
+        Assert.StartsWith("/home/seam/.config/visual-relay/.env", path, StringComparison.Ordinal);
+    }
+
     // ── Parse ──────────────────────────────────────────────────────────
 
     [Fact]

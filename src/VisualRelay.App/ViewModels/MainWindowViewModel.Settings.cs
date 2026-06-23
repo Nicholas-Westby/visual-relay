@@ -48,7 +48,7 @@ public partial class MainWindowViewModel
     [RelayCommand]
     private void RevealSettingsFile()
     {
-        var path = KeyEnvFile.ResolvePathForCurrentUser();
+        var path = KeyEnvFile.ResolvePathForCurrentUser(EnvironmentAccessor);
         if (File.Exists(path))
         {
             FileReveal.Reveal(path);

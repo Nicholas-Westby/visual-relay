@@ -93,14 +93,14 @@ public sealed class Installer5DocsTests
 
         // The brew command is demoted: a window around it must flag that it is
         // not yet available / coming once a release is published, so nobody runs
-        // a brew install that 404s today.
+        // a brew install that 404s today. Require an explicit demotion phrase —
+        // a bare "once" (e.g. "run this once") must not satisfy the marker.
         var windowStart = Math.Max(0, brewIdx - 400);
         var window = content.Substring(windowStart, Math.Min(content.Length - windowStart, 800));
         Assert.True(
-            window.Contains("not yet", StringComparison.OrdinalIgnoreCase) ||
-            window.Contains("once ", StringComparison.OrdinalIgnoreCase) ||
-            window.Contains("coming", StringComparison.OrdinalIgnoreCase) ||
-            window.Contains("not available", StringComparison.OrdinalIgnoreCase),
+            window.Contains("not yet published", StringComparison.OrdinalIgnoreCase) ||
+            window.Contains("not yet available", StringComparison.OrdinalIgnoreCase) ||
+            window.Contains("coming once", StringComparison.OrdinalIgnoreCase),
             "The brew install must be clearly marked as not yet available / coming once released");
     }
 

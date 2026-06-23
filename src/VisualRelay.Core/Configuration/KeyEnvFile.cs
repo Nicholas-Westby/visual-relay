@@ -39,7 +39,16 @@ public static class KeyEnvFile
     /// process environment. The backend lifecycle reads this to source provider
     /// keys at proxy start (the user-level tier of the precedence chain).
     /// </summary>
-    public static string ResolvePathForCurrentUser() => ResolvePath();
+    public static string ResolvePathForCurrentUser() => ResolvePathForCurrentUser(null);
+
+    /// <summary>
+    /// Public accessor for the user-level dotenv path, reading
+    /// <c>XDG_CONFIG_HOME</c> and <c>HOME</c> through <paramref name="accessor"/>
+    /// (or the real process environment when null). Threads the same env seam as
+    /// the other settings/keys methods so callers stay consistent and testable.
+    /// </summary>
+    public static string ResolvePathForCurrentUser(IEnvironmentAccessor? accessor) =>
+        ResolvePath(accessor);
 
     /// <summary>
     /// Public accessor for <see cref="GetUnsetKeys(string, IEnvironmentAccessor?)"/>:
