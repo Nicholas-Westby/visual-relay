@@ -151,6 +151,7 @@ public partial class MainWindowViewModel
         SelectedTask = preferredTaskId is null
             ? Tasks.FirstOrDefault()
             : Tasks.FirstOrDefault(task => task.Id == preferredTaskId) ?? Tasks.FirstOrDefault();
+        DrainQueueCommand.NotifyCanExecuteChanged();
     }
 
     private async Task RunBusyAsync(Func<Task> action)

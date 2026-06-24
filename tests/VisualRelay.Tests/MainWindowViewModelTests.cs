@@ -203,6 +203,36 @@ public sealed partial class MainWindowViewModelTests
         Assert.False(viewModel.RevealStageArtifactsCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task DrainQueueCommand_FiresCanExecuteChanged_AfterCreatingTask()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("existing", "# Existing\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        // Open the new-task dialog and set a title so CreateNewTask can execute.
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        viewModel.NewTaskTitle = "New feature";
+
+        // Subscribe AFTER load so IsBusy toggles during RunBusyAsync/RefreshAsync
+        // don't inflate the count (those fire via [NotifyCanExecuteChangedFor]
+        // on _isBusy, which is expected and not the bug being tested).
+        var changedCount = 0;
+        viewModel.DrainQueueCommand.CanExecuteChanged += (_, _) => changedCount++;
+
+        // Create the task — this flows through ReloadTaskListAsync, which must
+        // call DrainQueueCommand.NotifyCanExecuteChanged() so the "Run All"
+        // button re-reads CanExecute and becomes enabled.
+        await viewModel.CreateNewTaskCommand.ExecuteAsync(null);
+
+        Assert.True(changedCount >= 1,
+            "DrainQueueCommand.CanExecuteChanged must fire after creating a task " +
+            "(ReloadTaskListAsync must call DrainQueueCommand.NotifyCanExecuteChanged()).");
+    }
+
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
