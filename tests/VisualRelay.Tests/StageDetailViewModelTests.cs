@@ -212,6 +212,46 @@ public sealed class StageDetailViewModelTests
         AssertAllStates(vm, StageDetailState.NoStage);
     }
 
+    [Fact]
+    public void Load_StageDoneNoReport_OutputStateSkipped()
+    {
+        // When a stage has Status="Done" (e.g. Fix-verify skipped because
+        // Verify found no issues) but no report file exists, the output tab
+        // should show the Skipped state — not the misleading NotComplete
+        // "will appear once the stage completes" message.
+        using var dir = new TempDirectory();
+        var stage = MakeStage(10, "Fix-verify", "balanced");
+        stage.Status = "Done";
+
+        var vm = new StageDetailViewModel();
+        vm.Load(stage, dir.Path);
+
+        Assert.Equal(StageDetailState.Skipped, vm.OutputState);
+        Assert.True(vm.IsOutputSkipped);
+        // System prompt still loads from the static definition.
+        Assert.Equal(StageDetailState.Ready, vm.SystemState);
+        // Input has no artifact file, so it remains NotStarted.
+        Assert.Equal(StageDetailState.NotStarted, vm.InputState);
+    }
+
+    [Fact]
+    public void Load_StageNotDoneNoReport_OutputStateNotComplete()
+    {
+        // When a stage has Status != "Done" (e.g. still Waiting/Running) and
+        // no report file exists, the output is genuinely NotComplete — not
+        // Skipped. This guards against accidentally treating all missing-report
+        // cases as skipped.
+        using var dir = new TempDirectory();
+        var stage = MakeStage(10, "Fix-verify", "balanced");
+        stage.Status = "Waiting";
+
+        var vm = new StageDetailViewModel();
+        vm.Load(stage, dir.Path);
+
+        Assert.Equal(StageDetailState.NotComplete, vm.OutputState);
+        Assert.False(vm.IsOutputSkipped);
+    }
+
     private static void AssertAllStates(StageDetailViewModel vm, StageDetailState expected)
     {
         Assert.Equal(expected, vm.SystemState);

@@ -6,7 +6,7 @@ using VisualRelay.Core.Traces;
 
 namespace VisualRelay.App.ViewModels;
 
-public enum StageDetailState { NoStage, NotStarted, NotComplete, Ready, DriverStage }
+public enum StageDetailState { NoStage, NotStarted, NotComplete, Ready, DriverStage, Skipped }
 
 public partial class StageDetailViewModel : ViewModelBase
 {
@@ -60,6 +60,7 @@ public partial class StageDetailViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsOutputNotComplete))]
     [NotifyPropertyChangedFor(nameof(IsOutputReady))]
     [NotifyPropertyChangedFor(nameof(IsOutputDriverStage))]
+    [NotifyPropertyChangedFor(nameof(IsOutputSkipped))]
     private StageDetailState _outputState = StageDetailState.NoStage;
 
     // ── Boolean state properties for XAML binding (no converter needed) ──
@@ -81,6 +82,7 @@ public partial class StageDetailViewModel : ViewModelBase
     public bool IsOutputNotComplete => OutputState == StageDetailState.NotComplete;
     public bool IsOutputReady => OutputState == StageDetailState.Ready;
     public bool IsOutputDriverStage => OutputState == StageDetailState.DriverStage;
+    public bool IsOutputSkipped => OutputState == StageDetailState.Skipped;
 
     // ── Raw toggle visibility helpers ──
 
@@ -141,7 +143,7 @@ public partial class StageDetailViewModel : ViewModelBase
         LoadInput(inputPath);
 
         // ── Output fields ───────────────────────────────────────────
-        LoadOutput(taskDirectory, stage.Number);
+        LoadOutput(taskDirectory, stage.Number, stage.Status);
 
         // ── Header ──────────────────────────────────────────────────
         Header = BuildHeader(stage, inputPath);
@@ -185,14 +187,16 @@ public partial class StageDetailViewModel : ViewModelBase
         }
     }
 
-    private void LoadOutput(string taskDirectory, int stageNumber)
+    private void LoadOutput(string taskDirectory, int stageNumber, string? status)
     {
         var reportPath = LatestReportPath(taskDirectory, stageNumber);
         if (reportPath is null || !File.Exists(reportPath))
         {
             OutputFields = [];
             RawJson = "";
-            OutputState = StageDetailState.NotComplete;
+            OutputState = "Done".Equals(status, StringComparison.OrdinalIgnoreCase)
+                ? StageDetailState.Skipped
+                : StageDetailState.NotComplete;
             return;
         }
 
