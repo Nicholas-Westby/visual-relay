@@ -6,7 +6,7 @@ using VisualRelay.Core.Traces;
 
 namespace VisualRelay.App.ViewModels;
 
-public enum StageDetailState { NoStage, NotStarted, NotComplete, Ready, DriverStage, Skipped }
+public enum StageDetailState { NoStage, NotStarted, NotComplete, Ready, DriverStage, Skipped, NotAvailable }
 
 public partial class StageDetailViewModel : ViewModelBase
 {
@@ -52,6 +52,7 @@ public partial class StageDetailViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsInputNotComplete))]
     [NotifyPropertyChangedFor(nameof(IsInputReady))]
     [NotifyPropertyChangedFor(nameof(IsInputDriverStage))]
+    [NotifyPropertyChangedFor(nameof(IsInputNotAvailable))]
     [NotifyPropertyChangedFor(nameof(IsInputReadyAndNotRawText))]
     [NotifyPropertyChangedFor(nameof(IsInputReadyAndRawText))]
     private StageDetailState _inputState = StageDetailState.NoStage;
@@ -63,6 +64,7 @@ public partial class StageDetailViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsOutputReady))]
     [NotifyPropertyChangedFor(nameof(IsOutputDriverStage))]
     [NotifyPropertyChangedFor(nameof(IsOutputSkipped))]
+    [NotifyPropertyChangedFor(nameof(IsOutputNotAvailable))]
     [NotifyPropertyChangedFor(nameof(IsOutputReadyAndNotRawJson))]
     [NotifyPropertyChangedFor(nameof(IsOutputReadyAndRawJson))]
     private StageDetailState _outputState = StageDetailState.NoStage;
@@ -80,13 +82,14 @@ public partial class StageDetailViewModel : ViewModelBase
     public bool IsInputNotComplete => InputState == StageDetailState.NotComplete;
     public bool IsInputReady => InputState == StageDetailState.Ready;
     public bool IsInputDriverStage => InputState == StageDetailState.DriverStage;
-
+    public bool IsInputNotAvailable => InputState == StageDetailState.NotAvailable;
     public bool IsOutputNoStage => OutputState == StageDetailState.NoStage;
     public bool IsOutputNotStarted => OutputState == StageDetailState.NotStarted;
     public bool IsOutputNotComplete => OutputState == StageDetailState.NotComplete;
     public bool IsOutputReady => OutputState == StageDetailState.Ready;
     public bool IsOutputDriverStage => OutputState == StageDetailState.DriverStage;
     public bool IsOutputSkipped => OutputState == StageDetailState.Skipped;
+    public bool IsOutputNotAvailable => OutputState == StageDetailState.NotAvailable;
 
     // ── Raw toggle visibility helpers ──
 
@@ -129,19 +132,17 @@ public partial class StageDetailViewModel : ViewModelBase
 
         if (string.IsNullOrEmpty(taskDirectory) || !Directory.Exists(taskDirectory))
         {
-            // ── System prompt (static fallback) ─────────────────────
             LoadSystemPrompt(null, stage);
 
-            // ── Input / Output ──────────────────────────────────────
+            var done = "Done".Equals(stage.Status, StringComparison.OrdinalIgnoreCase);
             InputSections = [];
             InputPromptRawText = "";
             IsInputRawText = false;
-            InputState = StageDetailState.NotStarted;
+            InputState = done ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
             OutputFields = [];
             RawJson = "";
-            OutputState = StageDetailState.NotComplete;
+            OutputState = done ? StageDetailState.NotAvailable : StageDetailState.NotComplete;
 
-            // ── Header ──────────────────────────────────────────────
             Header = BuildHeader(stage, null);
             return;
         }
@@ -152,7 +153,7 @@ public partial class StageDetailViewModel : ViewModelBase
         LoadSystemPrompt(inputPath, stage);
 
         // ── Input sections ─────────────────────────────────────────
-        LoadInput(inputPath);
+        LoadInput(inputPath, stage.Status);
 
         // ── Output fields ───────────────────────────────────────────
         LoadOutput(taskDirectory, stage.Number, stage.Status);
@@ -179,7 +180,7 @@ public partial class StageDetailViewModel : ViewModelBase
         SystemState = StageDetailState.Ready;
     }
 
-    private void LoadInput(string? inputPath)
+    private void LoadInput(string? inputPath, string? status)
     {
         if (inputPath is not null &&
             StageInputArtifact.TryRead(inputPath, out var data) &&
@@ -195,7 +196,8 @@ public partial class StageDetailViewModel : ViewModelBase
             InputSections = [];
             InputPromptRawText = "";
             IsInputRawText = false;
-            InputState = StageDetailState.NotStarted;
+            var done = "Done".Equals(status, StringComparison.OrdinalIgnoreCase);
+            InputState = done ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
         }
     }
 

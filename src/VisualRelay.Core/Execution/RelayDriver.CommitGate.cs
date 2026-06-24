@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Tasks;
+using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -149,6 +150,29 @@ public sealed partial class RelayDriver
                     Path.Combine(".relay", taskId, "manifest.txt"),
                     Path.Combine(".relay", taskId, "status.json"),
                 });
+
+                // ── Per-stage .input.json and .report.json artifacts ──
+                if (Directory.Exists(taskDirectory))
+                {
+                    var inputFiles = Directory.EnumerateFiles(taskDirectory, "stage*-attempt*.input.json");
+                    var reportFiles = Directory.EnumerateFiles(taskDirectory, "stage*-attempt*.report.json");
+                    var allArtifacts = inputFiles.Concat(reportFiles);
+
+                    // Group by stage number and pick all files from the highest attempt.
+                    var latestByStage = allArtifacts
+                        .GroupBy(f => RelayAttempt.StageNumber(Path.GetFileName(f)) ?? 0)
+                        .Where(g => g.Key > 0)
+                        .SelectMany(g =>
+                        {
+                            var maxAttempt = g.Max(f => RelayAttempt.AttemptNumber(Path.GetFileName(f)));
+                            return g.Where(f => RelayAttempt.AttemptNumber(Path.GetFileName(f)) == maxAttempt);
+                        });
+
+                    foreach (var fullPath in latestByStage)
+                    {
+                        proofFiles.Add(Path.Combine(".relay", taskId, Path.GetFileName(fullPath)));
+                    }
+                }
             }
             if (retirement?.Additions is { Count: > 0 } additions)
                 proofFiles.AddRange(additions);
