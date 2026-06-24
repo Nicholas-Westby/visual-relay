@@ -27,9 +27,9 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
     private static (string VaultRoot, string RepoRoot) SetupDirs()
     {
         var vaultRoot = Path.Combine(Path.GetTempPath(), "vr-obsidian-vm-scaf-tests",
-            Guid.NewGuid().ToString("N"));
+            "vault-" + Guid.NewGuid().ToString("N")[..8]);
         var repoRoot = Path.Combine(Path.GetTempPath(), "vr-obsidian-vm-scaf-repo",
-            Guid.NewGuid().ToString("N"));
+            "repo-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(vaultRoot);
         Directory.CreateDirectory(repoRoot);
         return (vaultRoot, repoRoot);
@@ -74,7 +74,7 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
             var viewModel = CreateViewModel(repoRoot, vaultRoot, env);
             await viewModel.LoadInitialAsync();
 
-            var repoName = RootFolderDisplay.Name(repoRoot);
+            var repoName = Path.GetFileName(repoRoot);
             var repoDir = Path.Combine(vaultRoot, repoName);
             Assert.False(Directory.Exists(repoDir),
                 "Vault repo dir should not exist before first scan");
@@ -115,7 +115,7 @@ public sealed class ObsidianBridgeVmScaffoldExportTests : IDisposable
             await viewModel.LoadInitialAsync();
             await Dispatcher.UIThread.InvokeAsync(viewModel.RunObsidianBridgeScanAsync);
 
-            var repoName = RootFolderDisplay.Name(repoRoot);
+            var repoName = Path.GetFileName(repoRoot);
             var summaryPath = Path.Combine(vaultRoot, repoName, "Completed", "2026-06-20", $"{taskId}.md");
             Assert.True(File.Exists(summaryPath));
             var content = File.ReadAllText(summaryPath);

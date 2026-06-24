@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Core.ObsidianBridge;
 
@@ -23,6 +24,9 @@ public sealed partial class ObsidianVaultLayout
     // it can never match a path-traversal token ("..", "a/b", "x.y", …).
     [GeneratedRegex("^[a-z0-9]+(-[a-z0-9]+)*$")]
     private static partial Regex SlugRegex();
+
+    [GeneratedRegex("^[0-9a-f]{32}$", RegexOptions.IgnoreCase)]
+    private static partial Regex GuidNRegex();
 
     /// <summary>
     /// True when <paramref name="taskId"/> is a safe kebab-case slug
@@ -85,7 +89,56 @@ public sealed partial class ObsidianVaultLayout
         if (string.IsNullOrWhiteSpace(sanitized) || dotCheck is "." or "..")
             return FallbackRepoName;
 
+        // Reject bare 32-hex-char Guid.ToString("N") strings — these are
+        // never legitimate project names and come from temp/worktree checkout
+        // paths whose leaf happens to be a GUID.
+        if (GuidNRegex().IsMatch(sanitized))
+            return FallbackRepoName;
+
         return sanitized;
+    }
+
+    /// <summary>
+    /// Resolves the stable vault folder name for the project at
+    /// <paramref name="rootPath"/>. Prefers the git repo-root leaf
+    /// (<c>git rev-parse --show-toplevel</c>) when inside a work tree;
+    /// falls back to the directory leaf otherwise.
+    /// </summary>
+    public static async Task<string> ResolveProjectFolderNameAsync(
+        string rootPath,
+        IGitInvoker? gitInvoker = null,
+        CancellationToken cancellationToken = default)
+    {
+        var gi = gitInvoker ?? new GitInvoker();
+        try
+        {
+            var result = await gi.RunAsync(
+                rootPath, ["rev-parse", "--show-toplevel"], cancellationToken);
+            if (result.ExitCode == 0)
+            {
+                var topLevel = result.Output.Trim();
+                if (!string.IsNullOrEmpty(topLevel))
+                {
+                    var leaf = Path.GetFileName(
+                        topLevel.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+                    if (!string.IsNullOrEmpty(leaf))
+                        return leaf;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Best-effort: any git failure falls through to directory leaf.
+        }
+
+        // Fallback: use the directory leaf (same logic as RootFolderDisplay.Name).
+        var trimmed = rootPath.TrimEnd(
+            Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return Path.GetFileName(trimmed) is { Length: > 0 } name ? name : trimmed;
     }
 
     /// <summary>

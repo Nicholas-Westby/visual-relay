@@ -28,9 +28,9 @@ public sealed class ObsidianBridgeVmTests : IDisposable
     private static (string VaultRoot, string RepoRoot) SetupDirs()
     {
         var vaultRoot = Path.Combine(Path.GetTempPath(), "vr-obsidian-vm-tests",
-            Guid.NewGuid().ToString("N"));
+            "vault-" + Guid.NewGuid().ToString("N")[..8]);
         var repoRoot = Path.Combine(Path.GetTempPath(), "vr-obsidian-vm-repo",
-            Guid.NewGuid().ToString("N"));
+            "repo-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(vaultRoot);
         Directory.CreateDirectory(repoRoot);
         return (vaultRoot, repoRoot);
@@ -90,7 +90,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             await viewModel.LoadInitialAsync();
 
             // Set up the vault layout and drop a task file.
-            var newTasksDir = Path.Combine(vaultRoot, RootFolderDisplay.Name(repoRoot), "New Tasks");
+            var newTasksDir = Path.Combine(vaultRoot, Path.GetFileName(repoRoot), "New Tasks");
             Directory.CreateDirectory(newTasksDir);
 
             var sourcePath = Path.Combine(newTasksDir, "obsidian-task.md");
@@ -128,7 +128,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             await viewModel.LoadInitialAsync();
 
             // Drop a task file in the vault — it should be ignored.
-            var newTasksDir = Path.Combine(vaultRoot, RootFolderDisplay.Name(repoRoot), "New Tasks");
+            var newTasksDir = Path.Combine(vaultRoot, Path.GetFileName(repoRoot), "New Tasks");
             Directory.CreateDirectory(newTasksDir);
 
             var sourcePath = Path.Combine(newTasksDir, "should-be-ignored.md");
@@ -171,7 +171,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             // Pause the queue.
             await Dispatcher.UIThread.InvokeAsync(() => viewModel.PauseRequested = true);
 
-            var newTasksDir = Path.Combine(vaultRoot, RootFolderDisplay.Name(repoRoot), "New Tasks");
+            var newTasksDir = Path.Combine(vaultRoot, Path.GetFileName(repoRoot), "New Tasks");
             Directory.CreateDirectory(newTasksDir);
 
             var sourcePath = Path.Combine(newTasksDir, "paused-import.md");
@@ -213,7 +213,7 @@ public sealed class ObsidianBridgeVmTests : IDisposable
             // Mark the VM as busy (simulating a running drain/task).
             await Dispatcher.UIThread.InvokeAsync(() => viewModel.IsBusy = true);
 
-            var newTasksDir = Path.Combine(vaultRoot, RootFolderDisplay.Name(repoRoot), "New Tasks");
+            var newTasksDir = Path.Combine(vaultRoot, Path.GetFileName(repoRoot), "New Tasks");
             Directory.CreateDirectory(newTasksDir);
 
             var sourcePath = Path.Combine(newTasksDir, "busy-ignore.md");

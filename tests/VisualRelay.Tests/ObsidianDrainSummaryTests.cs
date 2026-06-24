@@ -93,8 +93,9 @@ public sealed class ObsidianDrainSummaryTests : IDisposable
     private static async Task<string> WaitForSummaryAsync(
         MainWindowViewModel viewModel, string vaultRoot, string taskId)
     {
-        var layout = new ObsidianVaultLayout(
-            vaultRoot, RootFolderDisplay.Name(viewModel.RootPath));
+        var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(
+            viewModel.RootPath);
+        var layout = new ObsidianVaultLayout(vaultRoot, repoName);
         // The export is fire-and-forget (_ = ExportSummaryOnCompletion(...)). Poll a
         // short while for the dated summary to appear under Completed/<date>/.
         var deadline = DateTime.UtcNow.AddSeconds(10);

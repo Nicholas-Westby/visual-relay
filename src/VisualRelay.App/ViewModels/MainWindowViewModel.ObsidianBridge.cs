@@ -87,7 +87,7 @@ public partial class MainWindowViewModel
         _bridgeCycleBusy = true;
         try
         {
-            var repoName = RootFolderDisplay.Name(RootPath);
+            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath);
             var layout = new ObsidianVaultLayout(ObsidianVaultRoot, repoName);
             layout.EnsureScaffold();
 
@@ -145,7 +145,8 @@ public partial class MainWindowViewModel
         if (!ObsidianEnabled || string.IsNullOrWhiteSpace(ObsidianVaultRoot)) return;
         try
         {
-            var layout = new ObsidianVaultLayout(ObsidianVaultRoot, RootFolderDisplay.Name(RootPath));
+            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath);
+            var layout = new ObsidianVaultLayout(ObsidianVaultRoot, repoName);
             layout.EnsureScaffold();
             var spec = await ResolveTaskSpecAsync(taskId);
             new ObsidianSummaryWriter().Write(layout, RootPath, taskId, outcome, spec, sourceGuid, DateTimeOffset.UtcNow);
