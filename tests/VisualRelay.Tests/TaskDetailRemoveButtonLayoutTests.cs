@@ -14,7 +14,7 @@ namespace VisualRelay.Tests;
 /// Regression anchor for the Attachments-tab Remove button clipping defect.
 ///
 /// Root cause: the Remove button sits in the rightmost Auto column of a
-/// *,Auto,Auto Grid inside a <see cref="Border"/> with Padding="4,3"
+/// DockPanel inside a <see cref="Border"/> with Padding="4,3"
 /// (only 4 px right padding).  Above that, the Attachments-tab
 /// <see cref="ScrollViewer"/> has HorizontalScrollBarVisibility="Disabled"
 /// and its VerticalScrollBarVisibility defaults to Auto.  When enough
@@ -121,7 +121,7 @@ public sealed class TaskDetailRemoveButtonLayoutTests
             $"Remove button right edge ({buttonRight:F1} px) exceeds " +
             $"ScrollViewer viewport width ({viewportWidth:F1} px). " +
             "The button is clipped — increase right padding on the " +
-            "item template Border (line 265) from 4 to at least 10.");
+            "item template Border (DockPanel, line 265) from 4 to at least 10.");
     }
 
     /// <summary>
