@@ -18,8 +18,10 @@ namespace VisualRelay.Tests;
 /// confirm; these assert the checkable surface — a comfortable hit width, that
 /// the hit strip is co-located with the visible seam (the ACTIVITY panel's left
 /// edge, not offset by ColumnSpacing), the resize <see cref="Cursor"/> property,
-/// a non-transparent divider, and that the existing drag→clamp→persist plumbing
-/// still updates <see cref="MainWindowViewModel.ActivityColumnWidth"/>.
+/// a Fluent-style dot-grip divider with transparent hit-strip Background, seam
+/// line matching theme borders, small grip dots (not a heavy block), and that
+/// the existing drag→clamp→persist plumbing still updates
+/// <see cref="MainWindowViewModel.ActivityColumnWidth"/>.
 /// </summary>
 [Collection("Headless")]
 public sealed class ActivitySplitterAffordanceTests
@@ -78,8 +80,9 @@ public sealed class ActivitySplitterAffordanceTests
     }
 
     /// <summary>
-    /// The splitter must read as draggable — it must NOT be an invisible
-    /// fully-transparent strip; it needs a visible (non-transparent) divider.
+    /// The splitter must read as draggable — the hit-strip Background must be
+    /// transparent (no solid fill), while template children (SeamLine + grip
+    /// dots) provide the visible (non-transparent) divider affordance.
     /// </summary>
     [AvaloniaFact]
     public void Splitter_HasVisibleDivider_NotTransparent()
@@ -87,8 +90,65 @@ public sealed class ActivitySplitterAffordanceTests
         var (_, window) = CreateWindow();
         var splitter = FindSplitter(window);
 
-        Assert.False(IsTransparent(splitter.Background),
-            "splitter must have a visible (non-transparent) divider background");
+        // The hit-strip Background must be transparent — no solid fill.
+        Assert.True(IsTransparent(splitter.Background),
+            "splitter Background must be transparent (visible divider comes from template children)");
+
+        // SeamLine must provide the visible (non-transparent) divider line.
+        var seamLine = splitter.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.Name == "SeamLine");
+        Assert.NotNull(seamLine);
+        Assert.False(IsTransparent(seamLine.Background),
+            "SeamLine must provide a visible (non-transparent) divider line");
+    }
+
+    /// <summary>
+    /// The seam line must use the theme panel-border colour (#252A33),
+    /// harmonising with <c>Border.panel</c> borders throughout the app.
+    /// </summary>
+    [AvaloniaFact]
+    public void Splitter_SeamLine_Color_MatchesThemeBorder()
+    {
+        var (_, window) = CreateWindow();
+        var splitter = FindSplitter(window);
+        var seamLine = splitter.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.Name == "SeamLine");
+        Assert.NotNull(seamLine);
+
+        Assert.Equal(Color.Parse("#252A33"), ((ISolidColorBrush)seamLine.Background!).Color);
+    }
+
+    /// <summary>
+    /// The grip must be a dot pattern (≥ 3 small stacked dots at #46535F),
+    /// not the old single 2×34 px solid block. Each dot is ≤ 6×6 px so it
+    /// reads as a subtle grab handle rather than a heavy block.
+    /// </summary>
+    [AvaloniaFact]
+    public void Splitter_Grip_IsDotPattern_NotSolidBlock()
+    {
+        var (_, window) = CreateWindow();
+        var splitter = FindSplitter(window);
+
+        // The old "Grip" block (2×34 px) must not exist.
+        var oldGrip = splitter.GetVisualDescendants().OfType<Border>()
+            .FirstOrDefault(b => b.Name == "Grip");
+        Assert.Null(oldGrip);
+
+        // Small dot-like Borders within the splitter (3–6 px square).
+        var dots = splitter.GetVisualDescendants().OfType<Border>()
+            .Where(b => b.Bounds.Width >= 3 && b.Bounds.Width <= 6
+                     && b.Bounds.Height >= 3 && b.Bounds.Height <= 6)
+            .ToList();
+
+        Assert.True(dots.Count >= 3,
+            $"expected ≥ 3 grip dots, found {dots.Count}");
+
+        foreach (var dot in dots)
+        {
+            Assert.False(IsTransparent(dot.Background),
+                "grip dot Background must be non-transparent");
+            Assert.Equal(Color.Parse("#46535F"), ((ISolidColorBrush)dot.Background!).Color);
+        }
     }
 
     /// <summary>
