@@ -208,10 +208,13 @@ public sealed partial class MainWindowViewModelTests
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
-        repo.WriteTask("existing", "# Existing\n");
+        // Start with NO tasks — the literal spec scenario: an empty project.
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
+
+        // Empty queue → the "Run All" button is correctly disabled.
+        Assert.False(viewModel.DrainQueueCommand.CanExecute(null));
 
         // Open the new-task dialog and set a title so CreateNewTask can execute.
         viewModel.OpenNewTaskDialogCommand.Execute(null);
@@ -224,13 +227,15 @@ public sealed partial class MainWindowViewModelTests
         viewModel.DrainQueueCommand.CanExecuteChanged += (_, _) => changedCount++;
 
         // Create the task — this flows through ReloadTaskListAsync, which must
-        // call DrainQueueCommand.NotifyCanExecuteChanged() so the "Run All"
-        // button re-reads CanExecute and becomes enabled.
+        // re-notify DrainQueueCommand so the "Run All" button re-reads CanExecute.
         await viewModel.CreateNewTaskCommand.ExecuteAsync(null);
 
         Assert.True(changedCount >= 1,
             "DrainQueueCommand.CanExecuteChanged must fire after creating a task " +
-            "(ReloadTaskListAsync must call DrainQueueCommand.NotifyCanExecuteChanged()).");
+            "(ReloadTaskListAsync must re-notify DrainQueueCommand).");
+        // The user-visible outcome the spec demands: the button is now enabled.
+        Assert.True(viewModel.DrainQueueCommand.CanExecute(null),
+            "The 'Run All' button must become enabled once a task exists.");
     }
 
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)

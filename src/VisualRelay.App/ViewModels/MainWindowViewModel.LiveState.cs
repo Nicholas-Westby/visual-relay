@@ -78,6 +78,9 @@ public partial class MainWindowViewModel
         if (string.Equals(SelectedTask?.Id, taskId, StringComparison.Ordinal))
             SelectedTask = Tasks.FirstOrDefault(t => !string.Equals(t.Id, taskId, StringComparison.Ordinal));
         Tasks.Remove(row);
+        // Queue membership changed — keep "Run All" in sync (CanDrain reads Tasks, a plain
+        // ObservableCollection the MVVM generator can't auto-wire CanExecuteChanged to).
+        DrainQueueCommand.NotifyCanExecuteChanged();
     }
 
     internal void RestoreRunningTaskState(string taskId, int? stageNumber, string? stageName)
