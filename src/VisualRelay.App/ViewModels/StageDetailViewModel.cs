@@ -209,7 +209,7 @@ public partial class StageDetailViewModel : ViewModelBase
             OutputFields = [];
             RawJson = "";
             OutputState = "Done".Equals(status, StringComparison.OrdinalIgnoreCase)
-                ? StageDetailState.Skipped
+                ? stageNumber == 10 ? StageDetailState.Skipped : StageDetailState.NotAvailable
                 : StageDetailState.NotComplete;
             return;
         }

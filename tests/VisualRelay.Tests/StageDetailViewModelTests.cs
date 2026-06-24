@@ -217,6 +217,19 @@ public sealed class StageDetailViewModelTests
         Assert.False(vm.IsOutputSkipped);
     }
     [Fact]
+    public void Load_DoneNonVerifyStageNoReport_OutputStateNotAvailable()
+    {
+        // Non-Verify Done stage without report → NotAvailable (not Skipped).
+        using var dir = new TempDirectory();
+        var stage = MakeStage(3, "Diagnose", "balanced");
+        stage.Status = "Done";
+        var vm = new StageDetailViewModel();
+        vm.Load(stage, dir.Path);
+        Assert.Equal(StageDetailState.NotAvailable, vm.OutputState);
+        Assert.True(vm.IsOutputNotAvailable);
+        Assert.False(vm.IsOutputSkipped);
+    }
+    [Fact]
     public void Load_DoneStageNullDirectory_InputOutputNotAvailable()
     {
         // Null directory + Done → early-return sets NotAvailable (not NotStarted/NotComplete).
@@ -234,6 +247,7 @@ public sealed class StageDetailViewModelTests
     public void Load_DoneStageNoInputFile_InputNotAvailable()
     {
         // Directory exists, no .input.json, stage Done → LoadInput sets NotAvailable.
+        // Non-Verify stage with no report → Output is NotAvailable, not Skipped.
         using var dir = new TempDirectory();
         var stage = MakeStage(3, "Diagnose", "balanced");
         stage.Status = "Done";
@@ -241,7 +255,9 @@ public sealed class StageDetailViewModelTests
         vm.Load(stage, dir.Path);
         Assert.Equal(StageDetailState.NotAvailable, vm.InputState);
         Assert.True(vm.IsInputNotAvailable);
-        Assert.Equal(StageDetailState.Skipped, vm.OutputState);
+        Assert.Equal(StageDetailState.NotAvailable, vm.OutputState);
+        Assert.True(vm.IsOutputNotAvailable);
+        Assert.False(vm.IsOutputSkipped);
     }
     [Fact]
     public void RawToggleTooltips_HaveDescriptiveText()
@@ -277,17 +293,5 @@ public sealed class StageDetailViewModelTests
         var report = JsonSerializer.Serialize(new { result = new { answer = answerJson } });
         File.WriteAllText(path, report);
         return path;
-    }
-
-    private sealed class TempDirectory : IDisposable
-    {
-        public string Path { get; } = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(), "vr-sdvm-tests", Guid.NewGuid().ToString("N"));
-        public TempDirectory() => Directory.CreateDirectory(Path);
-        public void Dispose()
-        {
-            try { TestFileSystem.DeleteDirectoryResilient(Path); }
-            catch { /* best-effort */ }
-        }
     }
 }

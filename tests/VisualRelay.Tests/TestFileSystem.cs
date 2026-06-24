@@ -52,3 +52,15 @@ internal static class TestFileSystem
         }
     }
 }
+
+internal sealed class TempDirectory : IDisposable
+{
+    public string Path { get; } = System.IO.Path.Combine(
+        System.IO.Path.GetTempPath(), "vr-sdvm-tests", Guid.NewGuid().ToString("N"));
+    public TempDirectory() => Directory.CreateDirectory(Path);
+    public void Dispose()
+    {
+        try { TestFileSystem.DeleteDirectoryResilient(Path); }
+        catch { /* best-effort */ }
+    }
+}
