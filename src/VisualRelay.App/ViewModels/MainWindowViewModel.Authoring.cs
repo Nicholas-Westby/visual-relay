@@ -6,7 +6,7 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
-    // ── Edit markdown ─────────────────────────────────────────────────────
+    // ── Edit markdown ────────────────────────────────────────────────────
 
     [RelayCommand(CanExecute = nameof(CanEditSelectedTask))]
     private void EditSelectedTask()
@@ -17,7 +17,11 @@ public partial class MainWindowViewModel
         }
 
         IsNewTaskDialogOpen = false;
-        EditBuffer = SelectedTaskMarkdown;
+
+        // Split the markdown into title and body.
+        var (title, body) = SplitMarkdownTitle(SelectedTaskMarkdown, SelectedTask.Id);
+        EditTitleBuffer = title;
+        EditBuffer = body;
         IsEditingMarkdown = true;
     }
 
@@ -65,22 +69,56 @@ public partial class MainWindowViewModel
             return;
         }
 
-        await RelayTaskWriter.SaveAsync(SelectedTask.Task, EditBuffer);
+        var title = EditTitleBuffer.Trim();
+        var body = EditBuffer;
+        var newMarkdown = $"# {title}\n\n{body}";
+        var titleChanged = !string.Equals(title, SelectedTaskName, StringComparison.Ordinal);
+        var newSlug = titleChanged ? RelayTaskWriter.Slugify(title) : SelectedTask.Id;
+
+        if (!titleChanged || string.Equals(newSlug, SelectedTask.Id, StringComparison.Ordinal))
+        {
+            // Slug unchanged or title not modified — save in place.
+            await RelayTaskWriter.SaveAsync(SelectedTask.Task, newMarkdown);
+        }
+        else
+        {
+            // Rename the task directory and markdown file.
+            var newPath = await RelayTaskWriter.RenameAsync(RootPath, SelectedTask.Task, newSlug, newMarkdown);
+            var newDir = Path.GetDirectoryName(newPath)!;
+
+            // Update the task item with new paths and slug.
+            var oldId = SelectedTask.Id;
+            SelectedTask.Task = SelectedTask.Task with { Id = newSlug, MarkdownPath = newPath, TaskDirectory = newDir };
+
+            // Migrate tracking dictionaries.
+            MigrateTrackingDictKey(_boostedTaskIds, oldId, newSlug);
+            if (_rewriteUndo.Has(oldId))
+            {
+                _rewriteUndo.Discard(oldId);
+            }
+        }
+
         _rewriteUndo.Discard(SelectedTask.Id);
         RaiseRewriteStateChanged();
         IsEditingMarkdown = false;
+        EditTitleBuffer = string.Empty;
 
-        // Reload the selected task to refresh markdown and context.
-        await LoadSelectedTaskAsync(SelectedTask);
+        // Reload the selected task to refresh markdown, context, and the queue list.
+        await ReloadTaskListAsync(SelectedTask.Id);
+
+        // After reload, SelectedTaskName is set by SelectTaskAsync, but set it
+        // here as well so it's immediately visible.
+        SelectedTaskName = title;
     }
 
-    private bool CanSaveEdit() => IsEditingMarkdown && SelectedTask is not null;
-
+    private bool CanSaveEdit() =>
+        IsEditingMarkdown && SelectedTask is not null && !string.IsNullOrWhiteSpace(EditTitleBuffer);
     [RelayCommand]
     private void CancelEdit()
     {
         IsEditingMarkdown = false;
         EditBuffer = string.Empty;
+        EditTitleBuffer = string.Empty;
     }
 
     // ── Attachments ───────────────────────────────────────────────────────
@@ -220,7 +258,6 @@ public partial class MainWindowViewModel
         SelectedTabIndex = 0;
         IsNewTaskDialogOpen = true;
     }
-
     [RelayCommand(CanExecute = nameof(CanCreateNewTask))]
     private async Task CreateNewTaskAsync()
     {
@@ -255,7 +292,6 @@ public partial class MainWindowViewModel
 
     private bool CanCreateNewTask() =>
         !string.IsNullOrWhiteSpace(NewTaskTitle);
-
     /// <summary>
     /// True when the Markdown tab should show the read-only view — neither
     /// editing an existing task nor authoring a new one.

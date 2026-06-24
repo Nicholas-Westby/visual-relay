@@ -184,7 +184,7 @@ public sealed class NewTaskAuthoringTests
         // ── Enter edit mode ──
         viewModel.EditSelectedTaskCommand.Execute(null);
         Assert.True(viewModel.IsEditingMarkdown);
-        Assert.False(string.IsNullOrEmpty(viewModel.EditBuffer));
+        Assert.False(string.IsNullOrEmpty(viewModel.EditTitleBuffer));
 
         // ── Open new-task dialog → must exit edit mode ──
         viewModel.OpenNewTaskDialogCommand.Execute(null);

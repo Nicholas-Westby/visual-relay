@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayTaskWriterTests
+public sealed partial class RelayTaskWriterTests
 {
     // ── CreateAsync ──────────────────────────────────────────────────────
 

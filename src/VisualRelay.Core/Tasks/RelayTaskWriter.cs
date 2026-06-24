@@ -177,6 +177,99 @@ public static class RelayTaskWriter
     }
 
     /// <summary>
+    /// Renames a task's directory and markdown file to <paramref name="newSlug"/>,
+    /// updates the markdown content, and returns the new markdown path.
+    /// Throws <see cref="ArgumentException"/> or <see cref="InvalidOperationException"/>
+    /// on invalid input so callers can surface the message.
+    /// When <paramref name="newSlug"/> equals <paramref name="task"/>.<see cref="RelayTaskItem.Id"/>,
+    /// only the content is updated in place — no directory rename occurs.
+    /// </summary>
+    public static async Task<string> RenameAsync(string rootPath, RelayTaskItem task, string newSlug, string newMarkdown)
+    {
+        // Self-rename: update content only.
+        if (string.Equals(newSlug, task.Id, StringComparison.Ordinal))
+        {
+            await File.WriteAllTextAsync(task.MarkdownPath, newMarkdown);
+            return task.MarkdownPath;
+        }
+
+        var error = ValidateSlugForRename(newSlug, rootPath, task.Id);
+        if (error is not null)
+        {
+            if (error.Contains("empty", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("unsafe", StringComparison.OrdinalIgnoreCase) ||
+                error.Contains("reserved", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ArgumentException(error);
+            }
+
+            throw new InvalidOperationException(error);
+        }
+
+        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var newDir = Path.Combine(tasksDir, newSlug);
+        Directory.CreateDirectory(newDir);
+
+        // Move all files from old directory into the new one.
+        foreach (var file in Directory.GetFiles(task.TaskDirectory))
+        {
+            var dest = Path.Combine(newDir, Path.GetFileName(file));
+            File.Move(file, dest);
+        }
+
+        // Rename the markdown file inside the new directory.
+        var oldMdPath = Path.Combine(newDir, $"{task.Id}.md");
+        var newMdPath = BuildNestedMarkdownPath(tasksDir, newSlug);
+        if (!string.Equals(oldMdPath, newMdPath, StringComparison.Ordinal))
+        {
+            File.Move(oldMdPath, newMdPath);
+        }
+
+        // Write the new content.
+        await File.WriteAllTextAsync(newMdPath, newMarkdown);
+
+        // Delete the now-empty old directory.
+        Directory.Delete(task.TaskDirectory, recursive: true);
+
+        return newMdPath;
+    }
+
+    /// <summary>
+    /// Validates <paramref name="slug"/> for a rename operation, skipping
+    /// collision check for <paramref name="excludeSlug"/> (the task being renamed).
+    /// </summary>
+    private static string? ValidateSlugForRename(string slug, string rootPath, string excludeSlug)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return "Slug is empty — enter a title to derive one.";
+        }
+
+        if (slug.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ||
+            slug.StartsWith("IGNORE-", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"Slug \"{slug}\" starts with a reserved prefix (DONE-/IGNORE-). Choose a different name.";
+        }
+
+        if (!Regex.IsMatch(slug, "^[a-z0-9]+(-[a-z0-9]+)*$"))
+        {
+            return $"Slug \"{slug}\" contains unsafe characters. Use lowercase letters, digits, and hyphens only.";
+        }
+
+        var tasksDir = Path.Combine(rootPath, "llm-tasks");
+        var flatPath = Path.Combine(tasksDir, $"{slug}.md");
+        var nestedDir = Path.Combine(tasksDir, slug);
+
+        if ((File.Exists(flatPath) || Directory.Exists(nestedDir)) &&
+            !string.Equals(slug, excludeSlug, StringComparison.Ordinal))
+        {
+            return $"A task named \"{slug}\" already exists. Choose a different name.";
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Deletes an attachment file. Returns true if the file existed and was deleted.
     /// </summary>
     public static bool RemoveAttachment(string filePath)

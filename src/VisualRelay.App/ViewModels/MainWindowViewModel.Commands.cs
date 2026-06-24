@@ -160,6 +160,7 @@ public partial class MainWindowViewModel
         {
             IsEditingMarkdown = false;
             EditBuffer = string.Empty;
+            EditTitleBuffer = string.Empty;
         }
 
         // Exit new-task authoring when switching tasks.
@@ -207,6 +208,7 @@ public partial class MainWindowViewModel
         if (task is null)
         {
             SelectedTaskMarkdown = string.Empty;
+            SelectedTaskName = string.Empty;
             SelectedTaskContext = string.Empty;
             SelectedTaskMetricLabel = "No run history";
             SelectedTaskError = null;
@@ -230,6 +232,7 @@ public partial class MainWindowViewModel
 
             var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task);
             SelectedTaskMarkdown = input.Markdown;
+            SelectedTaskName = ExtractTitleFromMarkdown(input.Markdown, task.Id);
             SelectedTaskContext = input.Context ?? string.Empty;
             await LoadRunHistoryAsync(task.Id);
         }
