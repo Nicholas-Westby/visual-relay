@@ -189,12 +189,12 @@ public sealed partial class MainWindowViewModelLayoutTests : IDisposable
         Assert.Equal(ChevronDirection.Right, vm.StagesChevron);
         vm.IsStagesCollapsed = false;
         Assert.Equal(ChevronDirection.Down, vm.StagesChevron);
-        // Activity column (right edge): Down expanded, Right collapsed in-place.
-        Assert.Equal(ChevronDirection.Down, vm.ActivityColumnChevron);
-        vm.IsActivityColumnCollapsed = true;
+        // Activity column (right edge): Right expanded, Left collapsed.
         Assert.Equal(ChevronDirection.Right, vm.ActivityColumnChevron);
+        vm.IsActivityColumnCollapsed = true;
+        Assert.Equal(ChevronDirection.Left, vm.ActivityColumnChevron);
         vm.IsActivityColumnCollapsed = false;
-        Assert.Equal(ChevronDirection.Down, vm.ActivityColumnChevron);
+        Assert.Equal(ChevronDirection.Right, vm.ActivityColumnChevron);
         // Activity rail: always Left (expand left from right edge).
         Assert.Equal(ChevronDirection.Left, vm.ActivityRailChevron);
         // Header tooltips flip.

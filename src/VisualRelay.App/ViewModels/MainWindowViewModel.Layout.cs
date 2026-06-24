@@ -112,9 +112,9 @@ public partial class MainWindowViewModel
     public ChevronDirection StagesChevron =>
         IsStagesCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
 
-    /// <summary>Activity column (right edge): Down expanded, Right collapsed in-place; Left to expand from rail.</summary>
+    /// <summary>Activity column (right edge): Right expanded, Left collapsed.</summary>
     public ChevronDirection ActivityColumnChevron =>
-        IsActivityColumnCollapsed ? ChevronDirection.Right : ChevronDirection.Down;
+        IsActivityColumnCollapsed ? ChevronDirection.Left : ChevronDirection.Right;
 
     /// <summary>Activity rail expand affordance (always Left — expand left from right edge).</summary>
     public ChevronDirection ActivityRailChevron => ChevronDirection.Left;
