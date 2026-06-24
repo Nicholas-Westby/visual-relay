@@ -126,8 +126,8 @@ public sealed partial class DrainQueueToolTests
     [Fact]
     public void ValidateTaskIds_NeedsReviewTask_IsStillPendingAndRecognized()
     {
-        // NEEDS-REVIEW tasks are excluded from the queue during RefreshAsync
-        // but could still be in the Tasks collection.  They should be treated
+        // NEEDS-REVIEW tasks are included during RefreshAsync so 'Run All'
+        // can re-attempt them.  They should be treated
         // as known — ValidateTaskIds only checks membership.
         var pending = new List<RelayTaskItem>
         {

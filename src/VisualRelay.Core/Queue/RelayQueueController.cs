@@ -48,7 +48,7 @@ public sealed class RelayQueueController
         // Seed from the persisted manual order so a headless/CLI drain runs in the
         // user's saved order — not the repository's alphabetical baseline. The same
         // store backs the GUI's visible queue, so display and run order stay aligned.
-        var listed = await _repository.ListPendingAsync(cancellationToken);
+        var listed = await _repository.ListAsync(cancellationToken: cancellationToken);
         foreach (var task in new TaskOrderStore(RootPath).Apply(listed, task => task.Id))
             Tasks.Add(task);
         State = RelayQueueState.Idle;
@@ -103,7 +103,7 @@ public sealed class RelayQueueController
         // Per-drain CTS; pause/stop cancels in-flight planning.
         using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var drainRunId = $"drain-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-        var queue = Tasks.Where(task => !task.NeedsReview).ToList();
+        var queue = Tasks.ToList();
 
         // Promote configResult so Phase 2 reads TasksDir without a second parse.
         RelayConfigResult? configResult = null;

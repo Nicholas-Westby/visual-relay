@@ -42,7 +42,7 @@ public sealed class RelayQueueControllerTests
 
         Assert.Equal(["alpha", "beta"], results.Select(r => r.TaskId));
         Assert.Equal(RelayQueueState.Failed, controller.State);
-        // Alpha and beta were both flagged and set aside for review; gamma is un-run.
+        // Alpha and beta flagged; gamma un-run.
         Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
         Assert.Contains(controller.Tasks, t => t is { Id: "beta", NeedsReview: true });
         Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: false });
@@ -52,8 +52,7 @@ public sealed class RelayQueueControllerTests
     [Fact]
     public async Task DrainAsync_ContinuesPastIsolatedFlag()
     {
-        // 3 tasks, the middle one Flagged — all 3 must run; the flagged one is
-        // set aside as NeedsReview; the drain does NOT stop after the flag.
+        // 3 tasks, middle one Flagged — all 3 run; flagged set aside as NeedsReview; drain continues.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
@@ -93,8 +92,7 @@ public sealed class RelayQueueControllerTests
     [Fact]
     public async Task DrainAsync_ContinuesPastStalledTaskWithTimeoutReason()
     {
-        // A stalled task (Flagged with a timeout reason) is treated like any
-        // other flag — skip + continue, not an immediate halt.
+        // Stalled task (Flagged + timeout) is treated like any flag — skip + continue.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
@@ -124,9 +122,7 @@ public sealed class RelayQueueControllerTests
     [Fact]
     public async Task DrainAsync_HaltsAtConsecutiveFlagThreshold()
     {
-        // ConsecutiveFlagThreshold (3) consecutive flags → drain halts, writes
-        // DRAIN-HALTED, leaves the rest un-run.
-        // Tasks sort alphabetically: alpha, beta, delta, gamma.
+        // 3 consecutive flags → drain halts with DRAIN-HALTED; rest un-run (alpha, beta, delta, gamma).
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
@@ -166,9 +162,7 @@ public sealed class RelayQueueControllerTests
     [Fact]
     public async Task DrainAsync_CommittedBetweenFlagsResetsCounter()
     {
-        // flag, commit, flag, commit, flag — the Committed outcomes reset the
-        // consecutive-flag counter, so the threshold is never reached and the
-        // drain finishes all tasks.
+        // flag, commit, flag, commit, flag — Committed resets counter so threshold never reached.
         // Tasks sort alphabetically: alpha, beta, delta, epsilon, gamma.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -188,20 +182,14 @@ public sealed class RelayQueueControllerTests
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
 
-        // All 5 tasks ran — Committed outcomes reset the counter so the
-        // consecutive-flag threshold was never reached.
-        // Alphabetical order: alpha, beta, delta, epsilon, gamma.
+        // Committed outcomes reset the counter; alphabetical order: alpha, beta, delta, epsilon, gamma.
         Assert.Equal(["alpha", "beta", "delta", "epsilon", "gamma"], runner.TasksRun);
         Assert.Equal(["alpha", "beta", "delta", "epsilon", "gamma"], results.Select(r => r.TaskId));
 
-        // No halt marker.
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "DRAIN-HALTED")));
 
-        // State reflects that flagged tasks need review.
         Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
 
-        // The flagged tasks are set aside for review (alpha, delta, gamma in
-        // alphabetical run order received the three Flagged outcomes).
         Assert.Contains(controller.Tasks, t => t is { Id: "alpha", NeedsReview: true });
         Assert.Contains(controller.Tasks, t => t is { Id: "delta", NeedsReview: true });
         Assert.Contains(controller.Tasks, t => t is { Id: "gamma", NeedsReview: true });
@@ -239,9 +227,7 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
-        // ReSharper disable once AccessToDisposedClosure — the callback fires only
-        // during the awaited DrainAsync below, while 'repo' (using var) is still alive;
-        // disposal happens at method exit, after the drain completes.
+        // ReSharper disable once AccessToDisposedClosure — fires during DrainAsync; repo alive until method exit.
         runner.AfterRun = () =>
         {
             if (runner.TasksRun.Count == 1)
@@ -272,15 +258,12 @@ public sealed class RelayQueueControllerTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
-        // ReSharper disable once AccessToDisposedClosure — fires only during the
-        // awaited DrainAsync below; 'repo' (using var) stays alive until method exit.
+        // ReSharper disable once AccessToDisposedClosure — fires during DrainAsync; repo alive until method exit.
         runner.AfterRunAsync = async () =>
         {
             if (runner.TasksRun.Count == 1)
             {
-                // Simulate a new task file landing on disk mid-run, then refresh.
-                // The refresh re-sorts Tasks so aardvark shifts to index 0,
-                // displacing beta from the head position.
+                // New task on disk mid-run; refresh re-sorts so aardvark shifts before beta.
                 repo.WriteTask("aardvark", "# Aardvark\n");
                 await controller.RefreshAsync();
             }
@@ -289,12 +272,29 @@ public sealed class RelayQueueControllerTests
         await controller.RefreshAsync();
         await controller.DrainAsync();
 
-        // Snapshot preserves original order; aardvark must NOT displace the
-        // in-flight drain and the original three tasks must all complete.
+        // Snapshot preserves order; aardvark must NOT displace in-flight drain.
         Assert.Equal(["alpha", "beta", "gamma"], runner.TasksRun);
         Assert.Equal(RelayQueueState.Completed, controller.State);
-        // Aardvark remains for the next drain.
         Assert.Contains(controller.Tasks, t => t.Id == "aardvark");
+    }
+
+    [Fact]
+    public async Task DrainAsync_IncludesTasksWithNeedsReview()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        // Write the NEEDS-REVIEW marker before RefreshAsync so the test
+        // exercises the production path (repository → controller → drain).
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "alpha"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "alpha", "NEEDS-REVIEW"), "prior flag");
+        var runner = new RecordingTaskRunner();
+        var controller = new RelayQueueController(repo.Root, runner);
+        await controller.RefreshAsync();
+        Assert.True(controller.Tasks[0].NeedsReview);
+        var results = await controller.DrainAsync();
+        Assert.Contains("alpha", runner.TasksRun);
+        Assert.Contains(results, r => r.TaskId == "alpha");
     }
 
 }

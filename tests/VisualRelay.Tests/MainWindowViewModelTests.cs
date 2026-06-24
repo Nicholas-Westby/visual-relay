@@ -238,6 +238,21 @@ public sealed partial class MainWindowViewModelTests
             "The 'Run All' button must become enabled once a task exists.");
     }
 
+    [Fact]
+    public void DrainQueueCommand_CanExecute_WhenAllTasksHaveNeedsReview()
+    {
+        // "Run All" must be enabled even when every task has an error
+        // (NeedsReview), so the user can re-attempt them.
+        var viewModel = new MainWindowViewModel();
+        viewModel.Tasks.Add(new TaskRowViewModel(new RelayTaskItem(
+            "alpha", "/tmp/llm-tasks/alpha.md", "/tmp/llm-tasks", false, [],
+            ReviewReason: "author-tests did not go red")));
+
+        Assert.True(viewModel.Tasks[0].NeedsReview);
+        Assert.True(viewModel.DrainQueueCommand.CanExecute(null),
+            "The 'Run All' button must be enabled when tasks exist, even if they all have errors.");
+    }
+
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);
@@ -282,5 +297,4 @@ public sealed partial class MainWindowViewModelTests
         var statusEntries = new[] { new StageStatusEntry(stage, $"Stage {stage}", "Done") };
         StageStatusRecord.WriteAsync(taskDirectory, statusEntries).GetAwaiter().GetResult();
     }
-
 }
