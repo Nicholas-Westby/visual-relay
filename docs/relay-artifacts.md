@@ -18,7 +18,8 @@ gitignored in generated samples).
 | `.relay/<task>/manifest.txt` | Newline-delimited list of the in-scope files for the task (proof of scope). Write-only proof; not read back. Renamed from the bare `manifest` so the filename explains itself. | Written by Visual Relay. | Yes |
 | `.relay/<task>/ledger.md` | Running record of each stage (one section per stage). | Written by Visual Relay. | Yes |
 | `.relay/<task>/<task>.seals` | The provenance hash chain. The `seal` term is stamped into every task commit as the `Relay-Seal:` trailer. | Written by Visual Relay. | Yes |
-| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt Swival report (outcome, cost, `error_message`). | Written by Swival; read by Visual Relay (cost/outcome). | No (gitignored) |
+| `.relay/<task>/stage{n}-attempt{m}.input.json` | Per-attempt stage input (system prompt, task input, metadata). | Written by Visual Relay; read by Visual Relay (UI). | Yes (force-added, final attempt only) |
+| `.relay/<task>/stage{n}-attempt{m}.report.json` | Per-attempt Swival report (outcome, cost, `error_message`). | Written by Swival; read by Visual Relay (cost/outcome). | Yes (force-added, final attempt only) |
 | `.relay/<task>/stage{n}-attempt{m}/<uuid>.jsonl` | Swival trace session for one attempt. The UUID filename is chosen by Swival. | Written by Swival; read by Visual Relay's trace pane. | No (gitignored) |
 | `.relay/<task>/run.log` | Visual Relay's own durable, human-readable run log (one line per event). Distinct from the target's `logs/app.log`. | Written by Visual Relay. | No (gitignored) |
 | `.relay/<task>/NEEDS-REVIEW` | Control marker: a runner crash or gate failure flagged this task for review so drains do not loop on it. | Written by Visual Relay. | No |

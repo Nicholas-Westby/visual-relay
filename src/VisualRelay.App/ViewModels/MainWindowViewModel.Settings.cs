@@ -9,10 +9,11 @@ namespace VisualRelay.App.ViewModels;
 public partial class MainWindowViewModel
 {
     /// <summary>
-    /// When true (default), the four proof files under .relay/&lt;taskId&gt;/
-    /// (ledger.md, &lt;taskId&gt;.seals, manifest.txt, status.json) are force-added
-    /// to each relay commit. When false, the proof files are still written to
-    /// disk but omitted from commits. Task retirement records are always committed.
+    /// When true (default), the proof files under .relay/&lt;taskId&gt;/
+    /// (ledger.md, &lt;taskId&gt;.seals, manifest.txt, status.json, and per-stage
+    /// .input.json/.report.json — final attempt only) are force-added to each
+    /// relay commit. When false, the proof files are still written to disk but
+    /// omitted from commits. Task retirement records are always committed.
     /// </summary>
     [ObservableProperty]
     private bool _commitProofArtifacts = true;

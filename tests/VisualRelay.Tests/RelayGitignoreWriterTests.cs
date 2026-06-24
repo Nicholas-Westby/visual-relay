@@ -69,4 +69,15 @@ public sealed class RelayGitignoreWriterTests
         Assert.True(File.Exists(path));
         Assert.Equal(RelayGitignoreWriter.Content, File.ReadAllText(path));
     }
+
+    [Fact]
+    public void Content_Comment_MentionsPerStageArtifacts()
+    {
+        // The canonical-record comment embedded in the generated .gitignore
+        // must describe the full committed set, including per-stage
+        // .input.json and .report.json artifacts that are force-added
+        // (final attempt only) by the commit stage.
+        Assert.Contains(".input.json", RelayGitignoreWriter.Content);
+        Assert.Contains(".report.json", RelayGitignoreWriter.Content);
+    }
 }
