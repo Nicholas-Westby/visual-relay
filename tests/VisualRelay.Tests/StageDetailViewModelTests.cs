@@ -215,10 +215,7 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_StageDoneNoReport_OutputStateSkipped()
     {
-        // When a stage has Status="Done" (e.g. Fix-verify skipped because
-        // Verify found no issues) but no report file exists, the output tab
-        // should show the Skipped state — not the misleading NotComplete
-        // "will appear once the stage completes" message.
+        // Status="Done" without report → Skipped (not NotComplete).
         using var dir = new TempDirectory();
         var stage = MakeStage(10, "Fix-verify", "balanced");
         stage.Status = "Done";
@@ -237,10 +234,7 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_StageNotDoneNoReport_OutputStateNotComplete()
     {
-        // When a stage has Status != "Done" (e.g. still Waiting/Running) and
-        // no report file exists, the output is genuinely NotComplete — not
-        // Skipped. This guards against accidentally treating all missing-report
-        // cases as skipped.
+        // Status != "Done" without report → NotComplete (not Skipped).
         using var dir = new TempDirectory();
         var stage = MakeStage(10, "Fix-verify", "balanced");
         stage.Status = "Waiting";
@@ -250,6 +244,22 @@ public sealed class StageDetailViewModelTests
 
         Assert.Equal(StageDetailState.NotComplete, vm.OutputState);
         Assert.False(vm.IsOutputSkipped);
+    }
+
+    [Fact]
+    public void RawToggleTooltips_HaveDescriptiveText()
+    {
+        var inputTooltip = StageDetailViewModel.InputRawToggleTooltip;
+        var outputTooltip = StageDetailViewModel.OutputRawToggleTooltip;
+
+        Assert.NotNull(inputTooltip);
+        Assert.NotEmpty(inputTooltip);
+        Assert.Contains("raw", inputTooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("prompt", inputTooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.NotNull(outputTooltip);
+        Assert.NotEmpty(outputTooltip);
+        Assert.Contains("raw", outputTooltip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("JSON", outputTooltip, StringComparison.OrdinalIgnoreCase);
     }
 
     private static void AssertAllStates(StageDetailViewModel vm, StageDetailState expected)
@@ -283,10 +293,7 @@ public sealed class StageDetailViewModelTests
         public void Dispose()
         {
             try { TestFileSystem.DeleteDirectoryResilient(Path); }
-            catch
-            {
-                // Best-effort cleanup; ignore failures to avoid masking test results.
-            }
+            catch { /* best-effort */ }
         }
     }
 }

@@ -147,8 +147,7 @@ public partial class MainWindowViewModel
 
     partial void OnSelectedTaskChanged(TaskRowViewModel? value)
     {
-        _selectedStageFilter = null;
-        LogScopeLabel = "full";
+        LogScopeLabel = _selectedStageFilter is { } n ? $"stage {n:00}" : "full";
         RebuildAttachments(value);
         foreach (var task in Tasks)
         {
@@ -213,7 +212,9 @@ public partial class MainWindowViewModel
             SelectedTaskMetricLabel = "No run history";
             SelectedTaskError = null;
             ClearLogState();
+            _selectedStageFilter = null; LogScopeLabel = "full";
             ResetStages();
+            RefreshStageDetail(null);
             return;
         }
 
@@ -235,6 +236,9 @@ public partial class MainWindowViewModel
             SelectedTaskName = ExtractTitleFromMarkdown(input.Markdown, task.Id);
             SelectedTaskContext = input.Context ?? string.Empty;
             await LoadRunHistoryAsync(task.Id);
+            var s = _selectedStageFilter is { } n ? Stages.FirstOrDefault(x => x.Number == n) : null;
+            if (s is not null) { s.IsSelected = true; LogScopeLabel = $"stage {s.Number:00}"; }
+            RefreshStageDetail(s);
         }
         catch (Exception ex)
         {

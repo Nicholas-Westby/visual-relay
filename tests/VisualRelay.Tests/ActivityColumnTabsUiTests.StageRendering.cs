@@ -5,15 +5,13 @@ using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
 public sealed partial class ActivityColumnTabsUiTests
 {
-    /// <summary>
-    /// The System tab shows a ScrollViewer wrapping a SelectableTextBlock
-    /// when SystemState is Ready.
-    /// </summary>
+    /// <summary>The System tab shows a SelectableTextBlock in a ScrollViewer when Ready.</summary>
     [AvaloniaFact]
     public void SystemTab_Ready_UsesSelectableTextBlockInScrollViewer()
     {
@@ -38,9 +36,7 @@ public sealed partial class ActivityColumnTabsUiTests
 
         var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
         Assert.NotNull(activityColumn);
-
         var systemView = SwitchToTabAndFindView<StageSystemView>(activityColumn, 2);
-
         var selectableBlocks = systemView.GetVisualDescendants()
             .OfType<SelectableTextBlock>()
             .ToList();
@@ -52,11 +48,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.NotNull(scrollViewer);
     }
 
-    /// <summary>
-    /// The Input tab renders parsed sections in Expanders when InputState
-    /// is Ready.  Sections with CollapsedByDefault=true (e.g. "Prior stages")
-    /// start collapsed.
-    /// </summary>
+    /// <summary>The Input tab renders Expanders; CollapsedByDefault sections start collapsed.</summary>
     [AvaloniaFact]
     public void InputTab_Ready_UsesExpandersWithCollapsedByDefault()
     {
@@ -85,23 +77,16 @@ public sealed partial class ActivityColumnTabsUiTests
 
         var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
         Assert.NotNull(activityColumn);
-
         var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
-
         var expanders = inputView.GetVisualDescendants()
             .OfType<Expander>()
             .ToList();
         Assert.Equal(2, expanders.Count);
-
         Assert.True(expanders[0].IsExpanded);
         Assert.False(expanders[1].IsExpanded);
     }
 
-    /// <summary>
-    /// The Output tab renders fields by kind when OutputState is Ready.
-    /// Text fields use TextBlock, List fields use ItemsControl, Json fields
-    /// use SelectableTextBlock.
-    /// </summary>
+    /// <summary>The Output tab renders fields by kind (Text/List/Json) when Ready.</summary>
     [AvaloniaFact]
     public void OutputTab_Ready_RendersFieldsByKind()
     {
@@ -131,20 +116,14 @@ public sealed partial class ActivityColumnTabsUiTests
 
         var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
         Assert.NotNull(activityColumn);
-
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
-
         AssertContainsText(outputView, "summary");
         AssertContainsText(outputView, "testFiles");
         AssertContainsText(outputView, "metadata");
-
         AssertContainsText(outputView, "Created tests.");
     }
 
-    /// <summary>
-    /// The Output tab has a raw-JSON toggle that, when checked, shows
-    /// StageDetail.RawJson instead of the parsed field list.
-    /// </summary>
+    /// <summary>The Output tab's Raw JSON toggle shows RawJson and has a ToolTip.</summary>
     [AvaloniaFact]
     public void OutputTab_RawJsonToggle_ShowsRawJson()
     {
@@ -173,14 +152,127 @@ public sealed partial class ActivityColumnTabsUiTests
 
         var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
         Assert.NotNull(activityColumn);
-
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
-
         var toggles = outputView.GetVisualDescendants()
             .OfType<CheckBox>()
             .Where(cb => cb.Content?.ToString()?.Contains("JSON", StringComparison.OrdinalIgnoreCase) == true
                       || cb.Content?.ToString()?.Contains("Raw", StringComparison.OrdinalIgnoreCase) == true)
             .ToList();
         Assert.NotEmpty(toggles);
+        var rawJsonToggle = toggles.FirstOrDefault();
+        Assert.NotNull(rawJsonToggle);
+        var tip = ToolTip.GetTip(rawJsonToggle!);
+        Assert.NotNull(tip);
+        Assert.NotEmpty(tip?.ToString() ?? "");
+    }
+
+    /// <summary>The Input tab's Raw checkbox has a ToolTip explaining the raw view.</summary>
+    [AvaloniaFact]
+    public void InputTab_RawTextToggle_HasTooltip()
+    {
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 05 (Author-tests)",
+                InputState = StageDetailState.Ready,
+                InputSections = new PromptSection[]
+                {
+                    new("Task input", "Write tests.", false),
+                },
+                InputPromptRawText = "## Task input\nWrite tests.",
+            }
+        };
+
+        var window = new MainWindow
+        {
+            DataContext = vm,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
+        Assert.NotNull(activityColumn);
+        var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
+        var rawToggle = inputView.GetVisualDescendants()
+            .OfType<CheckBox>()
+            .FirstOrDefault(cb => cb.Content?.ToString() == "Raw");
+        Assert.NotNull(rawToggle);
+        var tip = ToolTip.GetTip(rawToggle!);
+        Assert.NotNull(tip);
+        Assert.NotEmpty(tip?.ToString() ?? "");
+    }
+
+    /// <summary>Input parsed sections visible by default without toggling Raw.</summary>
+    [AvaloniaFact]
+    public void InputTab_Ready_ShowsParsedSectionsWithoutTogglingRaw()
+    {
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 05 (Author-tests)",
+                InputState = StageDetailState.Ready,
+                InputSections = new PromptSection[]
+                {
+                    new("Task input", "Write the tests.", false),
+                },
+                InputPromptRawText = "## Task input\nWrite the tests.",
+            }
+        };
+
+        var window = new MainWindow
+        {
+            DataContext = vm,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
+        Assert.NotNull(activityColumn);
+        var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
+        var expanders = inputView.GetVisualDescendants()
+            .OfType<Expander>()
+            .ToList();
+        Assert.NotEmpty(expanders);
+        Assert.Contains(expanders, e => e.IsVisible && e.Header?.ToString() == "Task input");
+    }
+
+    /// <summary>Output rendered fields visible by default without toggling Raw JSON.</summary>
+    [AvaloniaFact]
+    public void OutputTab_Ready_ShowsRenderedFieldsWithoutTogglingRawJson()
+    {
+        var vm = new MainWindowViewModel
+        {
+            StageDetail =
+            {
+                Header = "Stage 01 (Ideate)",
+                OutputState = StageDetailState.Ready,
+                OutputFields = new OutputField[]
+                {
+                    new("summary", OutputFieldKind.Text, "Framed idea."),
+                },
+                RawJson = """{"summary": "Framed idea."}""",
+            }
+        };
+
+        var window = new MainWindow
+        {
+            DataContext = vm,
+            Width = 1440,
+            Height = 900
+        };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
+        Assert.NotNull(activityColumn);
+        var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
+        AssertContainsText(outputView, "summary");
+        AssertContainsText(outputView, "Framed idea.");
     }
 }

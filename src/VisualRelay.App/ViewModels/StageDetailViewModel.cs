@@ -52,6 +52,8 @@ public partial class StageDetailViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsInputNotComplete))]
     [NotifyPropertyChangedFor(nameof(IsInputReady))]
     [NotifyPropertyChangedFor(nameof(IsInputDriverStage))]
+    [NotifyPropertyChangedFor(nameof(IsInputReadyAndNotRawText))]
+    [NotifyPropertyChangedFor(nameof(IsInputReadyAndRawText))]
     private StageDetailState _inputState = StageDetailState.NoStage;
 
     [ObservableProperty]
@@ -61,6 +63,8 @@ public partial class StageDetailViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(IsOutputReady))]
     [NotifyPropertyChangedFor(nameof(IsOutputDriverStage))]
     [NotifyPropertyChangedFor(nameof(IsOutputSkipped))]
+    [NotifyPropertyChangedFor(nameof(IsOutputReadyAndNotRawJson))]
+    [NotifyPropertyChangedFor(nameof(IsOutputReadyAndRawJson))]
     private StageDetailState _outputState = StageDetailState.NoStage;
 
     // ── Boolean state properties for XAML binding (no converter needed) ──
@@ -90,6 +94,14 @@ public partial class StageDetailViewModel : ViewModelBase
     public bool IsInputReadyAndRawText => InputState == StageDetailState.Ready && IsInputRawText;
     public bool IsOutputReadyAndNotRawJson => OutputState == StageDetailState.Ready && !IsOutputRawJson;
     public bool IsOutputReadyAndRawJson => OutputState == StageDetailState.Ready && IsOutputRawJson;
+
+    // ── Tooltip strings for the Raw / Raw JSON checkboxes ──
+
+    public static string InputRawToggleTooltip { get; } =
+        "Show the raw LLM prompt text instead of parsed sections";
+
+    public static string OutputRawToggleTooltip { get; } =
+        "Show the raw JSON output instead of rendered fields";
 
     /// <summary>
     /// Loads stage detail from the latest attempt artifacts in
