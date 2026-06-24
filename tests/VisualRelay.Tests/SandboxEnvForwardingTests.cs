@@ -33,6 +33,20 @@ public sealed class SandboxEnvForwardingTests
     }
 
     [Fact]
+    public void BuildSandboxEnvironment_CarriesDotnetLeakReductionVars()
+    {
+        // dotnet test leaves orphaned MSBuild node-reuse workers behind the
+        // finished tests; those keep the nono wrapper alive past completion (the
+        // stage-5/9 timeout). Disabling node reuse (and telemetry) lets the inner
+        // command leave no orphans so nono can exit on its own — defence in depth
+        // alongside SandboxedTestRunner's idle-reap.
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(SandboxOn());
+
+        Assert.Equal("1", env["MSBUILDDISABLENODEREUSE"]);
+        Assert.Equal("1", env["DOTNET_CLI_TELEMETRY_OPTOUT"]);
+    }
+
+    [Fact]
     public async Task ProcessCapture_AppliesSandboxEnvironment_ReachesSpawnedChild()
     {
         // The shared env-application path: ProcessCapture sets every entry of the

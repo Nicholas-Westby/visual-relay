@@ -104,4 +104,17 @@ public sealed record RelayConfig(
     // through.  Default: ["tools/guards/**/*.sh"] — repos that store guards
     // elsewhere should override.  Set to [] to disable.
     public IReadOnlyList<string> NewGuardPatterns { get; init; } = ["tools/guards/**/*.sh"];
+
+    // Grace window (ms) for the sandboxed test-run path's idle-reap watchdog
+    // (SandboxedTestRunner). Once the wrapped test process tree goes
+    // output-silent AND CPU-idle for this long, the runner reaps the sandbox
+    // wrapper and reports the inner command's real red/green result (the
+    // "exited with code N" marker in the wrapper's output) instead of riding
+    // TestTimeoutMilliseconds — the wrapper (nono) supervises descendants that
+    // can outlive the finished tests, so it may never exit on its own. A
+    // still-BUSY tree (CPU active) is never reaped; a genuine busy hang rides
+    // the hard cap. Default 60_000 (60 s): far below the cap yet above any
+    // legitimate output-silent + CPU-idle gap (e.g. a network wait) in a real
+    // run, so a finished-then-idle tree is reaped but a working one is not.
+    public int TestIdleGraceMilliseconds { get; init; } = 60_000;
 }

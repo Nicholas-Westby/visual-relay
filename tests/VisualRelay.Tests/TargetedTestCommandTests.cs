@@ -86,6 +86,38 @@ public sealed class TargetedTestCommandTests
         // .json, .yaml → IsTestFile=true; .ts → IsTestFile=false
         Assert.Equal("bun test config.json schema.yaml", result);
     }
+
+    // ── TestFileCommandWarning (the {files}-less footgun) ────────────────
+
+    [Fact]
+    public void TestFileCommandWarning_NoFilesToken_Warns()
+    {
+        // A full command masquerading as a targeted one: the red gate silently
+        // runs the whole suite. This is exactly VR's pre-fix testFileCmd.
+        var config = MakeConfig("dotnet test",
+            "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1");
+
+        var warning = RelayDriver.TestFileCommandWarning(config);
+
+        Assert.NotNull(warning);
+        Assert.Contains("{files}", warning);
+    }
+
+    [Fact]
+    public void TestFileCommandWarning_WithFilesToken_NoWarning()
+    {
+        var config = MakeConfig("dotnet test", "sh tools/dotnet-test-files.sh {files}");
+        Assert.Null(RelayDriver.TestFileCommandWarning(config));
+    }
+
+    [Fact]
+    public void TestFileCommandWarning_Empty_NoWarning()
+    {
+        // No targeting configured is not a footgun — only a non-empty command
+        // that looks targeted but isn't.
+        var config = MakeConfig("dotnet test", "   ");
+        Assert.Null(RelayDriver.TestFileCommandWarning(config));
+    }
 }
 
 /// <summary>

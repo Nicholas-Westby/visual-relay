@@ -217,6 +217,7 @@ public static class RelayConfigLoader
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 InactivityTimeoutMsByTier = inactivityTiers,
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
+                TestIdleGraceMilliseconds = OptionalInt(root, "testIdleGraceMs", defaults.TestIdleGraceMilliseconds),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),

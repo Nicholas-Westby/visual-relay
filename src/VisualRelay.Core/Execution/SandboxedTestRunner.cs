@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -12,7 +11,7 @@ namespace VisualRelay.Core.Execution;
 /// keeps the Swival and verification prefixes in lockstep; they differ only
 /// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
 /// </summary>
-public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) : ITestRunner
+public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig config) : ITestRunner
 {
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
 
@@ -20,18 +19,21 @@ public sealed class SandboxedTestRunner(ITestRunner inner, RelayConfig config) :
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var (fileName, args) = ResolveLaunch(command);
-
-        var sw = Stopwatch.StartNew();
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
-        var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
-            fileName, args, rootPath, _timeout, cancellationToken, environment: env);
 
-        if (timedOut)
-        {
-            output = $"test command timed out after {_timeout.TotalMilliseconds:F0}ms\n\n{output}";
-        }
-
-        return new TestRunResult(exitCode, output, timedOut, sw.Elapsed);
+        // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
+        // supervises the test process tree and can outlive the FINISHED tests —
+        // orphaned testhost / MSBuild node-reuse workers keep nono alive — so a
+        // plain wait rides TestTimeoutMilliseconds even when the tests passed in
+        // seconds. RunWatchedAsync reaps once the tree goes output-silent +
+        // CPU-idle and surfaces the inner command's real red/green result.
+        return await RunWatchedAsync(
+            fileName, args, rootPath, env,
+            firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
+            idleGraceMs: config.TestIdleGraceMilliseconds,
+            hardCap: _timeout,
+            cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
+            cancellationToken);
     }
 
     /// <summary>

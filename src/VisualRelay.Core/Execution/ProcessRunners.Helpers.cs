@@ -56,24 +56,6 @@ public sealed partial class SwivalSubagentRunner
         return string.Join(',', resolved);
     }
 
-    // Build environment overrides that redirect transitive-dependency caches
-    // into ~/.config/swival (already in the swival profile write-allow list)
-    // so nono's vr-guard sandbox does not block them. See nono-grant-swival-
-    // workspace-writes (stage 6).
-    internal static IReadOnlyDictionary<string, string> BuildSandboxEnvironment(RelayConfig config)
-    {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return new Dictionary<string, string>
-        {
-            ["HF_HOME"] = Path.Combine(home, ".config", "swival", "huggingface"),
-            ["XDG_CACHE_HOME"] = Path.Combine(home, ".config", "swival", "cache"),
-            ["UV_CACHE_DIR"] = Path.Combine(home, ".config", "swival", "uv-cache"),
-            // Stop Python under nono writing .pyc into its (denied) stdlib dir, e.g. the Homebrew python@3.14 Cellar — that triggers an interactive ~50-path "Review denied paths" prompt that blocks the run; PYCACHEPREFIX redirects any re-enabled bytecode to a write-allowed dir.
-            ["PYTHONDONTWRITEBYTECODE"] = "1",
-            ["PYTHONPYCACHEPREFIX"] = Path.Combine(home, ".config", "swival", "pycache"),
-        };
-    }
-
     // Resolve the process to actually launch. The sandbox is always on, so we run
     // `nono` as the wrapper around swival. skipDirs become --skip-dir flags so
     // nono's rollback preflight stays under budget.
