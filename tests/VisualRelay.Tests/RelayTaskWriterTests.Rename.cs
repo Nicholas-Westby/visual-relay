@@ -149,4 +149,57 @@ public sealed partial class RelayTaskWriterTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => RelayTaskWriter.RenameAsync(repo.Root, task, "flat-target", "# New\n\nBody."));
     }
+
+    // ── .relay/ migration ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task RenameAsync_MovesRelayDirectory_WhenPresent()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteNestedTask("old-slug", "# Old Title\n\nBody here.");
+        var tasksDir = Path.Combine(repo.Root, "llm-tasks");
+        var oldDir = Path.Combine(tasksDir, "old-slug");
+        var oldPath = Path.Combine(oldDir, "old-slug.md");
+        var task = new RelayTaskItem("old-slug", oldPath, oldDir, true, []);
+
+        // Simulate prior run history: create .relay/<old-slug>/ with a dummy file.
+        var oldRelayDir = Path.Combine(repo.Root, ".relay", "old-slug");
+        Directory.CreateDirectory(oldRelayDir);
+        var statusFile = Path.Combine(oldRelayDir, "status.json");
+        await File.WriteAllTextAsync(statusFile, "{\"status\":\"done\"}");
+
+        await RelayTaskWriter.RenameAsync(repo.Root, task, "new-slug", "# New Title\n\nUpdated body.");
+
+        // .relay/<new-slug>/ exists with the dummy file intact.
+        var newRelayDir = Path.Combine(repo.Root, ".relay", "new-slug");
+        Assert.True(Directory.Exists(newRelayDir),
+            ".relay/<new-slug>/ should exist after rename when .relay/<old-slug>/ was present.");
+        var movedFile = Path.Combine(newRelayDir, "status.json");
+        Assert.True(File.Exists(movedFile),
+            "Files inside .relay/<old-slug>/ should be moved to .relay/<new-slug>/.");
+        Assert.Equal("{\"status\":\"done\"}", await File.ReadAllTextAsync(movedFile));
+
+        // Old .relay dir is gone.
+        Assert.False(Directory.Exists(oldRelayDir),
+            ".relay/<old-slug>/ should no longer exist after a successful migration.");
+    }
+
+    [Fact]
+    public async Task RenameAsync_NoOpsRelayDirectory_WhenAbsent()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteNestedTask("task-no-history", "# Task Without History\n\nBody.");
+        var tasksDir = Path.Combine(repo.Root, "llm-tasks");
+        var oldDir = Path.Combine(tasksDir, "task-no-history");
+        var task = new RelayTaskItem("task-no-history",
+            Path.Combine(oldDir, "task-no-history.md"), oldDir, true, []);
+
+        // No .relay/ directory exists.
+        await RelayTaskWriter.RenameAsync(repo.Root, task, "renamed-no-history", "# Renamed\n\nBody.");
+
+        // .relay/<new-slug>/ should NOT have been created.
+        var newRelayDir = Path.Combine(repo.Root, ".relay", "renamed-no-history");
+        Assert.False(Directory.Exists(newRelayDir),
+            ".relay/<new-slug>/ should not be created when .relay/<old-slug>/ was never present.");
+    }
 }

@@ -4,7 +4,7 @@ using VisualRelay.App.ViewModels;
 namespace VisualRelay.Tests;
 
 [Collection("Headless")]
-public sealed class NewTaskAuthoringTests
+public sealed partial class NewTaskAuthoringTests
 {
     /// <summary>
     /// Headless UI/view-model regression test for the previously-broken path:

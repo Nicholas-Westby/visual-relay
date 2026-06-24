@@ -66,6 +66,19 @@ public sealed class RewriteUndoStore
         TryDeleteDirectory(snapshot);
     }
 
+    /// <summary>
+    /// Migrates the undo snapshot from <paramref name="oldId"/> to
+    /// <paramref name="newId"/> when a task is renamed. No-op when no
+    /// snapshot exists for <paramref name="oldId"/>.
+    /// </summary>
+    public void Rekey(string oldId, string newId)
+    {
+        if (_snapshots.Remove(oldId, out var snapshot))
+        {
+            _snapshots[newId] = snapshot;
+        }
+    }
+
     /// <summary>Discards every snapshot (e.g. on view-model teardown).</summary>
     public void DiscardAll()
     {

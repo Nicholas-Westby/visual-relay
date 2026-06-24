@@ -91,11 +91,7 @@ public partial class MainWindowViewModel
             SelectedTask.Task = SelectedTask.Task with { Id = newSlug, MarkdownPath = newPath, TaskDirectory = newDir };
 
             // Migrate tracking dictionaries.
-            MigrateTrackingDictKey(_boostedTaskIds, oldId, newSlug);
-            if (_rewriteUndo.Has(oldId))
-            {
-                _rewriteUndo.Discard(oldId);
-            }
+            RekeyTaskId(oldId, newSlug);
         }
 
         _rewriteUndo.Discard(SelectedTask.Id);
@@ -276,7 +272,7 @@ public partial class MainWindowViewModel
         {
             var markdown = string.IsNullOrWhiteSpace(NewTaskBody)
                 ? $"# {NewTaskTitle.Trim()}\n"
-                : NewTaskBody;
+                : $"# {NewTaskTitle.Trim()}\n\n{NewTaskBody}";
 
             await RelayTaskWriter.CreateAsync(RootPath, slug, markdown);
         }

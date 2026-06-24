@@ -228,6 +228,14 @@ public static class RelayTaskWriter
         // Write the new content.
         await File.WriteAllTextAsync(newMdPath, newMarkdown);
 
+        // Migrate run history if it exists for the old slug.
+        var oldRelayDir = Path.Combine(rootPath, ".relay", task.Id);
+        var newRelayDir = Path.Combine(rootPath, ".relay", newSlug);
+        if (Directory.Exists(oldRelayDir) && !Directory.Exists(newRelayDir))
+        {
+            Directory.Move(oldRelayDir, newRelayDir);
+        }
+
         // Delete the now-empty old directory.
         Directory.Delete(task.TaskDirectory, recursive: true);
 

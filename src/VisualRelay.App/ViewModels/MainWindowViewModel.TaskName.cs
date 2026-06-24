@@ -51,22 +51,25 @@ public partial class MainWindowViewModel
         }
 
         var reader = new StringReader(markdown);
-        var firstLine = reader.ReadLine();
-        if (firstLine is not null && firstLine.StartsWith("# ", StringComparison.Ordinal))
+        string? line;
+        while ((line = reader.ReadLine()) is not null)
         {
-            var title = firstLine[2..].Trim();
-            if (string.IsNullOrEmpty(title))
+            if (line.StartsWith("# ", StringComparison.Ordinal))
             {
-                title = fallbackId;
-            }
+                var title = line[2..].Trim();
+                if (string.IsNullOrEmpty(title))
+                {
+                    title = fallbackId;
+                }
 
-            var remaining = reader.ReadToEnd();
-            if (remaining.StartsWith('\n'))
-            {
-                remaining = remaining[1..];
-            }
+                var remaining = reader.ReadToEnd();
+                if (remaining.StartsWith('\n'))
+                {
+                    remaining = remaining[1..];
+                }
 
-            return (title, remaining);
+                return (title, remaining);
+            }
         }
 
         return (fallbackId, markdown);
@@ -78,5 +81,33 @@ public partial class MainWindowViewModel
         {
             dict.Add(newKey);
         }
+    }
+
+    private static void MigrateDictKey<TValue>(Dictionary<string, TValue> dict, string oldKey, string newKey)
+    {
+        if (dict.Remove(oldKey, out var value))
+        {
+            dict[newKey] = value;
+        }
+    }
+
+    /// <summary>
+    /// Re-keys every id-keyed tracking map in the view-model when a task is
+    /// renamed. Call this from <see cref="SaveEditAsync"/> after the rename
+    /// succeeds and before discarding the rewrite undo for the new id.
+    /// </summary>
+    private void RekeyTaskId(string oldId, string newId)
+    {
+        MigrateTrackingDictKey(_boostedTaskIds, oldId, newId);
+        MigrateDictKey(_liveEventsByTask, oldId, newId);
+        MigrateDictKey(_liveTraceEntriesByTask, oldId, newId);
+        MigrateTrackingDictKey(_runningTaskIds, oldId, newId);
+        MigrateDictKey(_runningStageNumbers, oldId, newId);
+        MigrateDictKey(_runningStageNames, oldId, newId);
+        MigrateDictKey(_runStartedAt, oldId, newId);
+        MigrateTrackingDictKey(_rewritingTaskIds, oldId, newId);
+        MigrateDictKey(_rewriteStartedAt, oldId, newId);
+        MigrateDictKey(_rewriteCts, oldId, newId);
+        _rewriteUndo.Rekey(oldId, newId);
     }
 }
