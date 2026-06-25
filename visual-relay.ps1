@@ -1,4 +1,3 @@
-#!/usr/bin/env pwsh
 # visual-relay.ps1 - the Windows pre-dotnet bootstrap (sibling of the bash
 # `visual-relay`). Nix has no native Windows story, so instead of entering a nix
 # devshell this provisions the same toolchain natively and consent-gated, then

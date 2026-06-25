@@ -23,6 +23,14 @@ public sealed class WindowsLauncherSizeGuardTests
     }
 
     [Fact]
+    public void PowerShellLauncher_WithPwshShebang_IsStillNotShellScript()
+    {
+        // "pwsh" ends in "sh", which the POSIX hashbang regex would otherwise
+        // match — a .ps1 must be excluded by extension regardless of its shebang.
+        Assert.False(ShellScriptClassifier.IsShellScript("visual-relay.ps1", "#!/usr/bin/env pwsh"));
+    }
+
+    [Fact]
     public void CmdShim_IsNotClassifiedAsPosixShellScript()
     {
         Assert.False(ShellScriptClassifier.IsShellScript("visual-relay.cmd", "@echo off"));

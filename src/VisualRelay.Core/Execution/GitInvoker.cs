@@ -131,6 +131,18 @@ public sealed class GitInvoker : IGitInvoker
 
     private static string ResolveGitBinary()
     {
+        // 0. On Windows resolve git.exe through the shared PATHEXT helper (Git for
+        //    Windows on PATH). There is no xcrun and no POSIX shell to fall back to.
+        if (OperatingSystem.IsWindows())
+        {
+            var windowsGit = PathExecutables.Find("git");
+            if (windowsGit is not null && ProbeGit(windowsGit))
+                return windowsGit;
+            throw new InvalidOperationException(
+                "git: not found on PATH. Install Git for Windows (winget install Git.Git) "
+                + "and ensure it is on PATH.");
+        }
+
         // 1. On macOS, prefer /usr/bin/git — it is immune to nix-shell rot
         //    and does not go through the xcrun shim.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
