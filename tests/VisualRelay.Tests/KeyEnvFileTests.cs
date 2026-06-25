@@ -14,7 +14,7 @@ public sealed class KeyEnvFileTests
     {
         var xdg = "/custom/xdg/config";
         var path = KeyEnvFile.ResolvePath(xdg, "/home/user");
-        Assert.StartsWith(xdg + "/visual-relay/.env", path, StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine(xdg, "visual-relay", ".env"), path, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -22,7 +22,7 @@ public sealed class KeyEnvFileTests
     {
         var home = "/home/user";
         var path = KeyEnvFile.ResolvePath(xdgConfigHome: null, home);
-        Assert.StartsWith(home + "/.config/visual-relay/.env", path, StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine(home, ".config", "visual-relay", ".env"), path, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -32,7 +32,7 @@ public sealed class KeyEnvFileTests
 
         var path = KeyEnvFile.ResolvePathForCurrentUser(_env);
 
-        Assert.StartsWith("/custom/xdg/config/visual-relay/.env", path, StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine("/custom/xdg/config", "visual-relay", ".env"), path, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -42,7 +42,7 @@ public sealed class KeyEnvFileTests
 
         var path = KeyEnvFile.ResolvePathForCurrentUser(_env);
 
-        Assert.StartsWith("/home/seam/.config/visual-relay/.env", path, StringComparison.Ordinal);
+        Assert.StartsWith(Path.Combine("/home/seam", ".config", "visual-relay", ".env"), path, StringComparison.Ordinal);
     }
 
     // ── Parse ──────────────────────────────────────────────────────────
@@ -146,8 +146,9 @@ public sealed class KeyEnvFileTests
         var result = File.ReadAllText(envPath);
         // The original content must appear verbatim as a prefix; the new key is
         // appended. This asserts byte-for-byte preservation of unrelated lines.
+        // The appended line uses the platform default (Environment.NewLine).
         Assert.StartsWith(original, result, StringComparison.Ordinal);
-        Assert.EndsWith("HF_TOKEN=hf-xyz\n", result, StringComparison.Ordinal);
+        Assert.EndsWith("HF_TOKEN=hf-xyz" + Environment.NewLine, result, StringComparison.Ordinal);
     }
 
     [Fact]

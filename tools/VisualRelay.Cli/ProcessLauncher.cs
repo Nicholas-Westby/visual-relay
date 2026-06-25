@@ -71,11 +71,50 @@ public static class ProcessLauncher
         var pathEnv = Environment.GetEnvironmentVariable("PATH");
         if (string.IsNullOrEmpty(pathEnv))
             return false;
+
+        // Windows: a bare name (e.g. "git", "nono", "swival") resolves only when
+        // its PATHEXT-implied extension (.EXE/.CMD/…) is appended — there is no
+        // exec bit. The pure helper keeps that logic unit-testable on any OS.
+        if (OperatingSystem.IsWindows())
+            return ResolveOnPath(pathEnv, Environment.GetEnvironmentVariable("PATHEXT"), name, File.Exists);
+
         foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var candidate = Path.Combine(dir, name);
             if (File.Exists(candidate) && IsExecutable(candidate))
                 return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Pure Windows PATH probe: resolves <paramref name="name"/> across every
+    /// <paramref name="pathEnv"/> directory, trying the bare name and — when the
+    /// name has no extension — each <paramref name="pathext"/> extension
+    /// (e.g. <c>.COM;.EXE;.BAT;.CMD</c>). Existence is decided by the injected
+    /// <paramref name="fileExists"/> predicate so the resolution is testable
+    /// without touching the filesystem.
+    /// </summary>
+    public static bool ResolveOnPath(string? pathEnv, string? pathext, string name, Func<string, bool> fileExists)
+    {
+        if (string.IsNullOrEmpty(pathEnv))
+            return false;
+
+        var extensions = (pathext ?? string.Empty)
+            .Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var nameHasExtension = Path.HasExtension(name);
+
+        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (fileExists(Path.Combine(dir, name)))
+                return true;
+            if (nameHasExtension)
+                continue;
+            foreach (var ext in extensions)
+            {
+                if (fileExists(Path.Combine(dir, name + ext)))
+                    return true;
+            }
         }
         return false;
     }

@@ -52,14 +52,28 @@ public sealed class BackendPaths
         return new BackendPaths(Combine(xdg, home));
     }
 
-    private static string Combine(string? xdgDataHome, string? home)
+    private static string Combine(string? xdgDataHome, string? home) =>
+        Combine(
+            xdgDataHome, home,
+            OperatingSystem.IsWindows(),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+
+    /// <summary>
+    /// Pure resolver with the OS dispatch injected (<paramref name="isWindows"/>
+    /// + <paramref name="localAppData"/>) so the Windows fallback is unit-testable
+    /// on any OS. Keeps the byte-for-byte XDG layout when <c>XDG_DATA_HOME</c> or
+    /// <c>HOME</c> is set; on Windows with neither set it falls back to
+    /// <c>%LOCALAPPDATA%\visual-relay</c>. Throws only when no source resolves.
+    /// </summary>
+    internal static string Combine(string? xdgDataHome, string? home, bool isWindows, string? localAppData)
     {
-        string baseDir;
-        if (!string.IsNullOrWhiteSpace(xdgDataHome))
-            baseDir = xdgDataHome;
-        else if (!string.IsNullOrWhiteSpace(home))
-            baseDir = Path.Combine(home, ".local", "share");
-        else
+        string? baseDir =
+            !string.IsNullOrWhiteSpace(xdgDataHome) ? xdgDataHome
+            : !string.IsNullOrWhiteSpace(home) ? Path.Combine(home, ".local", "share")
+            : isWindows && !string.IsNullOrWhiteSpace(localAppData) ? localAppData
+            : null;
+
+        if (baseDir is null)
             throw new InvalidOperationException(
                 "Cannot resolve data directory: neither XDG_DATA_HOME nor HOME is set.");
 

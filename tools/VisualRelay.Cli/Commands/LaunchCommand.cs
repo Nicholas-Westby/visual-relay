@@ -27,14 +27,25 @@ public static class LaunchCommand
         // (the C# successor to backend.sh; same shared lifecycle the app autostart
         // runs). A fresh launch can run a task without a manual proxy step; if it
         // fails the launch still proceeds and the in-app pre-flight probe surfaces
-        // the down backend.
-        var backendArgs = new List<string> { "run", "--project", paths.ToolProject("VisualRelay.Backend"), "--", "start" };
-        if (ProcessLauncher.Run(ProcessLauncher.Dotnet, backendArgs, paths.Root) != 0)
-            Console.Error.WriteLine(
-                "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)");
+        // the down backend. Skipped on Windows in Phase 0 (the lifecycle still
+        // spawns litellm through /bin/sh) — Phase 2 makes the Windows backend real.
+        if (ShouldStartBackend(OperatingSystem.IsWindows()))
+        {
+            var backendArgs = new List<string> { "run", "--project", paths.ToolProject("VisualRelay.Backend"), "--", "start" };
+            if (ProcessLauncher.Run(ProcessLauncher.Dotnet, backendArgs, paths.Root) != 0)
+                Console.Error.WriteLine(
+                    "visual-relay: backend start failed; launching anyway (in-app probe will flag a down backend)");
+        }
 
         var runArgs = new List<string> { "run", "--project", paths.AppProject, "--" };
         runArgs.AddRange(args);
         return ProcessLauncher.Run(ProcessLauncher.Dotnet, runArgs, paths.Root);
     }
+
+    /// <summary>
+    /// Whether <c>launch</c> autostarts the local model backend. Off on Windows in
+    /// Phase 0 (the backend lifecycle is not yet Windows-native); on everywhere
+    /// else. Pure so the OS gate is unit-testable on any OS.
+    /// </summary>
+    public static bool ShouldStartBackend(bool isWindows) => !isWindows;
 }

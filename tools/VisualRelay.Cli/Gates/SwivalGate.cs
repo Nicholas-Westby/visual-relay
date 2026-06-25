@@ -12,16 +12,42 @@ public static class SwivalGate
     private const string TapInstall = "brew trust swival/tap && brew install swival/tap/swival";
 
     /// <summary>Returns 0 when swival is available (already, or after a consenting
-    /// install); 127 when it is missing and no install happened.</summary>
+    /// install); 127 when it is missing and no install happened. On Windows a
+    /// missing swival never blocks GUI launch — it downgrades to a soft warning
+    /// (swival is only needed to <em>run</em> stages, gated in Phase 3).</summary>
     public static int Require(string workingDirectory)
     {
         if (ProcessLauncher.OnPath("swival"))
             return 0;
 
-        if (OfferInstall(workingDirectory) && ProcessLauncher.OnPath("swival"))
+        // The Homebrew-tap install offer is macOS/Linux only; Windows has no brew
+        // and provisions swival via `uv tool install swival` (Phase 3).
+        if (!OperatingSystem.IsWindows()
+            && OfferInstall(workingDirectory) && ProcessLauncher.OnPath("swival"))
             return 0;
 
-        Console.Error.WriteLine(
+        var (exitCode, message) = Decide(onPath: false, isWindows: OperatingSystem.IsWindows());
+        if (message is not null)
+            Console.Error.WriteLine(message);
+        return exitCode;
+    }
+
+    /// <summary>
+    /// Pure OS-aware gate decision. swival present → proceed (0). Missing on
+    /// macOS/Linux → hard fail (127) with the Homebrew-tap instructions. Missing
+    /// on Windows → proceed (0) with a soft warning that drops the brew
+    /// assumption: swival is only needed to run stages, and the GUI is fully
+    /// usable for inspection without it.
+    /// </summary>
+    public static (int ExitCode, string? Message) Decide(bool onPath, bool isWindows)
+    {
+        if (onPath)
+            return (0, null);
+        if (isWindows)
+            return (0, "visual-relay: swival was not found on PATH; needed only to run stages. "
+                + "Inspection works without it. Install with: uv tool install swival");
+
+        return (127,
             $"""
             visual-relay: swival was not found on PATH.
 
@@ -31,7 +57,6 @@ public static class SwivalGate
                 {TapInstall}
                 (or see https://swival.dev for other platforms)
             """);
-        return 127;
     }
 
     /// <summary>Consent-gated install. True when swival was (re)installed. Honors
