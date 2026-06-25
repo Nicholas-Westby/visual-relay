@@ -32,24 +32,7 @@ This is a terminal app for developers; there is no `.app` bundle to double-click
 own repository, run `./visual-relay init` in it first (it auto-detects your test command and
 writes `.relay/config.json`), then `./visual-relay launch` and point the folder picker at a repo
 containing `llm-tasks/`. Common commands: `build`, `test`, `check`, `install-hooks`. See
-[AGENTS.md](AGENTS.md) for contributor dev tooling (`sample`, `run-task`, `screenshot`) — those
-are source-checkout-only and will not ship in the Homebrew formula.
-
-### Homebrew (coming once released)
-
-A self-contained Homebrew formula is planned so you can install without a source checkout or
-.NET SDK. It is **not yet published**, so this will not work today — use the `./visual-relay`
-source checkout above until a release lands:
-
-```bash
-# Not yet available — coming once the first release is published.
-brew install nicholas-westby/tap/visual-relay
-```
-
-> **Once published, install via `brew` or `curl`, never download a `.tar.gz` through a
-> browser.** A browser download re-applies `com.apple.quarantine`, triggering Gatekeeper.
-> A Homebrew **formula** (not a cask) uses `curl` + `tar` internally — neither sets the
-> quarantine flag — so `visual-relay launch` runs with no Gatekeeper prompt and no notarization.
+[AGENTS.md](AGENTS.md) for contributor dev tooling (`sample`, `run-task`, `screenshot`).
 
 <!-- END install section -->
 
