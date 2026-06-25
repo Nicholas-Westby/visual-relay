@@ -64,6 +64,7 @@ public sealed class Installer5Bootstrap2LauncherTests
         var nx = stubNix ? Stub("nix", @"printf '%s\n' ""$@"" >> /tmp/.vr-b2-nix-argv") : "# nix absent";
         var uv = stubUv ? Stub("uv") : "# uv absent";
         var mk = marker is not null ? $"VISUAL_RELAY_NIX_REENTRY={marker}" : "VISUAL_RELAY_NIX_REENTRY=";
+        var fn = !stubNix ? "_VISUAL_RELAY_FAKE_NO_NIX=1" : "";
         return $$"""
             T=$(mktemp -d); S="$T/bin"; trap 'rm -rf "$T" /tmp/.vr-b2-*' EXIT
             rm -f /tmp/.vr-b2-nix-argv /tmp/.vr-b2-backend-ran
@@ -80,7 +81,7 @@ public sealed class Installer5Bootstrap2LauncherTests
             echo '{"testCmd":"true"}'>"$T/.relay/config.json"
             cp "$LAUNCHER" "$T/visual-relay"; chmod +x "$T/visual-relay"
             cd "$T"; RC=0
-            PATH="$S:/usr/bin:/bin" {{mk}} bash "$T/visual-relay" launch \
+            PATH="$S:/usr/bin:/bin" {{mk}} {{fn}} bash "$T/visual-relay" launch \
                 >/tmp/.vr-b2-out 2>/tmp/.vr-b2-err||RC=$?
             echo "$RC">/tmp/.vr-b2-rc
             {{assertions}}
@@ -179,15 +180,16 @@ public sealed class Installer5Bootstrap2LauncherTests
         Assert.Equal(0, ec);
     }
 
-    // ── 4. no nix + no nono → exits before backend runs (ordering proof) ─
+    // ── 4. no nix + no nono → prints install hint, falls through, backend never runs ─
 
     [Fact]
     public async Task Launch_NonoMissing_NoNix_ExitsBeforeBackendRuns()
     {
         var body = SetupB2Test(stubNono: false, stubNix: false, stubUv: true,
             marker: null, """
-            RC=$(cat /tmp/.vr-b2-rc)
-            (( RC != 0 )) || { echo "FAIL: should exit non-zero" >&2; exit 1; }
+            RC=$(cat /tmp/.vr-b2-rc); O=$(cat /tmp/.vr-b2-out /tmp/.vr-b2-err)
+            (( RC == 0 )) || { echo "FAIL: expected 0 got $RC" >&2; echo "$O" >&2; exit 1; }
+            echo "$O" | grep -q 'install.determinate.systems' || { echo "FAIL: missing install hint" >&2; echo "$O" >&2; exit 1; }
             if [[ -f /tmp/.vr-b2-backend-ran ]]; then
               echo "FAIL: backend ran before nono gate" >&2; exit 1
             fi

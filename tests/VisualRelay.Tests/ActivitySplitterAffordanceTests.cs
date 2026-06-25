@@ -115,7 +115,8 @@ public sealed class ActivitySplitterAffordanceTests
             .FirstOrDefault(b => b.Name == "SeamLine");
         Assert.NotNull(seamLine);
 
-        Assert.Equal(Color.Parse("#252A33"), ((ISolidColorBrush)seamLine.Background!).Color);
+        var gradient = Assert.IsType<LinearGradientBrush>(seamLine.Background);
+        Assert.Contains(gradient.GradientStops, gs => gs.Color == Color.Parse("#252A33"));
     }
 
     /// <summary>

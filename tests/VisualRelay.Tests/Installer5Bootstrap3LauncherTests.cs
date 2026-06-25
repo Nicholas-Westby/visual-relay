@@ -178,8 +178,8 @@ public sealed class Installer5Bootstrap3LauncherTests
         {{extra}}
         """;
     [Theory]
-    [InlineData("n", true, "")]
-    [InlineData("", true, "")]
+    [InlineData("n", true, @"echo ""$O"" | grep -q '\[y/N\]' || { echo FAIL: missing [y/N] prompt >&2; exit 1; }")]
+    [InlineData("", true, @"echo ""$O"" | grep -q '\[y/N\]' || { echo FAIL: missing [y/N] prompt >&2; exit 1; }")]
     [InlineData("n", false, @"echo ""$O"" | grep -q '\[y/N\]' && { echo FAIL: prompt in non-TTY >&2; exit 1; } || true")]
     public async Task Decline_NoInstaller(string stdin, bool tty, string extra)
     {
