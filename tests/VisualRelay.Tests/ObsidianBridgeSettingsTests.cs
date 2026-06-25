@@ -37,12 +37,25 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
         _env["HOME"] = _tempHome;
         _env["XDG_CONFIG_HOME"] = "";
 
-        var config = ObsidianBridgeSettings.Load(_env);
+        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
 
         Assert.False(config.Enabled);
-        Assert.Equal(_tempHome + "/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/",
+        Assert.Equal(
+            Path.Combine(_tempHome, "Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/"),
             config.VaultRoot);
         Assert.Equal(60, config.PollSeconds);
+    }
+
+    [Fact]
+    public void Load_OffMacOS_DefaultVaultRootIsEmpty_NotADeadIcloudPath()
+    {
+        _env["HOME"] = _tempHome;
+        _env["XDG_CONFIG_HOME"] = "";
+
+        var config = ObsidianBridgeSettings.Load(_env, isMacOS: false);
+
+        Assert.False(config.Enabled);
+        Assert.Equal(string.Empty, config.VaultRoot);
     }
 
     [Fact]
@@ -67,7 +80,7 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
 
         // Must degrade gracefully: disabled, default vault root with "~" unexpanded,
         // default poll seconds. Should not throw.
-        var config = ObsidianBridgeSettings.Load(_env);
+        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
 
         Assert.False(config.Enabled);
         // "Keeps defaults": HOME unset means the tilde stays unexpanded (no real-HOME leak).
@@ -103,10 +116,10 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
             "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/VR/", _env);
         KeyEnvFile.Upsert("VR_OBSIDIAN_POLL_SECONDS", "60", _env);
 
-        var config = ObsidianBridgeSettings.Load(_env);
+        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
 
         Assert.Equal(
-            _tempHome + "/Library/Mobile Documents/iCloud~md~obsidian/Documents/VR/",
+            Path.Combine(_tempHome, "Library/Mobile Documents/iCloud~md~obsidian/Documents/VR/"),
             config.VaultRoot);
     }
 

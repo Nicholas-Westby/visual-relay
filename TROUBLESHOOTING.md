@@ -62,3 +62,32 @@ rebuilds automatically.
 
 Legacy repo-local state (`tools/backend/.venv/` and `.relay-scratch/`) is cleaned
 up on first start by the new code.
+
+## Windows
+
+**State locations.** Windows has no `XDG_DATA_HOME`/`HOME`, so Visual Relay falls back to the
+standard Windows folders (XDG/`HOME` still win when explicitly set):
+
+| What | Location |
+|------|----------|
+| UI state, settings (`.env`), sandbox policy | `%APPDATA%\visual-relay\` |
+| LiteLLM venv, scratch (pidfile, log) | `%LOCALAPPDATA%\visual-relay\` |
+| Provisioned .NET SDK (when the launcher installs it) | `%LOCALAPPDATA%\visual-relay\dotnet\` |
+
+**`.\visual-relay` is blocked / "running scripts is disabled".** The PowerShell execution
+policy is blocking the launcher. The `.cmd` shim already passes `-ExecutionPolicy Bypass`, so
+prefer `.\visual-relay launch` (which runs `visual-relay.cmd`). To run the `.ps1` directly,
+`powershell -ExecutionPolicy Bypass -File visual-relay.ps1 launch`.
+
+**`dotnet` not found after the launcher installed it.** The launcher prepends its install dir to
+PATH for that session only (no global machine change). Re-run through `.\visual-relay`, or add
+`%LOCALAPPDATA%\visual-relay\dotnet` to your PATH for a standalone `dotnet`.
+
+**Task execution is blocked.** Windows confines writes with Microsoft Execution Containers; when
+`wxc-exec` is not provisioned and no opt-in is set, execution is blocked rather than run
+uncontained. Provision `wxc-exec`, set `VR_WINDOWS_SANDBOX=builtin` for swival's degraded
+sandbox, or run execution inside WSL2 with `nono`. Inspection (queue, logs, traces, settings)
+works without any sandbox.
+
+**Git hooks.** `install-hooks` works on Windows through Git for Windows' bundled bash (the
+pre-commit hook is `#!/usr/bin/env bash`); a working `git` on PATH is required.

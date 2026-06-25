@@ -34,6 +34,31 @@ writes `.relay/config.json`), then `./visual-relay launch` and point the folder 
 containing `llm-tasks/`. Common commands: `build`, `test`, `check`, `install-hooks`. See
 [AGENTS.md](AGENTS.md) for contributor dev tooling (`sample`, `run-task`, `screenshot`).
 
+### Windows
+
+Nix does not run on native Windows, so Windows uses a sibling launcher that provisions the same
+toolchain natively (the `gradlew`/`gradlew.bat` pattern). Clone the repo and run:
+
+```powershell
+git clone https://github.com/Nicholas-Westby/visual-relay.git
+cd visual-relay
+.\visual-relay launch
+```
+
+`visual-relay.cmd` hands off to `visual-relay.ps1`, which detects the .NET 10 SDK (offering
+Microsoft's official installer with one consent prompt when absent, into
+`%LOCALAPPDATA%\visual-relay`), hints `uv` and `git` if missing, then runs the same C# CLI. A
+non-interactive run installs nothing and prints the manual one-liners. UI state and settings
+persist under `%APPDATA%`/`%LOCALAPPDATA%`.
+
+The GUI is fully supported on Windows for **inspection** — pick a repo, browse the queue, read
+logs and live traces, and edit settings. Task **execution** is gated by the sandbox: there is no
+`nono` on Windows, so writes are confined by [Microsoft Execution
+Containers](https://github.com/microsoft/mxc) (`wxc-exec`) instead. When no sandbox is available,
+execution is **blocked** (never silently uncontained); set `VR_WINDOWS_SANDBOX=builtin` to opt
+into swival's own degraded sandbox, or run execution inside WSL2 with `nono` for the strongest
+isolation.
+
 <!-- END install section -->
 
 ## What it does

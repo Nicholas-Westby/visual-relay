@@ -33,10 +33,19 @@ public static class ObsidianBridgeSettings
     /// Returns defaults when the file is missing or malformed.
     /// Migrates a legacy <c>obsidian.json</c> on first load.
     /// </summary>
-    public static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor = null)
+    public static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor = null) =>
+        Load(accessor, OperatingSystem.IsMacOS());
+
+    /// <summary>
+    /// As <see cref="Load(IEnvironmentAccessor?)"/> with the macOS flag injected so
+    /// the OS-specific default vault root is testable on any OS. The iCloud default
+    /// is macOS-only; off macOS the default is empty (no dead iCloud path surfaces),
+    /// and the user supplies a vault path if they enable the bridge.
+    /// </summary>
+    internal static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor, bool isMacOS)
     {
         var home = KeyEnvFile.GetEnv("HOME", accessor);
-        var defaultVaultRoot = ExpandDefaultVaultRoot(home);
+        var defaultVaultRoot = ExpandDefaultVaultRoot(home, isMacOS);
 
         ObsidianBridgeConfig defaults = new(
             Enabled: false,
@@ -175,8 +184,13 @@ public static class ObsidianBridgeSettings
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static string ExpandDefaultVaultRoot(string? home)
+    private static string ExpandDefaultVaultRoot(string? home, bool isMacOS)
     {
+        // The iCloud vault default is macOS-only; off macOS there is no sensible
+        // default (no iCloud), so surface nothing rather than a dead macOS path.
+        if (!isMacOS)
+            return string.Empty;
+
         if (string.IsNullOrWhiteSpace(home))
         {
             // HOME unset → return the literal template (tests assert this).
