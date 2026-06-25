@@ -109,10 +109,83 @@ jobs:
             visual-relay-${{ matrix.rid }}.tar.gz
             visual-relay-${{ matrix.rid }}.tar.gz.sha256
 
+  build-windows:
+    name: build (win-x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish VisualRelay.App (self-contained)
+        run: >
+          dotnet publish src/VisualRelay.App/VisualRelay.App.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false -o publish/app
+
+      - name: Publish VisualRelay.Init (self-contained)
+        run: >
+          dotnet publish tools/VisualRelay.Init/VisualRelay.Init.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false -o publish/init
+
+      - name: Publish VisualRelay.GenBackendConfig (self-contained)
+        run: >
+          dotnet publish tools/VisualRelay.GenBackendConfig/VisualRelay.GenBackendConfig.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false -o publish/gen-backend-config
+
+      - name: Publish VisualRelay.Backend (self-contained)
+        run: >
+          dotnet publish tools/VisualRelay.Backend/VisualRelay.Backend.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=false -p:PublishTrimmed=false -o publish/backend
+
+      - name: Assemble release layout
+        shell: pwsh
+        run: |
+          # No .app bundle on Windows: ship the App exe, the sibling launchers, and
+          # the static litellm config template the in-process generator reads.
+          Copy-Item visual-relay.cmd publish/
+          Copy-Item visual-relay.ps1 publish/
+          New-Item -ItemType Directory -Force -Path publish/tools/backend | Out-Null
+          Copy-Item tools/backend/litellm-config.yaml publish/tools/backend/litellm-config.yaml
+
+      - name: Create zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath visual-relay-win-x64.zip
+
+      - name: Compute sha256
+        shell: pwsh
+        run: >
+          (Get-FileHash visual-relay-win-x64.zip -Algorithm SHA256).Hash
+          | Out-File -Encoding ascii visual-relay-win-x64.zip.sha256
+
+      - name: Smoke — app binary launches
+        shell: pwsh
+        run: |
+          # Bounded launch: the GUI never exits on its own, so start it, give it a
+          # moment to prove it loads, then stop it. A crash-on-start fails the job.
+          $p = Start-Process publish/app/VisualRelay.App.exe -ArgumentList '--help' -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited -and $p.ExitCode -ne 0) { throw "app exited $($p.ExitCode)" }
+          if (-not $p.HasExited) { $p.Kill($true) }
+          Write-Output 'smoke: app binary launched'
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-relay-win-x64
+          path: |
+            visual-relay-win-x64.zip
+            visual-relay-win-x64.zip.sha256
+
   release:
     name: create release
     runs-on: ubuntu-latest
-    needs: build
+    needs: [build, build-windows]
     permissions:
       contents: write
     steps:
