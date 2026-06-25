@@ -32,32 +32,51 @@ public sealed class BackendSpawnTests : IDisposable
     // ── Shell-free start info ────────────────────────────────────────────
 
     [Fact]
-    public void BuildLitellmStartInfo_LaunchesProxyDirectly_NoShell()
+    public void BuildBackendStartInfo_Unix_RunsLitellmCliWithConfigArg_NoShell()
     {
         var env = new Dictionary<string, string> { ["DEEPSEEK_API_KEY"] = "sk-x" };
-        var psi = BackendLifecycle.BuildLitellmStartInfo(
-            @"C:\venv\Scripts\litellm.exe", @"C:\cfg.yaml", "127.0.0.1", "4000", env);
+        var psi = BackendLifecycle.BuildBackendStartInfo(
+            "/venv/bin/litellm", "/venv/bin/uvicorn", "/cfg.yaml", "127.0.0.1", "4000", env, isWindows: false);
 
-        // The litellm binary itself is the launch target — not /bin/sh or cmd.exe.
-        Assert.Equal(@"C:\venv\Scripts\litellm.exe", psi.FileName);
+        // The litellm binary itself is the launch target — not /bin/sh.
+        Assert.Equal("/venv/bin/litellm", psi.FileName);
         Assert.False(psi.UseShellExecute);
         Assert.True(psi.RedirectStandardOutput);
-        Assert.True(psi.RedirectStandardError);
         Assert.Equal(
-            new[] { "--config", @"C:\cfg.yaml", "--host", "127.0.0.1", "--port", "4000" },
+            new[] { "--config", "/cfg.yaml", "--host", "127.0.0.1", "--port", "4000" },
             psi.ArgumentList);
         Assert.Equal("1", psi.Environment["PYTHONDONTWRITEBYTECODE"]);
         Assert.Equal("sk-x", psi.Environment["DEEPSEEK_API_KEY"]);
+        Assert.False(psi.Environment.ContainsKey("CONFIG_FILE_PATH"));
     }
 
     [Fact]
-    public void BuildLitellmStartInfo_OmitsConfig_WhenEmpty()
+    public void BuildBackendStartInfo_Windows_RunsUvicornDirectly_ConfigViaEnv()
     {
-        var psi = BackendLifecycle.BuildLitellmStartInfo(
-            "litellm", "", "127.0.0.1", "4000", new Dictionary<string, string>());
+        // litellm's CLI worker model crashes on Windows; run the proxy app via
+        // uvicorn directly with the config passed through CONFIG_FILE_PATH.
+        var psi = BackendLifecycle.BuildBackendStartInfo(
+            @"C:\venv\Scripts\litellm.exe", @"C:\venv\Scripts\uvicorn.exe",
+            @"C:\cfg.yaml", "127.0.0.1", "4000", new Dictionary<string, string>(), isWindows: true);
 
+        Assert.Equal(@"C:\venv\Scripts\uvicorn.exe", psi.FileName);
+        Assert.Equal(
+            new[] { "litellm.proxy.proxy_server:app", "--host", "127.0.0.1", "--port", "4000" },
+            psi.ArgumentList);
+        Assert.Equal(@"C:\cfg.yaml", psi.Environment["CONFIG_FILE_PATH"]);
         Assert.DoesNotContain("--config", psi.ArgumentList);
-        Assert.Equal(new[] { "--host", "127.0.0.1", "--port", "4000" }, psi.ArgumentList);
+    }
+
+    [Fact]
+    public void BuildBackendStartInfo_OmitsConfig_WhenEmpty()
+    {
+        var unix = BackendLifecycle.BuildBackendStartInfo(
+            "litellm", "uvicorn", "", "127.0.0.1", "4000", new Dictionary<string, string>(), isWindows: false);
+        Assert.DoesNotContain("--config", unix.ArgumentList);
+
+        var win = BackendLifecycle.BuildBackendStartInfo(
+            "litellm.exe", "uvicorn.exe", "", "127.0.0.1", "4000", new Dictionary<string, string>(), isWindows: true);
+        Assert.False(win.Environment.ContainsKey("CONFIG_FILE_PATH"));
     }
 
     // ── Log pump ─────────────────────────────────────────────────────────

@@ -36,6 +36,10 @@ public sealed class BackendPaths
     public string VenvPython => VenvExe(VenvDir, "python", OperatingSystem.IsWindows());
     public string VenvLitellm => VenvExe(VenvDir, "litellm", OperatingSystem.IsWindows());
 
+    /// <summary>The venv uvicorn used to run the proxy app directly on Windows
+    /// (litellm's CLI worker model crashes there); <c>Scripts\uvicorn.exe</c>.</summary>
+    public string VenvUvicorn => VenvExe(VenvDir, "uvicorn", OperatingSystem.IsWindows());
+
     /// <summary>
     /// The path of a venv executable <paramref name="name"/> for the layout uv
     /// creates: <c>{venvDir}\Scripts\{name}.exe</c> on Windows, <c>{venvDir}/bin/{name}</c>

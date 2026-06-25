@@ -80,37 +80,54 @@ public sealed partial class BackendLifecycle
         var host = new Uri(ModelBackend.BaseUrl).Host;
         var port = new Uri(ModelBackend.BaseUrl).Port.ToString();
 
-        var psi = BuildLitellmStartInfo(litellmBin, config, host, port, env);
+        var psi = BuildBackendStartInfo(
+            litellmBin, _paths.VenvUvicorn, config, host, port, env, OperatingSystem.IsWindows());
         var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"failed to start {litellmBin}");
+            ?? throw new InvalidOperationException("failed to start the model backend");
         StartLogPump(process.StandardOutput.BaseStream, process.StandardError.BaseStream);
         return process.Id;
     }
 
-    // Builds the shell-free ProcessStartInfo for litellm: the proxy is launched
-    // directly with stdout+stderr redirected to pipes (no shell file-redirect, so
-    // no /bin/sh on Unix and no cmd.exe on Windows). PYTHONDONTWRITEBYTECODE keeps
-    // the proxy's Python from writing bytecode into a (often system-owned) stdlib dir.
-    internal static ProcessStartInfo BuildLitellmStartInfo(
-        string litellmBin, string config, string host, string port,
-        IReadOnlyDictionary<string, string> env)
+    // Builds the shell-free ProcessStartInfo for the proxy: stdout+stderr go to
+    // pipes a background pump copies into the log file (no /bin/sh, no cmd.exe).
+    // On Windows litellm's CLI spawns a worker that crashes silently, so the proxy
+    // ASGI app runs via uvicorn directly (single process), with the config passed
+    // through CONFIG_FILE_PATH (the proxy reads it at startup). Unix runs the
+    // litellm CLI. PYTHONDONTWRITEBYTECODE keeps Python from writing bytecode into a
+    // (often system-owned) stdlib dir.
+    internal static ProcessStartInfo BuildBackendStartInfo(
+        string litellmBin, string uvicornBin, string config, string host, string port,
+        IReadOnlyDictionary<string, string> env, bool isWindows)
     {
-        var psi = new ProcessStartInfo(litellmBin)
+        var psi = new ProcessStartInfo(isWindows ? uvicornBin : litellmBin)
         {
             UseShellExecute = false,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             CreateNoWindow = true,
         };
-        if (!string.IsNullOrEmpty(config))
+        if (isWindows)
         {
-            psi.ArgumentList.Add("--config");
-            psi.ArgumentList.Add(config);
+            psi.ArgumentList.Add("litellm.proxy.proxy_server:app");
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add(host);
+            psi.ArgumentList.Add("--port");
+            psi.ArgumentList.Add(port);
+            if (!string.IsNullOrEmpty(config))
+                psi.Environment["CONFIG_FILE_PATH"] = config;
         }
-        psi.ArgumentList.Add("--host");
-        psi.ArgumentList.Add(host);
-        psi.ArgumentList.Add("--port");
-        psi.ArgumentList.Add(port);
+        else
+        {
+            if (!string.IsNullOrEmpty(config))
+            {
+                psi.ArgumentList.Add("--config");
+                psi.ArgumentList.Add(config);
+            }
+            psi.ArgumentList.Add("--host");
+            psi.ArgumentList.Add(host);
+            psi.ArgumentList.Add("--port");
+            psi.ArgumentList.Add(port);
+        }
 
         psi.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
         psi.Environment["DISABLE_AIOHTTP_TRANSPORT"] = Default("DISABLE_AIOHTTP_TRANSPORT", "True");
