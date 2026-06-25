@@ -18,7 +18,7 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
     public async Task<TestRunResult> RunAsync(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
-        var (fileName, args) = ResolveLaunch(command);
+        var (fileName, args) = ResolveLaunch(command, rootPath);
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
@@ -38,10 +38,15 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
 
     /// <summary>
     /// Resolves the launch target (FileName, Arguments) for the given command.
-    /// Exposed as internal for unit-test argument-shape assertions.
+    /// Exposed as internal for unit-test argument-shape assertions. On Windows the
+    /// verify command is wrapped in the OS-selected sandbox; <paramref name="rootPath"/>
+    /// is the workspace the MXC policy confines writes to.
     /// </summary>
-    internal (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command)
+    internal (string FileName, IReadOnlyList<string> Arguments) ResolveLaunch(string command, string? rootPath = null)
     {
+        if (OperatingSystem.IsWindows())
+            return ResolveWindowsLaunch(command, rootPath);
+
         // Sandbox always on: wrap in nono.
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
@@ -74,5 +79,24 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
             args.AddRange(parts.Arguments);
             return ("nono", args);
         }
+    }
+
+    // Windows verify launch: a shell command runs through cmd.exe /c, a script
+    // through direct exec; the resulting program is then wrapped in MXC (default)
+    // or run as-is under the degraded builtin opt-in, or blocked when no sandbox.
+    private (string FileName, IReadOnlyList<string> Arguments) ResolveWindowsLaunch(string command, string? rootPath)
+    {
+        var (innerFile, innerArgs) = inner is ShellTestRunner
+            ? ShellTestRunner.BuildShellLaunch(command, isWindows: true)
+            : DirectExecTestRunner.ResolveLaunch(command);
+
+        var (mode, wxc, policy) = MxcProvisioner.ResolvePlan(rootPath);
+        return mode switch
+        {
+            WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxc!, policy!, innerFile, innerArgs),
+            // Builtin guards only swival's own file tools, not the verify command.
+            WindowsSandboxMode.Builtin => (innerFile, innerArgs),
+            _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
+        };
     }
 }

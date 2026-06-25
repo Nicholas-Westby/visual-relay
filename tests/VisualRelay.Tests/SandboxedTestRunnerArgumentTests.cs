@@ -10,6 +10,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         // "bun test" → nono run --profile <abs> --allow-cwd -- /bin/sh -c "bun test"
         // Non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
         // rather than re-resolving a different dotnet/PATH from a login profile (which caused
@@ -35,6 +36,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void DirectExecMode_SandboxEnabled_WrapsScriptDirectly()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         // Script → nono run --profile <abs> --allow-cwd -- <script> <args>
         var config = TestConfig();
         var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
@@ -115,6 +117,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     [Fact]
     public void SandboxedTestRunner_ResolveLaunch_AppendsExtraAllowPaths()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         var extra = Path.Combine(home, ".cache", "exotic-tool");
         var config = TestConfig() with

@@ -62,10 +62,38 @@ public sealed partial class SwivalSubagentRunner
     internal (string FileName, IReadOnlyList<string> Arguments) BuildLaunchTarget(
         List<string> swivalArguments, IReadOnlyList<string>? skipDirs = null)
     {
+        // Windows has no nono; wrap swival in the OS-selected sandbox instead.
+        if (OperatingSystem.IsWindows())
+        {
+            var (mode, wxc, policy) = MxcProvisioner.ResolvePlan(ExtractBaseDir(swivalArguments));
+            return BuildWindowsLaunchTarget(swivalArguments, mode, wxc, policy);
+        }
+
         var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs);
         var nonoArguments = new List<string>(prefix) { _swivalBinary };
         nonoArguments.AddRange(swivalArguments);
         return (_nonoBinary, nonoArguments);
+    }
+
+    // Windows: wrap swival in MXC (default), the degraded builtin (opt-in), or block
+    // when no sandbox is available — execution is never silently uncontained.
+    internal (string FileName, IReadOnlyList<string> Arguments) BuildWindowsLaunchTarget(
+        List<string> swivalArguments, WindowsSandboxMode mode, string? wxcExec, string? policyPath) => mode switch
+    {
+        WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxcExec!, policyPath!, _swivalBinary, swivalArguments),
+        WindowsSandboxMode.Builtin => WindowsSandbox.BuildBuiltinSwivalLaunch(_swivalBinary, swivalArguments),
+        _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
+    };
+
+    // The --base-dir value (the workspace root the MXC policy confines writes to).
+    private static string? ExtractBaseDir(IReadOnlyList<string> swivalArguments)
+    {
+        for (var i = 0; i + 1 < swivalArguments.Count; i++)
+        {
+            if (swivalArguments[i] == "--base-dir")
+                return swivalArguments[i + 1];
+        }
+        return null;
     }
 
     internal static string BuildPrompt(StageInvocation invocation)

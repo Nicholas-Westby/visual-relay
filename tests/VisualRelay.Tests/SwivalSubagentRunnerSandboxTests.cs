@@ -25,6 +25,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildLaunchTarget_SandboxEnabled_WrapsSwivalInNono()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var config = TestConfig(); // sandbox is always on
         var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
@@ -215,6 +216,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     [Fact]
     public void BuildLaunchTarget_UsesBuildNonoPrefixWithRollback()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         // After the refactor, BuildLaunchTarget must produce the same args it
         // always did — the shared builder just means the prefix isn't inlined.
         var config = TestConfig();
