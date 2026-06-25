@@ -111,20 +111,9 @@ public static class BackendVenv
         }
     }
 
-    private static string? ResolveOnPath(string name)
-    {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH");
-        if (string.IsNullOrEmpty(pathEnv))
-            return null;
-        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            var candidate = Path.Combine(dir, name);
-            if (IsExecutable(candidate))
-                return candidate;
-        }
-
-        return null;
-    }
+    // Resolve uv/litellm on PATH through the shared PATHEXT-aware resolver so a
+    // bare `uv`/`litellm` finds `uv.exe`/`litellm.exe` on Windows.
+    private static string? ResolveOnPath(string name) => PathExecutables.Find(name);
 
     private static void TryDeleteDir(string dir)
     {

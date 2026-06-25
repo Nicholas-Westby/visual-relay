@@ -33,8 +33,19 @@ public sealed class BackendPaths
     /// <summary>Scratch directory for the pidfile, log, and generated config.</summary>
     public string Scratch { get; }
 
-    public string VenvPython => Path.Combine(VenvDir, "bin", "python");
-    public string VenvLitellm => Path.Combine(VenvDir, "bin", "litellm");
+    public string VenvPython => VenvExe(VenvDir, "python", OperatingSystem.IsWindows());
+    public string VenvLitellm => VenvExe(VenvDir, "litellm", OperatingSystem.IsWindows());
+
+    /// <summary>
+    /// The path of a venv executable <paramref name="name"/> for the layout uv
+    /// creates: <c>{venvDir}\Scripts\{name}.exe</c> on Windows, <c>{venvDir}/bin/{name}</c>
+    /// on Unix. <paramref name="isWindows"/> is injected so both layouts are
+    /// unit-testable on any OS.
+    /// </summary>
+    public static string VenvExe(string venvDir, string name, bool isWindows) =>
+        isWindows
+            ? Path.Combine(venvDir, "Scripts", name + ".exe")
+            : Path.Combine(venvDir, "bin", name);
     public string PidFile => Path.Combine(Scratch, "litellm.pid");
     public string LogFile => Path.Combine(Scratch, "litellm.log");
     public string GeneratedConfig => Path.Combine(Scratch, "litellm-config.generated.yaml");

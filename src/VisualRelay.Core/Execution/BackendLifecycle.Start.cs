@@ -71,31 +71,46 @@ public sealed partial class BackendLifecycle
         return null;
     }
 
-    // Spawns litellm detached (outlives this process), redirecting stdout+stderr
-    // to the log file, and returns its pid. PYTHONDONTWRITEBYTECODE=1 keeps the
-    // proxy's Python from writing __pycache__/*.pyc into a (often system-owned)
-    // stdlib dir — the same suppression the nono-wrapped paths apply.
+    // Spawns litellm shell-free (no /bin/sh — works on every OS), redirecting
+    // stdout+stderr to pipes that a background pump copies into the log file, and
+    // returns its pid. The proxy outlives this tool: on Windows/Unix a child is not
+    // killed when its parent exits, so it keeps serving after the readiness poll.
     private int SpawnLitellm(string litellmBin, string config, IReadOnlyDictionary<string, string> env)
     {
         var host = new Uri(ModelBackend.BaseUrl).Host;
         var port = new Uri(ModelBackend.BaseUrl).Port.ToString();
 
-        // Spawn through `sh -c 'exec litellm … >LOG 2>&1'` so the log redirect to a
-        // FILE happens in the child (the bash `nohup … >LOG 2>&1 &` shape) and the
-        // proxy fully detaches: it has no stdio pipe back to this tool, so it keeps
-        // running unharmed after the tool exits at readiness. `exec` replaces the
-        // shell with litellm, so the captured pid IS the proxy's.
-        var configArg = string.IsNullOrEmpty(config) ? string.Empty : $"--config {Quote(config)} ";
-        var shellCommand =
-            $"exec {Quote(litellmBin)} {configArg}--host {Quote(host)} --port {port} " +
-            $">{Quote(_paths.LogFile)} 2>&1";
+        var psi = BuildLitellmStartInfo(litellmBin, config, host, port, env);
+        var process = Process.Start(psi)
+            ?? throw new InvalidOperationException($"failed to start {litellmBin}");
+        StartLogPump(process.StandardOutput.BaseStream, process.StandardError.BaseStream);
+        return process.Id;
+    }
 
-        var psi = new ProcessStartInfo("/bin/sh")
+    // Builds the shell-free ProcessStartInfo for litellm: the proxy is launched
+    // directly with stdout+stderr redirected to pipes (no shell file-redirect, so
+    // no /bin/sh on Unix and no cmd.exe on Windows). PYTHONDONTWRITEBYTECODE keeps
+    // the proxy's Python from writing bytecode into a (often system-owned) stdlib dir.
+    internal static ProcessStartInfo BuildLitellmStartInfo(
+        string litellmBin, string config, string host, string port,
+        IReadOnlyDictionary<string, string> env)
+    {
+        var psi = new ProcessStartInfo(litellmBin)
         {
             UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
         };
-        psi.ArgumentList.Add("-c");
-        psi.ArgumentList.Add(shellCommand);
+        if (!string.IsNullOrEmpty(config))
+        {
+            psi.ArgumentList.Add("--config");
+            psi.ArgumentList.Add(config);
+        }
+        psi.ArgumentList.Add("--host");
+        psi.ArgumentList.Add(host);
+        psi.ArgumentList.Add("--port");
+        psi.ArgumentList.Add(port);
 
         psi.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
         psi.Environment["DISABLE_AIOHTTP_TRANSPORT"] = Default("DISABLE_AIOHTTP_TRANSPORT", "True");
@@ -103,16 +118,56 @@ public sealed partial class BackendLifecycle
             Default("LITELLM_MAX_STREAMING_DURATION_SECONDS", "240");
         foreach (var (k, v) in env)
             psi.Environment[k] = v;
-
-        var process = Process.Start(psi)
-            ?? throw new InvalidOperationException($"failed to start {litellmBin}");
-        return process.Id;
+        return psi;
     }
 
-    // Single-quote a value for safe inclusion in the `sh -c` command line,
-    // escaping any embedded single quotes (POSIX '\'' idiom).
-    private static string Quote(string value) =>
-        "'" + value.Replace("'", "'\\''") + "'";
+    // Copies the proxy's stdout+stderr into the log file (append). Fire-and-forget:
+    // it pumps for the life of the caller — the long-lived app in autostart, or the
+    // readiness poll in the one-shot CLI start (which captures the boot logs that
+    // matter). Best-effort: backend health is probed over HTTP, never the log.
+    private void StartLogPump(Stream stdout, Stream stderr)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await using var log = new FileStream(
+                    _paths.LogFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+                await CopyStreamsToLogAsync(stdout, stderr, log);
+            }
+            catch
+            {
+                // A closed pipe (proxy detached) or unwritable log is non-fatal.
+            }
+        });
+    }
+
+    // Pumps both streams into one log sink, serialized so a stdout and a stderr
+    // write never interleave mid-chunk.
+    internal static async Task CopyStreamsToLogAsync(Stream stdout, Stream stderr, Stream log)
+    {
+        var gate = new SemaphoreSlim(1, 1);
+        await Task.WhenAll(PumpAsync(stdout, log, gate), PumpAsync(stderr, log, gate));
+    }
+
+    private static async Task PumpAsync(Stream src, Stream dst, SemaphoreSlim gate)
+    {
+        var buffer = new byte[4096];
+        int read;
+        while ((read = await src.ReadAsync(buffer)) > 0)
+        {
+            await gate.WaitAsync();
+            try
+            {
+                await dst.WriteAsync(buffer.AsMemory(0, read));
+                await dst.FlushAsync();
+            }
+            finally
+            {
+                gate.Release();
+            }
+        }
+    }
 
     private async Task<BackendResult> PollReadinessAsync(CancellationToken cancellationToken)
     {

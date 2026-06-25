@@ -53,6 +53,17 @@ public sealed class ProcessTreeCpuSamplerTests
     }
 
     [Fact]
+    public void SumTreeCpuMs_FromMaps_SumsOnlyTheTree()
+    {
+        // The OS-agnostic summation both the ps (Unix) and Process (Windows)
+        // samplers feed: only the root and its descendants count, never siblings.
+        var children = new Dictionary<int, List<int>> { [10] = [11, 12], [11] = [13] };
+        var cpu = new Dictionary<int, long> { [10] = 100, [11] = 50, [12] = 25, [13] = 10, [99] = 9999 };
+
+        Assert.Equal(185, ProcessTreeCpuSampler.SumTreeCpuMs(10, children, cpu));
+    }
+
+    [Fact]
     public void TrySampleTreeCpuMs_SelfProcess_ReturnsNonNegative()
     {
         var sampled = ProcessTreeCpuSampler.TrySampleTreeCpuMs(Environment.ProcessId);

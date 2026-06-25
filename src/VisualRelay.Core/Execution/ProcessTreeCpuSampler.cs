@@ -1,14 +1,17 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// Samples cumulative CPU time of a process tree via one `ps` snapshot.
-/// A filesystem-independent activity signal: a subagent doing real work
-/// accrues CPU even when its stdout is quiet and its trace-file view is
-/// frozen (virtio-fs attr-cache staleness). Returns null when sampling
-/// fails — callers must treat null as "no signal", never as activity.
+/// Samples cumulative CPU time of a process tree. A filesystem-independent
+/// activity signal: a subagent doing real work accrues CPU even when its stdout is
+/// quiet and its trace-file view is frozen (virtio-fs attr-cache staleness).
+/// Dispatches by OS — a single <c>ps</c> snapshot on Unix, a Toolhelp snapshot plus
+/// <see cref="Process.TotalProcessorTime"/> on Windows — and shares one OS-agnostic
+/// tree summation. Returns null when sampling fails; callers must treat null as
+/// "no signal", never as activity.
 /// </summary>
 internal static class ProcessTreeCpuSampler
 {
@@ -16,27 +19,34 @@ internal static class ProcessTreeCpuSampler
     {
         try
         {
-            using var ps = new Process();
-            ps.StartInfo = new ProcessStartInfo("/bin/ps", "-axo pid=,ppid=,time=")
-            {
-                RedirectStandardOutput = true,
-                UseShellExecute = false
-            };
-            ps.Start();
-            var stdout = ps.StandardOutput.ReadToEnd();
-            if (!ps.WaitForExit(2_000))
-            {
-                try { ps.Kill(entireProcessTree: true); } catch { /* gone */ }
-                _ = ps.StandardOutput.ReadToEnd();
-                return null;
-            }
-
-            return ps.ExitCode == 0 ? SumTreeCpuMs(rootPid, stdout) : null;
+            return OperatingSystem.IsWindows() ? SampleWindows(rootPid) : SamplePosix(rootPid);
         }
         catch
         {
             return null;
         }
+    }
+
+    // ── POSIX: one `ps` snapshot ─────────────────────────────────────────
+
+    private static long? SamplePosix(int rootPid)
+    {
+        using var ps = new Process();
+        ps.StartInfo = new ProcessStartInfo("/bin/ps", "-axo pid=,ppid=,time=")
+        {
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+        ps.Start();
+        var stdout = ps.StandardOutput.ReadToEnd();
+        if (!ps.WaitForExit(2_000))
+        {
+            try { ps.Kill(entireProcessTree: true); } catch { /* gone */ }
+            _ = ps.StandardOutput.ReadToEnd();
+            return null;
+        }
+
+        return ps.ExitCode == 0 ? SumTreeCpuMs(rootPid, stdout) : null;
     }
 
     private static long SumTreeCpuMs(int rootPid, string psOutput)
@@ -61,6 +71,69 @@ internal static class ProcessTreeCpuSampler
             siblings.Add(pid);
         }
 
+        return SumTreeCpuMs(rootPid, childrenByParent, cpuByPid);
+    }
+
+    // ── Windows: a Toolhelp snapshot + Process.TotalProcessorTime ────────
+
+    private static long? SampleWindows(int rootPid)
+    {
+        var childrenByParent = BuildWindowsProcessTree();
+        if (childrenByParent is null)
+            return null;
+
+        var cpuByPid = new Dictionary<int, long>();
+        foreach (var pid in CollectDescendants(rootPid, childrenByParent))
+        {
+            try
+            {
+                using var process = Process.GetProcessById(pid);
+                cpuByPid[pid] = (long)process.TotalProcessorTime.TotalMilliseconds;
+            }
+            catch (Exception)
+            {
+                // Process gone or not accessible (e.g. a system pid) — skip it.
+            }
+        }
+
+        return SumTreeCpuMs(rootPid, childrenByParent, cpuByPid);
+    }
+
+    private static Dictionary<int, List<int>>? BuildWindowsProcessTree()
+    {
+        var snapshot = CreateToolhelp32Snapshot(Th32csSnapprocess, 0);
+        if (snapshot == InvalidHandleValue)
+            return null;
+        try
+        {
+            var childrenByParent = new Dictionary<int, List<int>>();
+            var entry = new ProcessEntry32 { dwSize = (uint)Marshal.SizeOf<ProcessEntry32>() };
+            if (!Process32First(snapshot, ref entry))
+                return null;
+            do
+            {
+                var pid = (int)entry.th32ProcessID;
+                var ppid = (int)entry.th32ParentProcessID;
+                if (!childrenByParent.TryGetValue(ppid, out var kids))
+                    childrenByParent[ppid] = kids = [];
+                kids.Add(pid);
+            }
+            while (Process32Next(snapshot, ref entry));
+            return childrenByParent;
+        }
+        finally
+        {
+            CloseHandle(snapshot);
+        }
+    }
+
+    /// <summary>OS-agnostic tree summation: the cumulative CPU (ms) of
+    /// <paramref name="rootPid"/> and every descendant, ignoring unrelated pids.</summary>
+    internal static long SumTreeCpuMs(
+        int rootPid,
+        IReadOnlyDictionary<int, List<int>> childrenByParent,
+        IReadOnlyDictionary<int, long> cpuByPid)
+    {
         long total = 0;
         foreach (var pid in CollectDescendants(rootPid, childrenByParent))
         {
@@ -70,6 +143,39 @@ internal static class ProcessTreeCpuSampler
 
         return total;
     }
+
+    // ── Toolhelp interop (Windows only; never invoked off the IsWindows branch) ──
+
+    private const uint Th32csSnapprocess = 0x00000002;
+    private static readonly IntPtr InvalidHandleValue = new(-1);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct ProcessEntry32
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public IntPtr th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+        public string szExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32FirstW")]
+    private static extern bool Process32First(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "Process32NextW")]
+    private static extern bool Process32Next(IntPtr hSnapshot, ref ProcessEntry32 lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
 
     internal static IReadOnlyList<int> CollectDescendants(
         int root, IReadOnlyDictionary<int, List<int>> childrenByParent)
