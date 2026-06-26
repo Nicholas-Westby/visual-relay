@@ -71,62 +71,61 @@ public sealed partial class BackendLifecycle
         return null;
     }
 
-    // Spawns litellm shell-free (no /bin/sh — works on every OS), redirecting
-    // stdout+stderr to pipes that a background pump copies into the log file, and
-    // returns its pid. The proxy outlives this tool: on Windows/Unix a child is not
-    // killed when its parent exits, so it keeps serving after the readiness poll.
+    // Spawns the proxy detached, with the child redirecting its own stdout+stderr to
+    // the log FILE through the OS shell (`>LOG 2>&1`, truncating). Detaching through a
+    // file (no pipe back to this tool) is why the proxy keeps serving after the
+    // one-shot `start` exits at readiness — on every OS. Returns the launched pid.
     private int SpawnLitellm(string litellmBin, string config, IReadOnlyDictionary<string, string> env)
     {
         var host = new Uri(ModelBackend.BaseUrl).Host;
         var port = new Uri(ModelBackend.BaseUrl).Port.ToString();
 
         var psi = BuildBackendStartInfo(
-            litellmBin, _paths.VenvUvicorn, config, host, port, env, OperatingSystem.IsWindows());
+            litellmBin, _paths.VenvUvicorn, config, host, port, _paths.LogFile, env, OperatingSystem.IsWindows());
         var process = Process.Start(psi)
             ?? throw new InvalidOperationException("failed to start the model backend");
-        StartLogPump(process.StandardOutput.BaseStream, process.StandardError.BaseStream);
         return process.Id;
     }
 
-    // Builds the shell-free ProcessStartInfo for the proxy: stdout+stderr go to
-    // pipes a background pump copies into the log file (no /bin/sh, no cmd.exe).
-    // On Windows litellm's CLI spawns a worker that crashes silently, so the proxy
-    // ASGI app runs via uvicorn directly (single process), with the config passed
-    // through CONFIG_FILE_PATH (the proxy reads it at startup). Unix runs the
-    // litellm CLI. PYTHONDONTWRITEBYTECODE keeps Python from writing bytecode into a
-    // (often system-owned) stdlib dir.
+    // Builds the ProcessStartInfo that launches the proxy through the OS shell so the
+    // CHILD redirects its own stdout+stderr to the log FILE (`>LOG 2>&1`, which
+    // truncates on each start) and fully detaches — no pipe back to this tool, so the
+    // proxy survives the one-shot `start` exiting at readiness. On Windows litellm's
+    // CLI worker crashes silently, so the proxy ASGI app runs via uvicorn directly
+    // with the config in CONFIG_FILE_PATH; Unix runs the litellm CLI under `exec` so
+    // the captured pid IS the proxy's. PYTHONDONTWRITEBYTECODE keeps Python from
+    // writing bytecode into a (often system-owned) stdlib dir.
     internal static ProcessStartInfo BuildBackendStartInfo(
         string litellmBin, string uvicornBin, string config, string host, string port,
-        IReadOnlyDictionary<string, string> env, bool isWindows)
+        string logFile, IReadOnlyDictionary<string, string> env, bool isWindows)
     {
-        var psi = new ProcessStartInfo(isWindows ? uvicornBin : litellmBin)
-        {
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true,
-        };
+        ProcessStartInfo psi;
         if (isWindows)
         {
-            psi.ArgumentList.Add("litellm.proxy.proxy_server:app");
-            psi.ArgumentList.Add("--host");
-            psi.ArgumentList.Add(host);
-            psi.ArgumentList.Add("--port");
-            psi.ArgumentList.Add(port);
+            // Raw argument string: cmd.exe parses its own command line, so the
+            // redirect and quoted paths are not re-escaped by .NET argv quoting. The
+            // whole command is wrapped in ONE outer quote pair — `cmd /c "…"` strips
+            // exactly that pair, leaving the inner quoted paths intact (without the
+            // wrap, cmd's multi-quote rule strips the uvicorn path's own quotes).
+            var inner = $"{WinQuote(uvicornBin)} litellm.proxy.proxy_server:app " +
+                        $"--host {host} --port {port} > {WinQuote(logFile)} 2>&1";
+            psi = new ProcessStartInfo("cmd.exe")
+            {
+                Arguments = $"/c \"{inner}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
             if (!string.IsNullOrEmpty(config))
                 psi.Environment["CONFIG_FILE_PATH"] = config;
         }
         else
         {
-            if (!string.IsNullOrEmpty(config))
-            {
-                psi.ArgumentList.Add("--config");
-                psi.ArgumentList.Add(config);
-            }
-            psi.ArgumentList.Add("--host");
-            psi.ArgumentList.Add(host);
-            psi.ArgumentList.Add("--port");
-            psi.ArgumentList.Add(port);
+            var configArg = string.IsNullOrEmpty(config) ? string.Empty : $"--config {ShQuote(config)} ";
+            psi = new ProcessStartInfo("/bin/sh") { UseShellExecute = false };
+            psi.ArgumentList.Add("-c");
+            psi.ArgumentList.Add(
+                $"exec {ShQuote(litellmBin)} {configArg}--host {ShQuote(host)} --port {port} " +
+                $">{ShQuote(logFile)} 2>&1");
         }
 
         psi.Environment["PYTHONDONTWRITEBYTECODE"] = "1";
@@ -138,53 +137,11 @@ public sealed partial class BackendLifecycle
         return psi;
     }
 
-    // Copies the proxy's stdout+stderr into the log file (append). Fire-and-forget:
-    // it pumps for the life of the caller — the long-lived app in autostart, or the
-    // readiness poll in the one-shot CLI start (which captures the boot logs that
-    // matter). Best-effort: backend health is probed over HTTP, never the log.
-    private void StartLogPump(Stream stdout, Stream stderr)
-    {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                await using var log = new FileStream(
-                    _paths.LogFile, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
-                await CopyStreamsToLogAsync(stdout, stderr, log);
-            }
-            catch
-            {
-                // A closed pipe (proxy detached) or unwritable log is non-fatal.
-            }
-        });
-    }
+    // Single-quote a value for POSIX sh, escaping embedded single quotes (the '\'' idiom).
+    private static string ShQuote(string value) => "'" + value.Replace("'", "'\\''") + "'";
 
-    // Pumps both streams into one log sink, serialized so a stdout and a stderr
-    // write never interleave mid-chunk.
-    internal static async Task CopyStreamsToLogAsync(Stream stdout, Stream stderr, Stream log)
-    {
-        var gate = new SemaphoreSlim(1, 1);
-        await Task.WhenAll(PumpAsync(stdout, log, gate), PumpAsync(stderr, log, gate));
-    }
-
-    private static async Task PumpAsync(Stream src, Stream dst, SemaphoreSlim gate)
-    {
-        var buffer = new byte[4096];
-        int read;
-        while ((read = await src.ReadAsync(buffer)) > 0)
-        {
-            await gate.WaitAsync();
-            try
-            {
-                await dst.WriteAsync(buffer.AsMemory(0, read));
-                await dst.FlushAsync();
-            }
-            finally
-            {
-                gate.Release();
-            }
-        }
-    }
+    // Double-quote a path for cmd.exe so a space-containing path stays one token.
+    private static string WinQuote(string value) => "\"" + value + "\"";
 
     private async Task<BackendResult> PollReadinessAsync(CancellationToken cancellationToken)
     {
