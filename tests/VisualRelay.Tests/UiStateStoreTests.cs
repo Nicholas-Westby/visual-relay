@@ -65,10 +65,11 @@ public sealed class UiStateStoreTests
     [Fact]
     public void Load_NoEnvironmentVariables_ReturnsDefaults()
     {
-        // Neither XDG_CONFIG_HOME nor HOME resolves — must not throw, returns
-        // defaults. Both are set to empty (treated as unset by the resolver) so
-        // the accessor stays authoritative and never leaks the agent's real
-        // HOME — an empty accessor would fall through to the process env.
+        // Unix-only: neither XDG_CONFIG_HOME nor HOME resolves, so the config dir
+        // is unresolvable and Load returns defaults. On Windows the same empty env
+        // resolves to %APPDATA% (a real folder, by design), which is a different —
+        // and intentional — behavior, so this Unix assertion is gated off Windows.
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix unresolvable-config-dir path");
         var env = new DictionaryEnvironmentAccessor
         {
             ["XDG_CONFIG_HOME"] = "",
