@@ -54,10 +54,11 @@ persist under `%APPDATA%`/`%LOCALAPPDATA%`.
 The GUI is fully supported on Windows for **inspection** — pick a repo, browse the queue, read
 logs and live traces, and edit settings. Task **execution** is gated by the sandbox: there is no
 `nono` on Windows, so writes are confined by [Microsoft Execution
-Containers](https://github.com/microsoft/mxc) (`wxc-exec`) instead. When no sandbox is available,
-execution is **blocked** (never silently uncontained); set `VR_WINDOWS_SANDBOX=builtin` to opt
-into swival's own degraded sandbox, or run execution inside WSL2 with `nono` for the strongest
-isolation.
+Containers](https://github.com/microsoft/mxc) (`wxc-exec`) instead — run `./visual-relay
+provision-mxc` to install the signed runtime (write-confinement is verified against it). When no
+sandbox is available, execution is **blocked** (never silently uncontained); set
+`VR_WINDOWS_SANDBOX=builtin` to opt into swival's own degraded sandbox, or run execution inside
+WSL2 with `nono` for the strongest isolation.
 
 <!-- END install section -->
 

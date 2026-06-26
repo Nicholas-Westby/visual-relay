@@ -83,11 +83,20 @@ prefer `.\visual-relay launch` (which runs `visual-relay.cmd`). To run the `.ps1
 PATH for that session only (no global machine change). Re-run through `.\visual-relay`, or add
 `%LOCALAPPDATA%\visual-relay\dotnet` to your PATH for a standalone `dotnet`.
 
-**Task execution is blocked.** Windows confines writes with Microsoft Execution Containers; when
-`wxc-exec` is not provisioned and no opt-in is set, execution is blocked rather than run
-uncontained. Provision `wxc-exec`, set `VR_WINDOWS_SANDBOX=builtin` for swival's degraded
-sandbox, or run execution inside WSL2 with `nono`. Inspection (queue, logs, traces, settings)
-works without any sandbox.
+**Task execution is blocked.** Windows confines writes with Microsoft Execution Containers
+(MXC); when `wxc-exec` is not provisioned and no opt-in is set, execution is blocked rather
+than run uncontained. Run `visual-relay provision-mxc` to download and install the pinned,
+Microsoft-signed `wxc-exec` runtime into `%LOCALAPPDATA%\visual-relay\mxc\` (a no-op if it is
+already present); set `VR_WINDOWS_SANDBOX=builtin` for swival's degraded sandbox; or run
+execution inside WSL2 with `nono`. Inspection (queue, logs, traces, settings) works without any
+sandbox.
+
+Write-confinement is empirically verified against the real `wxc-exec` (a command writing
+outside the workspace is denied, inside is allowed). Where the BaseContainer/processcontainer
+backend is unavailable, MXC falls back to the **AppContainer + DACL** tier; for the fewest
+caveats run `wxc-host-prep prepare-system-drive` (elevated) once so AppContainer processes can
+read the system-drive root metadata. The confinement policy lists only writable roots that
+exist — a missing toolchain-cache dir is never sent to `wxc-exec` (it would fail to stamp it).
 
 **Git hooks.** `install-hooks` works on Windows through Git for Windows' bundled bash (the
 pre-commit hook is `#!/usr/bin/env bash`); a working `git` on PATH is required.
