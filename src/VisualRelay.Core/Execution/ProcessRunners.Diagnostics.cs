@@ -21,21 +21,52 @@ public sealed partial class SwivalSubagentRunner
         string swivalBinary = "swival",
         string nonoBinary = NonoBinary)
     {
-        var pathDirs = (pathValue ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        var isWindows = OperatingSystem.IsWindows();
+        // On Windows there is no nono; the required sandbox is MXC (or the degraded
+        // builtin opt-in). Resolve its availability the same way the launch does.
+        var windowsMode = isWindows
+            ? WindowsSandbox.Select(
+                Environment.GetEnvironmentVariable(WindowsSandbox.OptInEnvVar),
+                MxcProvisioner.ResolveWxcExec() is not null)
+            : WindowsSandboxMode.Mxc; // unused off Windows
 
+        return MissingRequiredTools(
+            pathValue ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty,
+            swivalBinary, nonoBinary, isWindows,
+            Environment.GetEnvironmentVariable("PATHEXT"), windowsMode);
+    }
+
+    /// <summary>
+    /// Pure tool-presence probe with the OS dispatch injected. swival is always
+    /// required (resolved PATHEXT-aware on Windows so <c>swival.exe</c> is found);
+    /// the second requirement is nono on Unix and a non-blocked Windows sandbox on
+    /// Windows. Returns the missing requirement names (empty ⇒ runnable).
+    /// </summary>
+    internal static IReadOnlyList<string> MissingRequiredTools(
+        string path, string swivalBinary, string nonoBinary,
+        bool isWindows, string? pathext, WindowsSandboxMode windowsMode)
+    {
         bool OnPath(string name) =>
             // A bare path component (no directory) is taken as a cwd-relative
             // executable, mirroring how the process launcher resolves it.
             Path.IsPathRooted(name) || name.Contains(Path.DirectorySeparatorChar)
                 ? File.Exists(name)
-                : pathDirs.Any(dir => File.Exists(Path.Combine(dir, name)));
+                : PathExecutables.Resolve(name, path, pathext, isWindows, File.Exists) is not null;
 
         var missing = new List<string>(2);
         if (!OnPath(swivalBinary))
             missing.Add(swivalBinary);
-        if (!OnPath(nonoBinary))
+
+        if (isWindows)
+        {
+            if (windowsMode == WindowsSandboxMode.Blocked)
+                missing.Add("a Windows sandbox (set VR_WINDOWS_SANDBOX=builtin or provision wxc-exec)");
+        }
+        else if (!OnPath(nonoBinary))
+        {
             missing.Add(nonoBinary);
+        }
+
         return missing;
     }
 

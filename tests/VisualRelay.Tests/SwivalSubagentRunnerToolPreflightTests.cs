@@ -14,6 +14,7 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
     [Fact]
     public void MissingRequiredTools_NeitherToolPresent_SandboxOn_ReturnsBothNames()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix requires nono (Windows requires a sandbox)");
         var config = SandboxOnConfig();
         var emptyPath = string.Empty;
 
@@ -26,6 +27,7 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
     [Fact]
     public void MissingRequiredTools_BothPresentOnPath_ReturnsEmpty()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix requires nono (Windows requires a sandbox)");
         using var dir = new TempDir();
         var swival = MakeToolFile(dir.Path, "swival");
         var nono = MakeToolFile(dir.Path, "nono");
@@ -41,6 +43,7 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
     [Fact]
     public void MissingRequiredTools_OnlySwivalPresent_SandboxOn_ReturnsNono()
     {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix requires nono (Windows requires a sandbox)");
         using var dir = new TempDir();
         MakeToolFile(dir.Path, "swival");
 
@@ -50,6 +53,44 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
             config, dir.Path, swivalBinary: "swival", nonoBinary: "nono");
 
         Assert.Equal(new[] { "nono" }, missing);
+    }
+
+    // ── Windows: swival via PATHEXT + a sandbox (never nono) ──────────────
+
+    [Fact]
+    public void MissingRequiredTools_Windows_SwivalViaPathext_BuiltinSandbox_Runnable()
+    {
+        using var dir = new TempDir();
+        MakeToolFile(dir.Path, "swival.EXE"); // bare "swival" resolves via PATHEXT
+
+        var missing = SwivalSubagentRunner.MissingRequiredTools(
+            dir.Path, "swival", "nono", isWindows: true, pathext: ".EXE", windowsMode: WindowsSandboxMode.Builtin);
+
+        Assert.Empty(missing); // swival found, builtin sandbox usable, nono never required
+    }
+
+    [Fact]
+    public void MissingRequiredTools_Windows_NoSandbox_ReportsSandbox_NeverNono()
+    {
+        using var dir = new TempDir();
+        MakeToolFile(dir.Path, "swival.EXE");
+
+        var missing = SwivalSubagentRunner.MissingRequiredTools(
+            dir.Path, "swival", "nono", isWindows: true, pathext: ".EXE", windowsMode: WindowsSandboxMode.Blocked);
+
+        Assert.DoesNotContain("nono", missing);
+        Assert.Contains(missing, m => m.Contains("sandbox", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void MissingRequiredTools_Windows_SwivalMissing_Reported()
+    {
+        using var dir = new TempDir(); // no swival
+
+        var missing = SwivalSubagentRunner.MissingRequiredTools(
+            dir.Path, "swival", "nono", isWindows: true, pathext: ".EXE", windowsMode: WindowsSandboxMode.Builtin);
+
+        Assert.Contains("swival", missing);
     }
 
     // ── Preflight short-circuit in RunAsync ───────────────────────────

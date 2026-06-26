@@ -21,8 +21,11 @@ public sealed partial class SwivalSubagentRunner
         if (names.Length == 0)
             return string.Empty;
 
-        var pathDirs = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty)
-            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries);
+        // PATHEXT-aware on Windows so a bare `ls`/`git` resolves the `ls.exe`/`git.exe`
+        // bundled with Git for Windows; plain PATH match on Unix.
+        var path = Environment.GetEnvironmentVariable("PATH");
+        var pathext = Environment.GetEnvironmentVariable("PATHEXT");
+        var isWindows = OperatingSystem.IsWindows();
 
         var resolved = new List<string>(names.Length);
         foreach (var name in names)
@@ -30,7 +33,7 @@ public sealed partial class SwivalSubagentRunner
             if (string.IsNullOrWhiteSpace(name))
                 continue;
 
-            if (pathDirs.Any(dir => File.Exists(Path.Combine(dir, name))))
+            if (PathExecutables.Resolve(name, path, pathext, isWindows, File.Exists) is not null)
             {
                 resolved.Add(name);
             }
