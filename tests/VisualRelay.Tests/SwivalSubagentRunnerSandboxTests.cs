@@ -75,6 +75,19 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     }
 
     [Fact]
+    public void BuildSandboxEnvironment_OnWindows_ForcesUtf8Stdio()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows-only UTF-8 stdio override");
+
+        // Windows Python defaults stdout to cp1252, so swival's print() of model
+        // output crashes on a non-ASCII character. UTF-8 mode must be forced.
+        var env = SwivalSubagentRunner.BuildSandboxEnvironment(TestConfig());
+
+        Assert.Equal("1", env["PYTHONUTF8"]);
+        Assert.Equal("utf-8", env["PYTHONIOENCODING"]);
+    }
+
+    [Fact]
     public void BuildSandboxEnvironment_SandboxEnabled_StopsPythonWritingBytecodeIntoSystemStdlib()
     {
         // Regression: a Python invoked under nono (swival's own tooling, a

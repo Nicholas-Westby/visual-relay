@@ -71,10 +71,19 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 
 # git - required; without it print the install one-liner and stop.
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+$gitCmd = Get-Command git -ErrorAction SilentlyContinue
+if (-not $gitCmd) {
     [Console]::Error.WriteLine('visual-relay: git was not found. Install it: winget install Git.Git')
     exit 1
 }
+
+# Put Git for Windows' bundled unix tools (ls, cat, grep, ...) and uv's tool bin
+# (where `uv tool install swival` lands) on PATH so task execution can resolve the
+# agent's per-stage command whitelist and swival itself.
+$gitUsrBin = Join-Path (Split-Path (Split-Path $gitCmd.Source) -Parent) 'usr\bin'
+if (Test-Path $gitUsrBin) { $env:PATH = "$gitUsrBin;$env:PATH" }
+$uvToolBin = Join-Path $env:USERPROFILE '.local\bin'
+if (Test-Path $uvToolBin) { $env:PATH = "$uvToolBin;$env:PATH" }
 
 $cli = Join-Path $ScriptDir 'tools\VisualRelay.Cli\VisualRelay.Cli.csproj'
 # Pass $rest (not @rest): for a native command PowerShell expands an array into

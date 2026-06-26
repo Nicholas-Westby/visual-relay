@@ -15,7 +15,7 @@ public sealed partial class SwivalSubagentRunner
     internal static IReadOnlyDictionary<string, string> BuildSandboxEnvironment(RelayConfig config)
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        return new Dictionary<string, string>
+        var env = new Dictionary<string, string>
         {
             ["HF_HOME"] = Path.Combine(home, ".config", "swival", "huggingface"),
             ["XDG_CACHE_HOME"] = Path.Combine(home, ".config", "swival", "cache"),
@@ -27,5 +27,17 @@ public sealed partial class SwivalSubagentRunner
             ["MSBUILDDISABLENODEREUSE"] = "1",
             ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1",
         };
+
+        if (OperatingSystem.IsWindows())
+        {
+            // Windows Python defaults stdout to the legacy cp1252 console code page,
+            // so swival's print() of model output crashes on a non-ASCII character
+            // (e.g. a non-breaking hyphen). Force UTF-8 mode so the agent's output
+            // and the files it writes are encoded consistently.
+            env["PYTHONUTF8"] = "1";
+            env["PYTHONIOENCODING"] = "utf-8";
+        }
+
+        return env;
     }
 }
