@@ -60,17 +60,6 @@ sandbox is available, execution is **blocked** (never silently uncontained); set
 `VR_WINDOWS_SANDBOX=builtin` to opt into swival's own degraded sandbox, or run execution inside
 WSL2 with `nono` for the strongest isolation.
 
-### Homebrew (coming once released)
-
-A Homebrew formula is planned for `nicholas-westby/tap/visual-relay` — once a release is
-published you will be able to `brew install nicholas-westby/tap/visual-relay`. The formula is
-**not yet published**; until then, use the source-checkout path above.
-
-Visual Relay ships as a **formula, not a cask**, because a cask would download a tarball from
-GitHub Releases which macOS re-applies quarantine to — requiring manual Gatekeeper overrides on
-every upgrade. A formula builds from source inside Homebrew's sandbox, so there is no
-quarantine, no browser-download warning, and no notarization needed.
-
 <!-- END install section -->
 
 ## What it does
