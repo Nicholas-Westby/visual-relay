@@ -39,13 +39,16 @@ public static class WindowsSandbox
     }
 
     /// <summary>
-    /// MXC wrapper: <c>wxc-exec.exe &lt;policy.json&gt; &lt;program&gt; &lt;args…&gt;</c> —
-    /// the confined-write container around swival or the verify command.
+    /// MXC wrapper: <c>wxc-exec.exe &lt;policy.json&gt; -- &lt;program&gt; &lt;args…&gt;</c> —
+    /// the confined-write container around swival or the verify command. The <c>--</c>
+    /// separator is REQUIRED: without it wxc-exec parses the program as its own flags
+    /// (verified against wxc-exec v0.7.0-rc1), and it lets the command override the
+    /// policy's (omitted) <c>process.commandLine</c>.
     /// </summary>
     public static (string FileName, IReadOnlyList<string> Args) BuildMxcLaunch(
         string wxcExe, string policyPath, string program, IReadOnlyList<string> programArgs)
     {
-        var args = new List<string> { policyPath, program };
+        var args = new List<string> { policyPath, "--", program };
         args.AddRange(programArgs);
         return (wxcExe, args);
     }
@@ -72,7 +75,7 @@ public static class WindowsSandbox
     public static string DescribeMode(WindowsSandboxMode mode) => mode switch
     {
         WindowsSandboxMode.Mxc =>
-            "MXC (processcontainer): writes confined to the workspace, broad reads, network open.",
+            "MXC: writes confined to the workspace, broad reads, network open.",
         WindowsSandboxMode.Builtin =>
             "swival builtin (DEGRADED): app-layer file guards only; the shell tool can still "
             + "write or delete outside the workspace.",

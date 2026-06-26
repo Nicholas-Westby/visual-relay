@@ -27,7 +27,7 @@ public sealed class WindowsLaunchTargetTests
 
         Assert.Equal(@"C:\mxc\wxc-exec.exe", fileName);
         Assert.Equal(
-            new[] { @"C:\cfg\policy.json", Swival, "-q", "--base-dir", @"C:\repo" }, args);
+            new[] { @"C:\cfg\policy.json", "--", Swival, "-q", "--base-dir", @"C:\repo" }, args);
     }
 
     [Fact]

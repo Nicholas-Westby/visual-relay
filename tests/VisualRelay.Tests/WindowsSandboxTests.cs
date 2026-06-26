@@ -14,36 +14,50 @@ public sealed class WindowsSandboxTests
     // ── MXC policy generation ────────────────────────────────────────────
 
     [Fact]
-    public void Policy_ConfinesWrites_BroadReads_NetworkOpen()
+    public void Policy_ConfinesWritesUnderFilesystem_BroadReadDefault_NetworkAllow()
     {
         const string workspace = @"C:\repo";
         var caches = new[] { @"C:\Users\u\AppData\Local", @"C:\Users\u\.nuget\packages" };
-        var readonlyRoots = new[] { @"C:\" };
 
-        var json = MxcPolicyGenerator.Generate(workspace, caches, readonlyRoots);
+        var json = MxcPolicyGenerator.Generate(workspace, caches);
 
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
 
-        var rw = root.GetProperty("readwritePaths").EnumerateArray().Select(e => e.GetString()).ToList();
+        // Writes are confined under filesystem.readwritePaths — the real v0.7.0-alpha
+        // schema (verified against wxc-exec), NOT a top-level readwritePaths.
+        var rw = root.GetProperty("filesystem").GetProperty("readwritePaths")
+            .EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(workspace, rw[0]); // workspace is the first writable root
         Assert.Contains(@"C:\Users\u\AppData\Local", rw);
         Assert.Contains(@"C:\Users\u\.nuget\packages", rw);
-
-        var ro = root.GetProperty("readonlyPaths").EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Contains(@"C:\", ro);
-
-        Assert.True(root.GetProperty("network").GetProperty("allowOutbound").GetBoolean());
-
         // The workspace root is the ONLY writable root that is not a cache dir.
         Assert.Equal(new[] { workspace }, rw.Where(p => !caches.Contains(p)).ToArray());
+
+        // Reads are broad by MXC default — VR does not enumerate readonlyPaths.
+        Assert.False(root.GetProperty("filesystem").TryGetProperty("readonlyPaths", out _));
+
+        // Network must be opened EXPLICITLY — MXC is deny-by-default since SDK 0.3.0.
+        Assert.Equal("allow", root.GetProperty("network").GetProperty("defaultPolicy").GetString());
     }
 
     [Fact]
-    public void Policy_PinsTheMxcVersion()
+    public void Policy_PinsTheMxcSchemaVersion()
     {
-        var json = MxcPolicyGenerator.Generate(@"C:\repo", [], [@"C:\"]);
-        Assert.Contains(MxcPolicyGenerator.PinnedMxcVersion, json, StringComparison.Ordinal);
+        var json = MxcPolicyGenerator.Generate(@"C:\repo", []);
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(MxcPolicyGenerator.PinnedMxcVersion, doc.RootElement.GetProperty("version").GetString());
+    }
+
+    [Fact]
+    public void DefaultWindowsCacheDirs_ReturnsOnlyExistingDirs()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Windows cache dirs read the real environment");
+        // MXC's AppContainer+DACL backend fails to stamp an ACE on a missing dir, so a
+        // non-existent cache root (e.g. ~/.cargo on a non-Rust host) must never reach
+        // the policy — every returned dir must actually exist.
+        foreach (var dir in MxcPolicyGenerator.DefaultWindowsCacheDirs())
+            Assert.True(Directory.Exists(dir), $"cache dir should exist: {dir}");
     }
 
     // ── Mode selection ───────────────────────────────────────────────────
@@ -69,13 +83,15 @@ public sealed class WindowsSandboxTests
     // ── Wrapper building ─────────────────────────────────────────────────
 
     [Fact]
-    public void BuildMxcLaunch_WrapsProgramAfterPolicy()
+    public void BuildMxcLaunch_SeparatesCommandWithDoubleDash()
     {
         var (fileName, args) = WindowsSandbox.BuildMxcLaunch(
             @"C:\mxc\wxc-exec.exe", @"C:\cfg\policy.json", "swival", ["-q", "--report", "r.json"]);
 
         Assert.Equal(@"C:\mxc\wxc-exec.exe", fileName);
-        Assert.Equal(new[] { @"C:\cfg\policy.json", "swival", "-q", "--report", "r.json" }, args);
+        // wxc-exec needs `<config> -- <command>`: the `--` separator is REQUIRED, else
+        // it parses the program as its own flags (verified against wxc-exec v0.7.0-rc1).
+        Assert.Equal(new[] { @"C:\cfg\policy.json", "--", "swival", "-q", "--report", "r.json" }, args);
     }
 
     [Fact]

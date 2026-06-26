@@ -14,16 +14,20 @@ namespace VisualRelay.Core.Execution;
 /// </summary>
 public static class MxcPolicyGenerator
 {
-    /// <summary>Pinned MXC release the policy targets (flip in one place to upgrade).</summary>
-    public const string PinnedMxcVersion = "0.7.0";
+    /// <summary>Pinned MXC config schema version the policy targets (one-edit upgrade).</summary>
+    public const string PinnedMxcVersion = "0.7.0-alpha";
 
     /// <summary>
-    /// Emits the confined-write policy JSON: <c>readwritePaths</c> = workspace root
-    /// followed by <paramref name="cacheDirs"/>, broad <paramref name="readonlyRoots"/>,
-    /// and <c>network.allowOutbound = true</c>.
+    /// Emits the confined-write policy JSON in the real MXC v0.7.0-alpha schema
+    /// (verified against <c>wxc-exec</c>): writes confined under
+    /// <c>filesystem.readwritePaths</c> = workspace root followed by
+    /// <paramref name="cacheDirs"/>; reads stay broad by MXC default (no
+    /// <c>readonlyPaths</c> needed); and <c>network.defaultPolicy = "allow"</c> opts
+    /// back into outbound-open (MXC is deny-by-default since SDK 0.3.0), so swival can
+    /// reach the LiteLLM proxy. The command is supplied at launch via the <c>--</c>
+    /// separator, so no <c>process</c> block is emitted.
     /// </summary>
-    public static string Generate(
-        string workspaceRoot, IReadOnlyList<string> cacheDirs, IReadOnlyList<string> readonlyRoots)
+    public static string Generate(string workspaceRoot, IReadOnlyList<string> cacheDirs)
     {
         var readwritePaths = new List<string> { workspaceRoot };
         readwritePaths.AddRange(cacheDirs);
@@ -31,9 +35,8 @@ public static class MxcPolicyGenerator
         var policy = new
         {
             version = PinnedMxcVersion,
-            readonlyPaths = readonlyRoots,
-            readwritePaths,
-            network = new { allowOutbound = true },
+            filesystem = new { readwritePaths },
+            network = new { defaultPolicy = "allow" },
         };
         return JsonSerializer.Serialize(policy, new JsonSerializerOptions { WriteIndented = true });
     }
@@ -42,7 +45,10 @@ public static class MxcPolicyGenerator
     /// The Windows toolchain cache directories granted read+write, mirroring
     /// vr-guard's allow-list: <c>%LOCALAPPDATA%</c> and <c>%APPDATA%</c> (NuGet, uv,
     /// npm, etc. live under these), the user-profile package caches, and the scratch
-    /// temp dir. Resolved against the real environment.
+    /// temp dir. Only dirs that ACTUALLY EXIST are returned: MXC's AppContainer+DACL
+    /// backend stamps an ACE on each readwrite root, and a non-existent path makes the
+    /// whole container setup fail (verified against wxc-exec) — so e.g. a missing
+    /// <c>~/.cargo</c> on a non-Rust host must not reach the policy.
     /// </summary>
     public static IReadOnlyList<string> DefaultWindowsCacheDirs()
     {
@@ -59,22 +65,7 @@ public static class MxcPolicyGenerator
             Path.Combine(home, ".config", "swival"),
             Path.GetTempPath(),
         };
-        return dirs.Where(d => !string.IsNullOrWhiteSpace(d)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-    }
-
-    /// <summary>The broad read roots: every fixed/local drive the agent may read.</summary>
-    public static IReadOnlyList<string> DefaultWindowsReadonlyRoots()
-    {
-        try
-        {
-            return DriveInfo.GetDrives()
-                .Where(d => d.DriveType is DriveType.Fixed)
-                .Select(d => d.RootDirectory.FullName)
-                .ToList();
-        }
-        catch (Exception)
-        {
-            return [@"C:\"];
-        }
+        return dirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 }
