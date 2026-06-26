@@ -14,12 +14,17 @@ public sealed class WindowsExecutionTests
     // ── ShellTestRunner OS dispatch (pure) ───────────────────────────────
 
     [Fact]
-    public void BuildShellLaunch_Windows_UsesCmdC()
+    public void BuildShellLaunch_Windows_WritesBatch_PreservingQuotes()
     {
-        var (fileName, args) = ShellTestRunner.BuildShellLaunch("dotnet test", isWindows: true);
+        // A command with quotes/metacharacters must survive verbatim — .NET argv
+        // quoting on the command line would mangle it for cmd.exe.
+        var command = "dotnet test --filter \"Name=X\"";
+        var (fileName, args) = ShellTestRunner.BuildShellLaunch(command, isWindows: true);
 
         Assert.Equal("cmd.exe", fileName);
-        Assert.Equal(new[] { "/c", "dotnet test" }, args);
+        Assert.Equal("/c", args[0]);
+        Assert.EndsWith(".cmd", args[1]);
+        Assert.Contains(command, File.ReadAllText(args[1]), StringComparison.Ordinal);
     }
 
     [Fact]

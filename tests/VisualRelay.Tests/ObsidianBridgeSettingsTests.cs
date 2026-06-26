@@ -37,7 +37,7 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
         _env["HOME"] = _tempHome;
         _env["XDG_CONFIG_HOME"] = "";
 
-        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
+        var config = ObsidianBridgeSettings.Load(_env, useIcloudDefault: true);
 
         Assert.False(config.Enabled);
         Assert.Equal(
@@ -47,12 +47,14 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
     }
 
     [Fact]
-    public void Load_OffMacOS_DefaultVaultRootIsEmpty_NotADeadIcloudPath()
+    public void Load_OnWindows_DefaultVaultRootIsEmpty_NotADeadIcloudPath()
     {
+        // Windows (useIcloudDefault: false) surfaces no default rather than the dead
+        // macOS iCloud path; macOS and Linux keep the iCloud template (above).
         _env["HOME"] = _tempHome;
         _env["XDG_CONFIG_HOME"] = "";
 
-        var config = ObsidianBridgeSettings.Load(_env, isMacOS: false);
+        var config = ObsidianBridgeSettings.Load(_env, useIcloudDefault: false);
 
         Assert.False(config.Enabled);
         Assert.Equal(string.Empty, config.VaultRoot);
@@ -80,7 +82,7 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
 
         // Must degrade gracefully: disabled, default vault root with "~" unexpanded,
         // default poll seconds. Should not throw.
-        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
+        var config = ObsidianBridgeSettings.Load(_env, useIcloudDefault: true);
 
         Assert.False(config.Enabled);
         // "Keeps defaults": HOME unset means the tilde stays unexpanded (no real-HOME leak).
@@ -116,7 +118,7 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
             "~/Library/Mobile Documents/iCloud~md~obsidian/Documents/VR/", _env);
         KeyEnvFile.Upsert("VR_OBSIDIAN_POLL_SECONDS", "60", _env);
 
-        var config = ObsidianBridgeSettings.Load(_env, isMacOS: true);
+        var config = ObsidianBridgeSettings.Load(_env, useIcloudDefault: true);
 
         Assert.Equal(
             Path.Combine(_tempHome, "Library/Mobile Documents/iCloud~md~obsidian/Documents/VR/"),

@@ -82,13 +82,14 @@ internal static class ProcessTreeCpuSampler
         if (childrenByParent is null)
             return null;
 
-        var cpuByPid = new Dictionary<int, long>();
+        // Walk the tree once and sum the per-pid CPU directly — no second traversal.
+        long total = 0;
         foreach (var pid in CollectDescendants(rootPid, childrenByParent))
         {
             try
             {
                 using var process = Process.GetProcessById(pid);
-                cpuByPid[pid] = (long)process.TotalProcessorTime.TotalMilliseconds;
+                total += (long)process.TotalProcessorTime.TotalMilliseconds;
             }
             catch (Exception)
             {
@@ -96,7 +97,7 @@ internal static class ProcessTreeCpuSampler
             }
         }
 
-        return SumTreeCpuMs(rootPid, childrenByParent, cpuByPid);
+        return total;
     }
 
     private static Dictionary<int, List<int>>? BuildWindowsProcessTree()

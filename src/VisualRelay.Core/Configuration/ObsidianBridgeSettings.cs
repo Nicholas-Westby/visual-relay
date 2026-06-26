@@ -34,18 +34,19 @@ public static class ObsidianBridgeSettings
     /// Migrates a legacy <c>obsidian.json</c> on first load.
     /// </summary>
     public static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor = null) =>
-        Load(accessor, OperatingSystem.IsMacOS());
+        Load(accessor, useIcloudDefault: !OperatingSystem.IsWindows());
 
     /// <summary>
-    /// As <see cref="Load(IEnvironmentAccessor?)"/> with the macOS flag injected so
-    /// the OS-specific default vault root is testable on any OS. The iCloud default
-    /// is macOS-only; off macOS the default is empty (no dead iCloud path surfaces),
+    /// As <see cref="Load(IEnvironmentAccessor?)"/> with the default-vault decision
+    /// injected so it is testable on any OS. The iCloud template is the default on
+    /// macOS and Linux (unchanged from before this Windows port); only on Windows —
+    /// where the iCloud path is dead — is the default empty so no dead path surfaces,
     /// and the user supplies a vault path if they enable the bridge.
     /// </summary>
-    internal static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor, bool isMacOS)
+    internal static ObsidianBridgeConfig Load(IEnvironmentAccessor? accessor, bool useIcloudDefault)
     {
         var home = KeyEnvFile.GetEnv("HOME", accessor);
-        var defaultVaultRoot = ExpandDefaultVaultRoot(home, isMacOS);
+        var defaultVaultRoot = ExpandDefaultVaultRoot(home, useIcloudDefault);
 
         ObsidianBridgeConfig defaults = new(
             Enabled: false,
@@ -184,11 +185,11 @@ public static class ObsidianBridgeSettings
 
     // ── Helpers ───────────────────────────────────────────────────────────
 
-    private static string ExpandDefaultVaultRoot(string? home, bool isMacOS)
+    private static string ExpandDefaultVaultRoot(string? home, bool useIcloudDefault)
     {
-        // The iCloud vault default is macOS-only; off macOS there is no sensible
-        // default (no iCloud), so surface nothing rather than a dead macOS path.
-        if (!isMacOS)
+        // macOS/Linux keep the iCloud template default (unchanged); only Windows,
+        // where the iCloud path is dead, surfaces nothing rather than a dead path.
+        if (!useIcloudDefault)
             return string.Empty;
 
         if (string.IsNullOrWhiteSpace(home))

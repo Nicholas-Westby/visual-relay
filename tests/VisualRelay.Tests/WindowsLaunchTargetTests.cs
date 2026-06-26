@@ -10,8 +10,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class WindowsLaunchTargetTests
 {
+    // An absolute swival path so resolution passes it through unchanged (a bare name
+    // would resolve against the real PATH and make the assertion machine-dependent).
+    private const string Swival = @"C:\tools\swival.exe";
+
     private static SwivalSubagentRunner Runner() =>
-        new(TestConfig(), backendProbe: SwivalTestHelpers.AlwaysReady);
+        new(TestConfig(), swivalBinary: Swival, backendProbe: SwivalTestHelpers.AlwaysReady);
 
     [Fact]
     public void Windows_Mxc_WrapsSwivalInWxcExecWithPolicy()
@@ -23,7 +27,7 @@ public sealed class WindowsLaunchTargetTests
 
         Assert.Equal(@"C:\mxc\wxc-exec.exe", fileName);
         Assert.Equal(
-            new[] { @"C:\cfg\policy.json", "swival", "-q", "--base-dir", @"C:\repo" }, args);
+            new[] { @"C:\cfg\policy.json", Swival, "-q", "--base-dir", @"C:\repo" }, args);
     }
 
     [Fact]
@@ -32,7 +36,7 @@ public sealed class WindowsLaunchTargetTests
         var (fileName, args) = Runner().BuildWindowsLaunchTarget(
             new List<string> { "-q", "--report", "r.json" }, WindowsSandboxMode.Builtin, null, null);
 
-        Assert.Equal("swival", fileName);
+        Assert.Equal(Swival, fileName);
         Assert.Equal(new[] { "-q", "--report", "r.json", "--sandbox", "builtin" }, args);
     }
 

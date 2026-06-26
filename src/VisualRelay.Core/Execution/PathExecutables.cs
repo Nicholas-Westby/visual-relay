@@ -16,7 +16,7 @@ public static class PathExecutables
             Environment.GetEnvironmentVariable("PATH"),
             Environment.GetEnvironmentVariable("PATHEXT"),
             OperatingSystem.IsWindows(),
-            DefaultExists);
+            IsExecutableFile);
 
     /// <summary>True when <paramref name="name"/> resolves on the current PATH.</summary>
     public static bool OnPath(string name) => Find(name) is not null;
@@ -56,9 +56,12 @@ public static class PathExecutables
         return null;
     }
 
-    // Real-filesystem existence: a present file on Windows, an execute-bit file on
-    // Unix (matching the long-standing OnPath/ResolveOnPath semantics).
-    private static bool DefaultExists(string path)
+    /// <summary>
+    /// True when <paramref name="path"/> names a runnable file: a present file on
+    /// Windows, an execute-bit file on Unix. The one shared predicate for "is this
+    /// file executable" used by PATH resolution and the backend venv probe.
+    /// </summary>
+    public static bool IsExecutableFile(string path)
     {
         if (!File.Exists(path))
             return false;

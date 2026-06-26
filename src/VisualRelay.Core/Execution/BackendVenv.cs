@@ -35,7 +35,7 @@ public static class BackendVenv
         onPath ??= ResolveOnPath;
 
         // Probe: venv python must actually run AND litellm must be executable.
-        if (probe(paths.VenvPython, "-V") && IsExecutable(paths.VenvLitellm))
+        if (probe(paths.VenvPython, "-V") && PathExecutables.IsExecutableFile(paths.VenvLitellm))
             return new Result(paths.VenvLitellm);
 
         // Probe failed but the dir exists => broken; remove so uv rebuilds.
@@ -50,7 +50,7 @@ public static class BackendVenv
             log($"provisioning litellm into {paths.VenvDir} (one-time; Python {BackendPaths.PinnedPythonVersion})");
             var made = run(uv, ["venv", paths.VenvDir, "--python", BackendPaths.PinnedPythonVersion])
                 && run(uv, ["pip", "install", "--python", paths.VenvPython, "litellm[proxy]"])
-                && IsExecutable(paths.VenvLitellm);
+                && PathExecutables.IsExecutableFile(paths.VenvLitellm);
             if (made)
                 return new Result(paths.VenvLitellm);
             log("uv could not provision litellm (see output above)");
@@ -65,23 +65,6 @@ public static class BackendVenv
         }
 
         return new Result(null);
-    }
-
-    private static bool IsExecutable(string path)
-    {
-        if (!File.Exists(path))
-            return false;
-        if (OperatingSystem.IsWindows())
-            return true;
-        try
-        {
-            var mode = File.GetUnixFileMode(path);
-            return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
-        }
-        catch (IOException)
-        {
-            return false;
-        }
     }
 
     private static bool RunSucceeds(string file, string arg) => RunSucceeds(file, [arg]);

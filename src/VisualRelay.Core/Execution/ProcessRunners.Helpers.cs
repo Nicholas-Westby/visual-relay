@@ -63,12 +63,14 @@ public sealed partial class SwivalSubagentRunner
     // `nono` as the wrapper around swival. skipDirs become --skip-dir flags so
     // nono's rollback preflight stays under budget.
     internal (string FileName, IReadOnlyList<string> Arguments) BuildLaunchTarget(
-        List<string> swivalArguments, IReadOnlyList<string>? skipDirs = null)
+        List<string> swivalArguments, IReadOnlyList<string>? skipDirs = null, StageInvocation? invocation = null)
     {
         // Windows has no nono; wrap swival in the OS-selected sandbox instead.
         if (OperatingSystem.IsWindows())
         {
             var (mode, wxc, policy) = MxcProvisioner.ResolvePlan(ExtractBaseDir(swivalArguments));
+            if (invocation is { } inv)
+                PublishSandboxMode(mode, inv);
             return BuildWindowsLaunchTarget(swivalArguments, mode, wxc, policy);
         }
 
@@ -81,12 +83,38 @@ public sealed partial class SwivalSubagentRunner
     // Windows: wrap swival in MXC (default), the degraded builtin (opt-in), or block
     // when no sandbox is available — execution is never silently uncontained.
     internal (string FileName, IReadOnlyList<string> Arguments) BuildWindowsLaunchTarget(
-        List<string> swivalArguments, WindowsSandboxMode mode, string? wxcExec, string? policyPath) => mode switch
+        List<string> swivalArguments, WindowsSandboxMode mode, string? wxcExec, string? policyPath)
     {
-        WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxcExec!, policyPath!, _swivalBinary, swivalArguments),
-        WindowsSandboxMode.Builtin => WindowsSandbox.BuildBuiltinSwivalLaunch(_swivalBinary, swivalArguments),
-        _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
-    };
+        var swival = ResolveWindowsSwival();
+        return mode switch
+        {
+            WindowsSandboxMode.Mxc => WindowsSandbox.BuildMxcLaunch(wxcExec!, policyPath!, swival, swivalArguments),
+            WindowsSandboxMode.Builtin => WindowsSandbox.BuildBuiltinSwivalLaunch(swival, swivalArguments),
+            _ => throw new InvalidOperationException(WindowsSandbox.BlockedMessage),
+        };
+    }
+
+    // Resolve swival to a directly-launchable path: CreateProcess (UseShellExecute
+    // false) only auto-appends .exe, so a bare "swival" backed by a PATHEXT shim
+    // (swival.cmd/.bat) would not launch even though the preflight found it. An
+    // already-rooted binary passes through unchanged.
+    private string ResolveWindowsSwival() =>
+        Path.IsPathRooted(_swivalBinary) || _swivalBinary.Contains(Path.DirectorySeparatorChar)
+            ? _swivalBinary
+            : PathExecutables.Find(_swivalBinary) ?? _swivalBinary;
+
+    // Surface the active Windows sandbox mode (the degraded builtin escape is a
+    // warning) to the run log so an operator can see whether writes are contained.
+    private void PublishSandboxMode(WindowsSandboxMode mode, StageInvocation invocation)
+    {
+        _eventSink?.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow,
+            mode == WindowsSandboxMode.Builtin ? "warn" : "info",
+            "sandbox_mode",
+            invocation.RunId, invocation.TargetRoot, invocation.TaskName,
+            invocation.Stage.Number, invocation.Tier,
+            Data: new Dictionary<string, string> { ["mode"] = WindowsSandbox.DescribeMode(mode) }));
+    }
 
     // The --base-dir value (the workspace root the MXC policy confines writes to).
     private static string? ExtractBaseDir(IReadOnlyList<string> swivalArguments)

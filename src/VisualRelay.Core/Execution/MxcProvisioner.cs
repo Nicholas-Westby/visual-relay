@@ -26,13 +26,22 @@ public static class MxcProvisioner
         return File.Exists(cached) ? cached : null;
     }
 
+    private static string? _cachedWorkspace;
+    private static string? _cachedPolicyPath;
+
     /// <summary>
     /// Writes the VR-authored policy for <paramref name="workspaceRoot"/> to VR's
-    /// config dir and returns its absolute path. Regenerated each call (the cache
-    /// dirs and workspace can change), like the nono profile's overwrite-always.
+    /// config dir and returns its absolute path. Memoized by workspace (the cache/
+    /// readonly roots are machine-stable), and the write is skipped when the on-disk
+    /// bytes already match — so a stage launch does not re-enumerate drives, rebuild
+    /// JSON, and rewrite the file every time.
     /// </summary>
     public static string EnsurePolicy(string workspaceRoot)
     {
+        if (string.Equals(_cachedWorkspace, workspaceRoot, StringComparison.Ordinal)
+            && _cachedPolicyPath is { } cached && File.Exists(cached))
+            return cached;
+
         var configDir = Configuration.XdgConfig.ResolveConfigDir();
         var dir = Path.Combine(configDir, "visual-relay");
         Directory.CreateDirectory(dir);
@@ -41,7 +50,11 @@ public static class MxcProvisioner
             workspaceRoot,
             MxcPolicyGenerator.DefaultWindowsCacheDirs(),
             MxcPolicyGenerator.DefaultWindowsReadonlyRoots());
-        File.WriteAllText(path, json);
+        if (!File.Exists(path) || !string.Equals(File.ReadAllText(path), json, StringComparison.Ordinal))
+            File.WriteAllText(path, json);
+
+        _cachedWorkspace = workspaceRoot;
+        _cachedPolicyPath = path;
         return path;
     }
 
