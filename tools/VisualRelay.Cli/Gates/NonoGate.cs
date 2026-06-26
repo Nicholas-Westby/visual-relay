@@ -26,18 +26,15 @@ public static class NonoGate
     /// <summary>
     /// Pure OS-aware gate decision. nono is present → proceed (0). Missing on
     /// macOS/Linux → hard fail (127) with install instructions (the sandbox is a
-    /// hard dependency there). Missing on Windows → proceed (0): nono cannot exist
-    /// on Windows, so the GUI opens for inspection and task <em>execution</em> is
-    /// governed separately by the Windows sandbox gate (Phase 3). The returned
-    /// message (when non-null) is what <see cref="Require"/> prints to stderr.
+    /// hard dependency there). Missing on Windows → proceed (0) silently: nono is the
+    /// Unix sandbox and Windows simply uses a different one (MXC, gated at run time),
+    /// so its absence is unremarkable and not worth a note. The returned message (when
+    /// non-null) is what <see cref="Require"/> prints to stderr.
     /// </summary>
     public static (int ExitCode, string? Message) Decide(bool onPath, bool isWindows)
     {
-        if (onPath)
+        if (onPath || isWindows)
             return (0, null);
-        if (isWindows)
-            return (0, "visual-relay: OS sandbox unavailable on Windows; inspection only "
-                + "(task execution is gated separately).");
 
         return (127,
             """

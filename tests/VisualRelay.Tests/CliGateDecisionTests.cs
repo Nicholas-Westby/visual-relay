@@ -33,14 +33,14 @@ public sealed class CliGateDecisionTests
     }
 
     [Fact]
-    public void Nono_Missing_Windows_ProceedsWithInspectionNote()
+    public void Nono_Missing_Windows_ProceedsSilently()
     {
+        // nono is the Unix sandbox; Windows simply uses a different one (MXC), so its
+        // absence is not noteworthy — proceed with no message.
         var (exitCode, message) = NonoGate.Decide(onPath: false, isWindows: true);
 
         Assert.Equal(0, exitCode);
-        Assert.NotNull(message);
-        Assert.Contains("Windows", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("inspection", message, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(message);
     }
 
     // ── SwivalGate ───────────────────────────────────────────────────────
