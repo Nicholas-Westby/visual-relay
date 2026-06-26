@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Tasks;
 
-public sealed class RelayTaskRepository(string rootPath, IGitInvoker? gitInvoker = null)
+public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gitInvoker = null)
 {
     private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation"];
 

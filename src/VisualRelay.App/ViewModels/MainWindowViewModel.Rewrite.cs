@@ -274,5 +274,6 @@ public partial class MainWindowViewModel
         RunSelectedCommand.NotifyCanExecuteChanged();
         ResumeSelectedCommand.NotifyCanExecuteChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
     }
 }

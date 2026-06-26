@@ -39,7 +39,9 @@ public static class PathExecutables
             : [];
         var nameHasExtension = Path.HasExtension(name);
 
-        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        // Windows PATH separator is always ';', regardless of host OS.
+        var sep = isWindows ? ';' : Path.PathSeparator;
+        foreach (var dir in pathEnv.Split(sep, StringSplitOptions.RemoveEmptyEntries))
         {
             var bare = Path.Combine(dir, name);
             if (exists(bare))

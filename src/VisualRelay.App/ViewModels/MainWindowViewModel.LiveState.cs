@@ -115,6 +115,7 @@ public partial class MainWindowViewModel
         ClearSelectedTaskErrorForRunStart(task.Id);
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>
@@ -174,6 +175,7 @@ public partial class MainWindowViewModel
         }
 
         NotifyRunningTaskContextChanged();
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>

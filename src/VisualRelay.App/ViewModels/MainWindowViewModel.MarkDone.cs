@@ -1,0 +1,51 @@
+using CommunityToolkit.Mvvm.Input;
+using VisualRelay.Core.Tasks;
+
+namespace VisualRelay.App.ViewModels;
+
+public partial class MainWindowViewModel
+{
+    [RelayCommand(CanExecute = nameof(CanMarkSelectedTaskDone))]
+    private async Task MarkSelectedTaskDoneAsync()
+    {
+        if (SelectedTask is null)
+            return;
+
+        // Confirm unless headless (ShowConfirmationAsync is null).
+        if (ShowConfirmationAsync is not null)
+        {
+            var confirmed = await ShowConfirmationAsync(
+                "Mark task done",
+                $"Move \"{SelectedTask.Id}\" to the archive? It won't be run by Visual Relay.",
+                "Mark done");
+            if (!confirmed)
+                return;
+        }
+
+        await RunBusyAsync(async () =>
+        {
+            await new RelayTaskRepository(RootPath).MarkDoneAsync(SelectedTask.Task);
+            await ReloadTaskListAsync();
+            StatusText = FormatQueueStatus();
+        });
+    }
+
+    private bool CanMarkSelectedTaskDone() =>
+        SelectedTask is not null &&
+        !SelectedTask.IsArchived &&
+        !ShowArchive &&
+        !IsBusy &&
+        !_runningTaskIds.Contains(SelectedTask.Id);
+
+    public bool IsMarkDoneButtonVisible =>
+        SelectedTask is not null && !SelectedTask.IsArchived && !ShowArchive;
+
+    partial void OnShowArchiveChanged(bool value)
+    {
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsMarkDoneButtonVisible));
+    }
+
+    partial void OnIsBusyChanged(bool value) =>
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
+}

@@ -60,9 +60,10 @@ public sealed class ProcessLauncherOnPathTests
     [Fact]
     public void ResolveOnPath_SearchesEveryPathEntry()
     {
-        var pathEnv = @"C:\a" + Path.PathSeparator + @"C:\b";
+        var pathEnv = @"C:\a" + ";" + @"C:\b";
+        var target = Path.Combine(@"C:\b", "git.exe");
         var found = ProcessLauncher.ResolveOnPath(
-            pathEnv, Pathext, "git", Exists(@"C:\b\git.exe"));
+            pathEnv, Pathext, "git", Exists(target));
 
         Assert.True(found);
     }

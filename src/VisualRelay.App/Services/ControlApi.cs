@@ -41,6 +41,7 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
         "rewrite-selected" => viewModel.RewriteSelectedTaskCommand,
         "cancel-rewrite" => viewModel.CancelRewriteSelectedCommand,
         "revert-rewrite" => viewModel.RevertRewriteSelectedCommand,
+        "mark-done" => viewModel.MarkSelectedTaskDoneCommand,
         _ => null
     };
 

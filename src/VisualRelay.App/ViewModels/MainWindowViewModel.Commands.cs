@@ -185,6 +185,8 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(CanRewriteSelectedPublic));
         RewriteSelectedTaskCommand.NotifyCanExecuteChanged();
         RevertRewriteSelectedCommand.NotifyCanExecuteChanged();
+        MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsMarkDoneButtonVisible));
 
         // Capture the task so tests can await it deterministically
         // (no 1 000 ms wall-clock budget — the real operation decides).

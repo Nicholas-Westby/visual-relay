@@ -297,5 +297,4 @@ public sealed class ObsidianBridgeSettingsTests : IDisposable
         Assert.Equal("/env/vault/", config.VaultRoot);
         Assert.Equal(90, config.PollSeconds);
     }
-
 }

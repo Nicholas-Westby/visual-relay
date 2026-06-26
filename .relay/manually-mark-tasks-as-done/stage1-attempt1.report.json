@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-06-26T19:37:52.633804+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: manually-mark-tasks-as-done\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Manually Mark Tasks as Done\n\nAdd a per-task \"Mark done\" action that retires a non-archived task straight into the archive **without running it** \u2014 for tasks completed outside Visual Relay that were never moved out of the queue (e.g. `windows-support`). It reuses the existing retirement/archive machinery and reloads the list so the task leaves the queue immediately.\n\n## Current state (researched)\n\n- `RelayTaskItem` (`src/VisualRelay.Domain/RelayTaskItem.cs`) carries `IsArchived`, `MarkdownPath`, `TaskDirectory`, `IsNested`; `StateLabel` is `\"Completed\"` when archived, else `\"Pending\"`/`\"Needs review\"`.\n- Retirement + archive is `TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task)` (`src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs`, `internal static`): renames `<id>.md` \u2192 `DONE-<id>.md` and, when `config.ArchiveOnDone`, moves it under `llm-tasks/completed/[batch-N/]`. Returns `RetirementResult` (`Additions`, `Rollback`, `DestinationPath`). Today only the driver calls it, in `RelayDriver.CommitGate.cs` `ExecuteCommitStageAsync`. It is `internal`, and VisualRelay.App has no `InternalsVisibleTo` into Core \u2014 so the App cannot call it directly.\n- `RelayTaskRepository` (`src/VisualRelay.Core/Tasks/RelayTaskRepository.cs`, `public`, not `partial`) lists pending via `ListAsync`/`ListPendingAsync` (skips `DONE-`/`IGNORE-` names in `Walk`/`IsSkippedName`) and archived via `ListCompletedAsync`. File is 291 lines.\n- The VM never git-commits authoring mutations: `SaveEditAsync`/`RenameAsync` (`MainWindowViewModel.Authoring.cs`) write files then `await ReloadTaskListAsync(...)`; only `RelayDriver` commits. `ReloadTaskListAsync` (`MainWindowViewModel.Helpers.cs`) re-scans and rebuilds `Tasks`. `RunBusyAsync` (same file) guards on `IsBusy` and surfaces faults to `StatusText`. `FormatQueueStatus()` is the queue-status string.\n- Per-selected-task action buttons live in the `TaskDetailPanel` header (`src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml`): a `StackPanel` with `Classes=\"primary\"` `Run selected` / `Resume`. That file is **exactly 300 lines** \u2014 the guard is `FileSizeGuard.cs` `if (lines > limit)` with `DefaultLimit = 300`, so no inline addition fits.\n- `MainWindowViewModel.Commands.cs` is 298 lines \u2014 near the ceiling; new commands go in a partial.\n- Confirmations use `ShowConfirmationAsync` (`MainWindowViewModel.cs`: `Func<string,string,string,Task<bool>>?`), wired in `App.axaml.cs`; `null` in tests/headless skips the prompt (see `MainWindowViewModel.Rewrite.cs` `RewriteSelectedTaskAsync`). Can-execute pattern: `CanRunSelected()` = `!IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived && !_rewritingTaskIds.Contains(SelectedTask.Id)`.\n- Control API: `ControlApi.ResolveCommand` (`src/VisualRelay.App/Services/ControlApi.cs`) maps names \u2192 commands; `IcommandNames` in `ControlApi.State.cs` (~line 97) lists them for `/state`. Disabled commands return 409.\n- Tests: `TestRepository.Create()`/`WriteConfig(testCommand, logSources, archiveOnDone: true)`/`WriteTask`/`WriteNestedTask` (`tests/VisualRelay.Tests/TestDoubles.cs`); headless UI tests use `[AvaloniaFact]` + `window.GetVisualDescendants()` (e.g. `TaskDetailRemoveButtonLayoutTests.cs`).\n\n## What to build (TDD-first)\n\n1. **Core retire wrapper.** Add `public Task<string?> MarkDoneAsync(RelayTaskItem task, CancellationToken ct = default)` to `RelayTaskRepository`: load config (`RelayConfigLoader.TryLoadAsync`), return `null` if not `Loaded`, else call `TaskCompletionArchive.RetireAsync(RootPath, config, task.Id, task)` and return `retirement?.DestinationPath`. **No git commit** \u2014 matches create/edit/rename. Keep `RelayTaskRepository.cs` \u2264 300 (it is 291); if it would exceed, mark the class `partial` and move the method into `RelayTaskRepository.MarkDone.cs`.\n   - Test (mirror `TaskCompletionArchiveNoBatchTests.cs`): with `archiveOnDone:true`, `MarkDoneAsync` on a pending task moves `llm-tasks/<id>/<id>.md` under `completed/`; afterward `ListPendingAsync` excludes it and `ListCompletedAsync` includes it (`IsArchived`, `StateLabel == \"Completed\"`).\n\n2. **VM command.** In a **new partial** `MainWindowViewModel.MarkDone.cs`, add `[RelayCommand(CanExecute = nameof(CanMarkSelectedTaskDone))] async Task MarkSelectedTaskDoneAsync()`: guard on `SelectedTask`; confirm via `ShowConfirmationAsync` (skip when `null`) \u2014 title \"Mark task done\", message ``Move \"<id>\" to the archive? It won't be run by Visual Relay.``, confirm \"Mark done\"; on confirm, `await new RelayTaskRepository(RootPath).MarkDoneAsync(SelectedTask.Task)`, then `await ReloadTaskListAsync()` and `StatusText = FormatQueueStatus()`, all inside `RunBusyAsync`. `CanMarkSelectedTaskDone()` = `SelectedTask is not null && !SelectedTask.IsArchived && !ShowArchive && !IsBusy && !_runningTaskIds.Contains(SelectedTask.Id)`. Add `[NotifyCanExecuteChangedFor(nameof(MarkSelectedTaskDoneCommand))]` to `_selectedTask`, `_showArchive`, and `_isBusy`, and re-notify it when running-task set changes (mirroring how `RunSelectedCommand` is refreshed).\n   - Test (headless, `ShowConfirmationAsync = null`): mark-done on a pending task removes it from `viewModel.Tasks`; `CanMarkSelectedTaskDone` is false for an archived task, while `ShowArchive`, while `IsBusy`, and for a running task.\n\n3. **Button \u2014 extract to stay under 300.** Extract the `TaskDetailPanel` header action `StackPanel` (Run selected / Resume) into a new child control `Views/Controls/TaskActionBar.axaml`(+`.axaml.cs`), `x:DataType=\"vm:MainWindowViewModel\"`, referenced from `TaskDetailPanel.axaml` as `<controls:TaskActionBar/>` (net line reduction keeps `TaskDetailPanel.axaml` \u2264 300). Add a **plain (non-primary)** `Mark done` button there with `ToolTip.Tip=\"Move this task to the archive without running it.\"`, `Command=\"{Binding MarkSelectedTaskDoneCommand}\"`, and `IsVisible` bound to a new computed `IsMarkDoneButtonVisible` (`SelectedTask is not null && !SelectedTask.IsArchived && !ShowArchive`, notified from the same sources). Placement next to Run/Resume keeps it with the other selected-task actions; plain styling makes it visually subordinate to the primary run actions; hidden for archived tasks / the archive view.\n   - Test (`[AvaloniaFact]`, `TaskDetailRemoveButtonLayoutTests.cs` style): with a non-archived task selected, a `Button` whose content is \"Mark done\" is visible and bound to `MarkSelectedTaskDoneCommand`; it is hidden when an archived task is selected.\n\n4. **Control API.** In `ControlApi.ResolveCommand` add `\"mark-done\" => viewModel.MarkSelectedTaskDoneCommand`; add `\"mark-done\"` to `IcommandNames` in `ControlApi.State.cs`. Flow is `select-task` then `mark-done` (operates on the selected task); disabled \u2192 409.\n\n## Done when\n\n- Selecting a pending task and clicking \"Mark done\" (confirming) moves its file under `llm-tasks/completed/` and it disappears from the queue; toggling the archive view shows it as completed.\n- The button is hidden for archived tasks and in the archive view, disabled while busy or for a running task, and always asks for confirmation in the live app (skipped headless).\n- `POST /command/mark-done` retires the selected task; `/state` lists `mark-done` with the correct `enabled` flag.\n- `./visual-relay check` passes; every changed `.cs`/`.axaml` is \u2264 300 lines; headless UI tests use `[AvaloniaFact]`; no per-machine state written in-repo.\n- Conventional Commit subject, e.g. `feat: mark tasks done from the task panel`.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "**Summary:** Implement a \"Mark done\" action that lets users manually retire a non-archived task into the archive without running it. The feature reuses `TaskCompletionArchive.RetireAsync` (currently `internal`), adds a public entry point, wires a ViewModel command with confirmation, exposes a button in the task panel, and registers a Control API endpoint. Key constraints: `TaskDetailPanel.axaml` and `RelayTaskRepository.cs` are both at the 300-line SplitGuard ceiling, so additions require extraction or partial classes.\n\n**Option A \u2014 Repository wrapper + extracted TaskActionBar (spec-following)**  \nAdd `MarkDoneAsync` to `RelayTaskRepository` (making it `partial` + a new `RelayTaskRepository.MarkDone.cs` file if line count exceeds 300). Create `MainWindowViewModel.MarkDone.cs` partial with `MarkSelectedTaskDoneAsync` / `CanMarkSelectedTaskDone`. Extract the header action `StackPanel` from `TaskDetailPanel.axaml` into a new `TaskActionBar.axaml` child control, then add a plain `Mark done` button there. Wire `\"mark-done\"` in `ControlApi`.  \n*Pro:* Clean separation, every file stays \u2264300 lines, matches the spec verbatim. *Con:* Most file churn (new .axaml + .axaml.cs pair, two new partials, test files).\n\n**Option B \u2014 Dedicated mark-done service (lighter Core change)**  \nInstead of adding to `RelayTaskRepository`, create a small `public` class `TaskMarkDoneService` in `VisualRelay.Core` that wraps `RetireAsync`. The VM calls that directly \u2014 no need to touch `RelayTaskRepository` at all, avoiding the partial split there. VM command, TaskActionBar extraction, and Control API wiring remain the same as Option A.  \n*Pro:* Zero change to `RelayTaskRepository` (stays \u2264291 lines, no `partial` needed); single-responsibility service. *Con:* New file in Core; still needs the UI extraction.\n\n**Option C \u2014 Minimal delta: InternalsVisibleTo + inline AXAML split**  \nAdd `[assembly: InternalsVisibleTo(\"VisualRelay.App\")]` to Core so the VM can call `RetireAsync` directly (no wrapper). Instead of extracting a new control, split `TaskDetailPanel.axaml` across two files (e.g. `TaskDetailPanel.Top.axaml` + `TaskDetailPanel.Bottom.axaml` merged via `UserControl` composition or a `ContentControl` slot) to stay under 300 lines per file while adding the button inline.  \n*Pro:* Fewest new abstractions; simplest Core change. *Con:* `InternalsVisibleTo` weakens the assembly boundary; AXAML splitting is awkward; no reusable `TaskActionBar`.\n\n```json\n{\n  \"summary\": \"Add a \\\"Mark done\\\" button/command that retires a selected pending task into the archive without running it, reusing TaskCompletionArchive.RetireAsync. Key challenge: TaskDetailPanel.axaml and RelayTaskRepository.cs are both at the 300-line SplitGuard ceiling, so additions need extraction or partial-class splitting. Also RetireAsync is internal \u2014 needs a public wrapper (or InternalsVisibleTo).\",\n  \"options\": [\n    \"Option A (spec-following): Add MarkDoneAsync to RelayTaskRepository (making it partial if over 300), create MainWindowViewModel.MarkDone.cs partial, extract TaskActionBar.axaml child control from TaskDetailPanel.axaml, wire ControlApi \\\"mark-done\\\". Most file churn but cleanest separation.\",\n    \"Option B (dedicated service): Create a new public TaskMarkDoneService in Core wrapping RetireAsync \u2014 no touch to RelayTaskRepository. VM command, TaskActionBar extraction, and Control API same as Option A. Fewer Core changes, single-responsibility service.\",\n    \"Option C (minimal delta): Add InternalsVisibleTo so VM calls RetireAsync directly. Split TaskDetailPanel.axaml into two composed files to squeeze the button inline without extracting a new control. Fewest abstractions but weaker assembly boundary and awkward AXAML split.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 7,
+    "tool_calls_total": 17,
+    "tool_calls_succeeded": 15,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 13,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 0,
+        "failed": 2
+      },
+      "think": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 7,
+    "total_llm_time_s": 36.661,
+    "prompt_cache": {
+      "cached_tokens": 77952,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.025,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.096,
+      "prompt_tokens_est": 5711,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 156
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.009,
+      "result_length": 262,
+      "error": "error: Path '/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs' resolves to /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 266,
+      "error": "error: Path '/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs' resolves to /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.114,
+      "prompt_tokens_est": 6062,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 139
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 99
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4672
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.877,
+      "prompt_tokens_est": 7463,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/bg_6ca91f4bd6ad.log",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4118
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/bg_7b1c2b847dcf.log",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1120
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/bg_8f817b793b30.log",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3846
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/bg_95d9dfe4ee87.log",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 19
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/bg/bg_ceeec3f47312.log",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3631
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.853,
+      "prompt_tokens_est": 11604,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/runasync-edit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 104
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14466
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.swival/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 20528
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 12.033,
+      "prompt_tokens_est": 19544,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "The task input gives very detailed implementation instructions. I need to frame the overall problem and present 2-3 solution options. The key architectural challenges are:\n\n1. `TaskCompletionArchive.RetireAsync` is `internal static` \u2014 Core's internal method must be called from App. The task input says VisualRelay.App has no `InternalsVisibleTo` into Core. So we need a public wrapper.\n2. `TaskDetailPanel.axaml` is exactly 300 lines (the SplitGuard ceiling) \u2014 no inline additions possible.\n3. `MainWindowViewModel.Commands.cs` is 298 lines \u2014 near the 300-line ceiling, so a new partial is the right approach.\n4. `RelayTaskRepository.cs` is 291 lines \u2014 also near ceiling; may need to go partial.\n\nLet me think about the 2-3 options now.\n\n**Option A (task-spec approach): Repository partial + VM partial + TaskActionBar extraction + Control API**\nThis follows the exact spec: add `MarkDoneAsync` to `RelayTaskRepository` (making it `partial` if needed), create `MainWindowViewModel.MarkDone.cs` partial, extract `TaskActionBar.axaml` from `TaskDetailPanel.axaml`, and wire up Control API. This is the most architecturally clean but requires the most changes.\n\n**Option B (facade service approach): Instead of adding to Repository, create a dedicated `TaskMarkDoneService` in Core that's `public`**\nInstead of adding `MarkDoneAsync` to `RelayTaskRepository` (which is already near the 300-line ceiling and mixes concerns), create a small dedicated `public` service class. The VM would call that instead. This keeps `RelayTaskRepository` under 300 without needing `partial`. The UI extraction and VM command remain the same. Fewer files changed in Core, more separation of concerns.\n\n**Option C (direct core exposure + inline button): Make RetireAsync `public` or add InternalsVisibleTo, and extend TaskDetailPanel via a small partial code-behind split**\nSimplest changes: make `TaskCompletionArchive` public (or add `InternalsVisibleTo`), and instead of extracting a new control, split `TaskDetailPanel` into a partial class with the button in a separate `.axaml` partial file (if Avalonia supports that) or add via code-behind only. Less elegant but minimal code churn. Risky re: the 300-line AXAML limit though.\n\nI'll present these as three distinct approaches.",
+        "thought_number": 1,
+        "total_thoughts": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.614,
+      "prompt_tokens_est": 20604,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me finalize the three options and present the summary + options JSON block. The user wants just the JSON block at the end with nothing after it.",
+        "thought_number": 2,
+        "next_thought_needed": false
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 10.075,
+      "prompt_tokens_est": 20732,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

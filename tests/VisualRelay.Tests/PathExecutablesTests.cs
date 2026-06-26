@@ -44,7 +44,7 @@ public sealed class PathExecutablesTests
         var dirA = Path.Combine("C:", "a");
         var dirB = Path.Combine("C:", "b");
         var target = Path.Combine(dirB, "git.exe");
-        var path = dirA + Path.PathSeparator + dirB;
+        var path = dirA + ";" + dirB;
 
         var found = PathExecutables.Resolve("git", path, Pathext, isWindows: true, Only(target));
 
