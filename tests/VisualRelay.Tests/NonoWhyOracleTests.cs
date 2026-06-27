@@ -249,7 +249,7 @@ public sealed class NonoWhyOracleTests
         if (!Directory.Exists(path) && !File.Exists(path))
         {
             try { Directory.CreateDirectory(path); }
-            catch { Assert.Skip("Cannot create directory for oracle check — skipping"); }
+            catch { /* nono why evaluates the profile statically; the path need not exist */ }
         }
 
         var psi = new ProcessStartInfo("nono",
