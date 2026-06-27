@@ -2,11 +2,10 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for README.md and AGENTS.md install documentation. The recommended
-/// install path is a source checkout driven by <c>./visual-relay</c> (which
-/// bootstraps nix / Determinate Nix and provisions <c>uv</c>/<c>nono</c>);
-/// Homebrew is demoted to a "coming once released" note because the formula
-/// is not published yet. AGENTS.md still documents the dev-only sample tooling
-/// that the (future) Homebrew formula will not ship.
+/// install path is a source checkout driven by <c>./visual-relay</c>, which
+/// bootstraps nix / Determinate Nix and provisions <c>uv</c>/<c>nono</c>.
+/// AGENTS.md documents the dev-only sample tooling that the user-facing
+/// install path does not ship.
 /// </summary>
 public sealed class Installer5DocsTests
 {
@@ -64,82 +63,6 @@ public sealed class Installer5DocsTests
         // must be named as prerequisites the bootstrap provides.
         Assert.Contains("uv", installSection, StringComparison.Ordinal);
         Assert.Contains("nono", installSection, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Readme_SourceCheckoutPath_PrecedesBrew()
-    {
-        var content = ReadReadme();
-
-        var checkoutIdx = content.IndexOf("./visual-relay", StringComparison.Ordinal);
-        var brewIdx = content.IndexOf("brew install", StringComparison.Ordinal);
-
-        // The clone + ./visual-relay path is the primary recommendation, so it
-        // must appear before any brew install reference.
-        Assert.True(checkoutIdx >= 0, "README must document the ./visual-relay launcher");
-        Assert.True(brewIdx >= 0, "README must still mention the future brew install");
-        Assert.True(
-            checkoutIdx < brewIdx,
-            "The ./visual-relay source-checkout path must precede the brew install reference");
-    }
-
-    [Fact]
-    public void Readme_BrewInstall_IsMarkedNotYetAvailable()
-    {
-        var content = ReadReadme();
-
-        var brewIdx = content.IndexOf("brew install", StringComparison.Ordinal);
-        Assert.True(brewIdx >= 0, "README must still mention the future brew install");
-
-        // The brew command is demoted: a window around it must flag that it is
-        // not yet available / coming once a release is published, so nobody runs
-        // a brew install that 404s today. Require an explicit demotion phrase —
-        // a bare "once" (e.g. "run this once") must not satisfy the marker.
-        var windowStart = Math.Max(0, brewIdx - 400);
-        var window = content.Substring(windowStart, Math.Min(content.Length - windowStart, 800));
-        Assert.True(
-            window.Contains("not yet published", StringComparison.OrdinalIgnoreCase) ||
-            window.Contains("not yet available", StringComparison.OrdinalIgnoreCase) ||
-            window.Contains("coming once", StringComparison.OrdinalIgnoreCase),
-            "The brew install must be clearly marked as not yet available / coming once released");
-    }
-
-    [Fact]
-    public void Readme_BrewInstall_ReferencesTheTap()
-    {
-        var content = ReadReadme();
-
-        // The future brew command still names the tap formula.
-        Assert.Contains("brew install", content, StringComparison.Ordinal);
-        Assert.Contains("nicholas-westby/tap/visual-relay", content, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Readme_InstallSection_WarnsAgainstBrowserDownload()
-    {
-        var content = ReadReadme();
-
-        // The quarantine/browser-download caveat (relevant to the future brew
-        // tarball) must still be explained somewhere in the README.
-        Assert.True(
-            content.Contains("browser", StringComparison.OrdinalIgnoreCase) ||
-            content.Contains("quarantine", StringComparison.OrdinalIgnoreCase),
-            "README must warn against browser downloads (quarantine re-application)");
-    }
-
-    [Fact]
-    public void Readme_ExplainsFormulaNotCaskRationale()
-    {
-        var content = ReadReadme();
-
-        // The README must explain why it's a formula, not a cask (no
-        // quarantine, no Gatekeeper, no notarization).
-        Assert.True(
-            content.Contains("formula", StringComparison.OrdinalIgnoreCase) &&
-            (content.Contains("cask", StringComparison.OrdinalIgnoreCase) ||
-             content.Contains("quarantine", StringComparison.OrdinalIgnoreCase) ||
-             content.Contains("Gatekeeper", StringComparison.OrdinalIgnoreCase)),
-            "README must explain formula-not-cask rationale");
     }
 
     // ── README: sample-reset / dev-only references removed ───────────────
