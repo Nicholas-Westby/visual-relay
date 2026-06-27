@@ -39,6 +39,7 @@ internal sealed class ActivityWatchdog
     private readonly int _absoluteCeilingMs;
     private readonly CancellationTokenSource _kill;
     private readonly Action<string>? _onHeartbeat;
+    private readonly TimeProvider _timeProvider;
     private readonly long _startTimestamp;
     private readonly object _lock = new();
     private long _lastPulseTimestamp;
@@ -75,14 +76,16 @@ internal sealed class ActivityWatchdog
         int inactivityTimeoutMs,
         int absoluteCeilingMs,
         CancellationTokenSource kill,
-        Action<string>? onHeartbeat = null)
+        Action<string>? onHeartbeat = null,
+        TimeProvider? timeProvider = null)
     {
         _firstOutputTimeoutMs = firstOutputTimeoutMs;
         _inactivityTimeoutMs = inactivityTimeoutMs;
         _absoluteCeilingMs = absoluteCeilingMs;
         _kill = kill;
         _onHeartbeat = onHeartbeat;
-        _startTimestamp = Stopwatch.GetTimestamp();
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _startTimestamp = _timeProvider.GetTimestamp();
         _lastPulseTimestamp = _startTimestamp;
         _lastRealOutputTimestamp = _startTimestamp;
         _lastSubtreeBusyTimestamp = _startTimestamp;
@@ -98,7 +101,7 @@ internal sealed class ActivityWatchdog
     /// </summary>
     public void Pulse(string source)
     {
-        var now = Stopwatch.GetTimestamp();
+        var now = _timeProvider.GetTimestamp();
         lock (_lock)
         {
             _lastPulseTimestamp = now;
@@ -122,7 +125,7 @@ internal sealed class ActivityWatchdog
             // so a bursty/working agent (CPU active at any point in the window) is
             // never socket-wedge-killed even while its trace view is frozen.
             if (!sample.SubtreeIdle)
-                _lastSubtreeBusyTimestamp = Stopwatch.GetTimestamp();
+                _lastSubtreeBusyTimestamp = _timeProvider.GetTimestamp();
         }
     }
 
@@ -180,7 +183,7 @@ internal sealed class ActivityWatchdog
 
             lock (_lock)
             {
-                nowTicks = Stopwatch.GetTimestamp();
+                nowTicks = _timeProvider.GetTimestamp();
                 var elapsedMs = TicksToMs(nowTicks - _startTimestamp);
                 silenceMs = TicksToMs(nowTicks - _lastPulseTimestamp);
                 realOutputSilenceMs = TicksToMs(nowTicks - _lastRealOutputTimestamp);
@@ -259,7 +262,7 @@ internal sealed class ActivityWatchdog
             // never <= 0 — no further clamp needed.
             var delay = Math.Min(200L, Math.Max(1L, deadlineMs));
 
-            var delayTask = Task.Delay(TimeSpan.FromMilliseconds(delay), ct);
+            var delayTask = Task.Delay(TimeSpan.FromMilliseconds(delay), _timeProvider, ct);
             try
             {
                 await delayTask;
@@ -271,5 +274,5 @@ internal sealed class ActivityWatchdog
         }
     }
 
-    private static long TicksToMs(long ticks) => (long)(ticks / (double)Stopwatch.Frequency * 1000.0);
+    private long TicksToMs(long ticks) => (long)(ticks / (double)_timeProvider.TimestampFrequency * 1000.0);
 }
