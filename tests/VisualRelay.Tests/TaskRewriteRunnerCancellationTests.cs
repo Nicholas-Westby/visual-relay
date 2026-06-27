@@ -42,6 +42,12 @@ public sealed class TaskRewriteRunnerCancellationTests
         return (root, task, config);
     }
 
+    // Pins XDG_CONFIG_HOME under the per-test repo so the once-per-run vr-guard
+    // profile self-heal (TaskRewriteRunner.RunAsync → NonoProfileEnsurer.EnsureAsync)
+    // writes there, never the real ~/.config — cleaned up with the repo root.
+    private static DictionaryEnvironmentAccessor TempXdg(string root) =>
+        new() { ["XDG_CONFIG_HOME"] = Path.Combine(root, ".xdg") };
+
     [Fact]
     public async Task Cancellation_LeavesSpecByteIdentical()
     {
@@ -56,7 +62,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, cts.Token);
+                root, task, config, fake, cts.Token, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -88,7 +94,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new PostWriteCancellationRunner(RewrittenSpec, cts.Token);
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);

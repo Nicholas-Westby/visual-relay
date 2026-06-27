@@ -38,7 +38,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             // the sandbox never loads a stale installed-by-name copy. The sandbox is
             // always on. A write failure throws here — the run must not silently
             // proceed unsandboxed/stale.
-            await NonoProfileEnsurer.EnsureAsync(cancellationToken: cancellationToken);
+            await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
             // Publish the command-guard middleware binary so swival can strip
             // git hook-bypass flags. Fail-open: if publish fails, swival
             // launches without --command-middleware and the squash is the floor.

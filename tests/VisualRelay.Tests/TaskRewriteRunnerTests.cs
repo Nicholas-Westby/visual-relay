@@ -56,6 +56,12 @@ public sealed class TaskRewriteRunnerTests
         return (root, task, config);
     }
 
+    // Pins XDG_CONFIG_HOME under the per-test repo so the once-per-run vr-guard
+    // profile self-heal (TaskRewriteRunner.RunAsync → NonoProfileEnsurer.EnsureAsync)
+    // writes there, never the real ~/.config — cleaned up with the repo root.
+    private static DictionaryEnvironmentAccessor TempXdg(string root) =>
+        new() { ["XDG_CONFIG_HOME"] = Path.Combine(root, ".xdg") };
+
     private static string ReadSpec(string root, string taskId)
         => File.ReadAllText(Path.Combine(root, "llm-tasks", taskId, $"{taskId}.md"));
 
@@ -75,7 +81,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
             Assert.True(outcome.Changed);
@@ -107,7 +113,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
@@ -130,7 +136,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = OriginalSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed, "unchanged spec must report Changed=false");
             Assert.Equal(OriginalSpec, ReadSpec(root, task.Id));
@@ -158,7 +164,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -190,7 +196,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteDiagnosticFailureRunner();
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -273,7 +279,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None);
+                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, "task-a"));
