@@ -61,12 +61,12 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             """
             #!/usr/bin/env bash
             echo "startup chatter" >&2
-            sleep 14
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 4_500 },
-            SubagentTimeoutMilliseconds = 60_000,
+            SubagentTimeoutMilliseconds = 10_000,  // backstop (inactivity window 4.5s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -90,12 +90,12 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             """
             #!/usr/bin/env bash
             echo "WEDGE-MARKER-XYZ pre-hang diagnostics" >&2
-            sleep 14
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 3_000 },
-            SubagentTimeoutMilliseconds = 60_000,
+            SubagentTimeoutMilliseconds = 8_000,  // backstop (inactivity window 3s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -118,9 +118,9 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     /// from a dead CLOSE_WAIT socket) — must be killed at the inactivity
     /// deadline, not hours later.
     ///
-    /// The fake script emulates the exact incident pattern: ~65 KB of startup
-    /// chatter, trace-dir creation (first-output pulse), then absolute silence
-    /// for <c>sleep 30</c> (far longer than the 6 s inactivity window).
+    /// The fake script emulates the exact incident pattern: startup chatter,
+    /// trace-dir creation (first-output pulse), then absolute silence — a
+    /// 0-CPU block-forever child (far longer than the 6 s inactivity window).
     /// With the current <c>SampleTreeCpuLoopAsync</c> null-return bug this test
     /// may flakily pass or fail depending on whether <c>ps(1)</c> fails during
     /// the run; after the fix it must pass deterministically.
@@ -141,16 +141,15 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             echo "startup diagnostics complete" >&2
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"first token"}]}}' > "$trace_dir/trace.jsonl"
-            # Now go completely silent — dead socket, no trace, no output.
-            sleep 30
-            # Late output — must never be seen because the stage was killed.
-            echo "too late" >&1
-            exit 0
+            # Now go completely silent — dead socket, no trace, no output — block
+            # forever so the inactivity watchdog's kill is the only thing that ends
+            # this child. Any late output after exec is unreachable, as the kill intends.
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 6_000 },
-            SubagentTimeoutMilliseconds = 60_000,
+            SubagentTimeoutMilliseconds = 11_000,  // backstop (inactivity window 6s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,

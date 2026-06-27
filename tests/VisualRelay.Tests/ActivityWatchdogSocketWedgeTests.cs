@@ -156,9 +156,9 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
     /// End-to-end through the REAL production wiring (ProcessCapture cpu sampler →
     /// wedge sample → ActivityWatchdog decision → killToken → tree kill), with only
     /// the backend socket faked via the injected probe. The synthetic child writes
-    /// an early real-output burst then goes idle at ~0 CPU ("sleep") — a true
-    /// socket wedge. It must be killed near the inactivity window (not after the
-    /// child's own 60s sleep).
+    /// an early real-output burst then goes idle at ~0 CPU (block-forever) — a
+    /// true socket wedge. It must be killed near the inactivity window, never
+    /// left to block forever.
     ///
     /// Note on the decisive outcome: when the agent subtree is genuinely idle, the
     /// CPU pulse does NOT fire, so the ordinary inactivity timer reaches the
@@ -184,8 +184,9 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
             firstOutputTimeoutMs: 60_000, inactivityTimeoutMs: inactivityMs,
             absoluteCeilingMs: 0, watchdogCts);
 
-        // Child: burst of real output (stderr), then idle at ~0 CPU for 60s.
-        var script = "echo 'first token' 1>&2; sleep 60";
+        // Child: burst of real output (stderr), then idle at ~0 CPU forever — the
+        // watchdog's kill is the only thing that ends it (no self-exit ceiling).
+        var script = "echo 'first token' 1>&2; exec tail -f /dev/null";
 
         var processTask = ProcessCapture.RunAsync(
             "/bin/sh", $"-c \"{script}\"", Directory.GetCurrentDirectory(),
@@ -198,6 +199,13 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
 
         var watchdogTask = watchdog.WaitAsync(watchdogCts.Token);
 
+        // Regression backstop: with a block-forever child and absoluteCeilingMs:0
+        // there is no other ceiling, so a regressed watchdog would hang the
+        // Task.WhenAny below forever. Cancel after the inactivity window + 8s so a
+        // regression trips the kill, WaitAsync returns Disarmed, and the
+        // kill-outcome assertion fails fast instead of hanging.
+        watchdogCts.CancelAfter(inactivityMs + 8_000);
+
         var sw = Stopwatch.StartNew();
         var first = await Task.WhenAny(processTask, watchdogTask);
         var wd = await watchdogTask;
@@ -205,7 +213,7 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
         sw.Stop();
 
         // The wedged (idle) agent is killed via a fire path (stall or socket-wedge),
-        // never left to run out its 60s sleep.
+        // never left to block forever.
         Assert.True(
             wd.Outcome is ActivityWatchdog.Outcome.FiredStall or ActivityWatchdog.Outcome.FiredSocketWedge,
             $"expected a kill outcome, got {wd.Outcome}");

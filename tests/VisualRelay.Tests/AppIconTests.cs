@@ -251,7 +251,7 @@ public sealed class AppIconTests
             StartInfo = new ProcessStartInfo
             {
                 FileName = "/bin/bash",
-                ArgumentList = { "-c", "sleep 9999" },
+                ArgumentList = { "-c", "exec tail -f /dev/null" },
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -263,7 +263,7 @@ public sealed class AppIconTests
         var exited = p.WaitForExit(10_000);
         sw.Stop();
         Assert.False(exited,
-            "WaitForExit(10_000) should return false for 'sleep 9999'.");
+            "WaitForExit(10s) should return false for a never-exiting child.");
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(15),
             $"WaitForExit took {sw.Elapsed.TotalSeconds:F1} s; expected < 15 s.");
         try { p.Kill(entireProcessTree: true); } catch { /* best-effort */ }

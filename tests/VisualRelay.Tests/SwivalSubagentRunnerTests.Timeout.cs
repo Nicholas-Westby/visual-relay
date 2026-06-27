@@ -15,7 +15,7 @@ public sealed partial class SwivalSubagentRunnerTests
             "fake-swival-stalled-backend",
             """
             #!/usr/bin/env bash
-            sleep 60
+            exec tail -f /dev/null
             """);
         // Totally silent process: no stdout, no stderr, no trace dir.
         // The first-output watchdog kills it at the per-tier window.
@@ -27,7 +27,7 @@ public sealed partial class SwivalSubagentRunnerTests
                 ["balanced"] = 120_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 15_000,  // backstop
+            SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -60,7 +60,7 @@ public sealed partial class SwivalSubagentRunnerTests
             echo "partial test output" >&2
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"test","message":"running suite"}' > "$trace_dir/trace.jsonl"
-            sleep 60
+            exec tail -f /dev/null
             """);
         // Produces output (disarms first-output watchdog), then goes silent.
         // The inactivity deadline kills it after the per-tier window.
@@ -78,7 +78,7 @@ public sealed partial class SwivalSubagentRunnerTests
                 ["balanced"] = 600_000,
                 ["frontier"] = 1_200_000
             },
-            SubagentTimeoutMilliseconds = 30_000,  // backstop
+            SubagentTimeoutMilliseconds = 7_000,  // backstop (inactivity window 2s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,

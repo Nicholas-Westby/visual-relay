@@ -61,8 +61,9 @@ public sealed class FdLeakTests
 
     /// <summary>
     /// Spawns a stage process via <c>ProcessCapture.RunAsync</c> that
-    /// forks a detached background child (sleep 0.5).  After RunAsync returns
-    /// normally, asserts that the detached child is no longer alive.
+    /// forks a detached background child (a block-forever <c>tail -f /dev/null</c>).
+    /// After RunAsync returns normally, asserts that the detached child is no
+    /// longer alive — the block-forever child can only die by being reaped.
     ///
     /// RED until ProcessCapture reaps the stage's process group on normal
     /// exit.  The current code only kills on timeout; detached descendants
@@ -99,7 +100,7 @@ public sealed class FdLeakTests
             "    open(STDIN,  '<', '/dev/null');\n" +
             "    open(STDOUT, '>', '/dev/null');\n" +
             "    open(STDERR, '>', '/dev/null');\n" +
-            "    exec('sleep', '0.3');\n" +
+            "    exec('tail', '-f', '/dev/null');\n" +
             "}\n" +
             "print \"CHILD_PID=$pid\\n\";\n");
 
@@ -132,15 +133,16 @@ public sealed class FdLeakTests
     /// The inherited-pipe inverse of
     /// <see cref="ProcessCapture_DetachedChildReapedAfterNormalExit"/>: the forked
     /// child deliberately INHERITS the parent's stdout/stderr pipe write-ends
-    /// (it does NOT redirect them to /dev/null) and then sleeps for 10 s, while
-    /// the parent prints a sentinel and exits 0 immediately.
+    /// (it does NOT redirect them to /dev/null) and then blocks forever
+    /// (<c>tail -f /dev/null</c>), while the parent prints a sentinel and exits 0
+    /// immediately.
     ///
     /// With async-read redirected streams, <c>WaitForExitAsync</c> does not complete
     /// until the pipes hit EOF, and EOF only arrives once every process holding the
-    /// write-end closes it — so the surviving child wedges RunAsync until it finally
-    /// exits (~10 s here) even though the spawned process exited at once. A generous
-    /// 30 s RunAsync timeout keeps the buggy failure a clean, bounded ~10 s return
-    /// (via stream EOF) rather than a hang to the cap.
+    /// write-end closes it — so without reap-on-exit + bounded-drain the surviving
+    /// child wedges RunAsync indefinitely even though the spawned process exited at
+    /// once. A tightened 6 s RunAsync timeout caps that buggy hang at a fast, bounded
+    /// TimedOut return rather than riding a long cap.
     ///
     /// RED until reap-on-exit + bounded-drain lands; then RunAsync returns in &lt;1 s
     /// once the parent exits, regardless of the inherited pipe-holder.
@@ -158,8 +160,9 @@ public sealed class FdLeakTests
         // Script: set its own process group (so reaping works even when the
         // parent-side setpgid races), fork a background child that INHERITS
         // stdout/stderr (no /dev/null redirect — that inherited pipe is the
-        // whole point), then sleep 10 s.  The parent prints a unique sentinel
-        // plus the child PID and falls off the end (exit 0) immediately.
+        // whole point), then block forever (tail -f /dev/null).  The parent prints
+        // a unique sentinel plus the child PID and falls off the end (exit 0)
+        // immediately.
         //
         // Perl shebang so the process itself calls setpgid(0,0); perl is
         // guaranteed on macOS and near-universal on Linux.
@@ -173,7 +176,7 @@ public sealed class FdLeakTests
             "if ($pid == 0) {\n" +
             // Intentionally do NOT touch stdio: the child inherits the
             // parent's stdout/stderr pipe write-ends and holds them open.
-            "    exec('sleep', '10');\n" +
+            "    exec('tail', '-f', '/dev/null');\n" +
             "}\n" +
             "print \"CHILD_PID=$pid\\n\";\n" +
             "print \"PARENT_DONE\\n\";\n");
@@ -183,10 +186,10 @@ public sealed class FdLeakTests
             script,
             "",
             repo.Root,
-            // Far above the child's 10 s sleep, so buggy code returns via
-            // stream-EOF at ~10 s (a clean bounded RED) rather than hanging
-            // to this cap; fixed code returns in well under a second.
-            TimeSpan.FromSeconds(30),
+            // Tight 6 s cap: with a block-forever child the buggy path (no
+            // reap/drain) can only fail by riding this cap to a TimedOut return,
+            // so keep it short; fixed code returns in well under a second.
+            TimeSpan.FromSeconds(6),
             CancellationToken.None);
         sw.Stop();
 
@@ -194,12 +197,13 @@ public sealed class FdLeakTests
             $"RunAsync timed out (elapsed {sw.Elapsed.TotalSeconds:F1}s); expected a prompt return on parent exit.");
 
         // PRIMARY discriminating assertion: RunAsync must return shortly after
-        // the parent exits — well under the child's 10 s sleep.  Buggy code
-        // blocks on the inherited pipe until the child's sleep ends (~10 s) and
-        // FAILS here; the fix reaps + bounded-drains and returns in <1 s.
+        // the parent exits, not ride the surviving child's lifetime.  Buggy code
+        // blocks on the inherited pipe (the child never exits) and FAILS here —
+        // via this 5 s bound or the 6 s RunAsync cap above; the fix reaps +
+        // bounded-drains and returns in <1 s.
         Assert.True(sw.Elapsed < TimeSpan.FromSeconds(5),
             $"RunAsync took {sw.Elapsed.TotalSeconds:F1}s to return after the parent exited; " +
-            "expected < 5s. A ~10s return means it blocked on the surviving child's inherited " +
+            "expected < 5s. A late return means it blocked on the surviving child's inherited " +
             "stdout/stderr pipe (WaitForExitAsync waits for stream EOF) instead of ending on " +
             "process exit.");
 

@@ -134,10 +134,9 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             done
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"first pulse"}]}}' > "$trace_dir/trace.jsonl"
-            # 8 s silence exceeds the 3 s cheap inactivity window.
-            sleep 8
-            printf '```json\n{"summary":"should be dead already","options":["small"]}\n```\n'
-            exit 0
+            # Exceeds the 3 s cheap inactivity window — block forever so the
+            # inactivity watchdog's kill is the only thing that ends this child.
+            exec tail -f /dev/null
             """);
         var cheapConfig = TestConfig() with
         {
@@ -153,7 +152,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 600_000,
                 ["frontier"] = 600_000
             },
-            SubagentTimeoutMilliseconds = 30_000,
+            SubagentTimeoutMilliseconds = 8_000,  // backstop (cheap inactivity window 3s + ~5s)
             MaxStallRetries = 0
         };
         var cheapRunner = new SwivalSubagentRunner(cheapConfig, cheapScript, backendProbe: SwivalTestHelpers.AlwaysReady,

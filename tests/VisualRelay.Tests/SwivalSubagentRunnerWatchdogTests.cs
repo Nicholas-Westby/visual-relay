@@ -24,7 +24,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
               printf '```json\n{"summary":"recovered","options":["small"]}\n```\n'
               exit 0
             else
-              sleep 60
+              exec tail -f /dev/null
             fi
             """);
         var config = TestConfig() with
@@ -35,7 +35,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 3_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 30_000,
+            SubagentTimeoutMilliseconds = 8_000,  // backstop (first-output window 3s + ~5s)
             MaxStallRetries = 1
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -98,7 +98,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             "fake-swival-cheap-stall",
             """
             #!/usr/bin/env bash
-            sleep 60
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
@@ -108,7 +108,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 120_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 15_000,
+            SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -174,7 +174,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             "fake-swival-persistent-stall",
             """
             #!/usr/bin/env bash
-            sleep 60
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
@@ -184,7 +184,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 2_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 60_000,
+            SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
             MaxStallRetries = 1
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,

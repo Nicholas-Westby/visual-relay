@@ -113,7 +113,7 @@ public sealed class BackendSpawnTests : IDisposable
     {
         var psi = OperatingSystem.IsWindows()
             ? new ProcessStartInfo("ping", "-n 30 127.0.0.1")
-            : new ProcessStartInfo("sleep", "30");
+            : new ProcessStartInfo("tail", "-f /dev/null");
         psi.UseShellExecute = false;
         psi.CreateNoWindow = true;
         return Process.Start(psi)!;

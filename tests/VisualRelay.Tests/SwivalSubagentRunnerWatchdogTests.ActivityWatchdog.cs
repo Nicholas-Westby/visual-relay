@@ -80,7 +80,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             """
             #!/usr/bin/env bash
             # Completely silent — no output, no trace dir.
-            sleep 60
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
@@ -90,7 +90,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 2_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 15_000,
+            SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -129,11 +129,11 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             # Pulse once via trace dir creation.
             mkdir -p "$trace_dir"
             printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"first token"}]}}' > "$trace_dir/trace.jsonl"
-            # Now go silent past the inactivity window (3 s for cheap).
-            sleep 10
-            # Late output — should never be seen because the stage is already killed.
-            echo "too late" >&1
-            exit 0
+            # Now go silent past the inactivity window (3 s for cheap) — block
+            # forever so the inactivity watchdog's kill is the only thing that ends
+            # this child. Any late output after exec is unreachable, exactly as the
+            # kill intends (no resurrection).
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {
@@ -149,7 +149,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 600_000,
                 ["frontier"] = 1_200_000
             },
-            SubagentTimeoutMilliseconds = 30_000,
+            SubagentTimeoutMilliseconds = 8_000,  // backstop (inactivity window 3s + ~5s)
             MaxStallRetries = 0
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,

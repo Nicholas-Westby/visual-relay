@@ -26,7 +26,7 @@ public sealed class SandboxedTestRunnerReapTests
     /// ProcessCapture_ReturnsPromptlyWhenChildInheritsPipeAndSurvives): the
     /// directly-spawned WRAPPER stays alive after its child's work is done —
     /// it printed nono's "Command exited with code N" marker, forked an orphan
-    /// that inherits the pipe and lingers (testhost/MSBuild), and then sleeps.
+    /// that inherits the pipe and lingers (testhost/MSBuild), then blocks forever.
     /// The runner must reap on idle and return the inner command's REAL result
     /// promptly, not ride the cap to TimedOut.
     /// </summary>
@@ -42,17 +42,19 @@ public sealed class SandboxedTestRunnerReapTests
             "use POSIX; setpgid(0,0);\n" +
             // Orphan inherits stdout/stderr (the lingering testhost/MSBuild node).
             "my $pid = fork();\n" +
-            "if ($pid == 0) { exec('sleep', '6'); }\n" +
+            "if ($pid == 0) { exec('tail', '-f', '/dev/null'); }\n" +
             "print \"Failed: 1, Passed: 1857\\n\";\n" +
             "print \"Command exited with code 1\\n\";\n" +
-            // The wrapper itself lingers, supervising the un-draining tree.
-            "sleep 6;\n");
+            // The wrapper itself lingers (block-forever), supervising the un-draining tree.
+            "exec('tail', '-f', '/dev/null');\n");
 
         var sw = Stopwatch.StartNew();
         var result = await SandboxedTestRunner.RunWatchedAsync(
             wrapper, [], repo.Root, null,
             firstOutputTimeoutMs: GraceMs, idleGraceMs: GraceMs,
-            hardCap: TimeSpan.FromSeconds(20), cpuSampleIntervalMs: CpuSampleMs,
+            // Tightened from 20s: with block-forever children a regressed idle-reap
+            // can only fail by riding this cap, so keep it just above the ~1.5s grace.
+            hardCap: TimeSpan.FromSeconds(7), cpuSampleIntervalMs: CpuSampleMs,
             CancellationToken.None);
         sw.Stop();
 
@@ -107,7 +109,7 @@ public sealed class SandboxedTestRunnerReapTests
         using var repo = TestRepository.Create();
         var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root, "fake-nono-silent",
-            "#!/usr/bin/env perl\nsleep 30;\n");
+            "#!/usr/bin/env perl\nexec('tail', '-f', '/dev/null');\n");
 
         var sw = Stopwatch.StartNew();
         var result = await SandboxedTestRunner.RunWatchedAsync(

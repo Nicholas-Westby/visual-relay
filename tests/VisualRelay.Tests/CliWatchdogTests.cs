@@ -29,9 +29,13 @@ public sealed class CliWatchdogTests
     public async Task Returns124_AndKillsTree_OnTimeout()
     {
         var sw = Stopwatch.StartNew();
+        // 0-CPU, no-timer child that never exits on its own — the 500ms watchdog
+        // deadline is the only thing that ends it. WaitAsync caps a REGRESSED
+        // watchdog at ~8s instead of hanging forever against `tail -f` (which,
+        // unlike `sleep 30`, has no self-exit ceiling of its own).
         var rc = await TimeoutWatchdog.RunAsync(
-            "/bin/sh", ["-c", "sleep 30"], Directory.GetCurrentDirectory(),
-            TimeSpan.FromMilliseconds(500));
+            "/bin/sh", ["-c", "exec tail -f /dev/null"], Directory.GetCurrentDirectory(),
+            TimeSpan.FromMilliseconds(500)).WaitAsync(TimeSpan.FromSeconds(8));
         sw.Stop();
 
         Assert.Equal(124, rc);
@@ -63,9 +67,13 @@ public sealed class CliWatchdogTests
         // A child that traps SIGTERM and keeps running must still be force-killed
         // and reported as 124 — the bash watchdog escalated TERM→KILL for this.
         var sw = Stopwatch.StartNew();
+        // trap '' TERM keeps the SIG_IGN(TERM) disposition (preserved across exec),
+        // so the block-forever `tail` still ignores SIGTERM and must be SIGKILL'd —
+        // the same force-kill the original `sleep 30` exercised. WaitAsync caps a
+        // regressed watchdog at ~8s rather than hanging forever.
         var rc = await TimeoutWatchdog.RunAsync(
-            "/bin/sh", ["-c", "trap '' TERM; sleep 30"], Directory.GetCurrentDirectory(),
-            TimeSpan.FromMilliseconds(500));
+            "/bin/sh", ["-c", "trap '' TERM; exec tail -f /dev/null"], Directory.GetCurrentDirectory(),
+            TimeSpan.FromMilliseconds(500)).WaitAsync(TimeSpan.FromSeconds(8));
         sw.Stop();
 
         Assert.Equal(124, rc);
