@@ -6,7 +6,8 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Unit tests for <see cref="RelayDriver.BuildTargetedTestCommand"/>.
-/// IsTestFile = !IsImpl — files whose extension is in NonCodeExtensions (.md, .json, .yaml, …).
+/// Targeting selects authored test files (IsTestFile), toolchain-agnostic, so
+/// .NET test files (tests/FooTests.cs) narrow the gate, not the full suite.
 /// </summary>
 public sealed class TargetedTestCommandTests
 {
@@ -16,13 +17,13 @@ public sealed class TargetedTestCommandTests
     [Fact]
     public void BuildTargetedTestCommand_WithFilesToken_AndTestFiles_ReturnsSubstitutedCommand()
     {
-        // .json has no-code extension → IsTestFile=true → included in substitution
+        // tests/app.tests.cs is an authored test file (IsTestFile=true) → substituted
         var config = MakeConfig("dotnet test", "bun test {files}");
-        var manifest = new List<string> { "src/app.cs", "config.json" };
+        var manifest = new List<string> { "src/app.cs", "tests/app.tests.cs" };
 
         var result = RelayDriver.BuildTargetedTestCommand(config, manifest);
 
-        Assert.Equal("bun test config.json", result);
+        Assert.Equal("bun test tests/app.tests.cs", result);
     }
 
     [Fact]
@@ -42,9 +43,9 @@ public sealed class TargetedTestCommandTests
     [Fact]
     public void BuildTargetedTestCommand_WithFilesToken_ButNoTestFiles_ReturnsFallbackTestCommand()
     {
-        // All files are code (IsImpl=true) → no non-code "test files" → fallback
+        // Manifest has no authored test files (IsTestFile=false for all) → fallback
         var config = MakeConfig("dotnet test", "bun test {files}");
-        var manifest = new List<string> { "src/app.cs", "tests/app.tests.cs" };
+        var manifest = new List<string> { "src/app.cs", "src/helper.cs" };
 
         var result = RelayDriver.BuildTargetedTestCommand(config, manifest);
 
@@ -52,9 +53,9 @@ public sealed class TargetedTestCommandTests
     }
 
     [Fact]
-    public void BuildTargetedTestCommand_WithFilesToken_MixedManifest_OnlyNonCodeFilesSubstituted()
+    public void BuildTargetedTestCommand_WithFilesToken_MixedManifest_OnlyTestFilesSubstituted()
     {
-        // IsTestFile = !IsImpl. .cs → IsImpl=true (code). .json, .yaml → IsImpl=false.
+        // Only authored test files are substituted; impl + config/docs excluded.
         var config = MakeConfig("dotnet test", "bun test {files}");
         var manifest = new List<string>
         {
@@ -66,25 +67,43 @@ public sealed class TargetedTestCommandTests
 
         var result = RelayDriver.BuildTargetedTestCommand(config, manifest);
 
-        // Only non-code files appear in substitution
-        Assert.Equal("bun test config.json settings.yaml", result);
+        Assert.Equal("bun test tests/app.tests.cs", result);
     }
 
     [Fact]
-    public void BuildTargetedTestCommand_MultipleNonCodeFiles_SpaceJoined()
+    public void BuildTargetedTestCommand_MultipleTestFiles_SpaceJoined()
     {
         var config = MakeConfig("bun test", "bun test {files}");
         var manifest = new List<string>
         {
-            "config.json",
-            "schema.yaml",
+            "tests/a.tests.cs",
+            "tests/b.tests.cs",
             "src/app.ts"
         };
 
         var result = RelayDriver.BuildTargetedTestCommand(config, manifest);
 
-        // .json, .yaml → IsTestFile=true; .ts → IsTestFile=false
-        Assert.Equal("bun test config.json schema.yaml", result);
+        // Both authored test files are joined; src/app.ts (impl) is excluded.
+        Assert.Equal("bun test tests/a.tests.cs tests/b.tests.cs", result);
+    }
+
+    [Fact]
+    public void BuildTargetedTestCommand_DotNetTestFileUnderTests_ReturnsTargetedCommand()
+    {
+        // Regression: a .NET test file under tests/ has a .cs extension; the old
+        // !IsImpl filter excluded it and ran the full suite. IsTestFile narrows it.
+        var config = MakeConfig("dotnet test", "sh tools/dotnet-test-files.sh {files}");
+        var manifest = new List<string>
+        {
+            "src/App/Foo.cs",
+            "tests/VisualRelay.Tests/FooTests.cs"
+        };
+
+        var result = RelayDriver.BuildTargetedTestCommand(config, manifest);
+
+        Assert.Equal(
+            "sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/FooTests.cs", result);
+        Assert.NotEqual(config.TestCommand, result); // NOT the full suite
     }
 
     // ── TestFileCommandWarning (the {files}-less footgun) ────────────────
@@ -129,7 +148,7 @@ public sealed class TargetedTestInvocationTests
     [Fact]
     public async Task RunTaskAsync_StagesImplementAndFix_ReceiveTargetedTestCommand()
     {
-        // Config with {files} token — targeted command will be built from non-code files
+        // Config with {files} token; targeted command is built from authored test files
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
@@ -145,8 +164,8 @@ public sealed class TargetedTestInvocationTests
             """);
         repo.WriteTask("targeted-test", "# Targeted test\n");
         var runner = new CapturingSubagentRunner();
-        // Manifest: src/app.cs (IsImpl=true) + config.json (IsImpl=false → IsTestFile=true)
-        runner.SeedHappyPath("src/app.cs", "config.json");
+        // Manifest: src/app.cs (impl) + tests/app.tests.cs (authored test file)
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 9 verify — green
@@ -160,11 +179,11 @@ public sealed class TargetedTestInvocationTests
 
         // Stage 6 (Implement) receives targeted command
         var stage6 = runner.Invocations.Single(i => i.Stage.Number == 6);
-        Assert.Equal("bun test config.json", stage6.TestCommand);
+        Assert.Equal("bun test tests/app.tests.cs", stage6.TestCommand);
 
         // Stage 8 (Fix) receives targeted command
         var stage8 = runner.Invocations.Single(i => i.Stage.Number == 8);
-        Assert.Equal("bun test config.json", stage8.TestCommand);
+        Assert.Equal("bun test tests/app.tests.cs", stage8.TestCommand);
     }
 
     [Fact]
