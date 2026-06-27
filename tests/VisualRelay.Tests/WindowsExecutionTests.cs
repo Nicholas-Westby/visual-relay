@@ -82,8 +82,18 @@ public sealed class WindowsExecutionTests
 
             Assert.True(File.Exists(hbFile), "the grandchild must have written before the kill");
             var sizeAtKill = new FileInfo(hbFile).Length;
-            await Task.Delay(1500); // a few heartbeat intervals
-            Assert.Equal(sizeAtKill, new FileInfo(hbFile).Length); // no further writes => tree killed
+            // A still-living grandchild would grow the heartbeat file within a couple
+            // of its ~1 s ping intervals; a killed tree leaves the size frozen. Poll
+            // over a bounded window with SHORT cancellable waits (no real sleep) and
+            // assert the size never grows — a stronger check than a single post-wait
+            // read, and sleep-free per the real-sleep guard.
+            using var settle = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            while (!settle.IsCancellationRequested)
+            {
+                try { await Task.Delay(200, settle.Token); }
+                catch (OperationCanceledException) { break; }
+                Assert.Equal(sizeAtKill, new FileInfo(hbFile).Length); // no further writes => tree killed
+            }
         }
         finally
         {

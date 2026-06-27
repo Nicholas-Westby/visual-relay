@@ -154,6 +154,45 @@ internal sealed class ActivityWatchdog
         && sample is { SubtreeIdle: true, BackendSocketEstablished: true };
 
     /// <summary>
+    /// Pure stall/ceiling/first-output/wedge fire decision, extracted from
+    /// <see cref="WaitAsync"/> so the exact production algorithm is unit-testable
+    /// against simulated time values (mirrors <see cref="TryDecideSocketWedge"/>).
+    /// Priority matches the loop: the absolute ceiling wins when set, then the
+    /// first-output (before any pulse) / inactivity (after) stall deadline, then the
+    /// additive socket wedge; otherwise <see cref="Outcome.Disarmed"/>.
+    /// </summary>
+    internal static Outcome DecideOutcome(
+        long elapsedMs,
+        long silenceMs,
+        long realOutputSilenceMs,
+        long subtreeIdleForMs,
+        bool firstPulseReceived,
+        int firstOutputTimeoutMs,
+        int inactivityTimeoutMs,
+        int absoluteCeilingMs,
+        WedgeSample sample)
+    {
+        // Absolute ceiling first (it wins when set).
+        if (absoluteCeilingMs > 0 && elapsedMs >= absoluteCeilingMs)
+            return Outcome.FiredAbsoluteCeiling;
+
+        // First-output phase compares elapsed from start; inactivity phase compares
+        // silence since the last pulse.
+        var firedStall = firstPulseReceived
+            ? silenceMs >= inactivityTimeoutMs
+            : elapsedMs >= firstOutputTimeoutMs;
+        if (firedStall)
+            return Outcome.FiredStall;
+
+        // Additive: a cpu-pulse-masked wedge (real output silent past the inactivity
+        // window, agent subtree SUSTAINED-idle for the whole window, socket up).
+        if (TryDecideSocketWedge(firstPulseReceived, realOutputSilenceMs, subtreeIdleForMs, inactivityTimeoutMs, sample))
+            return Outcome.FiredSocketWedge;
+
+        return Outcome.Disarmed;
+    }
+
+    /// <summary>
     /// Polls every 200 ms (or sooner when a deadline is imminent).
     /// Returns <see cref="Outcome.Disarmed"/> when <paramref name="ct"/> is cancelled
     /// (process exited cleanly).  Returns <see cref="Outcome.FiredStall"/> when the
@@ -171,9 +210,7 @@ internal sealed class ActivityWatchdog
             if (ct.IsCancellationRequested)
                 return new Result(Outcome.Disarmed, _lastPulseSource, 0);
 
-            bool firedStall;
-            bool firedCeiling;
-            bool firedWedge;
+            Outcome outcome;
             string lastSource;
             long silenceMs;
             long realOutputSilenceMs;
@@ -190,26 +227,13 @@ internal sealed class ActivityWatchdog
                 subtreeIdleForMs = TicksToMs(nowTicks - _lastSubtreeBusyTimestamp);
                 lastSource = _lastPulseSource;
 
-                // Check absolute ceiling first (it wins when set).
-                firedCeiling = _absoluteCeilingMs > 0 && elapsedMs >= _absoluteCeilingMs;
-
-                if (!_firstPulseReceived)
-                {
-                    // First-output phase: compare elapsed from start.
-                    firedStall = elapsedMs >= _firstOutputTimeoutMs;
-                }
-                else
-                {
-                    // Inactivity phase: compare silence since last pulse.
-                    firedStall = silenceMs >= _inactivityTimeoutMs;
-                }
-
-                // Additive: a cpu-pulse-masked wedge (real output silent past the
-                // inactivity window, agent subtree SUSTAINED-idle for the whole
-                // window, backend socket ESTABLISHED).
-                firedWedge = TryDecideSocketWedge(
-                    _firstPulseReceived, realOutputSilenceMs, subtreeIdleForMs,
-                    _inactivityTimeoutMs, _lastWedgeSample);
+                // Single pure decision: absolute ceiling (wins when set) > first-output/
+                // inactivity stall > additive cpu-pulse-masked socket wedge. See
+                // DecideOutcome (unit-tested in isolation against simulated time values).
+                outcome = DecideOutcome(
+                    elapsedMs, silenceMs, realOutputSilenceMs, subtreeIdleForMs,
+                    _firstPulseReceived, _firstOutputTimeoutMs, _inactivityTimeoutMs,
+                    _absoluteCeilingMs, _lastWedgeSample);
 
                 // Snapshot the deadline for heartbeat logging (outside lock).
                 heartbeatDeadlineMs = !_firstPulseReceived
@@ -217,14 +241,11 @@ internal sealed class ActivityWatchdog
                     : _inactivityTimeoutMs - silenceMs;
             }
 
-            if (firedCeiling || firedStall || firedWedge)
+            if (outcome != Outcome.Disarmed)
             {
                 if (!ct.IsCancellationRequested)
                     _kill.Cancel();
 
-                var outcome = firedCeiling ? Outcome.FiredAbsoluteCeiling
-                    : firedStall ? Outcome.FiredStall
-                    : Outcome.FiredSocketWedge;
                 // For the wedge outcome, report real-output silence (≈ the inactivity
                 // window) — NOT silenceMs, which the cpu pulse keeps at ~one sample and
                 // which made the autopsy read like a "4s kill" — plus sustained-idle.

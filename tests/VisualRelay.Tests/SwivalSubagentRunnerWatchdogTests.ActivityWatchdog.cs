@@ -7,63 +7,20 @@ namespace VisualRelay.Tests;
 public sealed partial class SwivalSubagentRunnerWatchdogTests
 {
     /// <summary>
-    /// Regression (1): A process that writes stdout but NO trace file
-    /// must NOT be killed by the first-output watchdog.  This is the
-    /// original false-kill scenario: stdout bytes are visible as
-    /// liveness pulses.
+    /// Regression (1): stdout bytes are liveness pulses, so a process that writes
+    /// stdout but NO trace file must NOT be killed by the first-output watchdog (the
+    /// original false-kill scenario). A stdout pulse sets firstPulseReceived,
+    /// flipping the watchdog into the inactivity phase — so even 2.5 s elapsed (past
+    /// the 2 s first-output window) with only 0.5 s of inter-pulse silence (≪ the
+    /// inactivity window) stays Disarmed, exactly as a trace pulse would.
     /// </summary>
     [Fact]
-    public async Task RunAsync_StdoutNoTraceFile_NotKilled()
+    public void DecideOutcome_StdoutPulseDisarmsFirstOutput_SurvivesPastFirstOutputWindow()
     {
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-stdout-no-trace",
-            """
-            #!/usr/bin/env bash
-            # Simulate a heavy first turn: write stdout (proxy calls
-            # producing output) but do NOT create the trace directory
-            # until the very end.
-            for i in $(seq 1 5); do
-              echo "proxy call $i done" >&1
-              sleep 0.5
-            done
-            # Only now create the trace dir and write the final JSON.
-            while [[ $# -gt 0 ]]; do
-              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
-            done
-            mkdir -p "$trace_dir"
-            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}' > "$trace_dir/trace.jsonl"
-            printf '```json\n{"summary":"stdout kept me alive","options":["small"]}\n```\n'
-            exit 0
-            """);
-        var config = TestConfig() with
-        {
-            FirstOutputTimeoutMsByTier = new Dictionary<string, int>
-            {
-                ["cheap"] = 90_000,
-                ["balanced"] = 2_000,  // would kill if stdout invisible
-                ["frontier"] = 660_000
-            },
-            // 0 = no absolute ceiling; inactivity deadline is what matters.
-            SubagentTimeoutMilliseconds = 0,
-            MaxStallRetries = 0
-        };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = await runner.RunAsync(
-            SwivalTestHelpers.Invocation(repo.Root) with { Tier = "balanced" });
-        sw.Stop();
-
-        Assert.True(result.IsValid);
-        Assert.Null(result.Error);
-        Assert.Contains("stdout kept me alive", result.Json, StringComparison.Ordinal);
-        // Must have finished well before the 2 s first-output threshold
-        // (stdout pulses disarm the watchdog).
-        Assert.True(sw.ElapsedMilliseconds < 10_000,
-            $"Expected completion in < 10 s, took {sw.ElapsedMilliseconds} ms");
+        Assert.Equal(
+            ActivityWatchdog.Outcome.Disarmed,
+            Decide(elapsedMs: 2_500, silenceMs: 500, firstPulseReceived: true,
+                firstOutputTimeoutMs: 2_000, inactivityTimeoutMs: 600_000));
     }
 
     /// <summary>

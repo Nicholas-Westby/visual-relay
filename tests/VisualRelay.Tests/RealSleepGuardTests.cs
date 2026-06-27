@@ -138,12 +138,14 @@ public sealed class RealSleepGuardTests
 
     /// <summary>
     /// The live enforcing gate: every <c>*.cs</c> in the test project (excluding bin/obj)
-    /// is free of real sleeps. SKIPPED today because the watchdog tests still embed real
-    /// shell sleeps as "won't-stop-on-its-own" stand-ins; Part B of
-    /// harness-no-real-sleeps-in-tests rewrites them (block-forever child + injected clock)
-    /// and un-skips this fact, flipping the guard to build-failing against the live suite.
+    /// is free of real sleeps. Now ENABLED — Part B of harness-no-real-sleeps-in-tests
+    /// made the suite sleep-free: the timing-sensitive watchdog tests were rewritten to
+    /// a 0-CPU block-forever child (Class A) or the pure ActivityWatchdog.DecideOutcome
+    /// decision driven by simulated time values (Class B), so no test embeds a real
+    /// shell sleep as a "won't-stop-on-its-own" stand-in. This fact keeps the suite that
+    /// way: any reintroduced real sleep flips the guard to a build failure.
     /// </summary>
-    [Fact(Skip = "enable after the sleep-free rewrite — harness-no-real-sleeps-in-tests Part B")]
+    [Fact]
     public void AllTestProjectCsFiles_AreSleepFree()
     {
         var testsDir = Path.Combine(RepoSetup.Root, "tests", "VisualRelay.Tests");
