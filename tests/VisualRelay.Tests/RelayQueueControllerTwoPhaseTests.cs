@@ -25,7 +25,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -57,7 +58,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: taskId => taskId == "bad-plan" ? flagAt3 : goodRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -98,7 +100,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -127,7 +130,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => flagAt2,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -175,7 +179,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            lifecycle: lifecycle);
+            lifecycle: lifecycle,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         await controller.RefreshAsync();
         await controller.DrainAsync();

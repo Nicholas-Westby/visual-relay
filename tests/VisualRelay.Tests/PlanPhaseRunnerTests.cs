@@ -37,7 +37,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: tasks,
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         // All tasks should complete planning.
         Assert.Equal(taskCount, results.Count);
@@ -79,7 +80,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: tasks,
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Equal(3, results.Count);
         Assert.All(results, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
@@ -141,7 +143,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: [("stray-writer", strayWriter)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -192,7 +195,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: runners,
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Equal(taskCount, results.Count);
         // No task should have Failed with "another task is already active".
@@ -221,7 +225,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: [("copy-back", runner)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -257,7 +262,8 @@ public sealed partial class PlanPhaseRunnerTests
             tasks: [("flag-in-plan", flagAt3)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, results[0].Outcome.Status);

@@ -113,7 +113,8 @@ public sealed partial class DrainQueueToolTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await controller.RefreshAsync();
 
         var results = await controller.DrainAsync();
@@ -146,7 +147,8 @@ public sealed partial class DrainQueueToolTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await controller.RefreshAsync();
 
         // Select only alpha and gamma, in that order.
@@ -184,7 +186,8 @@ public sealed partial class DrainQueueToolTests
         var controller = new RelayQueueController(
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
-            planTestRunner: new ScriptedTestRunner());
+            planTestRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await controller.RefreshAsync();
 
         controller.Tasks.Clear();

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
 
@@ -26,13 +27,21 @@ public static class PlanPhaseRunner
     /// per task so live progress reaches the GUI. When null, a
     /// <see cref="NullRelayEventSink"/> is used (no live progress).
     /// </param>
+    /// <param name="environmentAccessor">
+    /// Optional environment accessor threaded into the <see cref="RelayDriverDependencies"/>
+    /// each planning driver is built from, so the once-per-run vr-guard profile self-heal
+    /// (<see cref="NonoProfileEnsurer.EnsureAsync"/>) resolves its path through it. Production
+    /// leaves it <c>null</c> (real process env, real <c>~/.config</c>); tests inject a hermetic
+    /// temp-XDG accessor so planning never writes the user's real profile.
+    /// </param>
     public static async Task<List<(string TaskId, RelayTaskOutcome Outcome)>> RunPlanPhaseAsync(
         string mainRootPath,
         IEnumerable<(string TaskId, ISubagentRunner Runner)> tasks,
         RelayConfig config,
         ITestRunner testRunner,
         CancellationToken cancellationToken = default,
-        Func<string, IRelayEventSink>? eventSinkFactory = null)
+        Func<string, IRelayEventSink>? eventSinkFactory = null,
+        IEnvironmentAccessor? environmentAccessor = null)
     {
         var taskList = tasks.ToList();
         if (taskList.Count == 0)
@@ -49,7 +58,7 @@ public static class PlanPhaseRunner
         // Fire all planning tasks concurrently, gated by the semaphore.
         await Task.WhenAll(taskList.Select(t => PlanOneAsync(
             mainRootPath, t.TaskId, t.Runner, testRunner, runId,
-            semaphore, results, eventSinkFactory, cancellationToken)));
+            semaphore, results, eventSinkFactory, environmentAccessor, cancellationToken)));
 
         // Return in input order.
         return results
@@ -66,6 +75,7 @@ public static class PlanPhaseRunner
         SemaphoreSlim semaphore,
         List<(string TaskId, RelayTaskOutcome Outcome)> results,
         Func<string, IRelayEventSink>? eventSinkFactory,
+        IEnvironmentAccessor? environmentAccessor,
         CancellationToken ct)
     {
         await semaphore.WaitAsync(ct);
@@ -73,7 +83,7 @@ public static class PlanPhaseRunner
         {
             var outcome = await PlanOneTaskAsync(
                 mainRootPath, taskId, runner, testRunner, runId,
-                eventSinkFactory, ct);
+                eventSinkFactory, environmentAccessor, ct);
             lock (results)
                 results.Add((taskId, outcome));
         }
@@ -102,6 +112,7 @@ public static class PlanPhaseRunner
         ITestRunner testRunner,
         string runId,
         Func<string, IRelayEventSink>? eventSinkFactory,
+        IEnvironmentAccessor? environmentAccessor,
         CancellationToken ct)
     {
         string? worktreePath = null;
@@ -123,7 +134,8 @@ public static class PlanPhaseRunner
             var fileSink = new FileRelayEventSink(
                 Path.Combine(worktreePath, ".relay", taskId, "run.log"));
             var sink = new CompositeRelayEventSink(observableSink, fileSink);
-            var dependencies = new RelayDriverDependencies(runner, testRunner, sink, gitInvoker);
+            var dependencies = new RelayDriverDependencies(
+                runner, testRunner, sink, gitInvoker, environmentAccessor);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
 

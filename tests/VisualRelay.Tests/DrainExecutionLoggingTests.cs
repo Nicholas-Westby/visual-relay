@@ -14,7 +14,7 @@ namespace VisualRelay.Tests;
 /// Gap 3 — RelayQueueController.DrainAsync excludes Planned outcomes from
 ///         results, so plannedCount in the GUI is always 0.
 /// </summary>
-public sealed class DrainExecutionLoggingTests
+public sealed partial class DrainExecutionLoggingTests
 {
     // ── Gap 3: Planned outcomes excluded from results ──────────────────
 
@@ -45,7 +45,8 @@ public sealed class DrainExecutionLoggingTests
         };
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
-            planSubagentRunnerFactory: _ => planRunner, planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle);
+            planSubagentRunnerFactory: _ => planRunner, planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -85,7 +86,8 @@ public sealed class DrainExecutionLoggingTests
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: id => id == "bad-plan" ? badRunner : goodRunner,
-            planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle);
+            planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -121,7 +123,8 @@ public sealed class DrainExecutionLoggingTests
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => runner,
-            planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle);
+            planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -166,7 +169,8 @@ public sealed class DrainExecutionLoggingTests
         // Phase 1: plan
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("full-run", runner)],
-            config: config, testRunner: new ScriptedTestRunner());
+            config: config, testRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         Assert.Single(planResults);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, planResults[0].Outcome.Status);
 
@@ -212,7 +216,8 @@ public sealed class DrainExecutionLoggingTests
 
         await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("correct", inner)],
-            config: config, testRunner: new ScriptedTestRunner());
+            config: config, testRunner: new ScriptedTestRunner(),
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         var runLogPath = Path.Combine(repo.Root, ".relay", "correct", "run.log");
         Assert.True(File.Exists(runLogPath));
@@ -262,7 +267,8 @@ public sealed class DrainExecutionLoggingTests
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("trace-me", traceRunner)],
             config: config, testRunner: new ScriptedTestRunner(),
-            eventSinkFactory: _ => captured);
+            eventSinkFactory: _ => captured,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -276,25 +282,5 @@ public sealed class DrainExecutionLoggingTests
             e is { EventName: "trace_entry", Data: not null }
             && e.Data.TryGetValue("content", out var c)
             && c.Contains("trace for trace-me", StringComparison.Ordinal));
-    }
-
-    // ── Legacy path regression ─────────────────────────────────────────
-
-    [Fact]
-    public async Task DrainAsync_LegacyConstructor_SerialOnly_NoRegression()
-    {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", []);
-        repo.WriteTask("legacy", "# Legacy\n");
-
-        var runner = new RecordingTaskRunner();
-        var controller = new RelayQueueController(repo.Root, runner);
-        await controller.RefreshAsync();
-        var results = await controller.DrainAsync();
-
-        Assert.Single(results);
-        Assert.Equal(RelayTaskOutcomeStatus.Committed, results[0].Status);
-        Assert.Equal(RelayQueueState.Completed, controller.State);
-        Assert.Equal(["legacy"], runner.TasksRun);
     }
 }

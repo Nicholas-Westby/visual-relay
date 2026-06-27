@@ -62,7 +62,8 @@ public sealed partial class NoCommitContaminationTests
             tasks: [("clean", cleanRunner), ("mixed", mixedRunner)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         Assert.Equal(2, planResults.Count);
 
         // Execute both serially.

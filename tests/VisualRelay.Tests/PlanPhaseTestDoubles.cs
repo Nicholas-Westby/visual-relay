@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
@@ -9,6 +10,20 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal static class PlanPhaseTestHelpers
 {
+    /// <summary>
+    /// One shared hermetic <see cref="IEnvironmentAccessor"/> the orchestrator tests pass
+    /// into <see cref="PlanPhaseRunner.RunPlanPhaseAsync"/> / <see cref="VisualRelay.Core.Queue.RelayQueueController"/>
+    /// so every internally-built planning driver self-heals the vr-guard sandbox profile
+    /// under a process-temp <c>XDG_CONFIG_HOME</c> instead of the real <c>~/.config</c> — the
+    /// same pre-seeded <see cref="TempXdgEnvironmentAccessor"/> that backs
+    /// <see cref="RelayDriverDependencies.ForTests"/>. Its temp profile is seeded once with the
+    /// canonical content, so each <see cref="NonoProfileEnsurer.EnsureAsync"/> finds matching
+    /// bytes and skips its write — safe under parallel planning and the always-on vr-guard nono
+    /// sandbox (which denies the real-<c>~/.config</c> write). A single shared seam means the
+    /// orchestrator call sites get isolation without per-test accessor plumbing.
+    /// </summary>
+    public static IEnvironmentAccessor TempXdg { get; } = new TempXdgEnvironmentAccessor();
+
     public static RelayConfig MakeConfig(int maxPlanConcurrency, string testCommand = "dotnet test") =>
         new(
             TasksDir: "llm-tasks",

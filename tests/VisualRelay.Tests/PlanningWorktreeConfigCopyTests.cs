@@ -171,7 +171,8 @@ public sealed class PlanningWorktreeConfigCopyTests
             tasks: [("ignored-cfg", runner)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Single(results);
         // PRE-FIX: Flagged with "config not found". POST-FIX: Planned.

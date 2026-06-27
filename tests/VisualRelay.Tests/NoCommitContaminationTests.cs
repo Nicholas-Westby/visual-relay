@@ -58,7 +58,8 @@ public sealed partial class NoCommitContaminationTests
             tasks: [("task-a", runnerA), ("task-b", runnerB)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
 
         Assert.Equal(2, planResults.Count);
         Assert.All(planResults, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
@@ -169,7 +170,8 @@ public sealed partial class NoCommitContaminationTests
             tasks: [("first", runnerFirst), ("second", runnerSecond)],
             config: config,
             testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None);
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
         Assert.Equal(2, planResults.Count);
 
         // Execute "second" first, then "first" — reversed order to expose any

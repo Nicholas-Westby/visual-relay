@@ -15,17 +15,23 @@ public sealed class RelayQueueController
     private readonly ITestRunner? _planTestRunner;
     private readonly Func<string, IRelayEventSink>? _planEventSinkFactory;
     private readonly DrainLifecycleCallbacks? _lifecycle;
+    private readonly IEnvironmentAccessor? _environmentAccessor;
     private bool _pauseRequested;
 
     /// <summary>Two-phase constructor: when plan factories are non-null,
-    /// DrainAsync runs planning in parallel worktrees before serial execute.</summary>
+    /// DrainAsync runs planning in parallel worktrees before serial execute.
+    /// <paramref name="environmentAccessor"/> is forwarded to the planning phase so
+    /// each planning driver's vr-guard profile self-heal resolves through it; it is
+    /// <c>null</c> in production (real env) and a hermetic temp-XDG accessor in tests,
+    /// keeping the parallel plan phase off the user's real <c>~/.config</c>.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
         Func<string, ISubagentRunner>? planSubagentRunnerFactory = null,
         ITestRunner? planTestRunner = null,
         Func<string, IRelayEventSink>? planEventSinkFactory = null,
-        DrainLifecycleCallbacks? lifecycle = null)
+        DrainLifecycleCallbacks? lifecycle = null,
+        IEnvironmentAccessor? environmentAccessor = null)
     {
         RootPath = rootPath;
         _runner = runner;
@@ -34,6 +40,7 @@ public sealed class RelayQueueController
         _planTestRunner = planTestRunner;
         _planEventSinkFactory = planEventSinkFactory;
         _lifecycle = lifecycle;
+        _environmentAccessor = environmentAccessor;
     }
 
     private string RootPath { get; }
@@ -130,7 +137,8 @@ public sealed class RelayQueueController
                         DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "start");
 
                     var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
-                        RootPath, needsPlan, configResult.Config, _planTestRunner, drainCts.Token, _planEventSinkFactory);
+                        RootPath, needsPlan, configResult.Config, _planTestRunner, drainCts.Token,
+                        _planEventSinkFactory, _environmentAccessor);
 
                     foreach (var (taskId, outcome) in planResults)
                     {
