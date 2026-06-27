@@ -40,6 +40,11 @@ public static class RelayStages
             SystemPromptFor(name),
             $"End your reply with a single fenced ```json block, nothing after it, matching: {contract}");
 
+    private const string SelfVerifyStopRule =
+        "Run that targeted command at most twice total. The harness re-runs the " +
+        "authoritative gate after you return, so do NOT keep re-running it to chase a " +
+        "clean local result — if it hangs or times out, record your work and return.";
+
     private static string SystemPromptFor(string name) => name switch
     {
         "Ideate" => "Frame the task and list 2-3 solution options. Do not edit files.",
@@ -51,7 +56,8 @@ public static class RelayStages
             "Verify your tests compile and fail using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
-            "the harness runs the full gate at its Verify/Commit stages.",
+            "the harness runs the full gate at its Verify/Commit stages. " +
+            SelfVerifyStopRule,
         "Implement" =>
             "Implement the change within the manifest files. " +
             "Verify your changes using ONLY the targeted test command shown in the " +
@@ -60,7 +66,8 @@ public static class RelayStages
             "implementation — the harness runs the full gate at the Verify stage. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +
             "says '0 failed': inspect the output tail for a non-test gate and resolve " +
-            "it legitimately. " +
+            "it legitimately. Resolving means an edit, not repeated re-runs. " +
+            SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Review" =>
@@ -68,7 +75,8 @@ public static class RelayStages
             "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
-            "the harness runs the full gate at its Verify/Commit stages.",
+            "the harness runs the full gate at its Verify/Commit stages. " +
+            SelfVerifyStopRule,
         "Fix" =>
             "Resolve every blocker and warning from review. " +
             "Verify your changes using ONLY the targeted test command shown in the " +
@@ -77,7 +85,8 @@ public static class RelayStages
             "full gate at the Verify stage. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +
             "says '0 failed': inspect the output tail for a non-test gate and resolve " +
-            "it legitimately. " +
+            "it legitimately. Resolving means an edit, not repeated re-runs. " +
+            SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
