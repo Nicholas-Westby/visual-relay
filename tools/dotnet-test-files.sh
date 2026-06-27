@@ -13,6 +13,6 @@ for f in "$@"; do
   case "$filter" in "") filter="FullyQualifiedName~$n" ;; *) filter="$filter|FullyQualifiedName~$n" ;; esac
 done
 if [ -n "$filter" ]; then
-  exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --filter "$filter"
+  exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 20s --blame-hang-dump-type none --filter "$filter"
 fi
-exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false
+exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 20s --blame-hang-dump-type none
