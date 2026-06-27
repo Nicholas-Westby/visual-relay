@@ -128,7 +128,10 @@ public sealed partial class SplitGuardVerificationTests
         // TierRows_* [Fact]s to the BackendConfigGeneratorTests family
         // (BackendConfigGeneratorTests.cs: TierRows_HfOnlyAndDeepSeek,
         // TierRows_ClaudePresentAndEmptyKeys).
-        const int baseline = 152;
+        // Bumped 152→154 on 2026-06-27: the no-real-sleeps rewrite converted the
+        // SwivalSubagentRunnerWatchdogTests family's real-sleep integration tests to
+        // pure DecideOutcome / ResolveTierWindows assertions (net +2 [Fact]s).
+        const int baseline = 154;
 
         string[] prefixes =
         [

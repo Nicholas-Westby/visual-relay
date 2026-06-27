@@ -10,19 +10,6 @@ public sealed partial class SwivalSubagentRunner
     // smallest configurable inactivity window.
     private const int CpuPulseSampleIntervalMs = 4_000;
 
-    // Resolve the first-output / inactivity watchdog windows for a tier: a tier
-    // present in the per-tier map uses ITS configured window; an absent tier (or a
-    // null inactivity map) falls back to the flat default. Extracted from RunAsync
-    // so the runner→tier→window wiring is unit-testable without a real clock.
-    internal static (int FirstOutputMs, int InactivityMs) ResolveTierWindows(RelayConfig config, string tier)
-    {
-        var firstOutputMs = config.FirstOutputTimeoutMsByTier.TryGetValue(tier, out var ctMs)
-            ? ctMs : config.FirstOutputTimeoutMs;
-        var inactivityMs = config.InactivityTimeoutMsByTier?.TryGetValue(tier, out var itMs) == true
-            ? itMs : config.InactivityTimeoutMs;
-        return (firstOutputMs, inactivityMs);
-    }
-
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
         // Pre-flight guard: _probe is the test-supplied fake (used verbatim) or the default retrying probe (see ProcessRunners.cs).
