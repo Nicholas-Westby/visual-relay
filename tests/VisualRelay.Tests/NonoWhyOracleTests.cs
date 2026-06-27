@@ -69,6 +69,13 @@ public sealed class NonoWhyOracleTests
     }
 
     [Fact]
+    public void NonoWhy_CloakBrowser_AllowedReadWrite()
+    {
+        if (!NonoAvailable) Assert.Skip("nono is not on PATH");
+        AssertAllowed(Path.Combine(Home, ".cloakbrowser"));
+    }
+
+    [Fact]
     public void NonoWhy_NixCache_AllowedReadWrite()
     {
         if (!NonoAvailable) Assert.Skip("nono is not on PATH");
@@ -242,7 +249,7 @@ public sealed class NonoWhyOracleTests
         if (!Directory.Exists(path) && !File.Exists(path))
         {
             try { Directory.CreateDirectory(path); }
-            catch { /* can't create — skip the oracle check gracefully */ }
+            catch { Assert.Skip("Cannot create directory for oracle check — skipping"); }
         }
 
         var psi = new ProcessStartInfo("nono",
