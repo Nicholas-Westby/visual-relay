@@ -21,8 +21,8 @@ output, so failures lost their diagnostic detail.
 - Confirm the full test output is persisted (VR already writes `stageN.verify-output.txt`) so the
   agent can scan it for diagnosis — that is the intended "store output, let the agent read it"
   design; no parsing on VR's side.
-- Re-tighten `.relay/config.json` `testTimeoutMs` from the inflated 1_200_000 (20 min) back to a
-  sane bound for a ~3-min suite (≈ 300_000–600_000) so a real future hang is caught, not masked.
+- Re-tighten `.relay/config.json` `testTimeoutMs` from the inflated 1_200_000 (20 min) back to
+  600_000 (10 min, per the user) so a real future hang is caught, not masked.
 
 ## Done when
 

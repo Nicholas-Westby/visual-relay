@@ -11,21 +11,34 @@ to kill it manually. (The common trigger — a too-slow full-suite self-verify �
 addressed separately by targeting self-verify at the relevant test files; this task is
 about the watchdog's blind spot itself.)
 
-## What to fix (re-grep the watchdog / activity-pulse logic in
-`src/VisualRelay.Core/Execution/` — `RunWatchedAsync`, the CPU/output pulse sources)
+## What to fix
 
-The liveness signal currently treats any output or CPU activity as "progressing", so a
-busy-but-stuck agent looks alive forever. Add a progress-based stall guard that is
-toolchain-agnostic, e.g.: if no NEW trace event / stage-token / turn has been recorded
-for a (generous) window despite the process being "active", treat it as a stall and
-reap + fail the attempt so the existing stage-retry path takes over. Keep a hard upper
-bound per attempt regardless of apparent activity.
+The robust, toolchain-agnostic mechanism is the HARD PER-ATTEMPT ABSOLUTE CEILING that
+already exists — `_absoluteCeilingMs` in `ActivityWatchdog` (config
+`SubagentTimeoutMilliseconds`, surfaced as `Outcome.FiredAbsoluteCeiling`). Ensure every
+stage attempt sets it to a sane wall-clock bound and NEVER leaves it 0/unset, so no attempt
+can run unbounded regardless of how "active" it looks. The observed 40-min flail ran
+unbounded because the ceiling was effectively unset for that stage; a sane ceiling caps it
+and the existing stage-retry path takes over.
+
+Do NOT add a "no new trace events ⇒ stalled" heuristic. The trace (`trace.jsonl`) does grow
+incrementally per turn (the watchdog already pulses on trace-dir growth), BUT within a single
+long *legitimate* tool call — a build, a test run — there are no new trace events for minutes
+while only the tool's stdout/CPU pulse. That is indistinguishable from a flailing agent
+spinning in a broken background-poll loop (also stdout/CPU active, no new trace events). So
+trace-event absence cannot separate "flailing" from "working hard on a slow tool", and would
+false-positive on slow-but-legitimate stages. The absolute ceiling is the reliable backstop;
+progress heuristics are not.
+
+(Lower urgency: the targeted-self-verify change already removed the flail's usual trigger — a
+too-slow full-suite self-verify — so this is a belt-and-suspenders bound, not a hot path.)
 
 ## Done when
 
-- A genuinely flailing agent (active CPU/output but no trace/turn progress for the window)
-  is reaped and the stage retried, without a human kill.
-- A legitimately slow-but-progressing stage (steady trace events) is NOT reaped.
+- Every stage attempt runs under a non-zero absolute ceiling; an attempt that exceeds it is
+  reaped and retried with no human kill, regardless of apparent activity.
+- A legitimately slow-but-progressing stage UNDER the ceiling is NOT reaped (no trace-event
+  heuristic that would false-positive on a long tool call).
 - `./visual-relay check` green; Conventional Commit subject.
 
 ## Coordination
