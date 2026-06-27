@@ -11,8 +11,8 @@ namespace VisualRelay.App.Views.Controls;
 /// Hosts the task queue and its drag-to-reorder gesture. The gesture/visual code
 /// lives here; the actual list mutation routes through
 /// <see cref="MainWindowViewModel.MoveTask"/> so the reorder logic stays testable
-/// without driving pointer input. Dragging is gated off while the runner is busy
-/// or the archive is shown (mirroring the old Up/Down command gate).
+/// without driving pointer input. Dragging is gated off while the archive
+/// is shown (mirroring the old Up/Down command gate).
 /// </summary>
 public partial class QueuePanel : UserControl
 {
@@ -54,7 +54,7 @@ public partial class QueuePanel : UserControl
     }
 
     private bool ReorderEnabled =>
-        DataContext is MainWindowViewModel { IsBusy: false, ShowArchive: false };
+        DataContext is MainWindowViewModel { ShowArchive: false };
 
     private void OnListPointerPressed(object? sender, PointerPressedEventArgs e)
     {

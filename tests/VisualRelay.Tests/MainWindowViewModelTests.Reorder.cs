@@ -147,15 +147,20 @@ public sealed partial class MainWindowViewModelTests
     }
 
     [Fact]
-    public void MoveTask_IsNoOpWhenBusy()
+    public void MoveTask_ReordersWhenBusy()
     {
-        var viewModel = new MainWindowViewModel { IsBusy = true };
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root, IsBusy = true };
         viewModel.Tasks.Add(new TaskRowViewModel(new("a", "/tmp/llm-tasks/a.md", "/tmp/llm-tasks", false, [])));
         viewModel.Tasks.Add(new TaskRowViewModel(new("b", "/tmp/llm-tasks/b.md", "/tmp/llm-tasks", false, [])));
 
         viewModel.MoveTask(0, 1);
 
-        Assert.Equal(["a", "b"], viewModel.Tasks.Select(t => t.Id));
+        // Reorder succeeds even when IsBusy — the drain snapshots its own execution
+        // order, so moving tasks during a run is safe and only affects scheduling.
+        Assert.Equal(["b", "a"], viewModel.Tasks.Select(t => t.Id));
+        // Persistence must also work when busy so the reorder survives post-drain reload.
+        Assert.Equal(["b", "a"], new TaskOrderStore(repo.Root).Read());
     }
 
     [Fact]

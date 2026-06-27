@@ -105,14 +105,14 @@ public partial class MainWindowViewModel
     /// <summary>
     /// Testable reorder seam: moves the task at <paramref name="fromIndex"/> to
     /// <paramref name="toIndex"/> in the in-memory <see cref="Tasks"/> list,
-    /// keeps the moved row selected, and is a no-op while busy or showing the
+    /// keeps the moved row selected, and is a no-op while showing the
     /// archive (mirroring the old Up/Down gate). The drag gesture in
     /// <c>QueuePanel</c> routes its mutation through here so the logic stays
     /// unit-testable without driving pointer input.
     /// </summary>
     internal void MoveTask(int fromIndex, int toIndex)
     {
-        if (IsBusy || ShowArchive)
+        if (ShowArchive)
         {
             return;
         }
