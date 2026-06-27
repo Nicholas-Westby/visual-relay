@@ -21,6 +21,15 @@ can run unbounded regardless of how "active" it looks. The observed 40-min flail
 unbounded because the ceiling was effectively unset for that stage; a sane ceiling caps it
 and the existing stage-retry path takes over.
 
+**Scale the ceiling with the 10× turn boost.** A task whose id is in
+`RelayConfig.BoostTurnsTaskIds` is given `MaxTurns × TurnBoostMultiplier` (10×) turns
+(`RelayDriver.VerifyFix.cs:216-218`) — the user has declared it legitimately long-running.
+The absolute ceiling MUST mirror that: multiply the per-attempt ceiling by
+`TurnBoostMultiplier` for boosted tasks, or a boosted (correctly long-running) task will be
+reaped by an unscaled ceiling, silently defeating the boost. This is latent today
+(`subagentTimeoutMs` is 0, so no ceiling exists yet) but becomes load-bearing the moment
+this task introduces one — wire the boost in at the same time, not as an afterthought.
+
 Do NOT add a "no new trace events ⇒ stalled" heuristic. The trace (`trace.jsonl`) does grow
 incrementally per turn (the watchdog already pulses on trace-dir growth), BUT within a single
 long *legitimate* tool call — a build, a test run — there are no new trace events for minutes
