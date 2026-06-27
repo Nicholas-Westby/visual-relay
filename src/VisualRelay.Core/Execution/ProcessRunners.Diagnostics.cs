@@ -16,8 +16,10 @@ public sealed partial class SwivalSubagentRunner
     /// Distills the real failure text from merged stdout/stderr by dropping
     /// nono's per-run advisory WARNs (lines containing <c>is blocked by '</c> and
     /// <c>use --bypass-protection</c>, which print every run regardless of the
-    /// failure) and pure banner/decoration rows, then keeping the most relevant
-    /// remainder. Anchoring is two-pass: first prefer a high-confidence failure
+    /// failure), nono's standing system-services / keychain advisory and its
+    /// remediation hints (<see cref="IsNonoSystemServiceAdvisory"/>, which trail
+    /// AFTER the test summary), and pure banner/decoration rows, then keeping the
+    /// most relevant remainder. Anchoring is two-pass: first prefer a high-confidence failure
     /// marker (<c>cannot find binary path</c>, <c>command execution failed</c>,
     /// <c>command not found</c>); only when none is present fall back to
     /// word-boundary weak keywords (<c>error</c>/<c>fatal</c>/… as whole words, so
@@ -62,6 +64,14 @@ public sealed partial class SwivalSubagentRunner
             // handled above). Match only a line that is ONLY such a token, so a real error
             // that merely contains the substring is never dropped.
             if (BareDenyAdvisoryLine.IsMatch(line))
+                continue;
+            // Drop nono's STANDING system-services / keychain advisory and its remediation
+            // hint lines. Unlike the "is blocked by … use --bypass-protection" WARNs above,
+            // nono prints this every run regardless of outcome AND trails it AFTER the test
+            // command's own summary, so without dropping it the tail lands on the advisory
+            // instead of the real failure. This is VR's own sandbox layer's output, so
+            // filtering it is provider-agnostic (no test framework is parsed).
+            if (IsNonoSystemServiceAdvisory(line))
                 continue;
             if (strongFailure < 0 && HasStrongFailureSignal(line))
                 strongFailure = kept.Count;
@@ -177,6 +187,24 @@ public sealed partial class SwivalSubagentRunner
 
     private static bool HasWeakFailureSignal(string line) => WeakFailureKeywords.IsMatch(line);
 
+    // nono's standing system-services / keychain advisory and its remediation hint
+    // lines (the "Next steps:" block and bare --allow/--read/--write flag suggestions
+    // it emits). Matched by nono's own distinctive wording and CLI-flag hint shapes —
+    // never by any test-framework output — so the distilled reason reflects the test
+    // command's failure and never nono's per-run keychain chatter. <paramref name="line"/>
+    // is already trimmed, so indented hint lines match by their leading token.
+    private static bool IsNonoSystemServiceAdvisory(string line) =>
+        line.StartsWith("system services:", StringComparison.OrdinalIgnoreCase) ||
+        line.Contains("mach-lookup (com.apple.SecurityServer)", StringComparison.Ordinal) ||
+        line.Contains("Keychain access requires granting the login keychain path", StringComparison.Ordinal) ||
+        line.Contains("Library/Keychains", StringComparison.Ordinal) ||
+        line.StartsWith("Next steps:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("Discover paths:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("Query policy:", StringComparison.OrdinalIgnoreCase) ||
+        line.StartsWith("nono learn", StringComparison.Ordinal) ||
+        line.StartsWith("nono why", StringComparison.Ordinal) ||
+        NonoFlagHintLine.IsMatch(line);
+
     /// <summary>
     /// Consults the litellm proxy-log text for a recent MODEL-BACKEND failure
     /// (auth / HTTP 4xx-5xx / rate-limit) — the class of error that lives ONLY in
@@ -251,4 +279,9 @@ public sealed partial class SwivalSubagentRunner
     // so "failed" inside prose / "Command execution failed" is not matched here.
     private static readonly Regex FailToken = new(
         @"\bFAIL\b", RegexOptions.Compiled);
+    // A bare nono CLI-flag remediation hint, e.g. "--allow ~/…", "--read-file ~/…",
+    // "--write ~/…". Anchored at line start (line is pre-trimmed) so a real diagnostic
+    // that merely contains such a token mid-line is never dropped.
+    private static readonly Regex NonoFlagHintLine = new(
+        @"^--(allow|read|write)\b", RegexOptions.Compiled);
 }

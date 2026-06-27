@@ -36,6 +36,67 @@ public sealed class ExtractFailureReasonDistillTests
     }
 
     [Fact]
+    public void ExtractFailureReason_KeychainAdvisoryTrailsSummary_KeepsSummaryDropsAdvisory()
+    {
+        // nono prints its STANDING keychain/system-services advisory AFTER the runner's
+        // own summary, so an unfiltered tail lands on the advisory and truncates the real
+        // failure away. The advisory block + its hint lines must be dropped so the
+        // strong "Failed!" summary anchors and survives.
+        var output = string.Join('\n', new[]
+        {
+            "Verified 1 pack(s)",
+            "Failed PaymentTest > charges card — expected 200 but got 500",
+            "Failed!  - Failed:     3, Passed:  1860, Skipped:     0, Total:  1863, Duration: 12 s",
+            "system services: mach-lookup (com.apple.SecurityServer) — Keychain / Security framework",
+            "Keychain access requires granting the login keychain path: --read-file ~/Library/Keychains/login.keychain-db",
+            "Next steps:",
+            "  Discover paths: nono learn -p vr-guard -- dotnet test",
+            "  Query policy:   nono why -p vr-guard --op read --path ~/Library/Keychains/login.keychain-db",
+            "  --allow ~/Library/Keychains/login.keychain-db",
+            "  --read-file ~/Library/Keychains/login.keychain-db",
+            "  --write ~/Library/Keychains/login.keychain-db",
+            "  nono learn -p vr-guard",
+            "  nono why -p vr-guard",
+        });
+
+        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+
+        // The runner's own failure leads and survives.
+        Assert.StartsWith("Failed PaymentTest", reason, StringComparison.Ordinal);
+        Assert.Contains("Failed!  - Failed:     3", reason, StringComparison.Ordinal);
+        // The standing keychain/system-services advisory and its hint lines are gone.
+        Assert.DoesNotContain("mach-lookup", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("com.apple.SecurityServer", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("Keychain access requires", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("login.keychain-db", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("Library/Keychains", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("Next steps:", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("nono learn", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("nono why", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExtractFailureReason_GreenRunWithKeychainAdvisoryOnly_DistillsToPlaceholder()
+    {
+        // A green run carries only nono's standing advisory (no failure). Once filtered,
+        // nothing diagnostic remains, so the distiller yields the no-output placeholder —
+        // never the keychain advisory dressed up as a reason.
+        var output = string.Join('\n', new[]
+        {
+            "Verified 1 pack(s)",
+            "system services: mach-lookup (com.apple.SecurityServer) — Keychain / Security framework",
+            "Keychain access requires granting the login keychain path: --read-file ~/Library/Keychains/login.keychain-db",
+            "Next steps:",
+            "  --read-file ~/Library/Keychains/login.keychain-db",
+            "  nono why -p vr-guard",
+        });
+
+        var reason = SwivalSubagentRunner.ExtractFailureReason(output);
+
+        Assert.Equal("(no diagnostic output captured)", reason);
+    }
+
+    [Fact]
     public void ExtractFailureReason_BenignZeroFailedSummary_DoesNotAnchorOnIt()
     {
         // A "0 failed" summary line is benign; it must NOT become the anchor. With no
