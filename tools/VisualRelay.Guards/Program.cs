@@ -5,7 +5,6 @@ using VisualRelay.Guards;
 //   shell-size (default) — enforcing: shell scripts over the logic-line limit (exit 1)
 //   file-size            — *.cs/*.axaml under src/tests/tools over the limit
 //   source-enumeration   — stale virtio-fs/readdir cache detector (pre-build)
-//   verify               — full test suite with TRX-counter-based pass/fail
 // shell-size is the default so `./visual-relay guards` keeps working.
 
 var sub = args.Length > 0 && !args[0].StartsWith("--", StringComparison.Ordinal) ? args[0] : "shell-size";
@@ -23,7 +22,6 @@ return sub switch
     "shell-size" => await ShellSizeGuardRunner.RunAsync(repoRoot, rest),
     "file-size" => FileSizeGuardRunner.Run(repoRoot),
     "source-enumeration" => await SourceEnumerationGuardRunner.RunAsync(repoRoot),
-    "verify" => await VerifyRunner.RunAsync(repoRoot),
     _ => Unknown(sub),
 };
 
