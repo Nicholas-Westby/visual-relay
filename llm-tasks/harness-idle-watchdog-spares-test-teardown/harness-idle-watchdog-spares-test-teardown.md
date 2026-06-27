@@ -2,19 +2,29 @@
 
 ## Problem
 
-The stage-9 verify routinely ends with the test process force-killed (exit 137 =
-SIGKILL) **after every test has already passed** — e.g. `Passed!  - Failed: 0, …`
-followed by `Catastrophic failure: Test process crashed with exit code 137`. This
-turns a green run into a non-zero exit, which (absent the TRX-based wrapper) marks the
-task failed.
+The stage-9 verify routinely ends with the test host force-killed (exit 137 = SIGKILL)
+**after every test has already passed** — e.g. `Passed!  - Failed: 0, …` followed by
+`Catastrophic failure: Test process crashed with exit code 137`, and `dotnet test` then
+exits non-zero. Absent the TRX-based wrapper, that marks a green task failed.
 
-Root cause (verified live, NOT memory): the test host only peaks at ~1 GB RSS on an
-8 GB host and the OS jetsam/memorystatus log shows no kills. The killer is VR's OWN
-**idle-reap watchdog** in `src/VisualRelay.Core/Execution/SandboxedTestRunner.cs`
-(`RunWatchedAsync`, `idleGraceMs` = `config.TestIdleGraceMilliseconds`). After the last
-test prints, the host spends ~1–2 min shutting down (MSBuild/test-host teardown) — it is
-output-silent and CPU-idle, so the watchdog mistakes legitimate teardown for a hang and
-reaps the whole tree.
+Root cause (measured, NOT memory): the test host peaks at ~1 GB RSS on an 8 GB host and
+the OS jetsam/memorystatus log shows no kills. The kill is VR's OWN **idle-reap watchdog**
+(`RunWatchedAsync` in `SandboxedTestRunner.Watched.cs`; threshold
+`TestIdleGraceMilliseconds = 60_000`, default 60s). The 137 lands ~60s after test output
+goes quiet — matching that 60s grace.
+
+The mechanism per the watchdog's own comments: the suite finishes, but **child processes
+the heavy integration tests spawned (git/dotnet/MSBuild workers) outlive the tests** and
+keep the sandbox process tree output-silent + CPU-idle. The watchdog reaps the whole tree
+after the 60s grace (by design, so it does not wait out the full hard cap for those
+leftovers) — but reaping kills the already-finished test host too, so `dotnet test`
+reports a crash and exits non-zero. `InterpretWatched` then uses that contaminated inner
+exit code, so a green run reads red.
+
+> Note: the "child outlives the tests" cause is inferred from the watchdog's design intent
+> + the 60s timing; it has not been confirmed by snapshotting the process tree during the
+> idle window. An implementer should first capture WHICH descendant lingers (and why it
+> does not exit) before choosing the fix.
 
 ## What to fix (root cause; the TRX wrapper currently masks the symptom)
 
