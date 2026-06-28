@@ -28,11 +28,13 @@ public sealed record RelayConfig(
     int FirstOutputTimeoutMs,
     // Maximum retries after a first-output stall kill before giving up.
     int MaxStallRetries,
-    // Untimed or generous-cap build phase that runs BEFORE the timed test
-    // command in the same nono sandbox (no idle-reap watchdog). The cold
-    // build happens outside testTimeoutMs so the timed budget covers only
-    // the test suite. 0 = no cap (the default 30 min covers any realistic
-    // cold rebuild; set 0 to disable the ceiling entirely).
+    // Wall-clock hard cap (ms) for the optional build phase that runs BEFORE the
+    // timed test command in the same nono sandbox. Threaded into the build run so the
+    // cold build honors THIS (generous) budget instead of the shorter testTimeoutMs —
+    // the timed test budget then covers only the suite. The idle-reap watchdog still
+    // applies (reaping a finished build whose nono wrapper lingers), but builds are
+    // CPU-active so a working build is never false-reaped. 0 = no wall-clock cap (the
+    // default 30 min covers any realistic cold rebuild).
     int BuildTimeoutMilliseconds = 1_800_000,
     // Maximum corrective retries when a stage completes (exit 0) but the output
     // lacks a parseable fenced JSON contract block (or the block has wrong shape).

@@ -69,18 +69,23 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Runs the optional <see cref="RelayConfig.BuildCommand"/> through the same
     /// <see cref="ITestRunner"/> as the test command so it inherits the same sandbox
-    /// (nono-wrapped in production, mocked in tests). The build runs before the
-    /// timed test phase — its wall-clock time counts against the runner's own
-    /// timeout (<see cref="RelayConfig.TestTimeoutMilliseconds"/>), not a separate
-    /// build budget. The idle-reap watchdog applies to the build: builds are
-    /// CPU-active so the CPU pulse keeps the watchdog from false-positive reaping.
-    /// Returns a <see cref="TestRunResult"/> that surfaces exit code, output, and
-    /// timeout for the caller to decide whether to proceed to the test phase.
+    /// (nono-wrapped in production, mocked in tests). The build runs BEFORE the timed
+    /// test phase and is bounded by its OWN (generous) budget,
+    /// <see cref="RelayConfig.BuildTimeoutMilliseconds"/> — threaded in via the
+    /// explicit-hard-cap RunAsync overload — NOT the shorter
+    /// <see cref="RelayConfig.TestTimeoutMilliseconds"/>, so the timed test budget then
+    /// covers only the suite. 0 = no wall-clock cap. The idle-reap watchdog still
+    /// applies (it reaps a finished build whose nono wrapper lingers); builds are
+    /// CPU-active so a working build is never false-reaped. Returns a
+    /// <see cref="TestRunResult"/> surfacing exit code, output, and timeout.
     /// </summary>
     private async Task<TestRunResult> RunBuildCommandAsync(
         string rootPath, RelayConfig config, CancellationToken ct)
     {
-        return await _dependencies.TestRunner.RunAsync(rootPath, config.BuildCommand!, ct);
+        var buildCap = config.BuildTimeoutMilliseconds <= 0
+            ? Timeout.InfiniteTimeSpan
+            : TimeSpan.FromMilliseconds(config.BuildTimeoutMilliseconds);
+        return await _dependencies.TestRunner.RunAsync(rootPath, config.BuildCommand!, buildCap, ct);
     }
 
     private async Task<TestRunResult> RunTestCommandWithRetryAsync(
@@ -128,5 +133,32 @@ public sealed partial class RelayDriver
         }
 
         return result with { Elapsed = result.Elapsed + retryResult.Elapsed }; // both failed — return original with total elapsed
+    }
+
+    /// <summary>
+    /// The command the Fix-verify (stage 10) agent is told to run to self-verify. When a
+    /// separate <see cref="RelayConfig.BuildCommand"/> is configured the test command is
+    /// typically <c>--no-build</c>; running it alone would self-verify the agent's edits
+    /// against STALE artifacts (a false green that drives non-convergent loops), so the
+    /// build is prepended (<c>buildCmd &amp;&amp; testCmd</c>) to compile the edits first.
+    /// With no BuildCommand the behavior is unchanged (the test command builds itself).
+    /// Keyed purely on config — no repo/toolchain specifics.
+    /// </summary>
+    internal static string AgentFixVerifyCommand(RelayConfig config) =>
+        string.IsNullOrWhiteSpace(config.BuildCommand)
+            ? config.TestCommand
+            : $"{config.BuildCommand} && {config.TestCommand}";
+
+    /// <summary>
+    /// Multiplies <paramref name="value"/> by <see cref="TurnBoostMultiplier"/> in
+    /// <see cref="long"/> and saturates to <see cref="int.MaxValue"/>, so a large
+    /// configured turn budget or subagent timeout cannot overflow <see cref="int"/> to a
+    /// negative value — which silently defeated the boost (a negative ceiling reads as
+    /// "disabled" downstream).
+    /// </summary>
+    internal static int SaturatingBoost(int value)
+    {
+        var scaled = (long)value * TurnBoostMultiplier;
+        return scaled > int.MaxValue ? int.MaxValue : (int)scaled;
     }
 }

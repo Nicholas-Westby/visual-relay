@@ -15,8 +15,22 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
 {
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
 
-    public async Task<TestRunResult> RunAsync(
-        string rootPath, string command, CancellationToken cancellationToken = default)
+    public Task<TestRunResult> RunAsync(
+        string rootPath, string command, CancellationToken cancellationToken = default) =>
+        RunWithCapAsync(rootPath, command, _timeout, cancellationToken);
+
+    /// <summary>
+    /// Explicit-hard-cap overload: bounds the run by <paramref name="hardCap"/> instead
+    /// of the default <see cref="RelayConfig.TestTimeoutMilliseconds"/>. The build phase
+    /// uses this so a long cold build honors <see cref="RelayConfig.BuildTimeoutMilliseconds"/>
+    /// without inflating the timed test budget. Idle-reap is unchanged.
+    /// </summary>
+    public Task<TestRunResult> RunAsync(
+        string rootPath, string command, TimeSpan hardCap, CancellationToken cancellationToken = default) =>
+        RunWithCapAsync(rootPath, command, hardCap, cancellationToken);
+
+    private async Task<TestRunResult> RunWithCapAsync(
+        string rootPath, string command, TimeSpan hardCap, CancellationToken cancellationToken)
     {
         var (fileName, args) = ResolveLaunch(command, rootPath);
         var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
@@ -24,14 +38,16 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —
         // orphaned testhost / MSBuild node-reuse workers keep nono alive — so a
-        // plain wait rides TestTimeoutMilliseconds even when the tests passed in
-        // seconds. RunWatchedAsync reaps once the tree goes output-silent +
-        // CPU-idle and surfaces the inner command's real red/green result.
+        // plain wait rides the hard cap even when the tests passed in seconds.
+        // RunWatchedAsync reaps once the tree goes output-silent + CPU-idle and
+        // surfaces the inner command's real red/green result. The hard cap is the
+        // wall-clock backstop: TestTimeoutMilliseconds for the test phase, the
+        // caller-supplied BuildTimeoutMilliseconds for the build phase.
         return await RunWatchedAsync(
             fileName, args, rootPath, env,
             firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
             idleGraceMs: config.TestIdleGraceMilliseconds,
-            hardCap: _timeout,
+            hardCap: hardCap,
             cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
             cancellationToken);
     }
