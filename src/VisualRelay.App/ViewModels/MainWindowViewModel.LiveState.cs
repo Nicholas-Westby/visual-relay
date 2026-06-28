@@ -15,6 +15,7 @@ public partial class MainWindowViewModel
             OnPlanningStarted = taskId =>
             {
                 StatusText = $"Planning {taskId}…";
+                _runStartedAt[taskId] = DateTimeOffset.UtcNow;
                 Tasks.FirstOrDefault(t => t.Id == taskId)?.MarkPlanning();
             },
             OnPlanningCompleted = (taskId, status) =>
@@ -23,7 +24,10 @@ public partial class MainWindowViewModel
                 if (task is not null)
                 {
                     if (status == RelayTaskOutcomeStatus.Flagged)
+                    {
+                        _runStartedAt.Remove(taskId);
                         task.MarkIdle();
+                    }
                     else
                         task.MarkPlanned();
                 }
@@ -109,7 +113,7 @@ public partial class MainWindowViewModel
         _runningTaskId = task.Id;
         _runningStageNumbers[task.Id] = null;
         _runningStageNames[task.Id] = null;
-        _runStartedAt[task.Id] = DateTimeOffset.UtcNow;
+        _runStartedAt.TryAdd(task.Id, DateTimeOffset.UtcNow);
         _rewriteUndo.Discard(task.Id);
         RaiseRewriteStateChanged();
         ClearSelectedTaskErrorForRunStart(task.Id);
@@ -275,5 +279,17 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(ViewingRunContextText));
         OnPropertyChanged(nameof(PauseNoticeText));
         FollowRunningTaskCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Test seam: backdate the run-start anchor so a VM test can seed a past
+    /// start and call <see cref="UpdateRunningElapsedLabels"/> to assert the
+    /// label reflects it without any real wall-clock wait. Mirrors the
+    /// <see cref="StageRowViewModel.MarkRunning(DateTimeOffset)"/> precedent
+    /// of accepting a start instant as a parameter.
+    /// </summary>
+    internal void SetRunStartedAt(string taskId, DateTimeOffset startedAt)
+    {
+        _runStartedAt[taskId] = startedAt;
     }
 }
