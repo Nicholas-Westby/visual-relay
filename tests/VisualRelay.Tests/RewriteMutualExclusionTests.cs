@@ -107,8 +107,11 @@ public sealed class RewriteMutualExclusionTests
         // A flat (non-nested) task's TaskDirectory is the SHARED llm-tasks/ root.
         // The rewrite copy-back and the revert both delete TaskDirectory
         // recursively, so rewriting a still-flat task would wipe every sibling.
-        // Tasks are normally promoted to nested on selection; if that promotion
-        // failed, rewriting must be refused.
+        // Selection normally promotes a task to nested, so this guard is the
+        // defence for when that promotion did NOT take effect (e.g. it threw).
+        // Setting SelectedTask runs the promotion synchronously, so to exercise
+        // the guard we model the promotion-failed state: select the task, then
+        // force the SELECTED row back to flat before evaluating CanRewrite.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("nested", "# Nested\n");
@@ -116,13 +119,15 @@ public sealed class RewriteMutualExclusionTests
         var vm = NewViewModel(repo);
         await vm.LoadInitialAsync();
 
-        var nestedTask = Row(vm, "nested").Task;
-        var flatRow = new TaskRowViewModel(nestedTask with
+        vm.SelectedTask = Row(vm, "nested");
+        await (vm.LastSelectionLoad ?? Task.CompletedTask);
+
+        // Re-flatten the live selection: TaskDirectory == the shared llm-tasks/ root.
+        vm.SelectedTask!.Task = vm.SelectedTask.Task with
         {
             IsNested = false,
             TaskDirectory = Path.Combine(repo.Root, "llm-tasks"),
-        });
-        vm.SelectedTask = flatRow;
+        };
 
         Assert.False(vm.CanRewriteSelectedPublic,
             "a non-nested task (TaskDirectory == shared root) must not be rewritable");
