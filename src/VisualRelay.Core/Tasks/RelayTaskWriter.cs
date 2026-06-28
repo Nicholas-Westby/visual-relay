@@ -117,15 +117,15 @@ public static class RelayTaskWriter
 
     /// <summary>
     /// Converts a flat task into the nested layout. Creates
-    /// <c>llm-tasks/&lt;slug&gt;/&lt;slug&gt;.md</c>, moves the existing flat
-    /// file's content, and deletes the original flat file.
+    /// <c>llm-tasks/&lt;slug&gt;/&lt;slug&gt;.md</c> and atomically moves the
+    /// existing flat file into it.
     /// Returns the new markdown path. No-ops when the task is already nested.
     /// </summary>
-    public static async Task<string> PromoteToNestedAsync(string rootPath, RelayTaskItem task)
+    public static Task<string> PromoteToNestedAsync(string rootPath, RelayTaskItem task)
     {
         if (task.IsNested)
         {
-            return task.MarkdownPath;
+            return Task.FromResult(task.MarkdownPath);
         }
 
         var tasksDir = Path.Combine(rootPath, "llm-tasks");
@@ -134,12 +134,15 @@ public static class RelayTaskWriter
 
         var newMarkdownPath = BuildNestedMarkdownPath(tasksDir, task.Id);
 
-        // Read existing content before we delete the flat file.
-        var content = await File.ReadAllTextAsync(task.MarkdownPath);
-        await File.WriteAllTextAsync(newMarkdownPath, content);
-
-        File.Delete(task.MarkdownPath);
-        return newMarkdownPath;
+        // Relocate the flat file with a single atomic rename. The previous
+        // copy-then-delete left a window in which the task existed at BOTH the
+        // flat path and the nested path; a concurrent listing (e.g. a refresh
+        // racing this selection-triggered promotion) then enumerated the flat
+        // file AND the nested copy and emitted the same id twice — a
+        // non-deterministic duplicate row in the queue. A move is never
+        // observable at both paths at once, so the listing stays deterministic.
+        File.Move(task.MarkdownPath, newMarkdownPath, overwrite: true);
+        return Task.FromResult(newMarkdownPath);
     }
 
     /// <summary>
