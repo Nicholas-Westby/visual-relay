@@ -217,7 +217,8 @@ public sealed class SandboxExtraAllowPathsConfigTests
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
-        Assert.Equal("--", prefix[6]);
+        Assert.Equal("--silent", prefix[6]); // quiet default sits before the -- separator
+        Assert.Equal("--", prefix[7]);
     }
 
     private static RelayConfig TestConfig() =>

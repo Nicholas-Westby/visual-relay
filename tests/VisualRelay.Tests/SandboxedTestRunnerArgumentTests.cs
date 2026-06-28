@@ -11,8 +11,9 @@ public sealed class SandboxedTestRunnerArgumentTests
     public void ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell()
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
-        // "bun test" → nono run --profile <abs> --allow-cwd -- /bin/sh -c "bun test"
-        // Non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
+        // "bun test" → nono run --profile <abs> --allow-cwd --silent -- /bin/sh -c "bun test"
+        // --silent is the quiet DEFAULT (output-only; suppresses nono's banner/footer). The
+        // non-login shell (-c, not -lc): the sandboxed verify inherits the harness's toolchain
         // rather than re-resolving a different dotnet/PATH from a login profile (which caused
         // runtime-mismatch launch failures under nono). --rollback/--no-rollback-prompt ABSENT.
         var config = TestConfig();
@@ -21,34 +22,34 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("bun test");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, args.Take(5));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, args.Take(6));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/bin/sh", args[5]);
+        Assert.Equal("/bin/sh", args[6]);
         // -c and the command MUST be separate ArgumentList entries. SandboxedTestRunner
         // uses the IEnumerable<string> ProcessCapture overload, which adds each entry
         // verbatim (no quote-splitting); a merged `-c "bun test"` entry reaches /bin/sh
         // as one unparseable arg → exit 2 (every sandboxed verify falsely red).
-        Assert.Equal("-c", args[6]);
-        Assert.Equal("bun test", args[7]);
+        Assert.Equal("-c", args[7]);
+        Assert.Equal("bun test", args[8]);
     }
 
     [Fact]
     public void DirectExecMode_SandboxEnabled_WrapsScriptDirectly()
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
-        // Script → nono run --profile <abs> --allow-cwd -- <script> <args>
+        // Script → nono run --profile <abs> --allow-cwd --silent -- <script> <args>
         var config = TestConfig();
         var sut = new SandboxedTestRunner(new DirectExecTestRunner(), config);
 
         var (fileName, args) = sut.ResolveLaunch("/path/to/guard.sh arg1");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, args.Take(5));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, args.Take(6));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/path/to/guard.sh", args[5]);
-        Assert.Equal("arg1", args[6]);
+        Assert.Equal("/path/to/guard.sh", args[6]);
+        Assert.Equal("arg1", args[7]);
     }
 
     // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
@@ -58,8 +59,9 @@ public sealed class SandboxedTestRunnerArgumentTests
     {
         var config = TestConfig();
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+        // --silent is the quiet default (output-only); it sits after the rollback flags, before --.
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--" },
             prefix);
     }
 
@@ -68,7 +70,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     {
         var config = TestConfig();
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--" }, prefix);
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, prefix);
     }
 
     [Fact]
@@ -82,8 +84,10 @@ public sealed class SandboxedTestRunnerArgumentTests
         Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" }, ver.Take(4));
         Assert.Equal("--rollback", swi[4]);
         Assert.Equal("--no-rollback-prompt", swi[5]);
-        Assert.Equal("--", swi[6]);
-        Assert.Equal("--", ver[4]);
+        Assert.Equal("--silent", swi[6]);
+        Assert.Equal("--", swi[7]);
+        Assert.Equal("--silent", ver[4]);
+        Assert.Equal("--", ver[5]);
         Assert.Equal(swi.Count - 2, ver.Count);
     }
 
@@ -111,7 +115,8 @@ public sealed class SandboxedTestRunnerArgumentTests
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
-        Assert.Equal("--", prefix[6]);
+        Assert.Equal("--silent", prefix[6]);
+        Assert.Equal("--", prefix[7]);
     }
 
     [Fact]

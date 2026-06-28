@@ -29,6 +29,11 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
     private readonly IGitInvoker? _gitInvoker;
     private readonly Func<string?> _proxyLogReader;
+    // Output-only "verbose diagnostics" preference threaded from the app/CLI. When
+    // false (default = quiet) the nono wrapper is invoked with --silent; when true
+    // nono's full diagnostics are shown. A plain bool — the engine never reads where
+    // it comes from (no app-settings coupling). See BuildNonoPrefix.
+    private readonly bool _verboseDiagnostics;
     public SwivalSubagentRunner(
         RelayConfig config,
         string swivalBinary = "swival",
@@ -45,7 +50,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         // in the proxy log). Defaults to a best-effort read of the per-machine
         // BackendPaths log; injectable so a test can supply log content (or none)
         // without depending on a running proxy.
-        Func<string?>? proxyLogReader = null)
+        Func<string?>? proxyLogReader = null,
+        // OUTPUT-ONLY verbosity for nono's own diagnostics (see _verboseDiagnostics /
+        // BuildNonoPrefix). Default false = quiet (--silent). Never weakens the sandbox.
+        bool verboseDiagnostics = false)
     {
         _config = config;
         _swivalBinary = swivalBinary;
@@ -54,6 +62,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         _probe = backendProbe ?? (token => BackendReadinessProbe.CheckWithRetryAsync(ModelBackend.BaseUrl, ProbeTimeout, cancellationToken: token));
         _gitInvoker = gitInvoker;
         _proxyLogReader = proxyLogReader ?? ReadProxyLogBestEffort;
+        _verboseDiagnostics = verboseDiagnostics;
     }
 
     // Default proxy-log reader: best-effort read of the per-machine litellm log.
@@ -124,9 +133,16 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     /// <c>--skip-dir &lt;name&gt;</c> — before <c>--</c> — so nono's rollback
     /// PREFLIGHT skips them and stays under its fixed budget on large repos
     /// (the swival path passes these; the verify path leaves them null).
+    /// When <paramref name="verboseDiagnostics"/> is false (the default = quiet)
+    /// <c>--silent</c> is added so nono prints none of its own banner / summary /
+    /// status / WARN-preflight / failure-footer chatter, leaving only the child
+    /// command's output. This is OUTPUT-ONLY: enforcement, the loaded profile, the
+    /// network policy, and the child exit code are all unchanged. Passing <c>true</c>
+    /// restores nono's full diagnostics for debugging the sandbox itself.
     /// </summary>
     internal static IReadOnlyList<string> BuildNonoPrefix(
-        RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null)
+        RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,
+        bool verboseDiagnostics = false)
     {
         // Load by absolute path, not the global profile name: NonoProfileEnsurer
         // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
@@ -145,6 +161,15 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         }
 
         if (rollback) { args.Add("--rollback"); args.Add("--no-rollback-prompt"); }
+
+        // Quiet by default: suppress nono's own banner/summary/status/WARN-preflight
+        // and the failure footer so only the child command's output reaches the
+        // captured log (the footer is a known red herring that can fill the agent's
+        // tail window). OUTPUT-ONLY — it changes nothing about enforcement or the
+        // child exit code. The verbose-diagnostics preference flips it off to restore
+        // nono's full output when diagnosing the sandbox itself.
+        if (!verboseDiagnostics) { args.Add("--silent"); }
+
         args.Add("--");
         return args;
     }

@@ -26,13 +26,16 @@ if (!configResult.IsRunnable)
 }
 
 var config = configResult.Config;
+// Honor the global (per-machine) verbose-diagnostics preference so a CLI drain
+// matches the GUI: OFF (default) → nono --silent (quiet, output-only).
+var verboseDiagnostics = DiagnosticsSettings.LoadVerboseDiagnostics();
 
 // ── Build two-phase controller ──
 var planTestRunner = new SandboxedTestRunner(
-    new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
+    new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics);
 
 ISubagentRunner PlanSubagentFactory(string taskId) =>
-    new SwivalSubagentRunner(config, eventSink: new ConsoleRelayEventSink(taskId));
+    new SwivalSubagentRunner(config, eventSink: new ConsoleRelayEventSink(taskId), verboseDiagnostics: verboseDiagnostics);
 
 // PlanPhaseRunner internally creates FileRelayEventSink for each planning task.
 // The ConsoleRelayEventSink gives attributable interleaved console output.
@@ -40,7 +43,8 @@ IRelayEventSink PlanSinkFactory(string taskId) =>
     new ConsoleRelayEventSink(taskId);
 
 var phase2Runner = new ConsoleTaskRunner(rootPath, config,
-    new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config));
+    new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics),
+    verboseDiagnostics);
 
 var controller = new RelayQueueController(
     rootPath,

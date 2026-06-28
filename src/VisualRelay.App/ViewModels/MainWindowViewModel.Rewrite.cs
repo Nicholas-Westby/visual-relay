@@ -52,7 +52,7 @@ public partial class MainWindowViewModel
 
         var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var runner = RewriteRunnerFactory?.Invoke(config)
-            ?? new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent));
+            ?? new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
 
         // Run the rewrite on a background task — do NOT block the UI thread.
         var rewriteTask = Task.Run(async () =>

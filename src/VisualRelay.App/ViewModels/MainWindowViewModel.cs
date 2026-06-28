@@ -231,6 +231,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public async Task LoadInitialAsync()
     {
         LoadObsidianBridgeSettings();
+        LoadDiagnosticsSettings();
 
         // RefreshAsync now also probes the backend, so probe directly only when
         // there is no root to refresh. Non-blocking either way: the probe runs

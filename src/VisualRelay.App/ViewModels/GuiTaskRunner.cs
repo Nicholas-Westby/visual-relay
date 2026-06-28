@@ -12,13 +12,16 @@ namespace VisualRelay.App.ViewModels;
 /// </summary>
 internal sealed class GuiTaskRunner(
     string mainRootPath, RelayConfig config,
-    IRelayEventSink sharedSink, ITestRunner testRunner) : IRelayTaskRunner
+    IRelayEventSink sharedSink, ITestRunner testRunner,
+    // Output-only nono-diagnostics verbosity (the global "verbose diagnostics"
+    // preference), forwarded verbatim to the per-call SwivalSubagentRunner.
+    bool verboseDiagnostics = false) : IRelayTaskRunner
 {
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
     {
         var fileSink = new FileRelayEventSink(Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(sharedSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics);
         var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink, new GitInvoker());
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);

@@ -78,18 +78,18 @@ public partial class MainWindowViewModel
 
             var executeSink = new ObservableRelayEventSink(HandleRelayEvent);
             var executeTestRunner = new SandboxedTestRunner(
-                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
+                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
 
             ISubagentRunner PlanSubagentFactory(string _) =>
-                new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent));
+                new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
             var planTestRunner = new SandboxedTestRunner(
-                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config);
+                new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
 
             var lifecycle = CreateDrainLifecycleCallbacks();
 
             var controller = new RelayQueueController(
                 RootPath,
-                new GuiTaskRunner(RootPath, config, executeSink, executeTestRunner),
+                new GuiTaskRunner(RootPath, config, executeSink, executeTestRunner, VerboseSandboxDiagnostics),
                 planSubagentRunnerFactory: PlanSubagentFactory,
                 planTestRunner: planTestRunner,
                 planEventSinkFactory: PlanSinkFactory,
@@ -271,8 +271,8 @@ public partial class MainWindowViewModel
         var observable = new ObservableRelayEventSink(HandleRelayEvent);
         var fileSink = new FileRelayEventSink(Path.Combine(RootPath, ".relay", task.Id, "run.log"));
         var sink = new CompositeRelayEventSink(observable, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
-        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config), sink, new GitInvoker());
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: VerboseSandboxDiagnostics);
+        var dependencies = new RelayDriverDependencies(subagentRunner, new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics), sink, new GitInvoker());
         var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));
         try
         {

@@ -201,7 +201,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 9)
                     {
-                        await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9TestResult!.ExitCode == 0 && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null ? "green" : "red");
+                        var stage9VerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9TestResult!.ExitCode == 0 && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null ? "green" : "red");
                         check = stage9TestResult!.ExitCode == 0 ? "green" : "red";
                         if (stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
                             check = "red";
@@ -237,7 +237,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 // Genuinely red — record stage 9, then enter fix-verify loop.
                                 (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
 
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage9BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage9VerifyOutputPath, stage9BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

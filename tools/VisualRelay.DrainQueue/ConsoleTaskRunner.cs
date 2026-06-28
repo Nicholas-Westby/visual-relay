@@ -16,6 +16,9 @@ namespace VisualRelay.DrainQueue;
 /// </summary>
 public sealed class ConsoleTaskRunner(
     string mainRootPath, RelayConfig config, ITestRunner testRunner,
+    // Output-only nono-diagnostics verbosity (the global "verbose diagnostics"
+    // preference), forwarded verbatim to the per-call SwivalSubagentRunner.
+    bool verboseDiagnostics = false,
     IEnvironmentAccessor? environmentAccessor = null)
     : IRelayTaskRunner
 {
@@ -26,7 +29,7 @@ public sealed class ConsoleTaskRunner(
         var fileSink = new FileRelayEventSink(
             Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(consoleSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink);
+        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics);
         var deps = new RelayDriverDependencies(
             subagentRunner, testRunner, sink, new GitInvoker(), environmentAccessor);
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));

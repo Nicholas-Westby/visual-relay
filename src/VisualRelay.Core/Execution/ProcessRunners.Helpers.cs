@@ -24,7 +24,7 @@ public sealed partial class SwivalSubagentRunner
             return BuildWindowsLaunchTarget(swivalArguments, mode, wxc, policy);
         }
 
-        var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs);
+        var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs, verboseDiagnostics: _verboseDiagnostics);
         var nonoArguments = new List<string>(prefix) { _swivalBinary };
         nonoArguments.AddRange(swivalArguments);
         return (_nonoBinary, nonoArguments);
@@ -77,75 +77,7 @@ public sealed partial class SwivalSubagentRunner
         return null;
     }
 
-    internal static string BuildPrompt(StageInvocation invocation)
-    {
-        var parts = new List<string>
-        {
-            $"# Relay stage {invocation.Stage.Number}: {invocation.Stage.Name}",
-            $"Task: {invocation.TaskName}",
-            $"Working directory: {invocation.TargetRoot}",
-            string.Empty,
-            "## Task input",
-            invocation.TaskInput,
-            string.Empty,
-            "## Manifest",
-            invocation.Manifest.Count > 0 ? string.Join('\n', invocation.Manifest) : "(not set yet)"
-        };
-        if (!string.IsNullOrWhiteSpace(invocation.TaskContext))
-        {
-            parts.AddRange(["", "## Task context", invocation.TaskContext]);
-        }
-
-        if (invocation.LogSources.Count > 0)
-        {
-            parts.AddRange(["", "## Log sources", string.Join('\n', invocation.LogSources)]);
-        }
-
-        parts.AddRange(["", "## Prior stages", invocation.LedgerSoFar, "", invocation.Stage.OutputContract]);
-
-        if (!string.IsNullOrWhiteSpace(invocation.LastTestOutput))
-        {
-            // The harness already ran the suite mechanically; this is its captured
-            // output (TAIL kept — the Passed!/Failed: summary sits after the
-            // sandbox/restore/build banner). Informational, not a re-run instruction.
-            parts.AddRange(["", "## Verify output",
-                "The harness already ran the test suite; its captured output (tail) is below.",
-                TrimForTail(invocation.LastTestOutput)]);
-        }
-
-        if (!string.IsNullOrWhiteSpace(invocation.TestCommand))
-        {
-            parts.AddRange(["", "## Verify command", "Run this exact command to reproduce and confirm the fix:", invocation.TestCommand]);
-        }
-
-        return string.Join('\n', parts);
-    }
-
-    private static string BuildCorrectivePrompt(StageInvocation invocation, string priorOutput, string? shapeError = null)
-    {
-        var problem = shapeError is not null
-            ? $"The previous completion had a valid fenced JSON block but it was rejected: {shapeError}. " +
-              "Reply with ONLY a corrected fenced JSON block — fix the issue, derive the values from the prior answer below. " +
-              "Do NOT redo the work or add any other text."
-            : "The previous completion was missing the required fenced JSON block. " +
-              "Reply with ONLY that block — derive it from the prior answer below. " +
-              "Do NOT redo the work or add any other text.";
-
-        var parts = new List<string>
-        {
-            $"# Relay stage {invocation.Stage.Number}: {invocation.Stage.Name} — CORRECTIVE RETRY",
-            $"Task: {invocation.TaskName}",
-            string.Empty,
-            problem,
-            string.Empty,
-            "## Expected contract",
-            invocation.Stage.OutputContract,
-            string.Empty,
-            "## Prior output",
-            priorOutput
-        };
-        return string.Join('\n', parts);
-    }
+    // BuildPrompt / BuildCorrectivePrompt moved to ProcessRunners.Prompt.cs (file-size split).
 
     private static string? NextTier(string tier) => tier switch
     {
@@ -190,8 +122,12 @@ public sealed partial class SwivalSubagentRunner
     /// Returns the TAIL of <paramref name="value"/> (last <paramref name="tailChars"/>
     /// characters), prepended with "…" when truncated. The real error is usually
     /// at the tail after a sandbox banner, so we keep the end rather than the head.
+    /// The default window is deliberately large (2000 chars) so the pass/fail summary
+    /// AND the real error survive any trailing noise when this output is handed to the
+    /// Verify/Fix-verify agent; the diagnostics extractors pass their own smaller caps.
+    /// Internal so the window can be asserted directly.
     /// </summary>
-    private static string TrimForTail(string value, int tailChars = 600)
+    internal static string TrimForTail(string value, int tailChars = 2000)
     {
         var text = value.Trim();
         return text.Length <= tailChars ? text : "…" + text[^tailChars..];

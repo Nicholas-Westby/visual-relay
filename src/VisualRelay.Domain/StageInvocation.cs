@@ -17,4 +17,9 @@ public sealed record StageInvocation(
     string? TaskContext = null,
     string? TestCommand = null,
     string? PinnedSwivalProfileContent = null,
-    int AbsoluteCeilingMs = 0);
+    int AbsoluteCeilingMs = 0,
+    // Absolute path to the persisted FULL verify output (stageN-attemptM.verify-output.txt)
+    // whose TAIL is in LastTestOutput. Surfaced in the prompt's ## Verify output section so
+    // the agent can read the complete log when the tail isn't enough. Null when there is no
+    // such artifact (e.g. non-verify stages).
+    string? VerifyOutputPath = null);

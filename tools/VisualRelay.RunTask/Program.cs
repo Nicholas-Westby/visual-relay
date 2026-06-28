@@ -22,10 +22,13 @@ var rootPath = Path.GetFullPath(filteredArgs[0]);
 var taskId = filteredArgs[1];
 VisualRelay.Core.Init.RelayGitignoreWriter.EnsureWritten(rootPath);
 var config = await RelayConfigLoader.LoadAsync(rootPath);
+// Honor the global (per-machine) verbose-diagnostics preference here too, so a CLI
+// run matches the GUI: OFF (default) → nono --silent (quiet, output-only).
+var verboseDiagnostics = DiagnosticsSettings.LoadVerboseDiagnostics();
 var sink = new ConsoleRelayEventSink();
 var dependencies = new RelayDriverDependencies(
-    new SwivalSubagentRunner(config, eventSink: sink),
-    new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config),
+    new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics),
+    new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics),
     sink,
     new GitInvoker());
 var driver = new RelayDriver(dependencies, new RelayDriverOptions(CreateGitCommit: true, Resume: resume));

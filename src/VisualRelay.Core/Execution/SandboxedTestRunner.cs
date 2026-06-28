@@ -11,7 +11,8 @@ namespace VisualRelay.Core.Execution;
 /// keeps the Swival and verification prefixes in lockstep; they differ only
 /// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
 /// </summary>
-public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig config) : ITestRunner
+public sealed partial class SandboxedTestRunner(
+    ITestRunner inner, RelayConfig config, bool verboseDiagnostics = false) : ITestRunner
 {
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
 
@@ -47,8 +48,9 @@ public sealed partial class SandboxedTestRunner(ITestRunner inner, RelayConfig c
         if (OperatingSystem.IsWindows())
             return ResolveWindowsLaunch(command, rootPath);
 
-        // Sandbox always on: wrap in nono.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
+        // Sandbox always on: wrap in nono. verboseDiagnostics is output-only (--silent
+        // when quiet); it never changes what the sandbox enforces.
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics);
 
         if (inner is ShellTestRunner)
         {

@@ -27,6 +27,40 @@ public partial class MainWindowViewModel
         }
     }
 
+    /// <summary>
+    /// GLOBAL (per-machine) "verbose diagnostics" preference. Default OFF = quiet:
+    /// the nono sandbox wrapper runs with <c>--silent</c> so only the child command's
+    /// output is captured. Turning it ON shows nono's full banner/footer diagnostics
+    /// for debugging the sandbox or Visual Relay itself. OUTPUT-ONLY — it never weakens
+    /// the sandbox. Threaded into the engine's runners as a plain bool at run launch
+    /// (see <see cref="RunOneAsync"/> / <see cref="DrainQueueAsync"/>); the engine never
+    /// reads app settings. Persisted to the user-level <c>.env</c>, NOT
+    /// <c>.relay/config.json</c>, because it follows the machine, not the repo.
+    /// </summary>
+    [ObservableProperty]
+    private bool _verboseSandboxDiagnostics;
+
+    /// <summary>Persist the global toggle to the per-machine user <c>.env</c>.</summary>
+    partial void OnVerboseSandboxDiagnosticsChanged(bool value) =>
+        DiagnosticsSettings.SaveVerboseDiagnostics(value, EnvironmentAccessor);
+
+    /// <summary>
+    /// Hydrates <see cref="VerboseSandboxDiagnostics"/> from the per-machine user
+    /// <c>.env</c>. Best-effort: a read hiccup leaves the quiet default. Called from
+    /// <see cref="LoadInitialAsync"/> alongside the other settings loads.
+    /// </summary>
+    private void LoadDiagnosticsSettings()
+    {
+        try
+        {
+            VerboseSandboxDiagnostics = DiagnosticsSettings.LoadVerboseDiagnostics(EnvironmentAccessor);
+        }
+        catch
+        {
+            // Best-effort: leave the quiet default.
+        }
+    }
+
     /// <summary>Whether the settings modal dialog is currently open.</summary>
     [ObservableProperty]
     private bool _isSettingsOpen;

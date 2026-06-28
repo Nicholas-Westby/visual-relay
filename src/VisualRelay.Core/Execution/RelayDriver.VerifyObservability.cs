@@ -14,8 +14,10 @@ public sealed partial class RelayDriver
     /// NOTE: the event reports the RAW authoritative-gate verdict; at stage 9 a task can
     /// still go green via baseline-exclusion of pre-existing failures, so a green task
     /// legitimately having a <c>check:"red"</c> stage-9 <c>verify_result</c> is not a contradiction.
+    /// Returns the persisted full-output artifact PATH (or null when the write failed) so the
+    /// caller can hand it to the next Fix-verify agent prompt (read-the-complete-log breadcrumb).
     /// </summary>
-    private async Task PublishVerifyResultAsync(
+    private async Task<string?> PublishVerifyResultAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayStageDefinition stage, int attempt, RelayConfig config,
         TestRunResult testResult, IReadOnlyList<string> manifest,
@@ -28,7 +30,7 @@ public sealed partial class RelayDriver
         // NOTE: WorkingTreeHash fingerprints only the manifest files' contents — a coarse
         // signal, acceptable for observability (and for the Task 2 convergence guard).
         var treeHash = WorkingTreeHash(rootPath, manifest);
-        var outputFile = TryPersistVerifyOutput(taskDirectory, stage.Number, attempt, check, testResult.Output) ?? string.Empty;
+        var outputFile = TryPersistVerifyOutput(taskDirectory, stage.Number, attempt, check, testResult.Output);
 
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "verify_result", runId, rootPath, taskId,
@@ -40,8 +42,10 @@ public sealed partial class RelayDriver
                 ["check"] = check,
                 ["reason"] = reason,
                 ["treeHash"] = treeHash,
-                ["outputFile"] = outputFile
+                ["outputFile"] = outputFile ?? string.Empty
             }), cancellationToken);
+
+        return outputFile;
     }
 
     /// <summary>

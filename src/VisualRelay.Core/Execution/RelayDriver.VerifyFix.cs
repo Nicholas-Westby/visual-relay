@@ -32,6 +32,10 @@ public sealed partial class RelayDriver
         double sessionCostUsd,
         int unknownCostStageCount,
         string failingTestOutput,
+        // Absolute path to the persisted FULL output behind failingTestOutput (from the
+        // stage-9 gate for the first iteration, then each red stage-10 attempt). Surfaced
+        // in the agent prompt so it can read the complete log. Null when persistence failed.
+        string? failingVerifyOutputPath,
         string? bootstrapCheckCmd,
         string? guardCmd,
         string pinnedSwivalProfileContent,
@@ -54,7 +58,7 @@ public sealed partial class RelayDriver
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
                 input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
-                pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+                pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null) { sessionCostUsd += cost.CostUsd; } else { unknownCostStageCount++; }
@@ -126,7 +130,7 @@ public sealed partial class RelayDriver
             }
 
             check ??= testResult.ExitCode == 0 ? "green" : "red";
-            await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken, overrideCheck: check);
+            var attemptVerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken, overrideCheck: check);
 
             // Record attempt in ledger with labeled section.
             var header = maxLoops > 1
@@ -170,9 +174,11 @@ public sealed partial class RelayDriver
             }
             previousAttempt = thisAttempt;
 
-            // Build combined failure output for next fix-verify iteration.
+            // Build combined failure output for next fix-verify iteration, carrying the
+            // matching full-output artifact path so the next prompt can point the agent at it.
             failingTestOutput = BuildFailureOutput(testResult, guardFailureOutput,
                 bootstrapFailingResult is not null, bootstrapFailingResult?.Output);
+            failingVerifyOutputPath = attemptVerifyOutputPath;
         }
 
         // All attempts exhausted — flag.
@@ -211,7 +217,8 @@ public sealed partial class RelayDriver
         IReadOnlyList<string> manifest,
         string? lastTestOutput = null,
         string? testCommand = null,
-        string? pinnedSwivalProfileContent = null)
+        string? pinnedSwivalProfileContent = null,
+        string? verifyOutputPath = null)
     {
         var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
         var turns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
@@ -234,7 +241,8 @@ public sealed partial class RelayDriver
             TaskContext: input.Context,
             TestCommand: testCommand,
             PinnedSwivalProfileContent: pinnedSwivalProfileContent,
-            AbsoluteCeilingMs: ceilingMs);
+            AbsoluteCeilingMs: ceilingMs,
+            VerifyOutputPath: verifyOutputPath);
     }
     /// <summary>
     /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.
