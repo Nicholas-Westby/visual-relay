@@ -86,7 +86,8 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.False(expanders[1].IsExpanded);
     }
 
-    /// <summary>The Output tab renders fields by kind (Text/List/Json) when Ready.</summary>
+    /// <summary>The Output tab renders fields as unified accordions (Expander per field)
+    /// with selectable body text, matching the Input tab's accordion pattern.</summary>
     [AvaloniaFact]
     public void OutputTab_Ready_RendersFieldsByKind()
     {

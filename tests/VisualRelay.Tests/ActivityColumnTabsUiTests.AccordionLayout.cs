@@ -104,8 +104,8 @@ public sealed partial class ActivityColumnTabsUiTests
 
     /// <summary>
     /// Output tab parity for width: each output field <see cref="Border"/> must
-    /// stretch to the panel content width (Output items are Borders, not
-    /// Expanders, but share the same ScrollViewer/ItemsControl shell).
+    /// stretch to the panel content width (Output items are Borders containing
+    /// Expanders, sharing the same ScrollViewer/ItemsControl shell).
     /// </summary>
     [AvaloniaFact]
     public void OutputTab_Ready_AllFieldBordersStretchToPanelWidth()
