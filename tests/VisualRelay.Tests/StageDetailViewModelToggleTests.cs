@@ -1,4 +1,3 @@
-using System.ComponentModel;
 using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
@@ -27,9 +26,7 @@ public sealed class StageDetailViewModelToggleTests
     public void IsInputReadyAndNotRawText_TrueWhenReadyAndNotRaw()
     {
         // Simulate Load setting state (without filesystem dependency).
-        var vm = new StageDetailViewModel();
-        vm.IsInputRawText = false;
-        vm.InputState = StageDetailState.Ready;
+        var vm = new StageDetailViewModel { IsInputRawText = false, InputState = StageDetailState.Ready };
 
         Assert.True(vm.IsInputReadyAndNotRawText);
         Assert.False(vm.IsInputReadyAndRawText);
@@ -38,9 +35,7 @@ public sealed class StageDetailViewModelToggleTests
     [Fact]
     public void IsInputReadyAndRawText_TrueWhenReadyAndRaw()
     {
-        var vm = new StageDetailViewModel();
-        vm.IsInputRawText = true;
-        vm.InputState = StageDetailState.Ready;
+        var vm = new StageDetailViewModel { IsInputRawText = true, InputState = StageDetailState.Ready };
 
         Assert.True(vm.IsInputReadyAndRawText);
         Assert.False(vm.IsInputReadyAndNotRawText);
@@ -49,9 +44,7 @@ public sealed class StageDetailViewModelToggleTests
     [Fact]
     public void IsOutputReadyAndNotRawJson_TrueWhenReadyAndNotRaw()
     {
-        var vm = new StageDetailViewModel();
-        vm.IsOutputRawJson = false;
-        vm.OutputState = StageDetailState.Ready;
+        var vm = new StageDetailViewModel { IsOutputRawJson = false, OutputState = StageDetailState.Ready };
 
         Assert.True(vm.IsOutputReadyAndNotRawJson);
         Assert.False(vm.IsOutputReadyAndRawJson);
@@ -60,9 +53,7 @@ public sealed class StageDetailViewModelToggleTests
     [Fact]
     public void IsOutputReadyAndRawJson_TrueWhenReadyAndRaw()
     {
-        var vm = new StageDetailViewModel();
-        vm.IsOutputRawJson = true;
-        vm.OutputState = StageDetailState.Ready;
+        var vm = new StageDetailViewModel { IsOutputRawJson = true, OutputState = StageDetailState.Ready };
 
         Assert.True(vm.IsOutputReadyAndRawJson);
         Assert.False(vm.IsOutputReadyAndNotRawJson);
@@ -132,8 +123,7 @@ public sealed class StageDetailViewModelToggleTests
     [Fact]
     public void InputNotStarted_RawVisibilityHelpersAreFalse()
     {
-        var vm = new StageDetailViewModel();
-        vm.InputState = StageDetailState.NotStarted;
+        var vm = new StageDetailViewModel { InputState = StageDetailState.NotStarted };
 
         Assert.False(vm.IsInputReadyAndNotRawText);
         Assert.False(vm.IsInputReadyAndRawText);
@@ -142,8 +132,7 @@ public sealed class StageDetailViewModelToggleTests
     [Fact]
     public void OutputNotComplete_RawVisibilityHelpersAreFalse()
     {
-        var vm = new StageDetailViewModel();
-        vm.OutputState = StageDetailState.NotComplete;
+        var vm = new StageDetailViewModel { OutputState = StageDetailState.NotComplete };
 
         Assert.False(vm.IsOutputReadyAndNotRawJson);
         Assert.False(vm.IsOutputReadyAndRawJson);

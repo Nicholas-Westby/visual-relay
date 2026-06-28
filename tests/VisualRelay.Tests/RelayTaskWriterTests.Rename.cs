@@ -46,7 +46,7 @@ public sealed partial class RelayTaskWriterTests
             Path.Combine(oldDir, "project-alpha.md"), oldDir, true,
             [Path.Combine(oldDir, "notes.txt"), Path.Combine(oldDir, "image.png")]);
 
-        var newPath = await RelayTaskWriter.RenameAsync(repo.Root, task, "project-beta", "# Project Beta\n\nTodo.");
+        _ = await RelayTaskWriter.RenameAsync(repo.Root, task, "project-beta", "# Project Beta\n\nTodo.");
 
         var newDir = Path.Combine(tasksDir, "project-beta");
         Assert.True(Directory.Exists(newDir));

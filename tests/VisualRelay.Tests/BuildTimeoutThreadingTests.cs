@@ -48,7 +48,7 @@ public sealed class BuildTimeoutThreadingTests
         var buildCall = tests.Calls.Single(c => c.Command == "dotnet build --no-restore");
         Assert.Equal(TimeSpan.FromMilliseconds(600_000), buildCall.HardCap);
         // The test command used the base overload — NOT capped by buildTimeoutMs.
-        Assert.Contains(tests.Calls, c => c.Command == "dotnet test --no-build" && c.HardCap is null);
+        Assert.Contains(tests.Calls, c => c is { Command: "dotnet test --no-build", HardCap: null });
     }
 
     [Fact]

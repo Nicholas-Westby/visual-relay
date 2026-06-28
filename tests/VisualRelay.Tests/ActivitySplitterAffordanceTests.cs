@@ -137,8 +137,8 @@ public sealed class ActivitySplitterAffordanceTests
 
         // Small dot-like Borders within the splitter (3–6 px square).
         var dots = splitter.GetVisualDescendants().OfType<Border>()
-            .Where(b => b.Bounds.Width >= 3 && b.Bounds.Width <= 6
-                     && b.Bounds.Height >= 3 && b.Bounds.Height <= 6)
+            .Where(b => b.Bounds.Width is >= 3 and <= 6
+                     && b.Bounds.Height is >= 3 and <= 6)
             .ToList();
 
         Assert.True(dots.Count >= 3,

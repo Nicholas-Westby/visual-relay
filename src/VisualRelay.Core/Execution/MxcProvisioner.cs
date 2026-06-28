@@ -36,7 +36,7 @@ public static class MxcProvisioner
     /// bytes already match — so a stage launch does not re-enumerate drives, rebuild
     /// JSON, and rewrite the file every time.
     /// </summary>
-    public static string EnsurePolicy(string workspaceRoot)
+    private static string EnsurePolicy(string workspaceRoot)
     {
         if (string.Equals(_cachedWorkspace, workspaceRoot, StringComparison.Ordinal)
             && _cachedPolicyPath is { } cached && File.Exists(cached))

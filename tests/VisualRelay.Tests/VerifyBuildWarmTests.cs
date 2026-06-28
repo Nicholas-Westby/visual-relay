@@ -189,6 +189,6 @@ public sealed class VerifyBuildWarmTests
         // The test command was NEVER invoked for verify — build failed first.
         Assert.DoesNotContain(recordingTests.Calls, c => c.Command == "dotnet test --no-build");
         // A build-failure error event was published.
-        Assert.Contains(sink.Events, e => e.Level == "error" && e.StageNumber >= 9);
+        Assert.Contains(sink.Events, e => e is { Level: "error", StageNumber: >= 9 });
     }
 }

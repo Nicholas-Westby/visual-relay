@@ -31,6 +31,7 @@ public sealed class WindowsLauncherTests
         SystemRoot,
         Path.Combine(SystemRoot, "System32", "WindowsPowerShell", "v1.0"));
 
+    // ReSharper disable once UnusedTupleComponentInReturnValue — callers discard stdout intentionally
     private static (int ExitCode, string Stdout, string Stderr) RunPs1(
         string stubBin, IReadOnlyList<string> args, IReadOnlyDictionary<string, string> env)
     {

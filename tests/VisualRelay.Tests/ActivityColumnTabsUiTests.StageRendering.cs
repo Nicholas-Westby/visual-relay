@@ -5,7 +5,6 @@ using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
-using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
@@ -164,7 +163,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.NotNull(rawJsonToggle);
         var tip = ToolTip.GetTip(rawJsonToggle!);
         Assert.NotNull(tip);
-        Assert.NotEmpty(tip?.ToString() ?? "");
+        Assert.NotEmpty(tip!.ToString() ?? "");
     }
 
     /// <summary>The Input tab's Raw checkbox has a ToolTip explaining the raw view.</summary>
@@ -203,7 +202,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.NotNull(rawToggle);
         var tip = ToolTip.GetTip(rawToggle!);
         Assert.NotNull(tip);
-        Assert.NotEmpty(tip?.ToString() ?? "");
+        Assert.NotEmpty(tip!.ToString() ?? "");
     }
 
     /// <summary>Input parsed sections visible by default without toggling Raw.</summary>

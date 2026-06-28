@@ -63,7 +63,7 @@ internal sealed class TempXdgEnvironmentAccessor : IEnvironmentAccessor
     private static readonly Lazy<string> SeededConfigHome = new(SeedSharedProfile);
 
     /// <summary>The shared temp directory pinned as <c>XDG_CONFIG_HOME</c>.</summary>
-    public string ConfigHome => SeededConfigHome.Value;
+    private string ConfigHome => SeededConfigHome.Value;
 
     public string? GetEnvironmentVariable(string name) =>
         name == "XDG_CONFIG_HOME" ? ConfigHome : null;

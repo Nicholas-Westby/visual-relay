@@ -32,8 +32,8 @@ public sealed class ShellTestRunner(TimeSpan? timeout = null) : ITestRunner
     internal static (string FileName, IReadOnlyList<string> Arguments) BuildShellLaunch(
         string command, bool isWindows) =>
         isWindows
-            ? ("cmd.exe", new[] { "/c", WriteWindowsCommandBatch(command) })
-            : ("/bin/sh", new[] { "-lc", command });
+            ? ("cmd.exe", ["/c", WriteWindowsCommandBatch(command)])
+            : ("/bin/sh", ["-lc", command]);
 
     // Materializes the command into a temp .cmd named by its content hash (so an
     // identical command reuses one file — bounded, race-safe), and returns its path.

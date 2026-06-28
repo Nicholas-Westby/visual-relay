@@ -22,10 +22,12 @@ public sealed partial class RelayDriver
     /// of re-running the suite itself. Returns (null, errorHint) on timeout,
     /// or (data, null) on success. Caller passes errorHint to FlagAsync.
     /// </summary>
+    // ReSharper disable UnusedParameter.Local — kept for future use in pre-agent logic
     private async Task<(Stage9PreAgentData? Data, string? ErrorHint)> RunStage9PreAgentAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, IReadOnlyList<string> manifest, StringBuilder ledger,
         List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
+    // ReSharper restore UnusedParameter.Local
     {
         var (shouldRunBootstrap, bootstrapCmd) = ResolveBootstrapCheck(config, manifest);
         var bootstrapCmdStr = shouldRunBootstrap ? bootstrapCmd : null;

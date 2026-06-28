@@ -67,6 +67,7 @@ public sealed class TaskDetailMarkdownTitleDeduplicationTests
 
         var titleTextBlocks = taskDetailPanel.GetVisualDescendants()
             .OfType<TextBlock>()
+            // ReSharper disable once MergeIntoPattern — IsVisible + Text null check would need pattern variable rename
             .Where(tb => tb.IsVisible && tb.Text is not null && tb.Text.Contains("Implement Feature X"))
             .ToList();
 

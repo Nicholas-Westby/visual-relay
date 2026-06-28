@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using VisualRelay.App;
 
 namespace VisualRelay.Tests;
 
@@ -31,7 +30,7 @@ public sealed class ConfirmationDialogButtonAlignmentTests
     [AvaloniaFact]
     public void ConfirmButton_VerticalContentAlignment_IsCenter()
     {
-        var button = VisualRelay.App.App.CreateConfirmButton("Rewrite and Replace");
+        var button = App.App.CreateConfirmButton("Rewrite and Replace");
 
         Assert.Equal(Avalonia.Layout.VerticalAlignment.Center,
             button.VerticalContentAlignment);

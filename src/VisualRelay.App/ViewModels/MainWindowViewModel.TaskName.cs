@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.ComponentModel;
-using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -25,8 +24,7 @@ public partial class MainWindowViewModel
         }
 
         var reader = new StringReader(markdown);
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        while (reader.ReadLine() is { } line)
         {
             if (line.StartsWith("# ", StringComparison.Ordinal))
             {
@@ -51,8 +49,7 @@ public partial class MainWindowViewModel
         }
 
         var reader = new StringReader(markdown);
-        string? line;
-        while ((line = reader.ReadLine()) is not null)
+        while (reader.ReadLine() is { } line)
         {
             if (line.StartsWith("# ", StringComparison.Ordinal))
             {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -202,15 +203,18 @@ public static class RealSleepGuard
             case ParenthesizedExpressionSyntax p:
                 return EvaluateDurationMs(p.Expression);
 
+            // ReSharper disable once MergeIntoPattern — IsKind is a method, cannot use property pattern
             case LiteralExpressionSyntax lit when lit.Token.IsKind(SyntaxKind.NumericLiteralToken):
                 return AsDouble(lit.Token.Value);
 
+            // ReSharper disable MergeIntoPattern — RightmostIdentifier needs m.Expression; IsKind is a method
             case InvocationExpressionSyntax i
                 when i.Expression is MemberAccessExpressionSyntax m
                      && RightmostIdentifier(m.Expression) == "TimeSpan"
                      && i.ArgumentList.Arguments.Count == 1
                      && i.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax inner
                      && inner.Token.IsKind(SyntaxKind.NumericLiteralToken):
+                // ReSharper restore MergeIntoPattern
                 {
                     var n = AsDouble(inner.Token.Value);
                     if (n is null)
@@ -241,7 +245,8 @@ public static class RealSleepGuard
     };
 
     private static string Format(double ms) =>
-        ms == Math.Floor(ms) ? ((long)ms).ToString() : ms.ToString();
+        // ReSharper disable once CompareOfFloatsByEqualityOperator — exact integer check on double is safe here (values from TimeSpan are exact)
+        ms == Math.Floor(ms) ? ((long)ms).ToString(CultureInfo.InvariantCulture) : ms.ToString(CultureInfo.InvariantCulture);
 
     private static int LineOf(SourceText text, int position) =>
         text.Lines.GetLinePosition(position).Line + 1;

@@ -201,6 +201,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
+    // ReSharper disable once InvalidXmlDocComment — cref ambiguities acceptable in test helper docs
     /// <summary>
     /// Dispatches <see cref="ITestRunner.RunAsync"/> to separate queues of
     /// <see cref="TestRunResult"/> based on command sentinel matching, and

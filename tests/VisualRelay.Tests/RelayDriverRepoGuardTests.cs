@@ -230,6 +230,7 @@ public sealed class RelayDriverRepoGuardTests
         TestGit.Run(root, "commit", "-m", "chore: seed repo");
     }
 
+    // ReSharper disable once InvalidXmlDocComment — cref ambiguities acceptable in test helper docs
     /// <summary>
     /// Dispatches <see cref="ITestRunner.RunAsync"/> to one of several
     /// inner runners based on whether the command string contains a

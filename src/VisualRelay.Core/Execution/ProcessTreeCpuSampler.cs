@@ -147,6 +147,7 @@ internal static class ProcessTreeCpuSampler
 
     // ── Toolhelp interop (Windows only; never invoked off the IsWindows branch) ──
 
+    // ReSharper disable once InconsistentNaming — matches Windows API TH32CS_SNAPPROCESS
     private const uint Th32csSnapprocess = 0x00000002;
     private static readonly IntPtr InvalidHandleValue = new(-1);
 
@@ -166,6 +167,7 @@ internal static class ProcessTreeCpuSampler
         public string szExeFile;
     }
 
+    // ReSharper disable once InconsistentNaming — matches Windows API CreateToolhelp32Snapshot
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
 

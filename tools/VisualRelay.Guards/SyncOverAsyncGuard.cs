@@ -120,37 +120,36 @@ public static class SyncOverAsyncGuard
                 switch (node)
                 {
                     // `<task>.Result` PROPERTY read (not an `x.Result(...)` call).
-                    case MemberAccessExpressionSyntax ma
-                        when ma.Name.Identifier.Text == "Result"
-                             && !IsInvokedMember(ma)
+                    case MemberAccessExpressionSyntax { Name.Identifier.Text: "Result" } ma
+                        when !IsInvokedMember(ma)
                              && IsTaskishReceiver(ma.Expression):
                         Report(ma.Name.SpanStart, ".Result");
                         break;
 
                     // `<task>.Wait()` / `<task>.Wait(timeout)`.
+                    // ReSharper disable once MergeIntoPattern — IsTaskishReceiver is a helper method, not a property
                     case InvocationExpressionSyntax wInv
-                        when wInv.Expression is MemberAccessExpressionSyntax wm
-                             && wm.Name.Identifier.Text == "Wait"
+                        when wInv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Wait" } wm
                              && IsTaskishReceiver(wm.Expression):
                         Report(wm.Name.SpanStart, ".Wait()");
                         break;
 
                     // Static `Task.WaitAll(...)` / `Task.WaitAny(...)` blocking joins.
+                    // ReSharper disable once MergeIntoPattern — RootIdentifier is a helper method, not a property
                     case InvocationExpressionSyntax sInv
-                        when sInv.Expression is MemberAccessExpressionSyntax sm
-                             && sm.Name.Identifier.Text is "WaitAll" or "WaitAny"
+                        when sInv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "WaitAll" or "WaitAny" } sm
                              && RootIdentifier(sm) == "Task":
                         Report(sm.Name.SpanStart, $".{sm.Name.Identifier.Text}()");
                         break;
 
                     // `<anything>.GetAwaiter().GetResult()` — the canonical
                     // sync-over-async bridge; kept broad (the chain is the signal).
+                    // ReSharper disable MergeIntoPattern — chain involves InvocationExpression patterns, not just properties
                     case InvocationExpressionSyntax gInv
-                        when gInv.Expression is MemberAccessExpressionSyntax maOuter
-                             && maOuter.Name.Identifier.Text == "GetResult"
+                        when gInv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "GetResult" } maOuter
                              && maOuter.Expression is InvocationExpressionSyntax invInner
-                             && invInner.Expression is MemberAccessExpressionSyntax maInner
-                             && maInner.Name.Identifier.Text == "GetAwaiter":
+                             && invInner.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "GetAwaiter" } maInner:
+                        // ReSharper restore MergeIntoPattern
                         Report(maInner.Name.SpanStart, ".GetAwaiter().GetResult()");
                         break;
                 }
@@ -188,6 +187,7 @@ public static class SyncOverAsyncGuard
             foreach (var attr in list.Attributes)
             {
                 var name = LastIdentifier(attr.Name);
+                // ReSharper disable once MergeIntoPattern — TestAttributeNames.Contains requires a non-null string
                 if (name is not null && TestAttributeNames.Contains(name))
                     return true;
             }
@@ -212,6 +212,7 @@ public static class SyncOverAsyncGuard
     /// "Result", not the blocking <c>Task&lt;T&gt;.Result</c> property.
     /// </summary>
     private static bool IsInvokedMember(MemberAccessExpressionSyntax ma) =>
+        // ReSharper disable once MergeIntoPattern — variable `ma` is a parameter, not a constant
         ma.Parent is InvocationExpressionSyntax inv && inv.Expression == ma;
 
     /// <summary>
@@ -243,8 +244,7 @@ public static class SyncOverAsyncGuard
         node.Ancestors().OfType<InvocationExpressionSyntax>().Any(IsOffloadInvocation);
 
     private static bool IsOffloadInvocation(InvocationExpressionSyntax inv) =>
-        inv.Expression is MemberAccessExpressionSyntax ma
-        && ma.Name.Identifier.Text is "Run" or "StartNew"
+        inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Run" or "StartNew" } ma
         && RootIdentifier(ma) == "Task";
 
     /// <summary>The rightmost identifier of a (possibly dotted) expression —

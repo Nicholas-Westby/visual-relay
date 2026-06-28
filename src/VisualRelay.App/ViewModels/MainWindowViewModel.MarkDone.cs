@@ -40,12 +40,14 @@ public partial class MainWindowViewModel
     public bool IsMarkDoneButtonVisible =>
         SelectedTask is not null && !SelectedTask.IsArchived && !ShowArchive;
 
+    // ReSharper disable once UnusedParameterInPartialMethod — value parameter is part of generated partial method signature
     partial void OnShowArchiveChanged(bool value)
     {
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsMarkDoneButtonVisible));
     }
 
+    // ReSharper disable once UnusedParameterInPartialMethod — value parameter is part of generated partial method signature
     partial void OnIsBusyChanged(bool value) =>
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
 }

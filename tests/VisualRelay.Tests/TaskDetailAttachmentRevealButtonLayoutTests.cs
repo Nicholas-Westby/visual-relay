@@ -39,7 +39,7 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
 
-        repo.WriteNestedTask("gap-check", "# Gap Check\n", [("file.txt", "content")]);
+        repo.WriteNestedTask("gap-check", "# Gap Check\n", ("file.txt", "content"));
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -101,7 +101,7 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
         repo.WriteConfig("dotnet test", []);
 
         var longName = "very-long-attachment-filename-that-would-overlap-with-reveal-button.txt";
-        repo.WriteNestedTask("gap-visual", "# Gap Visual\n", [(longName, "content")]);
+        repo.WriteNestedTask("gap-visual", "# Gap Visual\n", (longName, "content"));
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -147,7 +147,7 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
         TextBlock? pathBlock = null;
         foreach (var child in dockPanel!.Children)
         {
-            if (child is TextBlock tb && tb.Text is not null && tb.Text.Contains(longName))
+            if (child is TextBlock { Text: not null } tb && tb.Text.Contains(longName))
             {
                 pathBlock = tb;
                 break;

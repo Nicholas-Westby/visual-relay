@@ -34,10 +34,10 @@ public sealed class WindowsLaunchTargetTests
     public void Windows_Builtin_AppendsSandboxFlag_LaunchesSwivalDirectly()
     {
         var (fileName, args) = Runner().BuildWindowsLaunchTarget(
-            new List<string> { "-q", "--report", "r.json" }, WindowsSandboxMode.Builtin, null, null);
+            ["-q", "--report", "r.json"], WindowsSandboxMode.Builtin, null, null);
 
         Assert.Equal(Swival, fileName);
-        Assert.Equal(new[] { "-q", "--report", "r.json", "--sandbox", "builtin" }, args);
+        Assert.Equal(["-q", "--report", "r.json", "--sandbox", "builtin"], args);
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed class WindowsLaunchTargetTests
     {
         var ex = Assert.Throws<InvalidOperationException>(() =>
             Runner().BuildWindowsLaunchTarget(
-                new List<string> { "-q" }, WindowsSandboxMode.Blocked, null, null));
+                ["-q"], WindowsSandboxMode.Blocked, null, null));
 
         Assert.Contains("blocked", ex.Message, StringComparison.OrdinalIgnoreCase);
     }

@@ -195,8 +195,7 @@ public static class RealBuildSubprocessGuard
     }
 
     private static bool IsEnvironmentRead(InvocationExpressionSyntax inv) =>
-        inv.Expression is MemberAccessExpressionSyntax ma
-        && ma.Name.Identifier.Text == "GetEnvironmentVariable";
+        inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "GetEnvironmentVariable" };
 
     private static bool IsSkipGate(InvocationExpressionSyntax inv, bool hasEnvOptIn) => inv.Expression switch
     {
@@ -212,14 +211,14 @@ public static class RealBuildSubprocessGuard
     };
 
     private static bool IsProcessStart(InvocationExpressionSyntax inv) =>
-        inv.Expression is MemberAccessExpressionSyntax ma
-        && ma.Name.Identifier.Text == "Start"
+        inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Start" } ma
         && RightmostName(ma.Expression) == "Process";
 
     private static SyntaxToken? InitializerLiteral(ObjectCreationExpressionSyntax oce, string member)
     {
         foreach (var assign in Assignments(oce))
         {
+            // ReSharper disable once MergeIntoPattern — `member` is a variable parameter, cannot use constant pattern
             if (assign.Left is IdentifierNameSyntax id && id.Identifier.Text == member)
                 return LiteralToken(assign.Right);
         }
@@ -232,6 +231,7 @@ public static class RealBuildSubprocessGuard
         foreach (var assign in Assignments(oce))
         {
             if (assign.Left is IdentifierNameSyntax { Identifier.Text: "ArgumentList" }
+                // ReSharper disable once MergeIntoPattern — assign.Right is a separate member access, not a constant property
                 && assign.Right is InitializerExpressionSyntax init)
             {
                 foreach (var e in init.Expressions)

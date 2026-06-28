@@ -94,6 +94,8 @@ public static class MxcInstaller
 
     private static byte[] DefaultDownload(string url)
     {
+        // ReSharper disable once ShortLivedHttpClient — one-off download in installer; socket exhaustion not material
+        // ReSharper disable once UsingStatementResourceInitialization
         using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         return http.GetByteArrayAsync(url).GetAwaiter().GetResult();
     }
