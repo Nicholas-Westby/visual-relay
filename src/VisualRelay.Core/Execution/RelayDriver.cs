@@ -121,9 +121,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stage9GuardOutput = pre.GuardOutput;
                     }
 
-                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand
-                        : stage.Number == 9 ? config.TestCommand
-                        : null;
+                    // Stage 9 (read-only Verify) is NOT handed an imperative full-suite
+                    // command: the harness already ran the suite mechanically and the
+                    // agent gets the captured output via `lastTestOutput` (## Verify
+                    // output). Handing it `## Verify command` ("run this exact command")
+                    // re-tempted the very double-run the read-only stage exists to avoid.
+                    // Only the coding stages (6/8) get the TARGETED command to self-check.
+                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
                     var effectiveStage = implementationFrontLoaded && stage.Number == 6
                         ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,

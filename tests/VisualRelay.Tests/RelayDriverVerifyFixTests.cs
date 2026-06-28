@@ -267,7 +267,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var inv = runner.Invocations.Single(i => i.Stage.Number == 9);
         Assert.NotNull(inv.LastTestOutput);
         Assert.Contains("All 42 tests passed!", inv.LastTestOutput, StringComparison.Ordinal);
-        Assert.Equal("dotnet test", inv.TestCommand);
+        Assert.Null(inv.TestCommand); // fix B: read-only Verify gets captured output, not an imperative command
     }
 
     [Fact]
@@ -292,6 +292,6 @@ public sealed partial class RelayDriverVerifyFixTests
         var inv = runner.Invocations.Single(i => i.Stage.Number == 9);
         Assert.NotNull(inv.LastTestOutput);
         Assert.Contains("FAIL: TestDeepCheck", inv.LastTestOutput, StringComparison.Ordinal);
-        Assert.Equal("dotnet test", inv.TestCommand);
+        Assert.Null(inv.TestCommand); // fix B: read-only Verify gets captured output, not an imperative command
     }
 }

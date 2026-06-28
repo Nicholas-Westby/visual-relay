@@ -106,7 +106,12 @@ public sealed partial class SwivalSubagentRunner
 
         if (!string.IsNullOrWhiteSpace(invocation.LastTestOutput))
         {
-            parts.AddRange(["", "## Verify output", TrimForTrace(invocation.LastTestOutput)]);
+            // The harness already ran the suite mechanically; this is its captured
+            // output (TAIL kept — the Passed!/Failed: summary sits after the
+            // sandbox/restore/build banner). Informational, not a re-run instruction.
+            parts.AddRange(["", "## Verify output",
+                "The harness already ran the test suite; its captured output (tail) is below.",
+                TrimForTail(invocation.LastTestOutput)]);
         }
 
         if (!string.IsNullOrWhiteSpace(invocation.TestCommand))

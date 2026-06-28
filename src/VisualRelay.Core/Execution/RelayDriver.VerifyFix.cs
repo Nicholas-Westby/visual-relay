@@ -53,7 +53,7 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: AgentFixVerifyCommand(config),
                 pinnedSwivalProfileContent: pinnedSwivalProfileContent);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
@@ -213,12 +213,9 @@ public sealed partial class RelayDriver
         string? testCommand = null,
         string? pinnedSwivalProfileContent = null)
     {
-        var turns = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true
-            ? config.MaxTurns * TurnBoostMultiplier
-            : config.MaxTurns;
-        var ceilingMs = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true
-            ? config.SubagentTimeoutMilliseconds * TurnBoostMultiplier
-            : config.SubagentTimeoutMilliseconds;
+        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
+        var turns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
+        var ceilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
             stage,
