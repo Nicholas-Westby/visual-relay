@@ -86,18 +86,26 @@ public sealed partial class RelayDriver
         var worktreePath = await PlanningWorktree.CreateAsync(
             sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker);
 
+        // (1) ADD / MODIFY — copy every tracked-modified and untracked-not-ignored file
+        // across so the snapshot mirrors the agent's working tree. A path that `git diff`
+        // reports but that no longer exists on disk is a DELETION: it is skipped here
+        // (this loop only writes content that exists) and applied by step (2) below.
         foreach (var relative in await EnumerateUncommittedAsync(sourcePath, cancellationToken))
         {
             var src = Path.Combine(sourcePath, relative);
-            // Known limitation: a tracked file the agent DELETED in the working tree is
-            // reported by `git diff --name-only` but no longer exists on disk, so it is
-            // skipped here and the snapshot retains its HEAD copy. R0a concerns added/
-            // modified files outside the manifest (covered by the overlay), not deletions.
             if (!File.Exists(src)) continue;
             var dst = Path.Combine(worktreePath, relative);
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             File.Copy(src, dst, overwrite: true);
         }
+
+        // (2) DELETE — the HEAD checkout resurrects every tracked file the agent removed,
+        // so the snapshot would silently revert the deletion and verify a tree that still
+        // contains the file (recompiling/retesting code the task intentionally removed).
+        // Drop each deleted tracked path (and any parent dir it leaves empty) so the
+        // snapshot reflects the deletion. Keys purely on git status — no project specifics.
+        foreach (var relative in await EnumerateDeletedTrackedAsync(sourcePath, cancellationToken))
+            RemoveDeletedOverlayPath(worktreePath, relative);
 
         // The overlay above carries only uncommitted-NOT-ignored files, so the
         // snapshot still omits everything git ignores — node_modules, .env, .venv,
