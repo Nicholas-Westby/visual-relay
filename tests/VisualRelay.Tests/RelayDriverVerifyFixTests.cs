@@ -27,12 +27,9 @@ public sealed partial class RelayDriverVerifyFixTests
         var outcome = await driver.RunTaskAsync(repo.Root, "fixable-verify");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // Stage 9 seal should show red (honest record)
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "fixable-verify", "fixable-verify.seals"));
-        Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
-        // Stage 10 seal should show green (fix succeeded)
-        Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
-        // Verify the fix-verify stage ran (stage_start/done events for stage 10)
+        Assert.Contains(seals, l => l.Contains("\"n\":9", StringComparison.Ordinal) && l.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+        Assert.Contains(seals, l => l.Contains("\"n\":10", StringComparison.Ordinal) && l.Contains("\"check\":\"green\"", StringComparison.Ordinal));
         Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 10 });
         Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 10 });
         Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "fixable-verify", "NEEDS-REVIEW")));
@@ -61,11 +58,10 @@ public sealed partial class RelayDriverVerifyFixTests
         var outcome = await driver.RunTaskAsync(repo.Root, "retry-twice");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // Ledger should contain exactly 2 fix-verify sections
         var ledger = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "retry-twice", "ledger.md"));
         Assert.Contains("attempt 1/3", ledger, StringComparison.Ordinal);
         Assert.Contains("attempt 2/3", ledger, StringComparison.Ordinal);
-        Assert.DoesNotContain("attempt 3/3", ledger, StringComparison.Ordinal); // never reached
+        Assert.DoesNotContain("attempt 3/3", ledger, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -77,28 +73,22 @@ public sealed partial class RelayDriverVerifyFixTests
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
-            new TestRunResult(1, "red"),                    // stage 5 author gate
-            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 verify — retry also fails
-            new TestRunResult(1, "Failed DeepCheck"),        // fix-verify attempt 1 first run — red
-            new TestRunResult(0, "green"));                  // fix-verify attempt 1 retry — green
+            new TestRunResult(1, "red"),                    // stage 5
+            new TestRunResult(1, "Failed DeepCheck"),        // stage 9
+            new TestRunResult(1, "Failed DeepCheck"),        // stage 9 retry
+            new TestRunResult(1, "Failed DeepCheck"),        // fix-verify gate
+            new TestRunResult(0, "green"));                  // fix-verify retry
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "fail-visible");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // The stage-10 invocation must contain the captured failure from stage 9.
-        var stage10Invocation = runner.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10Invocation);
-        Assert.NotNull(stage10Invocation!.LastTestOutput);
-        Assert.Contains("Failed DeepCheck", stage10Invocation.LastTestOutput, StringComparison.Ordinal);
-        // Verify no other stage received LastTestOutput (regression guard).
-        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number != 10))
-        {
+        var inv10 = runner.Invocations.Single(i => i.Stage.Number == 10);
+        Assert.NotNull(inv10.LastTestOutput);
+        Assert.Contains("Failed DeepCheck", inv10.LastTestOutput, StringComparison.Ordinal);
+        // Regression guard: only stages 9 and 10 carry test output.
+        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number is not (9 or 10)))
             Assert.Null(inv.LastTestOutput);
-        }
     }
 
     [Fact]
@@ -120,27 +110,19 @@ public sealed partial class RelayDriverVerifyFixTests
         var outcome = await driver.RunTaskAsync(repo.Root, "green-skip");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-
-        // (1) NO stage-10 LLM subagent invocation happened.
         Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 10);
-
-        // (2) status.json still has all 11 stages Done, and stage 10 is green.
         var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "green-skip"));
         Assert.Equal(11, entries.Count);
         Assert.All(entries, e => Assert.Equal("Done", e.Status));
         var stage10 = entries.Single(e => e.Stage == 10);
         Assert.Equal("green", stage10.Check);
-        Assert.Null(stage10.CostUsd);   // no LLM ran
+        Assert.Null(stage10.CostUsd);
         Assert.Null(stage10.Turns);
-
-        // (3) The seal chain reached 10 stage seals; stage 10 seal is green.
         var seals = await File.ReadAllLinesAsync(
             Path.Combine(repo.Root, ".relay", "green-skip", "green-skip.seals"));
         Assert.Contains(seals, l =>
             l.Contains("\"n\":10", StringComparison.Ordinal) &&
             l.Contains("\"check\":\"green\"", StringComparison.Ordinal));
-
-        // (4) stage_done event for stage 10 was still published (UI parity).
         Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 10 });
     }
 
@@ -264,5 +246,52 @@ public sealed partial class RelayDriverVerifyFixTests
         var persisted = await File.ReadAllTextAsync(outputFile);
         Assert.Contains("Failed TestX", persisted, StringComparison.Ordinal);
         Assert.DoesNotContain(stage9.Data.Values, v => v.Contains("Failed TestX") && v.Length > 200);
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_VerifyGreen_Stage9AgentReceivesCapturedTestOutput()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteTask("stage9-green-output", "# Stage 9 receives green output\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),         // stage 5 author gate
+            new TestRunResult(0, "All 42 tests passed!"));
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+        var outcome = await driver.RunTaskAsync(repo.Root, "stage9-green-output");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var inv = runner.Invocations.Single(i => i.Stage.Number == 9);
+        Assert.NotNull(inv.LastTestOutput);
+        Assert.Contains("All 42 tests passed!", inv.LastTestOutput, StringComparison.Ordinal);
+        Assert.Equal("dotnet test", inv.TestCommand);
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_VerifyRed_Stage9AgentReceivesFailingTestOutput()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteTask("stage9-fail-output", "# Stage 9 receives failing output\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),                    // stage 5 author gate
+            new TestRunResult(1, "FAIL: TestDeepCheck"),    // stage 9
+            new TestRunResult(1, "FAIL: TestDeepCheck"),    // stage 9 retry
+            new TestRunResult(1, "FAIL: TestDeepCheck"),    // fix-verify gate
+            new TestRunResult(0, "All green!"));             // fix-verify retry
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+        var outcome = await driver.RunTaskAsync(repo.Root, "stage9-fail-output");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var inv = runner.Invocations.Single(i => i.Stage.Number == 9);
+        Assert.NotNull(inv.LastTestOutput);
+        Assert.Contains("FAIL: TestDeepCheck", inv.LastTestOutput, StringComparison.Ordinal);
+        Assert.Equal("dotnet test", inv.TestCommand);
     }
 }

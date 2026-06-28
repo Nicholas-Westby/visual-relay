@@ -106,7 +106,7 @@ public sealed partial class SwivalSubagentRunner
 
         if (!string.IsNullOrWhiteSpace(invocation.LastTestOutput))
         {
-            parts.AddRange(["", "## Failing verify output", TrimForTrace(invocation.LastTestOutput)]);
+            parts.AddRange(["", "## Verify output", TrimForTrace(invocation.LastTestOutput)]);
         }
 
         if (!string.IsNullOrWhiteSpace(invocation.TestCommand))

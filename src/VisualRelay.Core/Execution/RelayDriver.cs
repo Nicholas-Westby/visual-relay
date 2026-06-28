@@ -96,11 +96,39 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
+                    // Stage 9: run mechanical tests BEFORE the agent so it receives captured output for summarization.
+                    TestRunResult? stage9TestResult = null;
+                    bool stage9BootstrapFailed = false;
+                    string? stage9BootstrapFailureOutput = null;
+                    string? stage9BootstrapCmd = null;
+                    string? stage9NewGuardOutput = null;
+                    bool stage9GuardFailed = false;
+                    string? stage9GuardOutput = null;
+                    if (stage.Number == 9)
+                    {
+                        var (pre, errorHint) = await RunStage9PreAgentAsync(rootPath, runId, taskId, taskDirectory, config,
+                            manifest, ledger, statusEntries, cancellationToken);
+                        if (errorHint is not null)
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                                errorHint, null, statusEntries, cancellationToken);
+                        stage9TestResult = pre!.TestResult;
+                        testDurationSeconds = pre.TestDurationSeconds;
+                        stage9BootstrapFailed = pre.BootstrapFailed;
+                        stage9BootstrapFailureOutput = pre.BootstrapFailureOutput;
+                        stage9BootstrapCmd = pre.BootstrapCmd;
+                        stage9NewGuardOutput = pre.NewGuardOutput;
+                        stage9GuardFailed = pre.GuardFailed;
+                        stage9GuardOutput = pre.GuardOutput;
+                    }
+
+                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand
+                        : stage.Number == 9 ? config.TestCommand
+                        : null;
                     var effectiveStage = implementationFrontLoaded && stage.Number == 6
                         ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
                         testCommand: testCommandForCodingStage,
+                        lastTestOutput: stage9TestResult?.Output,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     cost = TryEstimateCost(invocation.ReportFile);
@@ -169,52 +197,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 9)
                     {
-                        var bootstrapFailed = false;
-                        string? bootstrapFailureOutput = null;
-                        var (shouldRunBootstrap, bootstrapCmd) = ResolveBootstrapCheck(config, manifest);
-                        if (shouldRunBootstrap)
-                        {
-                            var bootstrapResult = await _dependencies.TestRunner.RunAsync(rootPath, bootstrapCmd, cancellationToken);
-                            if (bootstrapResult.TimedOut)
-                            {
-                                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                    ErrorHintClassifier.WithHint(bootstrapResult.Output),
-                                    null, statusEntries, cancellationToken);
-                            }
-                            if (bootstrapResult.ExitCode != 0)
-                            {
-                                bootstrapFailed = true;
-                                bootstrapFailureOutput = bootstrapResult.Output;
-                            }
-                        }
-                        var (newGuardOutput, probeTimedOut) = await NewGuardProbeAsync(
-                            rootPath, manifest, config.NewGuardPatterns, cancellationToken);
-                        if (probeTimedOut)
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(newGuardOutput ?? "new guard timed out"),
-                                null, statusEntries, cancellationToken);
-                        var (guardFailed, guardOutput, guardTimedOut) = await IntegrateGuardAsync(
-                            rootPath, taskId, runId, config, ledger, cancellationToken);
-                        if (guardTimedOut)
-                        {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"),
-                                null, statusEntries, cancellationToken);
-                        }
-
-                        var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
-                            rootPath, config, stageNumber: 9, attempt: 1, runId, taskId, cancellationToken);
-                        await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage, verifyMutations, cancellationToken);
-                        testDurationSeconds = testResult.Elapsed.TotalSeconds;
-                        if (testResult.TimedOut)
-                        {
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
-                                ErrorHintClassifier.WithHint(testResult.Output),
-                                null, statusEntries, cancellationToken);
-                        }
-                        await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, testResult, manifest, cancellationToken, overrideCheck: testResult.ExitCode == 0 && !bootstrapFailed && !guardFailed && newGuardOutput is null ? "green" : "red");
-                        check = testResult.ExitCode == 0 ? "green" : "red";
-                        if (bootstrapFailed || guardFailed || newGuardOutput is not null)
+                        await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9TestResult!.ExitCode == 0 && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null ? "green" : "red");
+                        check = stage9TestResult!.ExitCode == 0 ? "green" : "red";
+                        if (stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
                             check = "red";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
@@ -228,16 +213,16 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            var failingTestOutput = BuildFailureOutput(testResult, guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
+                            var failingTestOutput = BuildFailureOutput(stage9TestResult, stage9GuardOutput, stage9BootstrapFailed, stage9BootstrapFailureOutput, stage9NewGuardOutput);
                             // Skip baseline diff when bootstrap, guard, or new-guard-probe is the source.
                             // NOTE: GetNewFailuresAsync runs against the LIVE rootPath (stash/restore), while
                             // testResult came from the isolated snapshot (HEAD + live overlay). These are
                             // content-equivalent, so the new-vs-baseline failure diff is valid; if the suite
                             // self-mutates, the snapshot absorbed those writes, leaving the live baseline cleaner.
-                            var newFailures = (config.BaselineVerify && !bootstrapFailed && !guardFailed && newGuardOutput is null)
-                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, testResult, _dependencies.GitInvoker, cancellationToken)
+                            var newFailures = (config.BaselineVerify && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null)
+                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, stage9TestResult, _dependencies.GitInvoker, cancellationToken)
                                 : null;
-                            if (!config.BaselineVerify || newFailures is not null || bootstrapFailed || guardFailed || newGuardOutput is not null)
+                            if (!config.BaselineVerify || newFailures is not null || stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
                             {
                                 if (config.MaxVerifyLoops <= 0)
                                 {
@@ -248,7 +233,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 // Genuinely red — record stage 9, then enter fix-verify loop.
                                 (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
 
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, shouldRunBootstrap ? bootstrapCmd : null, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage9BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;

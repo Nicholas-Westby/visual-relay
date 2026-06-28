@@ -18,7 +18,7 @@ public static partial class AssembledPromptParser
         "Task context",
         "Log sources",
         "Prior stages",
-        "Failing verify output",
+        "Verify output",
         "Verify command"
     };
 

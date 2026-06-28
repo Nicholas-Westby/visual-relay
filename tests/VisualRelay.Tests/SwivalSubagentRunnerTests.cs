@@ -210,7 +210,7 @@ public sealed partial class SwivalSubagentRunnerTests
 
         Assert.True(result.IsValid);
         var captured = await File.ReadAllTextAsync(Path.Combine(repo.Root, "prompt-capture.txt"));
-        Assert.Contains("## Failing verify output", captured, StringComparison.Ordinal);
+        Assert.Contains("## Verify output", captured, StringComparison.Ordinal);
         Assert.Contains("biome parse error: unexpected token at line 42", captured, StringComparison.Ordinal);
         Assert.Contains("## Verify command", captured, StringComparison.Ordinal);
         Assert.Contains("Run this exact command to reproduce and confirm the fix:", captured, StringComparison.Ordinal);
@@ -238,7 +238,7 @@ public sealed partial class SwivalSubagentRunnerTests
 
         Assert.True(result.IsValid);
         var captured = await File.ReadAllTextAsync(Path.Combine(repo.Root, "prompt-capture.txt"));
-        Assert.DoesNotContain("## Failing verify output", captured, StringComparison.Ordinal);
+        Assert.DoesNotContain("## Verify output", captured, StringComparison.Ordinal);
         Assert.DoesNotContain("## Verify command", captured, StringComparison.Ordinal);
     }
 

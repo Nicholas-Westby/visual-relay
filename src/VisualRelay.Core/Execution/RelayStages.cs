@@ -89,7 +89,7 @@ public static class RelayStages
             SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
-        "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically.",
+        "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically. Do NOT execute the test suite yourself — the harness has already run it mechanically; use the captured output in ## Verify output below for your summary.",
         "Fix-verify" =>
             "Fix all failures from the full test suite gate shown in ## Verify command. " +
             "The command in ## Verify command IS the full gate — run exactly that command " +

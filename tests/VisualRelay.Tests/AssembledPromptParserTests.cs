@@ -62,7 +62,7 @@ public sealed class AssembledPromptParserTests
             "## Stage 1 - Ideate", "```json", """{"summary": "..."}""", "```",
             "", "## Stage 2 - Research", "```json", """{"findings": "..."}""", "```",
             "", """End your reply with a single fenced ```json block, nothing after it, matching: {"testFiles": string[], "rationale": string}""",
-            "", "## Failing verify output", "FAILED test output here",
+            "", "## Verify output", "FAILED test output here",
             "", "## Verify command", "Run this exact command to reproduce and confirm the fix:",
             "dotnet test --filter AssembledPromptParserTests");
 
@@ -79,7 +79,7 @@ public sealed class AssembledPromptParserTests
         Assert.DoesNotContain("End your reply", result[5].Body);
         Assert.Equal("Output contract", result[6].Title);
         Assert.Contains("End your reply", result[6].Body);
-        Assert.Equal("Failing verify output", result[7].Title);
+        Assert.Equal("Verify output", result[7].Title);
         Assert.Equal("Verify command", result[8].Title);
         Assert.Contains("dotnet test", result[8].Body);
     }
