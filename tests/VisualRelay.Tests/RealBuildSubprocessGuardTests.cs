@@ -29,21 +29,8 @@ public sealed class RealBuildSubprocessGuardTests
     [Fact]
     public void UnboundedDotnetBuild_ViaProcessStartInfo_IsReported()
     {
-        const string source = """
-            class C
-            {
-                void M()
-                {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = "dotnet",
-                        ArgumentList = { "build", "--nologo" },
-                    };
-                    using var p = Process.Start(psi);
-                    p.WaitForExit();
-                }
-            }
-            """;
+        const string source =
+            "class C { void M() { var psi = new ProcessStartInfo { FileName = \"dotnet\", ArgumentList = { \"build\", \"--nologo\" } }; using var p = Process.Start(psi); p.WaitForExit(); } }";
 
         var violations = RealBuildSubprocessGuard.FindViolations([("Fixtures/Spawn.cs", source)]);
 
@@ -100,16 +87,8 @@ public sealed class RealBuildSubprocessGuardTests
     [Fact]
     public void DotnetBuild_BoundedByWaitForExitTimeout_IsNotReported()
     {
-        const string source = """
-            class C
-            {
-                void M()
-                {
-                    var p = Process.Start(new ProcessStartInfo("dotnet", "build"));
-                    if (!p.WaitForExit(60_000)) { p.Kill(true); }
-                }
-            }
-            """;
+        const string source =
+            "class C { void M() { var p = Process.Start(new ProcessStartInfo(\"dotnet\", \"build\")); if (!p.WaitForExit(60_000)) { p.Kill(true); } } }";
 
         var violations = RealBuildSubprocessGuard.FindViolations([("Fixtures/Timeout.cs", source)]);
 
@@ -124,21 +103,45 @@ public sealed class RealBuildSubprocessGuardTests
     [Fact]
     public void DotnetBuild_GatedBySkipHelper_IsNotReported()
     {
-        const string source = """
-            class C
-            {
-                void M()
-                {
-                    SkipIfNotOptedIn();
-                    var p = Process.Start(new ProcessStartInfo("dotnet", "build"));
-                    p.WaitForExit();
-                }
-            }
-            """;
+        const string source =
+            "class C { void M() { SkipIfNotOptedIn(); var p = Process.Start(new ProcessStartInfo(\"dotnet\", \"build\")); p.WaitForExit(); } }";
 
         var violations = RealBuildSubprocessGuard.FindViolations([("Fixtures/Skip.cs", source)]);
 
         Assert.Empty(violations);
+    }
+
+    /// <summary>
+    /// Skip-gate carve-out: the qualified <c>NonoIntegration.SkipIfNotOptedIn()</c>
+    /// form (the opt-in helper called WITHOUT <c>using static</c>) is recognised the
+    /// same as the bare form, so the unbounded spawn is not reported.
+    /// </summary>
+    [Fact]
+    public void DotnetBuild_GatedByQualifiedSkipHelper_IsNotReported()
+    {
+        const string source =
+            "class C { void M() { NonoIntegration.SkipIfNotOptedIn(); var p = Process.Start(new ProcessStartInfo(\"dotnet\", \"build\")); p.WaitForExit(); } }";
+
+        var violations = RealBuildSubprocessGuard.FindViolations([("Fixtures/Qualified.cs", source)]);
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
+    /// Precision: an unrelated <c>Skip…()</c> call that is NOT the opt-in helper
+    /// (e.g. <c>SkipWhitespace()</c>, with no env read or timeout) does NOT excuse the
+    /// spawn — only the known <c>SkipIfNotOptedIn</c> opt-in helper counts as a sandbox
+    /// opt-out, so the build child is still reported.
+    /// </summary>
+    [Fact]
+    public void DotnetBuild_WithUnrelatedSkipPrefixedCall_IsStillReported()
+    {
+        const string source =
+            "class C { void M() { SkipWhitespace(); var p = Process.Start(new ProcessStartInfo(\"dotnet\", \"build\")); p.WaitForExit(); } }";
+
+        var violations = RealBuildSubprocessGuard.FindViolations([("Fixtures/SkipPrefix.cs", source)]);
+
+        Assert.NotEmpty(violations);
     }
 
     /// <summary>

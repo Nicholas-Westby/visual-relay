@@ -11,9 +11,10 @@ namespace VisualRelay.Tests;
 /// check keeps the idiom in one place and lets the build-subprocess and gate-as-test
 /// guards key on the single marker.
 ///
-/// <para>Call <see cref="SkipIfNotOptedIn"/> unqualified (via
-/// <c>using static VisualRelay.Tests.NonoIntegration;</c>) so the guards' literal
-/// AST scan recognises the bare <c>Skip…()</c> opt-out.</para>
+/// <para><see cref="SkipIfNotOptedIn"/> is recognised by the guards' AST scan by its
+/// method name, so EITHER call form works: bare via
+/// <c>using static VisualRelay.Tests.NonoIntegration;</c>, or qualified
+/// <c>NonoIntegration.SkipIfNotOptedIn()</c>.</para>
 /// </summary>
 internal static class NonoIntegration
 {

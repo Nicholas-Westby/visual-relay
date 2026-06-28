@@ -84,6 +84,56 @@ public sealed class GateAsTestSandboxGuardTests
     }
 
     /// <summary>
+    /// Skip-gate carve-out: the qualified <c>NonoIntegration.SkipIfNotOptedIn()</c>
+    /// form (the opt-in helper called WITHOUT <c>using static</c>) is recognised the
+    /// same as the bare form — the invoked method's rightmost name is the known opt-in
+    /// helper — so the gate is not reported.
+    /// </summary>
+    [Fact]
+    public void GateRun_GatedByQualifiedSkipHelper_IsNotReported()
+    {
+        const string source = """
+            class C
+            {
+                void M()
+                {
+                    NonoIntegration.SkipIfNotOptedIn();
+                    var rc = InspectCodeGate.Run(paths);
+                }
+            }
+            """;
+
+        var violations = GateAsTestSandboxGuard.FindViolations([("Fixtures/Qualified.cs", source)]);
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
+    /// Precision: an unrelated <c>Skip…()</c> call that is NOT the opt-in helper
+    /// (e.g. <c>SkipWhitespace()</c>, with no env read) does NOT excuse the gate — only
+    /// the known <c>SkipIfNotOptedIn</c> opt-in helper counts as a sandbox opt-out, so
+    /// the gate is still reported.
+    /// </summary>
+    [Fact]
+    public void GateRun_WithUnrelatedSkipPrefixedCall_IsStillReported()
+    {
+        const string source = """
+            class C
+            {
+                void M()
+                {
+                    SkipWhitespace();
+                    var rc = InspectCodeGate.Run(paths);
+                }
+            }
+            """;
+
+        var violations = GateAsTestSandboxGuard.FindViolations([("Fixtures/SkipPrefix.cs", source)]);
+
+        Assert.NotEmpty(violations);
+    }
+
+    /// <summary>
     /// Skip-gate carve-out: an <c>Assert.Skip(…)</c> alongside an env-var read in the
     /// same method (the VR_RUN_NONO_INTEGRATION idiom) is not reported.
     /// </summary>

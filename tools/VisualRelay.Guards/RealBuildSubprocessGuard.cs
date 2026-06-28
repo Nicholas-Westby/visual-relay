@@ -16,8 +16,10 @@ namespace VisualRelay.Guards;
 /// mach-lookup). The test host's blame-hang collector then kills the whole run,
 /// discarding every test that already passed. A normal target codebase never
 /// spawns these from its own tests, so this guard keeps the suite sandbox-safe
-/// by construction. The pattern — not any VR symbol — is what it keys on, so it
-/// ports to any C# codebase.
+/// by construction. The pattern — not any VR engine symbol — is what it keys on, so
+/// it ports to any C# codebase. (The one name the shared skip carve-out matches,
+/// <c>SkipIfNotOptedIn</c>, is a test-idiom naming convention — not a VR engine
+/// symbol — so the general-purpose claim still holds; see <see cref="SandboxSkipScan"/>.)
 ///
 /// It Roslyn-parses each source and flags every <c>new ProcessStartInfo(...)</c>
 /// / <c>Process.Start(...)</c> whose program is a known build tool AND whose
@@ -25,8 +27,10 @@ namespace VisualRelay.Guards;
 /// install, …) — UNLESS the spawn is bounded or opted out:
 /// <list type="bullet">
 ///   <item>a timeout in the same method (<c>WaitForExit(&lt;n&gt;)</c> / <c>CancelAfter(…)</c>);</item>
-///   <item>a skip gate in the same method (<c>Assert.Skip(…)</c> or a
-///         <c>Skip…()</c> helper such as an opt-in <c>SkipIfNotOptedIn()</c>);</item>
+///   <item>an env-gated opt-out skip in the same method — the
+///         <c>SkipIfNotOptedIn(…)</c> opt-in helper (bare or qualified) or an
+///         <c>Assert.Skip(…)</c> alongside a <c>GetEnvironmentVariable</c> read
+///         (shared via <see cref="SandboxSkipScan"/>);</item>
 ///   <item>an inline <c>// vr-allow-subprocess: &lt;reason&gt;</c> on the spawn line.</item>
 /// </list>
 /// Program and verb are read from string LITERALS only: a variable
@@ -182,7 +186,7 @@ public static class RealBuildSubprocessGuard
 
     private static bool IsProcessStart(InvocationExpressionSyntax inv) =>
         inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Start" } ma
-        && RightmostName(ma.Expression) == "Process";
+        && SandboxSkipScan.RightmostName(ma.Expression) == "Process";
 
     private static SyntaxToken? InitializerLiteral(ObjectCreationExpressionSyntax oce, string member)
     {
@@ -240,13 +244,9 @@ public static class RealBuildSubprocessGuard
         return parts.Length == 0 ? null : parts[0];
     }
 
-    private static string RightmostName(ExpressionSyntax expr) => expr switch
-    {
-        IdentifierNameSyntax id => id.Identifier.Text,
-        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
-        _ => string.Empty,
-    };
-
+    // The expression-rightmost-name helper lives in SandboxSkipScan (shared with the
+    // gate-as-test guard); this TypeSyntax overload is build-subprocess-specific
+    // (matching `new ProcessStartInfo(...)` by type name).
     private static string RightmostName(TypeSyntax type) => type switch
     {
         IdentifierNameSyntax id => id.Identifier.Text,

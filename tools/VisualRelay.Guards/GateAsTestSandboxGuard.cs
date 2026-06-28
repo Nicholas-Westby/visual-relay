@@ -107,7 +107,7 @@ public static class GateAsTestSandboxGuard
         if (inv.Expression is not MemberAccessExpressionSyntax { Name.Identifier.Text: "Run" } ma)
             return false;
 
-        var receiver = RightmostName(ma.Expression);
+        var receiver = SandboxSkipScan.RightmostName(ma.Expression);
         if (receiver.Length <= "Gate".Length || !receiver.EndsWith("Gate", StringComparison.Ordinal))
             return false;
 
@@ -115,13 +115,6 @@ public static class GateAsTestSandboxGuard
         nameToken = ma.Name.Identifier;
         return true;
     }
-
-    private static string RightmostName(ExpressionSyntax expr) => expr switch
-    {
-        IdentifierNameSyntax id => id.Identifier.Text,
-        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
-        _ => string.Empty,
-    };
 
     private static int LineOf(SourceText text, int position) =>
         text.Lines.GetLinePosition(position).Line + 1;

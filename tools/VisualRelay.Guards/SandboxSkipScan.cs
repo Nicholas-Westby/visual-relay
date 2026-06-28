@@ -10,18 +10,33 @@ namespace VisualRelay.Guards;
 /// it can neither wedge nor false-fail under nono. Recognises exactly two forms
 /// (kept in lockstep with the house idiom in <c>NonoRealBuildTests</c>):
 /// <list type="bullet">
-///   <item>a bare <c>Skip…()</c> helper call (e.g. <c>SkipIfNotOptedIn()</c>) — by
-///         convention these wrap the env-var opt-in;</item>
+///   <item>a call to the known opt-in helper <c>SkipIfNotOptedIn(…)</c> — bare (via
+///         <c>using static</c>) or qualified (<c>NonoIntegration.SkipIfNotOptedIn(…)</c>),
+///         i.e. the invoked method's rightmost name is <c>SkipIfNotOptedIn</c>. The
+///         helper wraps the env-var opt-in INTERNALLY, so a scope-local scan sees only
+///         this call, not the env read — hence it must be recognised by name;</item>
 ///   <item>an <c>Assert.Skip(…)</c> alongside an
-///         <c>Environment.GetEnvironmentVariable</c> read in the same scope.</item>
+///         <c>Environment.GetEnvironmentVariable</c> read in the same scope (the inline
+///         opt-in form, e.g. <c>PackagingToolTests</c>).</item>
 /// </list>
-/// A bare platform skip (<c>OperatingSystem.IsMacOS</c> → <c>Assert.Skip</c>) with
-/// no env read does NOT count: the spawn/gate still runs on the macOS verify host.
+/// Matching the EXACT helper name (not a loose "starts with <c>Skip</c>") is
+/// deliberate: an unrelated <c>SkipWhitespace()</c> / <c>collection.Skip(n)</c> in the
+/// same scope must NOT excuse the spawn/gate. A bare platform skip
+/// (<c>OperatingSystem.IsMacOS</c> → <c>Assert.Skip</c>) with no env read does NOT
+/// count either: the spawn/gate still runs on the macOS verify host.
 /// Factored out of <see cref="RealBuildSubprocessGuard"/> so the build-subprocess
 /// guard and the gate-as-test guard accept the one well-known marker identically.
+/// <c>SkipIfNotOptedIn</c> is a test-helper-name convention, not a VR engine symbol.
 /// </summary>
 internal static class SandboxSkipScan
 {
+    /// <summary>
+    /// The opt-in test-helper name (a test-idiom naming convention, NOT a VR engine
+    /// symbol) that wraps the <c>VR_RUN_NONO_INTEGRATION</c> env read; see
+    /// <c>NonoIntegration.SkipIfNotOptedIn</c>.
+    /// </summary>
+    private const string OptInHelperName = "SkipIfNotOptedIn";
+
     /// <summary>The nearest enclosing method/local-function/accessor/lambda, else the tree root.</summary>
     internal static SyntaxNode EnclosingScope(SyntaxNode node) =>
         node.FirstAncestorOrSelf<SyntaxNode>(n =>
@@ -44,20 +59,33 @@ internal static class SandboxSkipScan
     private static bool IsEnvironmentRead(InvocationExpressionSyntax inv) =>
         inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "GetEnvironmentVariable" };
 
-    private static bool IsSkipGate(InvocationExpressionSyntax inv, bool hasEnvOptIn) => inv.Expression switch
+    private static bool IsSkipGate(InvocationExpressionSyntax inv, bool hasEnvOptIn)
     {
-        // Bare helper whose name starts with "Skip" — e.g. SkipIfNotOptedIn(); by
-        // convention these wrap the env-var opt-in. (LINQ's Skip is `collection.Skip`,
-        // a member access, so it is excluded.)
-        IdentifierNameSyntax id => id.Identifier.Text.StartsWith("Skip", StringComparison.Ordinal),
-        // Assert.Skip(...) counts only alongside an env-var opt-in in the same scope.
-        MemberAccessExpressionSyntax ma => hasEnvOptIn
-            && ma.Name.Identifier.Text == "Skip"
-            && RightmostName(ma.Expression) == "Assert",
-        _ => false,
-    };
+        // The one known opt-in helper, recognised by the invoked method's rightmost
+        // name — whether called bare via `using static` (SkipIfNotOptedIn(...)) or
+        // qualified (NonoIntegration.SkipIfNotOptedIn(...)). It wraps the env opt-in
+        // internally, so the scope-local scan never sees the env read — a name-based
+        // signal is the only thing available. Matching the EXACT name (not "starts
+        // with Skip") keeps unrelated calls like SkipWhitespace() / collection.Skip(n)
+        // from excusing the spawn/gate.
+        if (RightmostName(inv.Expression) == OptInHelperName)
+            return true;
 
-    private static string RightmostName(ExpressionSyntax expr) => expr switch
+        // Otherwise only an inline Assert.Skip(...) alongside an env-var opt-in read in
+        // the same scope counts (the inline VR_RUN_NONO_INTEGRATION idiom). A bare
+        // platform skip (OperatingSystem.IsMacOS -> Assert.Skip) with no env read does
+        // not, because the spawn/gate still runs on the macOS verify host.
+        return hasEnvOptIn
+            && inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Skip" } ma
+            && RightmostName(ma.Expression) == "Assert";
+    }
+
+    /// <summary>
+    /// The rightmost identifier of an expression: a bare name as-is, or the trailing
+    /// member of a member access. Used to read a call's method name (bare or qualified)
+    /// and a receiver's last segment. Shared with the sandbox-safety guards.
+    /// </summary>
+    internal static string RightmostName(ExpressionSyntax expr) => expr switch
     {
         IdentifierNameSyntax id => id.Identifier.Text,
         MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
