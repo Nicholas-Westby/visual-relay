@@ -88,4 +88,53 @@ public sealed class RunningStageElapsedTests
         // Sibling non-running stages stay clean.
         Assert.Equal(string.Empty, viewModel.Stages.First(s => s.Number == 1).ElapsedLabel);
     }
+
+    /// <summary>
+    /// When a stage_start event is replayed (e.g. during task switch via
+    /// LoadRunHistoryAsync), ApplyStageEventToBoard must use the event's
+    /// original Timestamp — not DateTimeOffset.UtcNow — so the elapsed timer
+    /// reflects the real stage start time rather than resetting to ~0s on every
+    /// replay. This test fires a stage_start with a past timestamp through the
+    /// same HandleRelayEvent → ApplyStageEventToBoard path that task-switch
+    /// replay uses, then ticks the elapsed timer to verify the label preserves
+    /// the original elapsed.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ReplayedStageStart_PreservesOriginalTimestamp()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        // Simulate a stage_start event emitted 5 minutes ago.
+        var pastTimestamp = DateTimeOffset.UtcNow - TimeSpan.FromSeconds(300);
+        var stageStartEvent = new RelayEvent(
+            Timestamp: pastTimestamp,
+            Level: "info",
+            EventName: "stage_start",
+            RunId: "test-run",
+            RootPath: repo.Root,
+            TaskId: "alpha",
+            StageNumber: 1,
+            Tier: "cheap");
+
+        // Route through HandleRelayEvent (the same entry point used by live
+        // events and by LoadRunHistoryAsync replay).
+        var handleMethod = typeof(MainWindowViewModel)
+            .GetMethod("HandleRelayEvent",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        handleMethod.Invoke(viewModel, [stageStartEvent]);
+
+        // Tick the 1-second timer to refresh elapsed labels.
+        viewModel.UpdateRunningElapsedLabels();
+
+        var stage = viewModel.Stages.First(s => s.Number == 1);
+        // Bug: MarkRunning(DateTimeOffset.UtcNow) makes the elapsed ~0s ("0s").
+        // Fix: MarkRunning(relayEvent.Timestamp) preserves the ~5m elapsed.
+        Assert.NotEqual("0s", stage.ElapsedLabel);
+        Assert.Contains("m", stage.ElapsedLabel);
+        Assert.Contains(stage.ElapsedLabel, stage.StatusLabel);
+    }
 }

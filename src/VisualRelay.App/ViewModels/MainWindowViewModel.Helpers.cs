@@ -89,7 +89,7 @@ public partial class MainWindowViewModel
         {
             // Capture the stage start so the 1-second timer can tick its elapsed
             // label (MarkRunning sets Status = "Running" and the start time).
-            stage.MarkRunning(DateTimeOffset.UtcNow);
+            stage.MarkRunning(relayEvent.Timestamp);
         }
         else
         {
