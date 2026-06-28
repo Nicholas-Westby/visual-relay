@@ -157,6 +157,15 @@ public sealed class PackagingToolTests
     [Fact]
     public void BuildAppBundle_EndToEnd_ProducesValidBundle()
     {
+        // Opt-in: this spawns a real `dotnet run` that can wedge under the verify's
+        // nono sandbox; skipped by default so the sandboxed verify stays wedge-proof.
+        if (!string.Equals(
+                Environment.GetEnvironmentVariable("VR_RUN_NONO_INTEGRATION"),
+                "1", StringComparison.Ordinal))
+        {
+            Assert.Skip("VR_RUN_NONO_INTEGRATION=1 required: spawns a real dotnet run.");
+        }
+
         if (!OperatingSystem.IsMacOS())
         {
             Assert.Skip("macOS .app bundle assembly requires macOS.");
