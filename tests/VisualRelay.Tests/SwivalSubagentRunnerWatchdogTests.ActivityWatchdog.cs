@@ -238,10 +238,11 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     }
 
     /// <summary>
-    /// Integration: a flailing agent that emits stdout every 500 ms (keeping the
-    /// inactivity watchdog disarmed) but never produces trace entries or exits.
-    /// The absolute ceiling (3_000 ms) must fire and reap the agent despite its
-    /// apparent activity — no human kill needed.
+    /// Integration: a flailing agent that emits a burst of stdout (satisfying the
+    /// first-output watchdog) then blocks forever, producing no trace entries and
+    /// never exiting. The absolute ceiling (3_000 ms) must fire and reap it well
+    /// before the (10 min) inactivity window — no human kill needed. The block is a
+    /// sleep-free child (per the no-real-sleeps gate) instead of a real shell sleep.
     /// </summary>
     [Fact]
     public async Task RunAsync_FlailingAgent_FiresAbsoluteCeiling()
@@ -256,10 +257,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
               if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
             done
             mkdir -p "$trace_dir"
-            while true; do
-              echo "flailing..."
-              sleep 0.5
-            done
+            for _ in 1 2 3 4 5; do echo "flailing..."; done
+            exec tail -f /dev/null
             """);
         var config = TestConfig() with
         {

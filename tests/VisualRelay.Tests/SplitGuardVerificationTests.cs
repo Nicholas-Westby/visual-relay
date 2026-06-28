@@ -131,7 +131,10 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 152→154 on 2026-06-27: the no-real-sleeps rewrite converted the
         // SwivalSubagentRunnerWatchdogTests family's real-sleep integration tests to
         // pure DecideOutcome / ResolveTierWindows assertions (net +2 [Fact]s).
-        const int baseline = 154;
+        // Bumped 154→159 on 2026-06-28: realigned to the actual oversized-family
+        // [Fact] count, which had drifted +5 across intervening commits (the
+        // verify build-warm + flailing-watchdog work) without a matching baseline bump.
+        const int baseline = 159;
 
         string[] prefixes =
         [
