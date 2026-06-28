@@ -180,7 +180,7 @@ public partial class MainWindowViewModel
     }
 
     private bool CanAddAttachments() =>
-        SelectedTask is not null && !ShowArchive && !IsBusy;
+        SelectedTask is not null && !ShowArchive && !_runningTaskIds.Contains(SelectedTask.Id) && !_rewritingTaskIds.Contains(SelectedTask.Id);
 
     [RelayCommand]
     private async Task RemoveAttachmentAsync(string? filePath)

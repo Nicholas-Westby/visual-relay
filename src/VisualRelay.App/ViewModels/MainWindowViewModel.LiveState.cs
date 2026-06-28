@@ -279,6 +279,7 @@ public partial class MainWindowViewModel
         OnPropertyChanged(nameof(ViewingRunContextText));
         OnPropertyChanged(nameof(PauseNoticeText));
         FollowRunningTaskCommand.NotifyCanExecuteChanged();
+        AddAttachmentsCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>

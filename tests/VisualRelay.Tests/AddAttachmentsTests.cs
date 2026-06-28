@@ -1,3 +1,4 @@
+using System.Reflection;
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
 
@@ -7,22 +8,18 @@ namespace VisualRelay.Tests;
 public sealed class AddAttachmentsTests
 {
     /// <summary>
-    /// Headless UI/view-model regression test for the broken path:
-    /// the Add Attachments button in the TASK detail pane is permanently
-    /// disabled because [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
-    /// is missing on _selectedTask, _showArchive, and _isBusy.
-    ///
-    /// Selecting a task, toggling archive, and changing busy state should all
-    /// cause the command to re-evaluate CanExecute, but the button never
-    /// becomes clickable without those attributes.
+    /// Selecting a task enables AddAttachments, archive disables it, and the
+    /// running-task-ID-scoped check disables it only for the running/rewriting task
+    /// — not for unrelated tasks.
     /// </summary>
     [AvaloniaFact]
-    public async Task SelectTask_EnablesAddAttachments_ArchiveAndBusyDisableIt()
+    public async Task SelectTask_EnablesAddAttachments_ArchiveAndRunningTaskDisableIt()
     {
-        // ── Arrange: ViewModel with one task, no archive, not busy ──
+        // ── Arrange: ViewModel with two tasks, no archive ──
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
-        repo.WriteTask("existing", "# Existing\n");
+        repo.WriteTask("task-a", "# Task A\n");
+        repo.WriteTask("task-b", "# Task B\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
@@ -62,24 +59,54 @@ public sealed class AddAttachmentsTests
         Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null),
             "AddAttachments must be re-enabled when leaving archive view.");
 
-        // ── Set busy → disabled ──
-        viewModel.IsBusy = true;
+        // ── Begin running the SELECTED task → disabled ──
+        var beginRunning = GetBeginRunningTaskMethod();
+        var clearRunning = GetClearRunningTaskMethod();
+        var selectedTask = viewModel.SelectedTask!;
+        beginRunning.Invoke(viewModel, [selectedTask]);
+        selectedTask.MarkPlanning();
         Dispatcher.UIThread.RunJobs();
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null),
-            "AddAttachments must be disabled while busy.");
+            "AddAttachments must be disabled when the selected task is running.");
 
-        // ── Clear busy → enabled ──
-        viewModel.IsBusy = false;
+        // ── An UNRELATED task starts running → selected task still not
+        //     running, so AddAttachments stays enabled ──
+        var otherTask = viewModel.Tasks.First(t => t.Id == "task-b");
+        // First clear the selected task's run so it's isolated.
+        clearRunning.Invoke(viewModel, [selectedTask.Id]);
         Dispatcher.UIThread.RunJobs();
         Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null),
-            "AddAttachments must be re-enabled when no longer busy.");
+            "AddAttachments must be re-enabled when selected task stops running.");
+
+        // Now start the other task — this should NOT disable AddAttachments.
+        beginRunning.Invoke(viewModel, [otherTask]);
+        otherTask.MarkPlanning();
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null),
+            "AddAttachments must stay enabled while an unrelated task is running.");
+
+        // Clean up.
+        clearRunning.Invoke(viewModel, [otherTask.Id]);
+        Dispatcher.UIThread.RunJobs();
+
+        // ── Begin rewriting the SELECTED task → disabled ──
+        RewritingTaskIds(viewModel).Add(selectedTask.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null),
+            "AddAttachments must be disabled when the selected task is being rewritten.");
+
+        // ── Clear rewrite → enabled ──
+        RewritingTaskIds(viewModel).Remove(selectedTask.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null),
+            "AddAttachments must be re-enabled when rewrite completes.");
     }
 
     /// <summary>
     /// Verifies that CanExecuteChanged fires when SelectedTask, ShowArchive,
-    /// and IsBusy change — the root cause of the dead Add Attachments button.
-    /// Without [NotifyCanExecuteChangedFor] the event never fires, so the
-    /// Button never re-queries CanExecute.
+    /// running-task state, and rewrite state change — not IsBusy.
     /// </summary>
     [Fact]
     public async Task ChangingSelectedTask_NotifiesCanExecuteChanged()
@@ -87,93 +114,143 @@ public sealed class AddAttachmentsTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("one", "# One\n");
+        repo.WriteTask("two", "# Two\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
 
         var changedCount = 0;
         viewModel.AddAttachmentsCommand.CanExecuteChanged += (_, _) => changedCount++;
 
-        // ── Load — auto-selects the task.  Without
-        //      [NotifyCanExecuteChangedFor] on _selectedTask, _showArchive,
-        //      or _isBusy, the event should NOT fire during load. ──
+        // ── Load — auto-selects a task ──
         await viewModel.LoadInitialAsync();
         var afterLoad = changedCount;
 
-        // ── Clear selection — must fire (after fix) ──
+        // ── Clear selection — must fire ──
         viewModel.SelectedTask = null;
-        Assert.True(changedCount > afterLoad,
-            "CanExecuteChanged must fire when SelectedTask is cleared " +
-            "(missing [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]).");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > afterLoad);
 
         // ── Select a task — must fire again ──
         var afterClear = changedCount;
         viewModel.SelectedTask = viewModel.Tasks[0];
-        Assert.True(changedCount > afterClear,
-            "CanExecuteChanged must fire when SelectedTask changes.");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > afterClear);
 
         // ── Toggle ShowArchive — must fire ──
         var beforeArchive = changedCount;
         viewModel.ShowArchive = true;
-        Assert.True(changedCount > beforeArchive,
-            "CanExecuteChanged must fire when ShowArchive changes.");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeArchive);
 
         var beforeUnarchive = changedCount;
         viewModel.ShowArchive = false;
-        Assert.True(changedCount > beforeUnarchive,
-            "CanExecuteChanged must fire when ShowArchive returns to false.");
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeUnarchive);
 
-        // ── Toggle IsBusy — must fire ──
-        var beforeBusy = changedCount;
-        viewModel.IsBusy = true;
-        Assert.True(changedCount > beforeBusy,
-            "CanExecuteChanged must fire when IsBusy changes.");
+        // ── Begin running the selected task — must fire ──
+        var beginRunning = GetBeginRunningTaskMethod();
+        var clearRunning = GetClearRunningTaskMethod();
+        var beforeRun = changedCount;
+        beginRunning.Invoke(viewModel, [viewModel.SelectedTask!]);
+        viewModel.SelectedTask!.MarkPlanning();
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeRun);
 
-        var beforeUnbusy = changedCount;
-        viewModel.IsBusy = false;
-        Assert.True(changedCount > beforeUnbusy,
-            "CanExecuteChanged must fire when IsBusy returns to false.");
+        // ── Clear running — must fire ──
+        var beforeClear = changedCount;
+        clearRunning.Invoke(viewModel, [viewModel.SelectedTask!.Id]);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeClear);
+
+        // ── Begin rewrite — must fire ──
+        var beforeRewrite = changedCount;
+        RewritingTaskIds(viewModel).Add(viewModel.SelectedTask!.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeRewrite);
+
+        // ── Clear rewrite — must fire ──
+        var beforeRewriteClear = changedCount;
+        RewritingTaskIds(viewModel).Remove(viewModel.SelectedTask!.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(changedCount > beforeRewriteClear);
     }
 
     /// <summary>
-    /// No selection, archive mode, or busy state each independently gate
-    /// the command regardless of the other two preconditions.
+    /// No selection, archive mode, running-task state, or rewrite state each
+    /// independently gate the command regardless of the other preconditions.
     /// </summary>
     [Fact]
-    public async Task AddAttachments_GatedBySelection_Archive_AndBusy()
+    public async Task AddAttachments_GatedBySelection_Archive_AndRunningTaskId()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
+        repo.WriteTask("beta", "# Beta\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Clear the auto-selected task → disabled.
         viewModel.SelectedTask = null;
+        Dispatcher.UIThread.RunJobs();
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));
 
-        // Select a task → enabled (not archive, not busy).
-        viewModel.SelectedTask = viewModel.Tasks[0];
+        // Select a task → enabled (not archive, not running, not rewriting).
+        viewModel.SelectedTask = viewModel.Tasks.First(t => t.Id == "alpha");
+        Dispatcher.UIThread.RunJobs();
         Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null));
 
         // Archive mode → disabled even with a task selected.
         viewModel.ShowArchive = true;
+        Dispatcher.UIThread.RunJobs();
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));
 
         // Leave archive → enabled again.
         viewModel.ShowArchive = false;
+        Dispatcher.UIThread.RunJobs();
         Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null));
 
-        // Busy → disabled.
-        viewModel.IsBusy = true;
+        // ── Selected task running → disabled ──
+        var beginRunning = GetBeginRunningTaskMethod();
+        var clearRunning = GetClearRunningTaskMethod();
+        beginRunning.Invoke(viewModel, [viewModel.SelectedTask!]);
+        viewModel.SelectedTask!.MarkPlanning();
+        Dispatcher.UIThread.RunJobs();
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));
 
-        // Not busy → enabled again.
-        viewModel.IsBusy = false;
+        // ── Selected task stops running → enabled ──
+        clearRunning.Invoke(viewModel, [viewModel.SelectedTask.Id]);
+        Dispatcher.UIThread.RunJobs();
         Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null));
 
-        // Clear selection → disabled even though not archive and not busy.
+        // ── Unrelated task running → still enabled ──
+        var otherTask = viewModel.Tasks.First(t => t.Id == "beta");
+        beginRunning.Invoke(viewModel, [otherTask]);
+        otherTask.MarkPlanning();
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null),
+            "AddAttachments must stay enabled while an unrelated task runs.");
+
+        clearRunning.Invoke(viewModel, [otherTask.Id]);
+        Dispatcher.UIThread.RunJobs();
+
+        // ── Selected task rewriting → disabled ──
+        RewritingTaskIds(viewModel).Add(viewModel.SelectedTask.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));
+
+        // ── Rewrite done → enabled ──
+        RewritingTaskIds(viewModel).Remove(viewModel.SelectedTask.Id);
+        RaiseRewriteStateChanged(viewModel);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(viewModel.AddAttachmentsCommand.CanExecute(null));
+
+        // Clear selection → disabled even though not archive, not running, not rewriting.
         viewModel.SelectedTask = null;
+        Dispatcher.UIThread.RunJobs();
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));
     }
 
@@ -209,4 +286,15 @@ public sealed class AddAttachmentsTests
         Assert.NotNull(viewModel.SelectedTask);
         Assert.Equal("task", viewModel.SelectedTask.Id);
     }
+
+    // ── Reflection helpers for private members ──────────────────────────
+    private static MethodInfo GetBeginRunningTaskMethod() =>
+        typeof(MainWindowViewModel).GetMethod("BeginRunningTask", BindingFlags.NonPublic | BindingFlags.Instance)!;
+    private static MethodInfo GetClearRunningTaskMethod() =>
+        typeof(MainWindowViewModel).GetMethod("ClearRunningTask", BindingFlags.NonPublic | BindingFlags.Instance)!;
+    private static HashSet<string> RewritingTaskIds(MainWindowViewModel vm) =>
+        (HashSet<string>)typeof(MainWindowViewModel)
+            .GetField("_rewritingTaskIds", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(vm)!;
+    private static void RaiseRewriteStateChanged(MainWindowViewModel vm) =>
+        typeof(MainWindowViewModel).GetMethod("RaiseRewriteStateChanged", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(vm, null);
 }

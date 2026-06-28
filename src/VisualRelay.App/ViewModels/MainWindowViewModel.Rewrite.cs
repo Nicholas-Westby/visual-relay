@@ -275,5 +275,6 @@ public partial class MainWindowViewModel
         ResumeSelectedCommand.NotifyCanExecuteChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
+        AddAttachmentsCommand.NotifyCanExecuteChanged();
     }
 }
