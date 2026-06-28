@@ -112,4 +112,48 @@ public sealed class QueueRowElapsedOverallTests
             Assert.Equal("0s", row.RunningElapsedLabel);
         }
     }
+
+    /// <summary>
+    /// Cross-drain regression: a task LEFT PLANNED when a drain pauses must not carry
+    /// its planning-start anchor into the resume drain. The post-drain cleanup
+    /// (DropStaleRunAnchorsAfterDrain) drops the stale anchor so the resume's execute
+    /// start re-anchors — the queue-row elapsed reflects the RESUME, not the original
+    /// planning inflated by the pause gap.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task DrainEnd_DropsStalePlannedAnchor_SoResumeReanchorsAtExecuteStart()
+    {
+        var (viewModel, repo) = await LoadTaskAsync("gamma");
+        using (repo)
+        {
+            var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
+            Assert.NotNull(lifecycle.OnPlanningStarted);
+            Assert.NotNull(lifecycle.OnPlanningCompleted);
+            Assert.NotNull(lifecycle.OnExecuteStarted);
+
+            // Drain 1: gamma plans, then is LEFT PLANNED (drain pauses before executing
+            // it). OnPlanningStarted seeds the anchor; OnPlanningCompleted (non-flagged)
+            // marks it Planned and KEEPS the anchor.
+            lifecycle.OnPlanningStarted.Invoke("gamma");
+            lifecycle.OnPlanningCompleted.Invoke("gamma", RelayTaskOutcomeStatus.Planned);
+            Dispatcher.UIThread.RunJobs();
+
+            // Simulate the pause gap: backdate the retained planning anchor 10 minutes.
+            viewModel.SetRunStartedAt("gamma", DateTimeOffset.UtcNow - TimeSpan.FromMinutes(10));
+
+            // Drain 1 ends (paused) → post-drain cleanup drops the stale anchor.
+            viewModel.DropStaleRunAnchorsAfterDrain();
+
+            // Drain 2 (resume): planning is skipped (1–4 Done) so OnPlanningStarted
+            // never fires; execute starts directly and re-anchors via TryAdd.
+            lifecycle.OnExecuteStarted.Invoke("gamma");
+            Dispatcher.UIThread.RunJobs();
+
+            viewModel.UpdateRunningElapsedLabels();
+
+            var row = viewModel.Tasks.First(t => t.Id == "gamma");
+            // The anchor reflects the RESUME (~0s), not the 10-min-old planning start.
+            Assert.Equal("0s", row.RunningElapsedLabel);
+        }
+    }
 }

@@ -134,6 +134,7 @@ public partial class MainWindowViewModel
                         ? $"Queue drained · {plannedCount} planned"
                         : "Queue drained";
 
+            DropStaleRunAnchorsAfterDrain(); // drop anchors for tasks left Planned (resume re-anchors)
             await RefreshTasksAfterDrainAsync();
         });
     }
