@@ -16,7 +16,7 @@ public sealed class NonoRealBuildTests
     public async Task RealBuild_DotNet_RestoreBuildTest_InSandbox()
     {
         SkipIfNotOptedIn();
-        if (!ToolAvailable("dotnet")) Assert.Skip("dotnet is not on PATH");
+        if (!NonoIntegration.ToolAvailable("dotnet")) Assert.Skip("dotnet is not on PATH");
 
         using var repo = CreateScratchRepo("dotnet-sandbox-test");
         await CreateMinimalDotNetProjectAsync(repo);
@@ -34,7 +34,7 @@ public sealed class NonoRealBuildTests
     public async Task RealBuild_Swift_BuildTest_InSandbox()
     {
         SkipIfNotOptedIn();
-        if (!ToolAvailable("swift")) Assert.Skip("swift is not on PATH");
+        if (!NonoIntegration.ToolAvailable("swift")) Assert.Skip("swift is not on PATH");
 
         using var repo = CreateScratchRepo("swift-sandbox-test");
         await CreateMinimalSwiftProjectAsync(repo);
@@ -51,7 +51,7 @@ public sealed class NonoRealBuildTests
     public async Task RealBuild_Node_NpmInstallTest_InSandbox()
     {
         SkipIfNotOptedIn();
-        if (!ToolAvailable("node") || !ToolAvailable("npm"))
+        if (!NonoIntegration.ToolAvailable("node") || !NonoIntegration.ToolAvailable("npm"))
             Assert.Skip("node/npm is not on PATH");
 
         using var repo = CreateScratchRepo("node-sandbox-test");
@@ -87,28 +87,15 @@ public sealed class NonoRealBuildTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
+    // The env opt-in (shared with the other sandbox-incompatible self-tests via
+    // NonoIntegration) PLUS the nono-on-PATH requirement specific to these real
+    // in-sandbox builds. Kept a bare-named helper so the build-subprocess guard's
+    // literal scan recognises the `SkipIfNotOptedIn()` opt-out at each call site.
     private static void SkipIfNotOptedIn()
     {
-        if (!string.Equals(
-                Environment.GetEnvironmentVariable("VR_RUN_NONO_INTEGRATION"),
-                "1", StringComparison.Ordinal))
-        {
-            Assert.Skip("VR_RUN_NONO_INTEGRATION=1 required for real in-sandbox builds.");
-        }
-        if (!ToolAvailable("nono"))
+        NonoIntegration.SkipIfNotOptedIn("VR_RUN_NONO_INTEGRATION=1 required for real in-sandbox builds.");
+        if (!NonoIntegration.ToolAvailable("nono"))
             Assert.Skip("nono is not on PATH.");
-    }
-
-    private static bool ToolAvailable(string name) =>
-        !string.IsNullOrEmpty(FindOnPath(name));
-
-    private static string? FindOnPath(string name)
-    {
-        var pathEnv = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        var sep = OperatingSystem.IsWindows() ? ';' : ':';
-        return pathEnv.Split(sep)
-            .Select(dir => Path.Combine(dir.Trim(), name))
-            .FirstOrDefault(File.Exists);
     }
 
     private static ScratchRepo CreateScratchRepo(string name)

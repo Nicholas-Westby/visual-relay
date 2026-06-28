@@ -160,55 +160,25 @@ public static class RealBuildSubprocessGuard
         return (NormalizeTool(programToken.Value), verb, programToken.Value);
     }
 
-    /// <summary>True for a method/local-function/lambda-local timeout or skip gate around the spawn.</summary>
+    /// <summary>
+    /// True for a method/local-function/lambda-local timeout OR skip gate around the
+    /// spawn. The timeout carve-out (<c>WaitForExit(&lt;n&gt;)</c> / <c>CancelAfter(…)</c>)
+    /// is build-subprocess-specific; the skip carve-out (the env-gated
+    /// <c>VR_RUN_NONO_INTEGRATION</c> opt-in) is shared with the gate-as-test guard
+    /// via <see cref="SandboxSkipScan"/>.
+    /// </summary>
     private static bool IsBounded(SyntaxNode spawn)
     {
-        var scope = spawn.FirstAncestorOrSelf<SyntaxNode>(n =>
-            n is BaseMethodDeclarationSyntax or LocalFunctionStatementSyntax
-              or AccessorDeclarationSyntax or AnonymousFunctionExpressionSyntax)
-            ?? spawn.SyntaxTree.GetRoot();
+        var scope = SandboxSkipScan.EnclosingScope(spawn);
 
-        var invocations = scope.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();
-        // An Assert.Skip only counts as a sandbox opt-out when the same scope reads an
-        // environment variable to decide it (the VR_RUN_NONO_INTEGRATION idiom). An
-        // unrelated platform skip (OperatingSystem.IsMacOS) must NOT excuse the spawn,
-        // because it still runs the build child on the (macOS) verify host.
-        var hasEnvOptIn = invocations.Any(IsEnvironmentRead);
+        // Timeout: WaitForExit(<arg>) or any CancelAfter(...) in the same scope.
+        var hasTimeout = scope.DescendantNodes().OfType<InvocationExpressionSyntax>().Any(inv =>
+            inv.Expression is MemberAccessExpressionSyntax tma
+            && (tma.Name.Identifier.Text == "CancelAfter"
+                || (tma.Name.Identifier.Text == "WaitForExit" && inv.ArgumentList.Arguments.Count >= 1)));
 
-        foreach (var inv in invocations)
-        {
-            // Timeout: WaitForExit(<arg>) or any CancelAfter(...).
-            if (inv.Expression is MemberAccessExpressionSyntax tma)
-            {
-                var n = tma.Name.Identifier.Text;
-                if (n == "CancelAfter")
-                    return true;
-                if (n == "WaitForExit" && inv.ArgumentList.Arguments.Count >= 1)
-                    return true;
-            }
-
-            if (IsSkipGate(inv, hasEnvOptIn))
-                return true;
-        }
-
-        return false;
+        return hasTimeout || SandboxSkipScan.HasOptInSkip(scope);
     }
-
-    private static bool IsEnvironmentRead(InvocationExpressionSyntax inv) =>
-        inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "GetEnvironmentVariable" };
-
-    private static bool IsSkipGate(InvocationExpressionSyntax inv, bool hasEnvOptIn) => inv.Expression switch
-    {
-        // Bare helper whose name starts with "Skip" — e.g. SkipIfNotOptedIn(); by
-        // convention these wrap the env-var opt-in. (LINQ's Skip is `collection.Skip`,
-        // a member access, so it is excluded.)
-        IdentifierNameSyntax id => id.Identifier.Text.StartsWith("Skip", StringComparison.Ordinal),
-        // Assert.Skip(...) counts only alongside an env-var opt-in in the same scope.
-        MemberAccessExpressionSyntax ma => hasEnvOptIn
-            && ma.Name.Identifier.Text == "Skip"
-            && RightmostName(ma.Expression) == "Assert",
-        _ => false,
-    };
 
     private static bool IsProcessStart(InvocationExpressionSyntax inv) =>
         inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: "Start" } ma

@@ -124,15 +124,8 @@ public sealed class CommandGuardEnsurerTests
     // default sandboxed verify stays wedge-proof; the product still bounds the
     // publish with a 45 s fail-open timeout, and the no-publish fast paths keep
     // their default coverage.
-    private static void SkipIfNotOptedIn()
-    {
-        if (!string.Equals(
-                Environment.GetEnvironmentVariable("VR_RUN_NONO_INTEGRATION"),
-                "1", StringComparison.Ordinal))
-        {
-            Assert.Skip("VR_RUN_NONO_INTEGRATION=1 required: runs a real dotnet publish.");
-        }
-    }
+    private static void SkipIfNotOptedIn() =>
+        NonoIntegration.SkipIfNotOptedIn("VR_RUN_NONO_INTEGRATION=1 required: runs a real dotnet publish.");
 
     // ── TempDir helper ──────────────────────────────────────────────
 
