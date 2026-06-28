@@ -9,21 +9,46 @@ public sealed partial class RelayDriver
     /// <c>git diff HEAD --name-status --no-renames -z</c> and keeps status <c>D</c>:
     /// this is the ONLY form that reveals a STAGED deletion — <c>git ls-files --deleted</c>
     /// and an unstaged <c>git diff</c> both miss it because the index no longer lists the
-    /// path. <c>--no-renames</c> makes a rename surface as delete(old)+add(new), so the
-    /// old path is removed here and the new one is copied by the add/modify overlay.
-    /// NUL-safe; keys purely on git status (no VR/toolchain specifics).
+    /// path. <c>--no-renames</c> makes a rename (including a STAGED <c>git mv</c>) surface
+    /// as delete(old)+add(new): the old path is removed here and the new one is copied by
+    /// the add/modify overlay, which now enumerates <c>git diff HEAD</c> and so sees the
+    /// staged add. NUL-safe; keys purely on git status (no VR/toolchain specifics).
     /// </summary>
     private async Task<IReadOnlyList<string>> EnumerateDeletedTrackedAsync(string rootPath, CancellationToken cancellationToken)
     {
-        var deleted = new List<string>();
         var diff = await _dependencies.GitInvoker.RunAsync(
             rootPath, new[] { "diff", "HEAD", "--name-status", "--no-renames", "-z" }, cancellationToken);
-        // `-z --name-status` (renames off) is a flat <status>\0<path>\0… stream: every
-        // record is exactly one status token followed by its path. Walk it in pairs.
-        var tokens = SplitNul(diff.Output).ToList();
-        for (var i = 0; i + 1 < tokens.Count; i += 2)
-            if (tokens[i] == "D")
+        return ParseDeletedTrackedPaths(diff.Output);
+    }
+
+    /// <summary>
+    /// Extracts status-<c>D</c> (deleted) paths from a <c>git diff --name-status -z</c>
+    /// stream. With <c>--no-renames</c> (which the caller keeps) every record is a flat
+    /// <c>&lt;status&gt;\0&lt;path&gt;\0</c> pair. DEFENSIVE: if <c>--no-renames</c> is ever
+    /// dropped, a rename/copy surfaces as a 3-token <c>R&lt;score&gt;\0src\0dst\0</c> record;
+    /// this consumes BOTH of its paths so the walk stays ALIGNED (a naive pairwise walk
+    /// would shift every later status onto a path and could remove the WRONG file or miss
+    /// a real deletion). A rename src is deliberately NOT reported as a deletion (fail
+    /// safe — under-remove, never over-remove; the dst is carried by the add/modify
+    /// overlay). Only a single-char <c>D</c> is a deletion. Pure + NUL-safe; keys purely
+    /// on git status (no VR/toolchain specifics).
+    /// </summary>
+    internal static IReadOnlyList<string> ParseDeletedTrackedPaths(string? nameStatusZ)
+    {
+        var deleted = new List<string>();
+        var tokens = SplitNul(nameStatusZ).ToList();
+        for (var i = 0; i < tokens.Count;)
+        {
+            var status = tokens[i];
+            // Rename/copy records (R<score>/C<score>) carry TWO paths; all others carry ONE.
+            var isRenameOrCopy = status.Length > 0 && (status[0] == 'R' || status[0] == 'C');
+            var pathsInRecord = isRenameOrCopy ? 2 : 1;
+            if (i + pathsInRecord >= tokens.Count)
+                break; // truncated / unexpected tail — stop safely
+            if (status == "D")
                 deleted.Add(tokens[i + 1]);
+            i += 1 + pathsInRecord;
+        }
         return deleted;
     }
 
@@ -43,7 +68,7 @@ public sealed partial class RelayDriver
             var dst = Path.Combine(worktreeRoot, relative);
             if (File.Exists(dst))
             {
-                File.Delete(dst); // a file (or a file symlink) — removes the entry only
+                File.Delete(dst); // a file (or a file/dangling symlink on Unix) — entry only
             }
             else if (Directory.Exists(dst))
             {
@@ -51,6 +76,21 @@ public sealed partial class RelayDriver
                 // point (never recurse into a link target); recurse a real directory.
                 var isLink = File.GetAttributes(dst).HasFlag(FileAttributes.ReparsePoint);
                 Directory.Delete(dst, recursive: !isLink);
+            }
+            else if (TryGetLinkAttributes(dst, out var attributes) &&
+                     attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                // A DANGLING tracked symlink (target absent): on Windows File.Exists AND
+                // Directory.Exists are BOTH false for a broken link, so neither branch
+                // above fires and the resurrected link would survive. GetAttributes still
+                // resolves the link's OWN attributes (it does not follow the missing
+                // target), so unlink it here WITHOUT touching the target — a directory
+                // reparse point non-recursively (recursive would delete the link target's
+                // contents), a file/broken link via File.Delete.
+                if (attributes.HasFlag(FileAttributes.Directory))
+                    Directory.Delete(dst, recursive: false);
+                else
+                    File.Delete(dst);
             }
 
             // Prune now-empty parent dirs, never escaping or deleting the worktree root.
@@ -71,6 +111,27 @@ public sealed partial class RelayDriver
         catch
         {
             // Best-effort: never abort worktree creation on a delete/prune IO error.
+        }
+    }
+
+    /// <summary>
+    /// Reads an entry's OWN attributes WITHOUT following a symlink target: succeeds for a
+    /// DANGLING link (GetAttributes does not follow the missing target) and returns
+    /// <c>false</c> only when the entry is genuinely absent (GetAttributes throws). Lets
+    /// the caller detect a broken reparse point that <see cref="File.Exists(string)"/> and
+    /// <see cref="Directory.Exists(string)"/> both miss on Windows.
+    /// </summary>
+    private static bool TryGetLinkAttributes(string path, out FileAttributes attributes)
+    {
+        try
+        {
+            attributes = File.GetAttributes(path);
+            return true;
+        }
+        catch
+        {
+            attributes = default;
+            return false;
         }
     }
 }

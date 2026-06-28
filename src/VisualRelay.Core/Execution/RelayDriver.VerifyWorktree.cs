@@ -86,10 +86,10 @@ public sealed partial class RelayDriver
         var worktreePath = await PlanningWorktree.CreateAsync(
             sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker);
 
-        // (1) ADD / MODIFY — copy every tracked-modified and untracked-not-ignored file
-        // across so the snapshot mirrors the agent's working tree. A path that `git diff`
-        // reports but that no longer exists on disk is a DELETION: it is skipped here
-        // (this loop only writes content that exists) and applied by step (2) below.
+        // (1) ADD / MODIFY — copy every path DIFFERING from HEAD (staged + unstaged) and
+        // every untracked-not-ignored file across, mirroring the agent's working tree. A
+        // path `git diff` reports but that is gone from disk is a DELETION: skipped here
+        // (this loop only writes existing content) and applied by step (2) below.
         foreach (var relative in await EnumerateUncommittedAsync(sourcePath, cancellationToken))
         {
             var src = Path.Combine(sourcePath, relative);
@@ -205,11 +205,14 @@ public sealed partial class RelayDriver
             "DerivedData",                                                 // Xcode
         };
 
-    /// <summary>Tracked-modified + untracked-not-ignored repo-relative paths (NUL-safe).</summary>
+    /// <summary>Paths to overlay onto the HEAD checkout: everything DIFFERING from HEAD
+    /// (<c>git diff HEAD</c> = STAGED + unstaged; plain <c>git diff</c> misses staged
+    /// edits and a staged <c>git mv</c>'s new path) plus untracked-not-ignored, NUL-safe.
+    /// </summary>
     private async Task<IReadOnlyList<string>> EnumerateUncommittedAsync(string rootPath, CancellationToken cancellationToken)
     {
         var set = new HashSet<string>(StringComparer.Ordinal);
-        var diff = await _dependencies.GitInvoker.RunAsync(rootPath, new[] { "diff", "--name-only", "-z" }, cancellationToken);
+        var diff = await _dependencies.GitInvoker.RunAsync(rootPath, new[] { "diff", "HEAD", "--name-only", "-z" }, cancellationToken);
         foreach (var p in SplitNul(diff.Output)) set.Add(p);
         var untracked = await _dependencies.GitInvoker.RunAsync(rootPath, new[] { "ls-files", "--others", "--exclude-standard", "-z" }, cancellationToken);
         foreach (var p in SplitNul(untracked.Output)) set.Add(p);
