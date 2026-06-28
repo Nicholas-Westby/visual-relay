@@ -172,4 +172,112 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             $"Fired too late: {sw.ElapsedMilliseconds}ms (expected ~{inactivityTimeoutMs}ms)");
         Assert.True(kill.IsCancellationRequested);
     }
+
+    /// <summary>
+    /// Absolute ceiling fires even when the agent is pulsing frequently
+    /// (low silenceMs keeps the inactivity watchdog disarmed).  The ceiling
+    /// is a hard wall-clock backstop, not a progress heuristic.
+    /// </summary>
+    [Fact]
+    public void DecideOutcome_FiresAbsoluteCeiling_WhenElapsedExceedsCeiling()
+    {
+        // Elapsed meets the 5 s ceiling; silence is only 500 ms (active pulses).
+        Assert.Equal(
+            ActivityWatchdog.Outcome.FiredAbsoluteCeiling,
+            Decide(elapsedMs: 5_000, silenceMs: 500, firstPulseReceived: true,
+                inactivityTimeoutMs: 600_000, absoluteCeilingMs: 5_000));
+    }
+
+    /// <summary>
+    /// When both the absolute ceiling AND a stall condition (silence ≥ inactivity
+    /// window) are met simultaneously, the ceiling takes priority — the outcome
+    /// must be FiredAbsoluteCeiling, not FiredStall.
+    /// </summary>
+    [Fact]
+    public void DecideOutcome_CeilingWinsOverStall()
+    {
+        // Both ceiling (elapsed ≥ 5s) and stall (silence ≥ 3s inactivity window)
+        // are met.  Ceiling must win.
+        Assert.Equal(
+            ActivityWatchdog.Outcome.FiredAbsoluteCeiling,
+            Decide(elapsedMs: 5_000, silenceMs: 5_000, firstPulseReceived: true,
+                inactivityTimeoutMs: 3_000, absoluteCeilingMs: 5_000));
+    }
+
+    /// <summary>
+    /// Under the absolute ceiling, the ceiling does NOT fire — only the
+    /// inactivity/stall path can fire.  This validates no false-positive from
+    /// the ceiling on a slow-but-legitimate stage (e.g. a long tool call).
+    /// </summary>
+    [Fact]
+    public void DecideOutcome_DoesNotFireCeiling_WhenUnderCeiling()
+    {
+        // Elapsed 4 s is under the 10 s ceiling; silence 5 s exceeds the 3 s
+        // inactivity window → FiredStall, NOT the ceiling.
+        Assert.Equal(
+            ActivityWatchdog.Outcome.FiredStall,
+            Decide(elapsedMs: 4_000, silenceMs: 5_000, firstPulseReceived: true,
+                inactivityTimeoutMs: 3_000, absoluteCeilingMs: 10_000));
+    }
+
+    /// <summary>
+    /// When absoluteCeilingMs is 0 (disabled), the ceiling path is inert even
+    /// at extreme elapsed durations — only the stall path can fire.  This
+    /// documents the pre-fix behavior: a flailing-but-active agent would run
+    /// unbounded.
+    /// </summary>
+    [Fact]
+    public void DecideOutcome_CeilingDisabled_DoesNotFire()
+    {
+        // Ceiling is 0 (disabled).  Elapsed 100 s is huge, but the ceiling
+        // short-circuit (absoluteCeilingMs > 0) is false, so only stall fires.
+        Assert.Equal(
+            ActivityWatchdog.Outcome.FiredStall,
+            Decide(elapsedMs: 100_000, silenceMs: 10_000, firstPulseReceived: true,
+                inactivityTimeoutMs: 5_000, absoluteCeilingMs: 0));
+    }
+
+    /// <summary>
+    /// Integration: a flailing agent that emits stdout every 500 ms (keeping the
+    /// inactivity watchdog disarmed) but never produces trace entries or exits.
+    /// The absolute ceiling (3_000 ms) must fire and reap the agent despite its
+    /// apparent activity — no human kill needed.
+    /// </summary>
+    [Fact]
+    public async Task RunAsync_FlailingAgent_FiresAbsoluteCeiling()
+    {
+        using var repo = TestRepository.Create();
+        var script = await SwivalTestHelpers.WriteExecutableAsync(
+            repo.Root,
+            "fake-swival-flailing",
+            """
+            #!/usr/bin/env bash
+            while [[ $# -gt 0 ]]; do
+              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
+            done
+            mkdir -p "$trace_dir"
+            while true; do
+              echo "flailing..."
+              sleep 0.5
+            done
+            """);
+        var config = TestConfig() with
+        {
+            SubagentTimeoutMilliseconds = 3_000,
+            MaxStallRetries = 0,
+            InactivityTimeoutMs = 600_000  // large — only the ceiling should fire
+        };
+        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
+        sw.Stop();
+
+        Assert.False(result.IsValid);
+        Assert.Contains("timed out", result.Error, StringComparison.Ordinal);
+        Assert.Contains("absolute ceiling", result.Error, StringComparison.Ordinal);
+        Assert.True(sw.ElapsedMilliseconds < 10_000,
+            $"Expected ceiling kill at ~3 s, took {sw.ElapsedMilliseconds} ms");
+    }
 }

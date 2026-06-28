@@ -24,7 +24,7 @@ public static class RelayConfigLoader
             MaxTurns: 200,
             BaselineVerify: true,
             ArchiveOnDone: true,
-            SubagentTimeoutMilliseconds: 0,
+            SubagentTimeoutMilliseconds: 12_000_000,
             TestTimeoutMilliseconds: 300_000,
             BuildTimeoutMilliseconds: 1_800_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>

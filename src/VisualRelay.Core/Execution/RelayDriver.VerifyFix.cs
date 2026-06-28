@@ -216,6 +216,9 @@ public sealed partial class RelayDriver
         var turns = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true
             ? config.MaxTurns * TurnBoostMultiplier
             : config.MaxTurns;
+        var ceilingMs = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true
+            ? config.SubagentTimeoutMilliseconds * TurnBoostMultiplier
+            : config.SubagentTimeoutMilliseconds;
         var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
         return new StageInvocation(
             stage,
@@ -233,7 +236,8 @@ public sealed partial class RelayDriver
             LastTestOutput: lastTestOutput,
             TaskContext: input.Context,
             TestCommand: testCommand,
-            PinnedSwivalProfileContent: pinnedSwivalProfileContent);
+            PinnedSwivalProfileContent: pinnedSwivalProfileContent,
+            AbsoluteCeilingMs: ceilingMs);
     }
     /// <summary>
     /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.

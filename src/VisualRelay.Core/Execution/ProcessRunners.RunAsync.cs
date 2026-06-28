@@ -38,7 +38,9 @@ public sealed partial class SwivalSubagentRunner
         }
 
         // SubagentTimeoutMilliseconds is now an optional absolute ceiling (0 = disabled).
-        var absoluteCeilingMs = _config.SubagentTimeoutMilliseconds;
+        var absoluteCeilingMs = invocation.AbsoluteCeilingMs > 0
+            ? invocation.AbsoluteCeilingMs
+            : _config.SubagentTimeoutMilliseconds;
 
         // Parse trace-dir name so retries follow stage{n}-attempt{k}.
         var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;

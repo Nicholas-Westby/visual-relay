@@ -16,4 +16,5 @@ public sealed record StageInvocation(
     string? LastTestOutput = null,
     string? TaskContext = null,
     string? TestCommand = null,
-    string? PinnedSwivalProfileContent = null);
+    string? PinnedSwivalProfileContent = null,
+    int AbsoluteCeilingMs = 0);

@@ -103,7 +103,8 @@ public static class TaskRewriteRunner
                 LogSources: [],
                 TraceDirectory: traceDir,
                 ReportFile: reportFile,
-                MaxTurns: config.MaxTurns);
+                MaxTurns: config.MaxTurns,
+                AbsoluteCeilingMs: config.SubagentTimeoutMilliseconds);
 
             SubagentResult result;
             try

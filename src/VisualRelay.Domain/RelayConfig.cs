@@ -11,9 +11,9 @@ public sealed record RelayConfig(
     int MaxTurns,
     bool BaselineVerify,
     bool ArchiveOnDone,
-    // Optional absolute wall-clock ceiling per stage invocation (ms).
-    // 0 = disabled (inactivity deadline + maxTurns cover failure modes).
-    // When > 0, a stage is killed after this many ms regardless of activity.
+    // Hard absolute wall-clock ceiling per stage invocation (ms).
+    // Default is 12_000_000 (200 turns × 60 s).  Scaled by 10× for
+    // tasks in BoostTurnsTaskIds.  Set to 0 to disable (not recommended).
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
     // Per-tier first-output watchdog (ms). A swival invocation that emits zero
