@@ -1,4 +1,3 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
@@ -9,9 +8,8 @@ namespace VisualRelay.Tests;
 ///   • B — the read-only Verify stage (9) is NOT handed an imperative full-suite
 ///     command (that re-tempted the double-run the stage exists to avoid); it gets
 ///     the captured output only.
-///   • D — the Fix-verify stage (10) agent command REBUILDS before testing when a
-///     separate buildCmd is configured, so its self-check compiles its edits instead
-///     of self-verifying against stale `--no-build` artifacts (a false green).
+///   • D — the Fix-verify stage (10) agent is handed the PLAIN test command (which
+///     builds AND tests in one pass); single-phase verify never prepends a buildCmd.
 ///   • G — the `## Verify output` section keeps the TAIL (Passed!/Failed: summary),
 ///     not the head (sandbox/restore/build banner).
 /// </summary>
@@ -66,56 +64,33 @@ public sealed class VerifyAgentCommandTests
         Assert.Contains("## Verify output", prompt, StringComparison.Ordinal);
     }
 
-    // ── D: Fix-verify (stage 10) agent command rebuilds ─────────────────
+    // ── D: Fix-verify (stage 10) agent gets the plain test command ──────
 
     [Fact]
-    public void AgentFixVerifyCommand_WithBuildCommand_PrependsBuild()
-    {
-        var config = RelayConfigLoader.Defaults("dotnet test --no-build") with { BuildCommand = "dotnet build" };
-
-        Assert.Equal("dotnet build && dotnet test --no-build", RelayDriver.AgentFixVerifyCommand(config));
-    }
-
-    [Fact]
-    public void AgentFixVerifyCommand_NoBuildCommand_IsTestCommandUnchanged()
-    {
-        var config = RelayConfigLoader.Defaults("dotnet test");
-
-        Assert.Equal("dotnet test", RelayDriver.AgentFixVerifyCommand(config));
-    }
-
-    [Fact]
-    public async Task Stage10_FixVerify_AgentCommandIncludesBuild_WhenBuildCmdSet()
+    public async Task Stage10_FixVerify_AgentReceivesPlainTestCommand()
     {
         using var repo = TestRepository.Create();
-        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
-        await File.WriteAllTextAsync(
-            Path.Combine(repo.Root, ".relay", "config.json"),
-            """
-            {
-              "testCmd": "dotnet test --no-build",
-              "logSources": [],
-              "baselineVerify": false,
-              "maxVerifyLoops": 2,
-              "buildCmd": "dotnet build -m:1"
-            }
-            """);
-        repo.WriteTask("fixverify-build", "# Fix-verify rebuilds\n");
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteTask("fixverify-plain", "# Fix-verify uses the plain test command\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
-        // Build calls are transparent (always succeed); test calls are red for the
-        // stage-5 gate + stage-9 run/retry (3), then green at fix-verify attempt 1.
-        var tests = new BuildTransparentTestRunner(buildSentinel: "dotnet build", redTestCalls: 3);
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),            // stage 5 author gate
+            new TestRunResult(1, "Failed TestX"),    // stage 9 verify run
+            new TestRunResult(1, "Failed TestX"),    // stage 9 verify retry
+            new TestRunResult(1, "Failed TestX"),    // fix-verify attempt 1 gate
+            new TestRunResult(0, "green"));          // fix-verify attempt 1 retry → green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "fixverify-build");
+        var outcome = await driver.RunTaskAsync(repo.Root, "fixverify-plain");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var inv10 = runner.Invocations.Single(i => i.Stage.Number == 10);
-        // The agent-facing self-verify command rebuilds before testing.
-        Assert.Equal("dotnet build -m:1 && dotnet test --no-build", inv10.TestCommand);
+        // Single-phase verify: the fix-verify agent is handed the plain test command
+        // (which builds AND tests in one pass), never a prepended buildCmd && testCmd.
+        Assert.Equal("dotnet test", inv10.TestCommand);
     }
 
     // ── G: verify output keeps the tail, not the head ───────────────────
@@ -134,25 +109,5 @@ public sealed class VerifyAgentCommandTests
         // The head banner (>600 chars before the tail) is dropped, so the agent is
         // not fed only restore/build noise.
         Assert.DoesNotContain("HEAD_NOISE_BANNER", prompt, StringComparison.Ordinal);
-    }
-}
-
-/// <summary>
-/// Test runner where BUILD calls (command contains <paramref name="buildSentinel"/>)
-/// are transparent successes that don't consume the red/green script, and TEST calls
-/// are red for the first <paramref name="redTestCalls"/> invocations then green.
-/// </summary>
-internal sealed class BuildTransparentTestRunner(string buildSentinel, int redTestCalls) : ITestRunner
-{
-    private int _testCalls;
-
-    public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
-    {
-        if (command.Contains(buildSentinel, StringComparison.Ordinal))
-            return Task.FromResult(new TestRunResult(0, "built"));
-        _testCalls++;
-        return Task.FromResult(_testCalls <= redTestCalls
-            ? new TestRunResult(1, "Failed TestX")
-            : new TestRunResult(0, "green"));
     }
 }

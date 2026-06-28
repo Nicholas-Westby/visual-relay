@@ -26,7 +26,6 @@ public static class RelayConfigLoader
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 12_000_000,
             TestTimeoutMilliseconds: 300_000,
-            BuildTimeoutMilliseconds: 1_800_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             {
                 ["cheap"] = 90_000,
@@ -210,7 +209,6 @@ public static class RelayConfigLoader
                 ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
                 SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds),
                 TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds),
-                BuildTimeoutMilliseconds = OptionalInt(root, "buildTimeoutMs", defaults.BuildTimeoutMilliseconds),
                 FirstOutputTimeoutMsByTier = firstOutputTiers,
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
@@ -224,7 +222,6 @@ public static class RelayConfigLoader
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
-                BuildCommand = OptionalStringOrNull(root, "buildCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),

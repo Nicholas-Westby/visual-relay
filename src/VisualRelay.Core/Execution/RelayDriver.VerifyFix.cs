@@ -53,7 +53,7 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: AgentFixVerifyCommand(config),
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
                 pinnedSwivalProfileContent: pinnedSwivalProfileContent);
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);

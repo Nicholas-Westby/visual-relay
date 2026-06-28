@@ -28,14 +28,6 @@ public sealed record RelayConfig(
     int FirstOutputTimeoutMs,
     // Maximum retries after a first-output stall kill before giving up.
     int MaxStallRetries,
-    // Wall-clock hard cap (ms) for the optional build phase that runs BEFORE the
-    // timed test command in the same nono sandbox. Threaded into the build run so the
-    // cold build honors THIS (generous) budget instead of the shorter testTimeoutMs —
-    // the timed test budget then covers only the suite. The idle-reap watchdog still
-    // applies (reaping a finished build whose nono wrapper lingers), but builds are
-    // CPU-active so a working build is never false-reaped. 0 = no wall-clock cap (the
-    // default 30 min covers any realistic cold rebuild).
-    int BuildTimeoutMilliseconds = 1_800_000,
     // Maximum corrective retries when a stage completes (exit 0) but the output
     // lacks a parseable fenced JSON contract block (or the block has wrong shape).
     // 0 preserves today's fail-fast; defaults to 1.
@@ -66,12 +58,6 @@ public sealed record RelayConfig(
     // upstream repo is correctly formatted), the formatted output lands in the
     // manifest and is automatically included in the commit.
     string? FormatCommand = null,
-    // Optional build command that runs in the verify worktree BEFORE the
-    // timed test command, inside the same nono sandbox but without the
-    // idle-reap watchdog. When set, the harness runs it once (not on retry)
-    // so the subsequent `testCmd --no-build` only covers the test suite.
-    // Absent (null) → backward-compatible: no separate build step.
-    string? BuildCommand = null,
     // Per-tier inactivity timeout (ms). A stage with no liveness pulse
     // (stdout/stderr bytes, trace-dir entry, or trace-file growth) within
     // this window is killed and retried (up to MaxStallRetries).
