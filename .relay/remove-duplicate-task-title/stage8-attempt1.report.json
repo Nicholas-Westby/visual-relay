@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-06-28T11:46:07.514243+00:00",
+  "task": "# Relay stage 8: Fix\nTask: remove-duplicate-task-title\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Remove Duplicate Task Title\n\nUnder the Markdown tab, a selected task's title renders twice in read-only mode: once as a bold heading bound to `SelectedTaskName`, and again as the `# Title` first line inside the `SelectedTaskMarkdown` body. Remove the duplicate so the title shows exactly once, while keeping the title editable.\n\n## Current state (researched)\n\nThe read-only Markdown view in `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` (the `<Grid ... IsVisible=\"{Binding IsMarkdownReadOnly}\">`) stacks two elements:\n\n- a bold heading `<TextBlock Grid.Row=\"0\" Text=\"{Binding SelectedTaskName}\" FontSize=\"18\" FontWeight=\"Bold\" .../>`\n- a `<ScrollViewer>` containing `<TextBlock Text=\"{Binding SelectedTaskMarkdown}\" .../>`\n\n`SelectedTaskMarkdown` holds the full file content, set in `SelectTaskAsync` as `SelectedTaskMarkdown = input.Markdown` (`MainWindowViewModel.Commands.cs`), so its first line is the `# Title`. `SelectedTaskName` is that same title extracted via `ExtractTitleFromMarkdown(input.Markdown, task.Id)` (`MainWindowViewModel.TaskName.cs`). Hence the title appears twice in read-only mode.\n\nEditing already separates the two: `EditSelectedTask` calls `SplitMarkdownTitle(SelectedTaskMarkdown, SelectedTask.Id)` and splits into `EditTitleBuffer` (title) + `EditBuffer` (body, without the `# Title` line) \u2014 see `MainWindowViewModel.Authoring.cs`. The title is independently editable; the duplication is read-only-only.\n\n`SelectedTaskName` is also used for rename detection in `SaveEditAsync`: `var titleChanged = !string.Equals(title, SelectedTaskName, ...)`. It must stay even if no longer displayed. No UI test asserts on the bold heading element; existing VM tests in `TaskDetailEditRenameTests.cs` assert the `SelectedTaskName`/`EditTitleBuffer` values and are unaffected by a view-only change.\n\n## What to build\n\nDirection (final): **remove the bold `SelectedTaskName` heading** from the read-only Markdown view. The title then renders once, as the `# Title` line inside the `SelectedTaskMarkdown` body. This is a single-element XAML deletion with no ViewModel, screenshots-tool, or binding changes \u2014 chosen over stripping the title out of the body (which would need a new body-only property and ripple into `tools/VisualRelay.Screenshots/Program.cs`, which seeds `SelectedTaskMarkdown` directly). The author delegated the choice; this is the minimal, zero-ripple option.\n\n1. **Test first (TDD).** Add a headless UI test that fails before the fix. Mirror the harness in `TaskDetailRemoveButtonLayoutTests.cs` (`[Collection(\"Headless\")]`, `[AvaloniaFact]`, `TestRepository.Create()` + `repo.WriteConfig`, `new MainWindowViewModel { RootPath = repo.Root }`, `await LoadInitialAsync()`, set `SelectedTask`, `await viewModel.LastSelectionLoad!`, `Dispatcher.UIThread.RunJobs()`, then `new MainWindow { DataContext = viewModel, Width = 900, Height = 900 }.Show()`). Seed a task whose markdown begins with `# Implement Feature X` (as in the `SelectedTaskName_PopulatedOnSelect` test). Select it, set `SelectedTabIndex = 0` (Markdown tab) so `IsMarkdownReadOnly` is true, then collect the visible `TextBlock`s under `window.GetVisualDescendants().OfType<TaskDetailPanel>().Single()` whose `Text` contains `\"Implement Feature X\"` and assert the count is exactly `1`. Before the fix this is `2` (the bold heading plus the body); the test drives the fix.\n2. **Remove the duplicate.** In `TaskDetailPanel.axaml`, delete the bold `<TextBlock Grid.Row=\"0\" Text=\"{Binding SelectedTaskName}\" .../>` from the read-only Markdown `<Grid RowDefinitions=\"Auto,*\" IsVisible=\"{Binding IsMarkdownReadOnly}\">`. The now-empty `Auto` row collapses to zero height; leave the `ScrollViewer` (the `SelectedTaskMarkdown` body) as-is. Do not touch the edit view (`EditTitleBuffer`/`EditBuffer`) or the new-task view.\n3. **Keep `SelectedTaskName` in the ViewModel.** Do not remove the property or its assignment in `SelectTaskAsync`; `SaveEditAsync` still relies on it for rename detection, and `TaskDetailEditRenameTests.cs` still asserts it.\n\n## Done when\n\n- Selecting a task and viewing the read-only Markdown tab shows the title exactly once (as the `# Title` line in the body), with no separate bold heading.\n- The new UI test passes; `TaskDetailEditRenameTests.cs` and `TaskDetailEditRenameTests.Save.cs` still pass unchanged.\n- Editing the title still works: entering edit mode populates `EditTitleBuffer` from the `# Title` line, and saving renames/saves as before.\n- `./visual-relay check` passes (file-size guard, format, build, tests, screenshot render). `TaskDetailPanel.axaml` stays under 300 lines.\n- Commit subject is a Conventional Commit, e.g. `fix: render task title once in markdown tab` (lowercase after the prefix, no trailing period, \u226472 chars; body of at most three `- ` bullets).\n\n\n## Manifest\ntests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs\nsrc/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\n\n## Task context\n### Screenshot 2026-06-26 at 12.12.33\u202fPM.png (225820 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Remove duplicate title rendering in the read-only Markdown tab by deleting the bold SelectedTaskName heading from TaskDetailPanel.axaml, so the title appears only once as the # Title line inside SelectedTaskMarkdown. Keep SelectedTaskName in the ViewModel for rename detection. Follow TDD: add a headless UI test that asserts exactly one visible TextBlock contains the title text, then delete the XAML element.\",\n  \"options\": [\n    \"A. Remove the bold <TextBlock Grid.Row=\\\"0\\\" Text=\\\"{Binding SelectedTaskName}\\\" .../> from the read-only Markdown Grid in TaskDetailPanel.axaml. Zero ViewModel changes, zero Screenshots/Program.cs changes. The Auto row collapses to nothing. Minimal, no ripple.\",\n    \"B. Strip the `# Title` line out of SelectedTaskMarkdown for display only, keeping only the bold heading. Requires a new body-only computed property (e.g., SelectedTaskMarkdownBody) and changes to tools/VisualRelay.Screenshots/Program.cs which seeds SelectedTaskMarkdown directly. More ripple, more test surface.\",\n    \"C. Keep both XAML elements but suppress the first line of SelectedTaskMarkdown via a value converter or attached behavior so the body starts from line 2. Avoids touching the markdown property but adds indirection and a new converter. Still leaves the title editable via the existing split path.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The read-only Markdown tab in TaskDetailPanel.axaml (lines 142-154) renders the title twice: a bold `<TextBlock Grid.Row=\\\"0\\\" Text=\\\"{Binding SelectedTaskName}\\\" .../>` heading plus the `# Title` first line inside `SelectedTaskMarkdown` in the `<ScrollViewer Grid.Row=\\\"1\\\">`. `SelectedTaskMarkdown` holds the full file content (set at `Commands.cs:237`), while `SelectedTaskName` is the extracted title (`Commands.cs:238` via `ExtractTitleFromMarkdown`). `SelectedTaskName` is needed by `SaveEditAsync` (`Authoring.cs:75`) for rename detection, so it must stay in the ViewModel. The edit path (`Authoring.cs:22`) splits via `SplitMarkdownTitle` and is independent. The fix: delete the bold `<TextBlock Grid.Row=\\\"0\\\" ...>` from lines 145-147 of the XAML. No ViewModel, Screenshots/Program.cs, or binding changes needed. TaskDetailPanel.axaml is 268 lines (under 300-line guard). Existing tests in `TaskDetailEditRenameTests.cs`/`.Save.cs` assert VM properties and are unaffected. The new UI test should mirror the pattern from `TaskDetailRemoveButtonLayoutTests.cs` (`[Collection(\\\"Headless\\\")]`, `[AvaloniaFact]`, `TestRepository.Create()`, window show, visual tree traversal via `GetVisualDescendants().OfType<TaskDetailPanel>().Single()`). Seed a task with `# Implement Feature X`, select it, set `SelectedTabIndex = 0` (Markdown tab), and assert exactly 1 visible `TextBlock` with text containing `\\\"Implement Feature X\\\"` (before fix: 2).\",\n  \"constraints\": [\n    \"TaskDetailPanel.axaml must stay under 300 lines (currently 268; deleting ~3 lines is safe).\",\n    \"SelectedTaskName must remain in the ViewModel (used by SaveEditAsync for rename detection at Authoring.cs:75).\",\n    \"No ViewModel changes \u2014 the fix is purely a XAML element deletion.\",\n    \"No changes to tools/VisualRelay.Screenshots/Program.cs (it seeds SelectedTaskMarkdown directly).\",\n    \"The edit view (EditTitleBuffer/EditBuffer) and new-task view must be untouched.\",\n    \"Existing tests (TaskDetailEditRenameTests.cs, TaskDetailEditRenameTests.Save.cs) must pass unchanged \u2014 they assert VM properties, not the bold heading.\",\n    \"New UI test must use the established [Collection(\\\"Headless\\\")] / [AvaloniaFact] pattern from TaskDetailRemoveButtonLayoutTests.cs.\",\n    \"Commit message must follow Conventional Commit format (lowercase after prefix, \u226472 chars, no trailing period, max 3 body bullets).\",\n    \"./visual-relay check must pass (source-enum guard \u2192 file-size guard \u2192 format \u2192 build \u2192 InspectCode \u2192 tests \u2192 screenshots).\",\n    \"The Auto row in the read-only Grid (<Grid RowDefinitions=\\\"Auto,*\\\">) will collapse to zero height after deletion \u2014 acceptable.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The run log (run.log) confirms stages 1-2 completed without errors, stage 3 is running. The ledger documents the Ideate option A (delete bold heading) and Research findings. Code inspection confirms the duplicate: TaskDetailPanel.axaml lines 145-147 render a bold `<TextBlock Text=\\\"{Binding SelectedTaskName}\\\" FontSize=\\\"18\\\" FontWeight=\\\"Bold\\\" .../>` while lines 150-152 render `<TextBlock Text=\\\"{Binding SelectedTaskMarkdown}\\\"/>` whose first line is the same `# Title`. Both are set from the same source at Commands.cs:237-238: `SelectedTaskMarkdown = input.Markdown` and `SelectedTaskName = ExtractTitleFromMarkdown(input.Markdown, task.Id)`. The edit path (Authoring.cs:22) uses SplitMarkdownTitle and is unaffected. SelectedTaskName is required by SaveEditAsync:75 for rename detection (`var titleChanged = !string.Equals(title, SelectedTaskName, ...)`). No existing UI test asserts on the bold heading; the VM tests (TaskDetailEditRenameTests.cs, TaskDetailEditRenameTests.Save.cs) only assert SelectedTaskName/EditTitleBuffer/EditBuffer properties. The Screenshots tool (Program.cs:170) seeds SelectedTaskMarkdown directly, confirming option A's advantage over option B. The fix is a single-element XAML deletion \u2014 removing lines 145-147 \u2014 with zero ViewModel, binding, or tool changes.\",\n  \"excerpts\": [\n    \"TaskDetailPanel.axaml:142-154: <Grid Grid.Row=\\\"1\\\" RowDefinitions=\\\"Auto,*\\\" IsVisible=\\\"{Binding IsMarkdownReadOnly}\\\">\\n  <TextBlock Grid.Row=\\\"0\\\" Text=\\\"{Binding SelectedTaskName}\\\" FontSize=\\\"18\\\" FontWeight=\\\"Bold\\\" .../>  <!-- DUPLICATE -->\\n  <ScrollViewer Grid.Row=\\\"1\\\">\\n    <TextBlock Text=\\\"{Binding SelectedTaskMarkdown}\\\" .../>  <!-- first line = # Title -->\",\n    \"Commands.cs:237-238: SelectedTaskMarkdown = input.Markdown;  SelectedTaskName = ExtractTitleFromMarkdown(input.Markdown, task.Id);\",\n    \"TaskName.cs:20-39: ExtractTitleFromMarkdown reads the first '# ' line from markdown \u2014 same text that appears as line 1 of SelectedTaskMarkdown\",\n    \"Authoring.cs:75: var titleChanged = !string.Equals(title, SelectedTaskName, StringComparison.Ordinal); \u2014 SelectedTaskName must stay for rename detection\",\n    \"Authoring.cs:295: public bool IsMarkdownReadOnly => !IsEditingMarkdown && !IsNewTaskDialogOpen; \u2014 edit/new-task views are independent paths\",\n    \"Screenshots Program.cs:170: viewModel.SelectedTaskMarkdown = demoTaskMarkdown; \u2014 seeds full markdown; option B would require changes here\"\n  ],\n  \"repro\": \"1. Create a task with markdown '# Implement Feature X\\\\n\\\\nBody text.' via TestRepository.WriteTask. 2. Load the task, select it, set SelectedTabIndex=0 (Markdown tab). 3. Traverse the visual tree from a shown MainWindow: window.GetVisualDescendants().OfType<TaskDetailPanel>().Single(). 4. Collect all visible TextBlocks whose Text contains \\\"Implement Feature X\\\". Before fix: count is 2 (the bold heading at Grid.Row=0 + the body TextBlock at Grid.Row=1 whose first line is '# Implement Feature X'). After fix: count is 1 (only the body TextBlock).\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"1. Create tests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs \u2014 a headless UI test (pattern from TaskDetailRemoveButtonLayoutTests.cs) that seeds a task with '# Implement Feature X', selects it, switches to the Markdown tab (SelectedTabIndex=0), shows the MainWindow, traverses the visual tree for TaskDetailPanel, collects all visible TextBlocks whose Text contains 'Implement Feature X', and asserts exactly 1 (fails red before fix: 2 \u2014 bold heading + body).\\n2. In src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml, delete the bold <TextBlock Grid.Row=\\\"0\\\" Text=\\\"{Binding SelectedTaskName}\\\" FontSize=\\\"18\\\" FontWeight=\\\"Bold\\\" Foreground=\\\"#DCE2EA\\\" Margin=\\\"8,14,8,0\\\" TextWrapping=\\\"Wrap\\\"/> (lines 145\u2013147) from the read-only Markdown Grid. The Auto row collapses; the ScrollViewer with SelectedTaskMarkdown stays as-is.\\n3. Do not touch SelectedTaskName in the ViewModel \u2014 SaveEditAsync still needs it for rename detection. Do not touch the edit view (EditTitleBuffer/EditBuffer) or new-task view. Run ./visual-relay check to confirm all guards pass.\",\n  \"manifest\": [\n    \"+tests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\"tests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs\"],\n  \"rationale\": \"Created a headless UI test that mirrors TaskDetailRemoveButtonLayoutTests.cs: seeds a task with '# Implement Feature X', selects it, switches to the Markdown tab (SelectedTabIndex=0), shows the MainWindow, traverses the visual tree to TaskDetailPanel, collects all visible TextBlocks whose Text contains 'Implement Feature X', and asserts exactly 1. Before fix the test failed with count=2 (bold heading + body). Removed the bold <TextBlock Grid.Row='0' Text='{Binding SelectedTaskName}' .../> from TaskDetailPanel.axaml lines 145-147. The ScrollViewer stays at Grid.Row='1' (* row), Row 0 (Auto) collapses to zero. XAML is 265 lines (under 300). SelectedTaskName property remains intact in the ViewModel for SaveEditAsync rename detection. All 12 TaskDetailEditRenameTests pass unchanged. The new test passes (count=1).\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Removed the bold SelectedTaskName TextBlock from the read-only Markdown Grid in TaskDetailPanel.axaml (lines 145-147). The # Title line now renders once inside SelectedTaskMarkdown body. New UI test TaskDetailMarkdownTitleDeduplicationTests.cs passes (count=1). No ViewModel or binding changes. XAML is 265 lines (under 300).\" }\n\n## Stage 7 - Review\n\n{ \"verdict\": \"pass\", \"issues\": [] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The targeted test passes (1 passed, 0 failed). The fix is confirmed.\n\n```json\n{ \"summary\": \"Verified: TaskDetailMarkdownTitleDeduplicationTests.cs passes (1/1). The bold SelectedTaskName heading was removed from the read-only Markdown Grid in TaskDetailPanel.axaml in stage 5-6; the # Title line now renders once inside the SelectedTaskMarkdown body. No ViewModel or binding changes. All guards from prior stages are clean.\" }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 2,
+    "tool_calls_total": 1,
+    "tool_calls_succeeded": 1,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "run_command": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 2,
+    "total_llm_time_s": 6.202,
+    "prompt_cache": {
+      "cached_tokens": 8064,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 3.763,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.189,
+      "prompt_tokens_est": 7772,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/TaskDetailMarkdownTitleDeduplicationTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 3.763,
+      "result_length": 1723
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.013,
+      "prompt_tokens_est": 8354,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
