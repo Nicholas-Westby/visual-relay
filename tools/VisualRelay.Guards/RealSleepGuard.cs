@@ -211,17 +211,17 @@ public static class RealSleepGuard
                      && i.ArgumentList.Arguments.Count == 1
                      && i.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax inner
                      && inner.Token.IsKind(SyntaxKind.NumericLiteralToken):
-            {
-                var n = AsDouble(inner.Token.Value);
-                if (n is null)
-                    return null;
-                return m.Name.Identifier.Text switch
                 {
-                    "FromMilliseconds" => n,
-                    "FromSeconds" => n * 1000,
-                    _ => null,
-                };
-            }
+                    var n = AsDouble(inner.Token.Value);
+                    if (n is null)
+                        return null;
+                    return m.Name.Identifier.Text switch
+                    {
+                        "FromMilliseconds" => n,
+                        "FromSeconds" => n * 1000,
+                        _ => null,
+                    };
+                }
 
             default:
                 return null;

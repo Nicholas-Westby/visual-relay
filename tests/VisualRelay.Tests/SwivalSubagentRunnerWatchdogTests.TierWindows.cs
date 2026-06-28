@@ -85,12 +85,16 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         {
             FirstOutputTimeoutMsByTier = new Dictionary<string, int>
             {
-                ["cheap"] = 2_000, ["balanced"] = 120_000, ["frontier"] = 30_000
+                ["cheap"] = 2_000,
+                ["balanced"] = 120_000,
+                ["frontier"] = 30_000
             },
             FirstOutputTimeoutMs = 99_000,
             InactivityTimeoutMsByTier = new Dictionary<string, int>
             {
-                ["cheap"] = 3_000, ["balanced"] = 600_000, ["frontier"] = 45_000
+                ["cheap"] = 3_000,
+                ["balanced"] = 600_000,
+                ["frontier"] = 45_000
             },
             InactivityTimeoutMs = 88_000
         };
