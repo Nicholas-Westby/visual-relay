@@ -26,6 +26,7 @@ public static class RelayConfigLoader
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 0,
             TestTimeoutMilliseconds: 300_000,
+            BuildTimeoutMilliseconds: 1_800_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             {
                 ["cheap"] = 90_000,
@@ -209,6 +210,7 @@ public static class RelayConfigLoader
                 ArchiveOnDone = OptionalBool(root, "archiveOnDone", defaults.ArchiveOnDone),
                 SubagentTimeoutMilliseconds = OptionalInt(root, "subagentTimeoutMs", defaults.SubagentTimeoutMilliseconds),
                 TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds),
+                BuildTimeoutMilliseconds = OptionalInt(root, "buildTimeoutMs", defaults.BuildTimeoutMilliseconds),
                 FirstOutputTimeoutMsByTier = firstOutputTiers,
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
                 MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
@@ -222,6 +224,7 @@ public static class RelayConfigLoader
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
+                BuildCommand = OptionalStringOrNull(root, "buildCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
@@ -268,7 +271,6 @@ public static class RelayConfigLoader
             : fallback;
     private static int OptionalInt(JsonElement root, string name, int fallback) =>
         root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : fallback;
-
     private static bool OptionalBool(JsonElement root, string name, bool fallback) =>
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()

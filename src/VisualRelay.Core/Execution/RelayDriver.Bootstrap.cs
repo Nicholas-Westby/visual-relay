@@ -66,10 +66,43 @@ public sealed partial class RelayDriver
         return (false, string.Empty);
     }
 
+    /// <summary>
+    /// Runs the optional <see cref="RelayConfig.BuildCommand"/> through the same
+    /// <see cref="ITestRunner"/> as the test command so it inherits the same sandbox
+    /// (nono-wrapped in production, mocked in tests). The build runs before the
+    /// timed test phase — its wall-clock time counts against the runner's own
+    /// timeout (<see cref="RelayConfig.TestTimeoutMilliseconds"/>), not a separate
+    /// build budget. The idle-reap watchdog applies to the build: builds are
+    /// CPU-active so the CPU pulse keeps the watchdog from false-positive reaping.
+    /// Returns a <see cref="TestRunResult"/> that surfaces exit code, output, and
+    /// timeout for the caller to decide whether to proceed to the test phase.
+    /// </summary>
+    private async Task<TestRunResult> RunBuildCommandAsync(
+        string rootPath, RelayConfig config, CancellationToken ct)
+    {
+        return await _dependencies.TestRunner.RunAsync(rootPath, config.BuildCommand!, ct);
+    }
+
     private async Task<TestRunResult> RunTestCommandWithRetryAsync(
         string rootPath, RelayConfig config, CancellationToken ct,
         int stageNumber, string runId, string taskId)
     {
+        // Run the build phase first (once only — retry reuses warm artifacts).
+        if (config.BuildCommand is not null)
+        {
+            var buildResult = await RunBuildCommandAsync(rootPath, config, ct);
+            if (buildResult.TimedOut || buildResult.ExitCode != 0)
+            {
+                await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow, "error", "verify_build_failed", runId, rootPath, taskId, stageNumber,
+                    Data: new Dictionary<string, string>
+                    {
+                        ["reason"] = buildResult.TimedOut ? "timeout" : $"exit-code-{buildResult.ExitCode}",
+                    }), ct);
+                return buildResult;
+            }
+        }
+
         var result = await _dependencies.TestRunner.RunAsync(rootPath, config.TestCommand, ct);
         if (result.TimedOut || result.ExitCode == 0 || !config.RetryFlakyVerify)
             return result;
