@@ -19,8 +19,9 @@ namespace VisualRelay.Tests;
 public sealed class SyncOverAsyncGuardTests
 {
     /// <summary>
-    /// A <c>.Result</c> member access inside an <c>[AvaloniaFact]</c> test method body
-    /// is reported as a sync-over-async deadlock.
+    /// A <c>.Result</c> member access on a Task-shaped receiver (an <c>…Async()</c>
+    /// invocation) inside an <c>[AvaloniaFact]</c> test method body is reported as a
+    /// sync-over-async deadlock.
     /// </summary>
     [Fact]
     public void DotResult_InAvaloniaFact_IsReported()
@@ -28,7 +29,7 @@ public sealed class SyncOverAsyncGuardTests
         const string source = """
             using Xunit;
             using Avalonia.Headless.XUnit;
-            class C { [AvaloniaFact] void M() { var t = GetTask(); _ = t.Result; } static Task GetTask() => Task.CompletedTask; }
+            class C { [AvaloniaFact] void M() { _ = GetTaskAsync().Result; } static Task GetTaskAsync() => Task.CompletedTask; }
             """;
 
         var violations = SyncOverAsyncGuard.FindViolations([("Fixtures/Deadlock.cs", source)]);
@@ -66,7 +67,7 @@ public sealed class SyncOverAsyncGuardTests
         const string source = """
             using Xunit;
             using Avalonia.Headless.XUnit;
-            class C { [AvaloniaFact] void M() { GetTask().Wait(); } static Task GetTask() => Task.CompletedTask; }
+            class C { [AvaloniaFact] void M() { GetTaskAsync().Wait(); } static Task GetTaskAsync() => Task.CompletedTask; }
             """;
 
         var violations = SyncOverAsyncGuard.FindViolations([("Fixtures/Wait.cs", source)]);
@@ -145,8 +146,8 @@ public sealed class SyncOverAsyncGuardTests
         const string source = """
             using Xunit;
             using Avalonia.Headless.XUnit;
-            class C { [AvaloniaFact] void M() { _ = GetTask().Result; } // vr-allow-sync-over-async: justified
-            static Task GetTask() => Task.CompletedTask; }
+            class C { [AvaloniaFact] void M() { _ = GetTaskAsync().Result; } // vr-allow-sync-over-async: justified
+            static Task GetTaskAsync() => Task.CompletedTask; }
             """;
 
         var violations = SyncOverAsyncGuard.FindViolations([("Fixtures/Allowed.cs", source)]);
@@ -164,8 +165,8 @@ public sealed class SyncOverAsyncGuardTests
         const string source = """
             using Xunit;
             using Avalonia.Headless.XUnit;
-            class C { [AvaloniaFact] void M() { _ = GetTask().Result; } // vr-allow-sync-over-async:
-            static Task GetTask() => Task.CompletedTask; }
+            class C { [AvaloniaFact] void M() { _ = GetTaskAsync().Result; } // vr-allow-sync-over-async:
+            static Task GetTaskAsync() => Task.CompletedTask; }
             """;
 
         var violations = SyncOverAsyncGuard.FindViolations([("Fixtures/BareMarker.cs", source)]);
