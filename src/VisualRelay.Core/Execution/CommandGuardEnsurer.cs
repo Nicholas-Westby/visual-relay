@@ -75,7 +75,25 @@ public static class CommandGuardEnsurer
             if (process is null)
                 return Fallback(binaryPath);
 
-            await process.WaitForExitAsync(cancellationToken);
+            // Bound the publish: a self-contained publish of this tiny project
+            // finishes in well under a minute, but inside a restrictive sandbox
+            // the child dotnet can wedge on a blocked resource. Cap it so a hung
+            // publish degrades to the fallback instead of hanging the caller —
+            // and, in a test host, instead of tripping the blame-hang collector
+            // that aborts the whole run.
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(45));
+            try
+            {
+                await process.WaitForExitAsync(timeoutCts.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+                await Console.Error.WriteLineAsync(
+                    "CommandGuardEnsurer: dotnet publish timed out (45s); falling back.");
+                return Fallback(binaryPath);
+            }
 
             if (process.ExitCode == 0)
                 return binaryPath;
