@@ -11,7 +11,7 @@ You create markdown files as specs, and Visual Relay implements them via the pip
 
 ![Visual Relay main window](docs/images/visual-relay-main.png)
 
-# Install (macOS)
+## Install
 
 <!-- BEGIN install section (self-contained; sibling tasks may shorten the README) -->
 
@@ -26,11 +26,13 @@ cd visual-relay
 ```
 
 `./visual-relay` is a tiny launcher that provisions its own toolchain via
-[Nix](https://nixos.org) (this avoids global installs).
+[Nix](https://nixos.org) / [Determinate Nix](https://determinate.systems/posts/determinate-nix-installer)
+(this avoids global installs). The bootstrap provides `uv` (LiteLLM backend) and
+`nono` (sandbox) as prerequisites.
 
 You can then run `./visual-relay` in that folder the next time you want to launch it.
 
-# Install (Windows)
+## Install (Windows)
 
 Clone the repo and run (nix doesn't run on Windows, so dependencies are installed globally):
 
@@ -75,6 +77,7 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 
 # Commands
 
+- `./visual-relay init` - bootstraps a new project with the relay config.
 - `./visual-relay` - launches the app.
 - `./visual-relay launch` also launches the app.
 - `./visual-relay build` - builds the app (the launcher also does this).
