@@ -16,8 +16,9 @@ namespace VisualRelay.Tests;
 public sealed class SwivalSubagentRunnerEscalationTests
 {
     // Fake swival that records "<attemptDir> profile=<p> turns=<t>" to ladder.log,
-    // then either always contract-fails (no JSON), nonzero-exits, or recovers at a
-    // chosen attempt. Behavior chosen by the `mode` arg baked into the script.
+    // then either always contract-fails (no JSON), nonzero-exits, persistently stalls
+    // (no output, then blocks forever 0-CPU via `tail -f /dev/null` so the first-output
+    // watchdog fires), or recovers at a chosen attempt. Mode is baked into the script.
     private static Task<string> WriteLadderSwivalAsync(string root, string mode) =>
         SwivalTestHelpers.WriteExecutableAsync(root, $"fake-swival-ladder-{mode}",
             $$"""
@@ -35,6 +36,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
             case "{{mode}}" in
               contract) echo "no fenced json here"; exit 0;;
               nonzero)  echo "boom" >&2; exit 7;;
+              stall)    exec tail -f /dev/null;;
               recover2)
                 if [[ "$trace_dir" == *attempt2* ]]; then
                   printf '```json\n{"summary":"recovered at run 2","options":["x"]}\n```\n'; exit 0
@@ -43,7 +45,9 @@ public sealed class SwivalSubagentRunnerEscalationTests
             esac
             """);
 
-    private static RelayConfig EscalationConfig(int maxStageFailures = 3, int maxContractRetries = 0, int maxStallRetries = 0, int maxTurns = 200) =>
+    // firstOutputMs > 0 pins a tiny first-output window across all tiers so a
+    // no-output stall fires the watchdog deterministically fast (the stall-ladder test).
+    private static RelayConfig EscalationConfig(int maxStageFailures = 3, int maxContractRetries = 0, int maxStallRetries = 0, int maxTurns = 200, int firstOutputMs = 0) =>
         new(
             TasksDir: "llm-tasks",
             TestCommand: "true",
@@ -57,8 +61,10 @@ public sealed class SwivalSubagentRunnerEscalationTests
             ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 30_000,
             TestTimeoutMilliseconds: 300_000,
-            FirstOutputTimeoutMsByTier: new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
-            FirstOutputTimeoutMs: 660_000,
+            FirstOutputTimeoutMsByTier: firstOutputMs > 0
+                ? new Dictionary<string, int> { ["cheap"] = firstOutputMs, ["balanced"] = firstOutputMs, ["frontier"] = firstOutputMs }
+                : new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
+            FirstOutputTimeoutMs: firstOutputMs > 0 ? firstOutputMs : 660_000,
             MaxStallRetries: maxStallRetries,
             MaxContractRetries: maxContractRetries,
             InactivityTimeoutMsByTier: null,
@@ -117,6 +123,28 @@ public sealed class SwivalSubagentRunnerEscalationTests
         var ladder = await ReadLadderAsync(repo.Root);
         Assert.Equal(["cheap", "balanced", "frontier"], ladder.Select(r => r.Profile));
         Assert.Equal(["200", "400", "800"], ladder.Select(r => r.Turns));
+    }
+
+    [Fact]
+    public async Task RunAsync_PersistentStall_AlsoEscalates_ThreeRunsThenFails()
+    {
+        using var repo = TestRepository.Create();
+        // A no-output stall: each run writes its ladder row then blocks forever (0-CPU),
+        // so the first-output watchdog (pinned tiny) fires. maxStallRetries:0 means the
+        // first stall escalates immediately, so the stall path drives the full ladder.
+        var script = await WriteLadderSwivalAsync(repo.Root, "stall");
+        var runner = new SwivalSubagentRunner(EscalationConfig(firstOutputMs: 2000), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
+
+        var result = await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));
+
+        Assert.False(result.IsValid);
+        var ladder = await ReadLadderAsync(repo.Root);
+        Assert.Equal(3, ladder.Count);
+        Assert.Equal(["cheap", "balanced", "frontier"], ladder.Select(r => r.Profile));
+        Assert.Equal(["200", "400", "800"], ladder.Select(r => r.Turns));
+        // No fourth run beyond the 3-run cap.
+        Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay", "task", "stage1-attempt4")));
     }
 
     [Fact]
