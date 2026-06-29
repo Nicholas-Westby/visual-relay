@@ -90,6 +90,9 @@ public sealed partial class ControlApi
         map["open-folder"] = new { enabled = true };
         map["obsidian-scan"] = new { enabled = viewModel is { ObsidianEnabled: true, IsBusy: false } };
         map["obsidian-bridge"] = new { enabled = true };
+        // Tab navigation is always available — switching tabs has no precondition.
+        map["select-activity-tab"] = new { enabled = true };
+        map["select-detail-tab"] = new { enabled = true };
 
         return map;
     }

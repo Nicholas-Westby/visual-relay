@@ -1,6 +1,7 @@
 using System.Windows.Input;
 using Avalonia.Controls;
 using Avalonia.Threading;
+using CommunityToolkit.Mvvm.Input;
 using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.App.Services;
@@ -47,7 +48,15 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
 
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
-        ["select-task", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge"];
+        ["select-task", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge",
+         "select-activity-tab", "select-detail-tab"];
+
+    // Destructive, confirm-gated commands. Each awaits the VM's confirmation seam
+    // (a modal in the GUI). Driven via the API they are PRE-CONFIRMED — they run
+    // without opening the modal — but require an explicit {"confirm":true} body,
+    // mirroring the human clicking "confirm". Keyed on command identity.
+    private static readonly HashSet<string> ConfirmGatedCommands =
+        new(StringComparer.Ordinal) { "mark-done", "rewrite-selected" };
 
     /// <summary>
     /// Invokes a documented command/action by name. Returns the HTTP status and
@@ -56,9 +65,11 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
     /// refused with 409 and NOT executed. Unknown names → 404.
     /// </summary>
     public Task<(int Status, string Json)> InvokeCommandAsync(string name, string? body) =>
-        Dispatcher.UIThread.InvokeAsync(() => InvokeCommandOnUiThread(name, body)).GetTask();
+        // The Func<Task<T>> overload of InvokeAsync awaits the inner task for us,
+        // so the returned Task completes only once the command has fully run.
+        Dispatcher.UIThread.InvokeAsync(() => InvokeCommandOnUiThreadAsync(name, body));
 
-    private (int Status, string Json) InvokeCommandOnUiThread(string name, string? body)
+    private async Task<(int Status, string Json)> InvokeCommandOnUiThreadAsync(string name, string? body)
     {
         var command = ResolveCommand(name);
         if (command is not null)
@@ -68,8 +79,13 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
                 return (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
             }
 
-            // Async (run) commands are fire-and-forget like a button click: we
-            // call Execute and return immediately; the operator polls /state.
+            if (ConfirmGatedCommands.Contains(name))
+            {
+                return await InvokeConfirmGatedAsync(name, command, body);
+            }
+
+            // Non-confirm commands keep button-click semantics: fire and return
+            // immediately; long-running run commands are polled via /state.
             command.Execute(null);
             return (200, Json.Object(("ok", true), ("command", name)));
         }
@@ -80,6 +96,35 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
         }
 
         return (404, Json.Object(("ok", false), ("error", "unknown command")));
+    }
+
+    /// <summary>
+    /// Runs a destructive, confirm-gated command via the pre-confirmed path: it
+    /// requires an explicit {"confirm":true} body (else 409 + no-op), then runs
+    /// inside the VM's auto-confirm scope so it completes WITHOUT the modal, and
+    /// AWAITS it to real completion — so {ok:true} means the effect took (e.g.
+    /// mark-done actually archived and the task left the queue, visible in /state).
+    /// </summary>
+    private async Task<(int Status, string Json)> InvokeConfirmGatedAsync(string name, ICommand command, string? body)
+    {
+        if (Json.ReadBool(body, "confirm") != true)
+        {
+            return (409, Json.Object(("ok", false), ("command", name), ("error", "confirmation required")));
+        }
+
+        await viewModel.InvokePreConfirmedAsync(async () =>
+        {
+            if (command is IAsyncRelayCommand asyncCommand)
+            {
+                await asyncCommand.ExecuteAsync(null);
+            }
+            else
+            {
+                command.Execute(null);
+            }
+        });
+
+        return (200, Json.Object(("ok", true), ("command", name)));
     }
 
     private (int Status, string Json) InvokePropertyAction(string name, string? body)
@@ -174,6 +219,12 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
 
                     return (409, Json.Object(("ok", false), ("command", name), ("error", "missing value or path")));
                 }
+
+            case "select-activity-tab":
+                return SelectActivityTab(name, body);
+
+            case "select-detail-tab":
+                return SelectDetailTab(name, body);
 
             default:
                 return (404, Json.Object(("ok", false), ("error", "unknown command")));

@@ -11,16 +11,14 @@ public partial class MainWindowViewModel
         if (SelectedTask is null)
             return;
 
-        // Confirm unless headless (ShowConfirmationAsync is null).
-        if (ShowConfirmationAsync is not null)
-        {
-            var confirmed = await ShowConfirmationAsync(
-                "Mark task done",
-                $"Move \"{SelectedTask.Id}\" to the archive? It won't be run by Visual Relay.",
-                "Mark done");
-            if (!confirmed)
-                return;
-        }
+        // Confirm via the shared seam (auto-resolves when headless or driven via
+        // the pre-confirmed control API; opens the modal for a human click).
+        var confirmed = await ConfirmAsync(
+            "Mark task done",
+            $"Move \"{SelectedTask.Id}\" to the archive? It won't be run by Visual Relay.",
+            "Mark done");
+        if (!confirmed)
+            return;
 
         await RunBusyAsync(async () =>
         {

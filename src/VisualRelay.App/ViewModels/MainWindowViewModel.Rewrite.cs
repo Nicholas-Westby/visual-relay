@@ -27,16 +27,14 @@ public partial class MainWindowViewModel
         var id = SelectedTask.Id;
         var task = SelectedTask.Task;
 
-        // Confirm unless headless (ShowConfirmationAsync is null).
-        if (ShowConfirmationAsync is not null)
-        {
-            var confirmed = await ShowConfirmationAsync(
-                "Rewrite with AI",
-                "Replace this task's spec with an AI-researched rewrite? The current text is kept so you can revert.",
-                "Rewrite and Replace");
-            if (!confirmed)
-                return;
-        }
+        // Confirm via the shared seam (auto-resolves when headless or driven via
+        // the pre-confirmed control API; opens the modal for a human click).
+        var confirmed = await ConfirmAsync(
+            "Rewrite with AI",
+            "Replace this task's spec with an AI-researched rewrite? The current text is kept so you can revert.",
+            "Rewrite and Replace");
+        if (!confirmed)
+            return;
 
         // Snapshot the WHOLE task folder before starting so a revert restores
         // attachments the rewrite may add/modify/delete — not just the spec.

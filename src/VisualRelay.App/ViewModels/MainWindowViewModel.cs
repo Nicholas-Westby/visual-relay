@@ -197,9 +197,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
-    /// <summary>Confirmation dialog (title, message, confirm-label). Null (headless) skips it.</summary>
-    public Func<string, string, string, Task<bool>>? ShowConfirmationAsync { get; set; }
-
     // Backend reachability surfaced to the UI. Defaults to reachable so the
     // startup banner stays hidden until a probe says otherwise. The later
     // top-bar status task reuses this state + RefreshBackendStatusAsync rather

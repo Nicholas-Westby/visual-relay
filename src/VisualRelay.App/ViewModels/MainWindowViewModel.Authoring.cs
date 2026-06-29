@@ -209,19 +209,14 @@ public partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// Asks the user for confirmation before deleting an attachment.
-    /// Override in tests via <see cref="ShowConfirmationAsync"/>; the default
-    /// (when null) skips the prompt so headless/NullFilePicker scenarios work.
+    /// Asks the user for confirmation before deleting an attachment, via the
+    /// shared <see cref="ConfirmAsync"/> seam: a human click opens the modal,
+    /// while a headless run or the pre-confirmed control API proceeds silently.
     /// </summary>
-    private async Task<bool> ConfirmRemoveAttachmentAsync(string filePath)
+    private Task<bool> ConfirmRemoveAttachmentAsync(string filePath)
     {
-        if (ShowConfirmationAsync is null)
-        {
-            return true;
-        }
-
         var fileName = Path.GetFileName(filePath);
-        return await ShowConfirmationAsync("Remove Attachment", $"Delete \"{fileName}\"? This cannot be undone.", "Delete");
+        return ConfirmAsync("Remove Attachment", $"Delete \"{fileName}\"? This cannot be undone.", "Delete");
     }
 
     [RelayCommand]

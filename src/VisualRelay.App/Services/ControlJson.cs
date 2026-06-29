@@ -53,6 +53,36 @@ internal static class Json
     }
 
     /// <summary>
+    /// Reads an integer field from a JSON request body. Returns null when the body
+    /// is empty, not an object, malformed, or the field is missing/not an int.
+    /// </summary>
+    public static int? ReadInt(string? body, string field)
+    {
+        if (string.IsNullOrWhiteSpace(body))
+        {
+            return null;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty(field, out var prop)
+                && prop.ValueKind == JsonValueKind.Number
+                && prop.TryGetInt32(out var value))
+            {
+                return value;
+            }
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Reads a boolean field from a JSON request body. Returns null when the body
     /// is empty, not an object, malformed, or the field is missing/not a bool.
     /// </summary>
