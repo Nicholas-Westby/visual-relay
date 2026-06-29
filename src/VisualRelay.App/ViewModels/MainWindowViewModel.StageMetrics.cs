@@ -31,13 +31,19 @@ public partial class MainWindowViewModel
             stage.AccumulateCompletedDuration(reported);
         else if (relayEvent.Data.TryGetValue("time", out var time))
             stage.DurationLabel = time;
-        if (relayEvent.Data.TryGetValue("cost", out var cost))
+        // Bank this attempt's cost + turns the SAME way (cumulative across attempts)
+        // so the retried card matches the archived squash. The numeric "costUsd" is
+        // the accumulation source; fall back to the formatted "cost" string (e.g. "?")
+        // only when it is absent (an unpriced attempt).
+        if (TryGetCostUsd(relayEvent) is { } costUsd)
+            stage.AccumulateCost(costUsd);
+        else if (relayEvent.Data.TryGetValue("cost", out var cost))
             stage.CostLabel = cost;
         if (relayEvent.Data.TryGetValue("model", out var model))
             stage.ModelLabel = model;
-        if (relayEvent.Data.TryGetValue("turns", out var turns))
+        if (relayEvent.Data.TryGetValue("turns", out var turns) && int.TryParse(turns, out var turnCount))
         {
-            stage.TurnsLabel = turns + "t";
+            stage.AccumulateTurns(turnCount);
         }
         if (relayEvent.Data.TryGetValue("testTime", out var testTime))
         {
@@ -90,5 +96,18 @@ public partial class MainWindowViewModel
         double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) &&
         seconds > 0
             ? TimeSpan.FromSeconds(seconds)
+            : null;
+
+    /// <summary>
+    /// Reads the numeric per-attempt stage cost ("costUsd") emitted on stage_done —
+    /// the machine-readable companion to the formatted "cost" label, so the GUI can
+    /// SUM per-attempt cost for a retried stage. Null when absent (an unpriced
+    /// attempt, which falls back to the formatted "cost" string, e.g. "?").
+    /// </summary>
+    private static double? TryGetCostUsd(RelayEvent relayEvent) =>
+        relayEvent.Data is not null &&
+        relayEvent.Data.TryGetValue("costUsd", out var raw) &&
+        double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out var usd)
+            ? usd
             : null;
 }

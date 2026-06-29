@@ -43,6 +43,14 @@ public sealed partial class RelayDriver
             ["cost"] = costLabel,
             ["sessionCost"] = sessionLabel
         };
+        // Machine-readable per-attempt cost companion to "cost" (like timeSeconds is
+        // to time), so the GUI sums cost across a retried stage's attempts. Emitted
+        // for priced stages and driver stages (cost 0); omitted when cost is unknown
+        // ("?") so the card falls back to showing the formatted "?" label.
+        if (cost is not null)
+            data["costUsd"] = cost.CostUsd.ToString(CultureInfo.InvariantCulture);
+        else if (stage.Kind == "driver")
+            data["costUsd"] = "0";
         if (!string.IsNullOrWhiteSpace(cost?.Model))
         {
             data["model"] = cost.Model;

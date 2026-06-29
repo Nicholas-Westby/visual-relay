@@ -5,7 +5,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
-public sealed class StageRowViewModel : ViewModelBase
+public sealed partial class StageRowViewModel : ViewModelBase
 {
     private static readonly IBrush MutedBrush = Brush.Parse("#7F8794");
     private static readonly IBrush SuccessBrush = Brush.Parse("#5AD47D");
@@ -146,17 +146,6 @@ public sealed class StageRowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Banks a completed attempt's reported duration and shows the cumulative total
-    /// as the stage's recorded duration. Called on a live stage_done so a retried
-    /// stage's finished card reads the SUM across attempts, not just the last one.
-    /// </summary>
-    public void AccumulateCompletedDuration(TimeSpan reportedDuration)
-    {
-        _elapsed.CompleteSegment(reportedDuration);
-        DurationLabel = ElapsedFormatter.Label(_elapsed.Completed);
-    }
-
-    /// <summary>
     /// Per-tick refresh invoked by the 1-second DispatcherTimer. No-op unless the
     /// stage is Running; shows the cumulative elapsed (banked attempts + live
     /// segment) and never touches the final DurationLabel recorded on stage_done.
@@ -261,27 +250,4 @@ public sealed class StageRowViewModel : ViewModelBase
 
     // Prefer the report (always exists for a run); fall back to the trace dir.
     public string? RevealTarget => ReportPath ?? TraceDirectory;
-
-    public void ApplyMetric(StageRunMetric metric)
-    {
-        DurationLabel = metric.DurationLabel;
-        CostLabel = metric.CostLabel;
-        ModelLabel = metric.Model;
-        TurnsLabel = metric.Turns > 0 ? $"{metric.Turns}t" : string.Empty;
-        ReportPath = metric.ReportPath;
-        TraceDirectory = metric.TraceDirectory;
-    }
-
-    public void ClearMetric()
-    {
-        DurationLabel = "No run yet";
-        CostLabel = "No cost yet";
-        ModelLabel = string.Empty;
-        TurnsLabel = string.Empty;
-        TestDurationLabel = string.Empty;
-        ReportPath = null;
-        TraceDirectory = null;
-        _elapsed.Reset();
-        ElapsedLabel = string.Empty;
-    }
 }
