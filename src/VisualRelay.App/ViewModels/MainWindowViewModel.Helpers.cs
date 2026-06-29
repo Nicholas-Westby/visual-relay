@@ -23,6 +23,10 @@ public partial class MainWindowViewModel
         }
 
         UpdateRunningTask(relayEvent);
+        // Accrue the task's overall active time from its stage events. Runs for
+        // EVERY task (before the selected-task gate) because a drain plans/executes
+        // tasks the user may not be viewing.
+        AccumulateTaskActiveTime(relayEvent);
         if (relayEvent.TaskId != SelectedTask?.Id)
         {
             return;
@@ -87,22 +91,26 @@ public partial class MainWindowViewModel
 
         if (relayEvent.EventName == "stage_start")
         {
-            // Capture the stage start so the 1-second timer can tick its elapsed
-            // label (MarkRunning sets Status = "Running" and the start time).
+            // Open a new elapsed segment. MarkRunning accumulates across attempts,
+            // so a retried stage's timer keeps the time already banked instead of
+            // restarting at the latest attempt.
             stage.MarkRunning(relayEvent.Timestamp);
         }
         else
         {
+            // Bank this attempt's duration BEFORE leaving Running — the Status
+            // setter drops the live segment — so a retried stage's finished card
+            // reads the cumulative total, not just the latest attempt.
+            if (relayEvent.EventName is "stage_done" or "stage_report")
+            {
+                ApplyStageEventMetric(stage, relayEvent);
+            }
             stage.Status = relayEvent.EventName switch
             {
                 "stage_done" or "stage_report" => "Done",
                 "flagged" => "Flagged",
                 _ => stage.Status
             };
-        }
-        if (relayEvent.EventName is "stage_done" or "stage_report")
-        {
-            ApplyStageEventMetric(stage, relayEvent);
         }
     }
 
@@ -274,26 +282,4 @@ public partial class MainWindowViewModel
     private bool IsInSelectedStage(TraceEntry entry) =>
         _selectedStageFilter is null || entry.StageNumber == _selectedStageFilter;
 
-    private static void ApplyStageEventMetric(StageRowViewModel stage, RelayEvent relayEvent)
-    {
-        if (relayEvent.Data is null)
-        {
-            return;
-        }
-
-        if (relayEvent.Data.TryGetValue("time", out var time))
-            stage.DurationLabel = time;
-        if (relayEvent.Data.TryGetValue("cost", out var cost))
-            stage.CostLabel = cost;
-        if (relayEvent.Data.TryGetValue("model", out var model))
-            stage.ModelLabel = model;
-        if (relayEvent.Data.TryGetValue("turns", out var turns))
-        {
-            stage.TurnsLabel = turns + "t";
-        }
-        if (relayEvent.Data.TryGetValue("testTime", out var testTime))
-        {
-            stage.TestDurationLabel = testTime;
-        }
-    }
 }

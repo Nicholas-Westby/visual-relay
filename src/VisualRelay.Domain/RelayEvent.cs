@@ -38,7 +38,9 @@ public sealed record RelayEvent(
             }
         }
 
-        foreach (var pair in Data?.Where(pair => !priority.Contains(pair.Key)) ?? [])
+        // "timeSeconds" is a machine-readable companion to "time" (so the GUI can
+        // sum per-attempt durations); keep it out of the human-readable detail line.
+        foreach (var pair in Data?.Where(pair => !priority.Contains(pair.Key) && pair.Key != "timeSeconds") ?? [])
         {
             yield return pair;
         }

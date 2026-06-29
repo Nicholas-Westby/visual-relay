@@ -1,21 +1,23 @@
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Domain;
+using static VisualRelay.Tests.RelayEventTestDispatch;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Pins that the LEFT queue list's running-task row shows the OVERALL
-/// wall-clock elapsed (since the task's pipeline began, planning stages
-/// 1–4 included), NOT the current stage's per-stage elapsed. The drain
-/// fires OnPlanningStarted for all planning tasks together; execute is
-/// serial, so a later-executing task's overall elapsed includes its idle
-/// queue wait — consistent with the "overall wall-clock since pipeline
-/// began" framing.
+/// Pins the queue-row "overall" task timer semantics chosen for Problem B:
+/// overall = the SUM of the task's own stage active times (matching the persisted
+/// per-task metric, which already sums squashed stage durations), NOT the
+/// wall-clock since planning. That excludes the idle queue-wait a task spends
+/// parked while ANOTHER task executes during a Run All drain, so the queue row
+/// reconciles with the stage cards instead of dwarfing them.
 /// </summary>
 [Collection("Headless")]
 public sealed class QueueRowElapsedOverallTests
 {
+    private static readonly DateTimeOffset Anchor = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);
+
     private static async Task<(MainWindowViewModel ViewModel, TestRepository Repo)> LoadTaskAsync(string taskId)
     {
         var repo = TestRepository.Create();
@@ -27,50 +29,118 @@ public sealed class QueueRowElapsedOverallTests
     }
 
     [AvaloniaFact]
-    public async Task Drain_RunningTaskElapsed_ShowsOverallTime_NotStageTime()
+    public async Task Overall_IsActiveSum_ExcludesIdleQueueWait_AndReconcilesWithStages()
     {
         var (viewModel, repo) = await LoadTaskAsync("gamma");
         using (repo)
         {
-            viewModel.RestoreRunningTaskState("gamma", stageNumber: 5, stageName: "Author-tests");
+            // gamma is running and selected, so its events drive both the stage
+            // board and its overall active-time accumulator.
+            viewModel.RestoreRunningTaskState("gamma", stageNumber: null, stageName: null);
 
-            var utcNow = DateTimeOffset.UtcNow;
-            // Seed the run-start anchor 10 minutes in the past (overall start).
-            viewModel.SetRunStartedAt("gamma", utcNow - TimeSpan.FromMinutes(10));
-            // Mark the Author-tests stage running 4 min 46 s ago (per-stage start).
-            var authorTests = viewModel.Stages.First(s => s.Number == 5);
-            authorTests.MarkRunning(utcNow - TimeSpan.FromSeconds(286));
+            // Stage 1 (planning): 2m active.
+            Dispatch(viewModel, StageStart("gamma", 1, Anchor));
+            Dispatch(viewModel, StageDone("gamma", 1, Anchor.AddSeconds(120), seconds: 120));
+
+            // A ONE-HOUR idle queue-wait while another task executes: no stage is
+            // open for gamma, so nothing accrues to its overall.
+            var afterIdle = Anchor.AddSeconds(120).AddHours(1);
+
+            // Stage 5: 3m active.
+            Dispatch(viewModel, StageStart("gamma", 5, afterIdle));
+            Dispatch(viewModel, StageDone("gamma", 5, afterIdle.AddSeconds(180), seconds: 180));
+
+            // Stage 10 (Fix-verify) retried: 5m + 4m across two attempts = 9m.
+            var s10 = afterIdle.AddSeconds(180);
+            Dispatch(viewModel, StageStart("gamma", 10, s10));
+            Dispatch(viewModel, StageDone("gamma", 10, s10.AddSeconds(300), seconds: 300));
+            Dispatch(viewModel, StageStart("gamma", 10, s10.AddSeconds(300)));
+            Dispatch(viewModel, StageDone("gamma", 10, s10.AddSeconds(540), seconds: 240));
 
             viewModel.UpdateRunningElapsedLabels();
 
             var row = viewModel.Tasks.First(t => t.Id == "gamma");
-            // Overall elapsed: 10 min.
-            Assert.Equal("10m 00s", row.RunningElapsedLabel);
-            Assert.Contains("10m 00s", row.MetricsLine);
-            // Stage elapsed: 4 min 46 s.
-            Assert.Equal("4m 46s", authorTests.ElapsedLabel);
-            // The queue row must NOT mirror the stage card's per-stage elapsed.
-            Assert.NotEqual(row.RunningElapsedLabel, authorTests.ElapsedLabel);
+            // Active sum = 120 + 180 + (300 + 240) = 840 s = 14m 00s. The 1-hour
+            // idle queue-wait is NOT counted.
+            Assert.Equal("14m 00s", row.RunningElapsedLabel);
+
+            // Reconciliation: overall equals the sum of the per-stage card times,
+            // with the retried stage 10 contributing its cumulative 9m.
+            var stages = viewModel.Stages;
+            var stage10 = stages.First(s => s.Number == 10);
+            Assert.Equal("Completed in 9m 00s", stage10.StatusLabel);
+            var stageSumSeconds =
+                ParseLabelSeconds(StripCompleted(stages.First(s => s.Number == 1).StatusLabel)) +
+                ParseLabelSeconds(StripCompleted(stages.First(s => s.Number == 5).StatusLabel)) +
+                ParseLabelSeconds(StripCompleted(stage10.StatusLabel));
+            Assert.Equal(ParseLabelSeconds(row.RunningElapsedLabel), stageSumSeconds);
         }
     }
 
     [AvaloniaFact]
-    public async Task BeginRunningTask_PreservesExistingPlanningAnchor()
+    public async Task RunningStage_LiveTick_KeepsOverallReconciledWithStageSum()
     {
         var (viewModel, repo) = await LoadTaskAsync("gamma");
         using (repo)
         {
-            viewModel.RestoreRunningTaskState("gamma", stageNumber: 5, stageName: "Author-tests");
+            viewModel.RestoreRunningTaskState("gamma", stageNumber: null, stageName: null);
 
-            var utcNow = DateTimeOffset.UtcNow;
-            // Seed a 10-min-ago planning-start anchor (simulating that
-            // OnPlanningStarted captured the overall start 10 min ago).
-            viewModel.SetRunStartedAt("gamma", utcNow - TimeSpan.FromMinutes(10));
+            var now = DateTimeOffset.UtcNow;
+            // Stage 5 completed (3m), stage 6 currently running (started 30s ago).
+            Dispatch(viewModel, StageStart("gamma", 5, now - TimeSpan.FromSeconds(230)));
+            Dispatch(viewModel, StageDone("gamma", 5, now - TimeSpan.FromSeconds(50), seconds: 180));
+            Dispatch(viewModel, StageStart("gamma", 6, now - TimeSpan.FromSeconds(30)));
 
-            // Now the drain's Phase 2 begins: OnExecuteStarted fires, which
-            // calls BeginRunningTask. With the fix, TryAdd *preserves* the
-            // seeded planning-start anchor; before the fix, the unconditional
-            // indexer assignment overwrites it to UtcNow (~0s ago).
+            viewModel.UpdateRunningElapsedLabels();
+
+            var row = viewModel.Tasks.First(t => t.Id == "gamma");
+            var stage6 = viewModel.Stages.First(s => s.Number == 6);
+            // Overall = 180 banked + ~30 live = ~210s; stage 6 card live = ~30s.
+            // The overall must equal stage 5 (180) + stage 6 live — reconciled.
+            var overall = ParseLabelSeconds(row.RunningElapsedLabel);
+            var stage6Live = ParseLabelSeconds(stage6.ElapsedLabel);
+            Assert.Equal(180 + stage6Live, overall);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ExecuteStart_PreservesPlanningPhaseActiveTime()
+    {
+        var (viewModel, repo) = await LoadTaskAsync("gamma");
+        using (repo)
+        {
+            var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
+            Assert.NotNull(lifecycle.OnPlanningStarted);
+            Assert.NotNull(lifecycle.OnExecuteStarted);
+
+            // Planning phase: the accumulator is created at planning start; stage 1
+            // (2m) accrues even though the task is not yet in the running set.
+            lifecycle.OnPlanningStarted.Invoke("gamma");
+            Dispatch(viewModel, StageStart("gamma", 1, Anchor));
+            Dispatch(viewModel, StageDone("gamma", 1, Anchor.AddSeconds(120), seconds: 120));
+            Dispatcher.UIThread.RunJobs();
+
+            // Execute phase begins (after the idle wait): BeginRunningTask must
+            // PRESERVE the planning-phase active time, not reset it.
+            lifecycle.OnExecuteStarted.Invoke("gamma");
+            Dispatcher.UIThread.RunJobs();
+
+            viewModel.UpdateRunningElapsedLabels();
+
+            var row = viewModel.Tasks.First(t => t.Id == "gamma");
+            // 2m of planning active time is preserved (no live stage open yet).
+            Assert.Equal("2m 00s", row.RunningElapsedLabel);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task ExecuteStart_NoPlanningPhase_StartsFreshAccumulator()
+    {
+        var (viewModel, repo) = await LoadTaskAsync("gamma");
+        using (repo)
+        {
+            // No OnPlanningStarted (single-run path, or a resume where planning is
+            // already done and skipped): execute start creates a fresh accumulator.
             var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
             Assert.NotNull(lifecycle.OnExecuteStarted);
             lifecycle.OnExecuteStarted.Invoke("gamma");
@@ -79,48 +149,19 @@ public sealed class QueueRowElapsedOverallTests
             viewModel.UpdateRunningElapsedLabels();
 
             var row = viewModel.Tasks.First(t => t.Id == "gamma");
-            Assert.Equal("10m 00s", row.RunningElapsedLabel);
-        }
-    }
-
-    [AvaloniaFact]
-    public async Task BeginRunningTask_CapturesStart_WhenNoPriorAnchor()
-    {
-        var (viewModel, repo) = await LoadTaskAsync("gamma");
-        using (repo)
-        {
-            viewModel.RestoreRunningTaskState("gamma", stageNumber: 5, stageName: "Author-tests");
-
-            // Do NOT seed _runStartedAt — this simulates a task skipping
-            // planning (stages 1–4 already Done → straight to execute), or
-            // the single-run path (RunOneAsync calls BeginRunningTask once
-            // with no prior entry).
-            var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
-            Assert.NotNull(lifecycle.OnExecuteStarted);
-            lifecycle.OnExecuteStarted.Invoke("gamma");
-            Dispatcher.UIThread.RunJobs();
-
-            viewModel.UpdateRunningElapsedLabels();
-
-            var row = viewModel.Tasks.First(t => t.Id == "gamma");
-            // TryAdd succeeds when there's no prior entry, so the label must
-            // NOT be null/empty — a real start was captured.
-            Assert.False(string.IsNullOrEmpty(row.RunningElapsedLabel));
-            // With no backdated anchor, the elapsed should be near-zero
-            // ("0s"), not the 10-min-ago value from the other tests.
+            // No stage segments yet ⇒ 0s (not null/empty: a real accumulator exists).
             Assert.Equal("0s", row.RunningElapsedLabel);
         }
     }
 
     /// <summary>
-    /// Cross-drain regression: a task LEFT PLANNED when a drain pauses must not carry
-    /// its planning-start anchor into the resume drain. The post-drain cleanup
-    /// (DropStaleRunAnchorsAfterDrain) drops the stale anchor so the resume's execute
-    /// start re-anchors — the queue-row elapsed reflects the RESUME, not the original
-    /// planning inflated by the pause gap.
+    /// Cross-drain regression: a task LEFT PLANNED when a drain pauses must not
+    /// carry its planning-phase active time into the resume drain. The post-drain
+    /// cleanup drops the stale accumulator so the resume's execute start begins a
+    /// fresh active-time count.
     /// </summary>
     [AvaloniaFact]
-    public async Task DrainEnd_DropsStalePlannedAnchor_SoResumeReanchorsAtExecuteStart()
+    public async Task DrainEnd_DropsStaleAccumulator_SoResumeStartsFresh()
     {
         var (viewModel, repo) = await LoadTaskAsync("gamma");
         using (repo)
@@ -130,29 +171,27 @@ public sealed class QueueRowElapsedOverallTests
             Assert.NotNull(lifecycle.OnPlanningCompleted);
             Assert.NotNull(lifecycle.OnExecuteStarted);
 
-            // Drain 1: gamma plans, then is LEFT PLANNED (drain pauses before executing
-            // it). OnPlanningStarted seeds the anchor; OnPlanningCompleted (non-flagged)
-            // marks it Planned and KEEPS the anchor.
+            // Drain 1: gamma plans (2m accrues) then is LEFT PLANNED (paused).
             lifecycle.OnPlanningStarted.Invoke("gamma");
+            Dispatch(viewModel, StageStart("gamma", 1, Anchor));
+            Dispatch(viewModel, StageDone("gamma", 1, Anchor.AddSeconds(120), seconds: 120));
             lifecycle.OnPlanningCompleted.Invoke("gamma", RelayTaskOutcomeStatus.Planned);
             Dispatcher.UIThread.RunJobs();
 
-            // Simulate the pause gap: backdate the retained planning anchor 10 minutes.
-            viewModel.SetRunStartedAt("gamma", DateTimeOffset.UtcNow - TimeSpan.FromMinutes(10));
-
-            // Drain 1 ends (paused) → post-drain cleanup drops the stale anchor.
+            // Drain 1 ends (paused) → cleanup drops the stale accumulator.
             viewModel.DropStaleRunAnchorsAfterDrain();
 
-            // Drain 2 (resume): planning is skipped (1–4 Done) so OnPlanningStarted
-            // never fires; execute starts directly and re-anchors via TryAdd.
+            // Drain 2 (resume): execute starts directly with a fresh accumulator.
             lifecycle.OnExecuteStarted.Invoke("gamma");
             Dispatcher.UIThread.RunJobs();
-
             viewModel.UpdateRunningElapsedLabels();
 
             var row = viewModel.Tasks.First(t => t.Id == "gamma");
-            // The anchor reflects the RESUME (~0s), not the 10-min-old planning start.
+            // The 2m of drain-1 planning was dropped; resume starts fresh at 0s.
             Assert.Equal("0s", row.RunningElapsedLabel);
         }
     }
+
+    private static string StripCompleted(string statusLabel) =>
+        statusLabel.Replace("Completed in ", "", StringComparison.Ordinal);
 }

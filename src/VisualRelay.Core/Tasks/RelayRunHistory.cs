@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using VisualRelay.Core.Costs;
@@ -52,6 +53,9 @@ public static partial class RelayRunHistory
             ["name"] = stage.StageName,
             ["model"] = stage.Model,
             ["time"] = stage.DurationLabel,
+            // Squashed (summed-across-attempts) duration, mirroring the live
+            // stage_done event so both carry the numeric value consistently.
+            ["timeSeconds"] = stage.DurationSeconds.ToString(CultureInfo.InvariantCulture),
             ["cost"] = stage.CostLabel
         };
         if (stage.Turns > 0)

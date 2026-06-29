@@ -15,7 +15,9 @@ public partial class MainWindowViewModel
             OnPlanningStarted = taskId =>
             {
                 StatusText = $"Planning {taskId}…";
-                _runStartedAt[taskId] = DateTimeOffset.UtcNow;
+                // Fresh active-time accumulator for this run; planning stages (1–4)
+                // accrue into it as their stage_done events arrive.
+                _taskElapsed[taskId] = new CumulativeElapsed();
                 Tasks.FirstOrDefault(t => t.Id == taskId)?.MarkPlanning();
             },
             OnPlanningCompleted = (taskId, status) =>
@@ -25,7 +27,7 @@ public partial class MainWindowViewModel
                 {
                     if (status == RelayTaskOutcomeStatus.Flagged)
                     {
-                        _runStartedAt.Remove(taskId);
+                        _taskElapsed.Remove(taskId);
                         task.MarkIdle();
                     }
                     else
@@ -103,6 +105,9 @@ public partial class MainWindowViewModel
         _runningTaskId = taskId;
         _runningStageNumbers[taskId] = stageNumber;
         _runningStageNames[taskId] = stageName;
+        // Ensure the restored running task has an active-time accumulator so live
+        // stage events accrue (a freshly-restored run has no banked time yet).
+        _taskElapsed.TryAdd(taskId, new CumulativeElapsed());
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
     }
@@ -113,7 +118,11 @@ public partial class MainWindowViewModel
         _runningTaskId = task.Id;
         _runningStageNumbers[task.Id] = null;
         _runningStageNames[task.Id] = null;
-        _runStartedAt.TryAdd(task.Id, DateTimeOffset.UtcNow);
+        // TryAdd preserves a planning-phase accumulator seeded by OnPlanningStarted
+        // (so the overall keeps the planning-stage active time across the
+        // plan→execute boundary); it creates a fresh one for the single-run path
+        // and for a resume where planning was already done.
+        _taskElapsed.TryAdd(task.Id, new CumulativeElapsed());
         _rewriteUndo.Discard(task.Id);
         RaiseRewriteStateChanged();
         ClearSelectedTaskErrorForRunStart(task.Id);
@@ -167,7 +176,7 @@ public partial class MainWindowViewModel
         _runningTaskIds.Remove(taskId);
         _runningStageNumbers.Remove(taskId);
         _runningStageNames.Remove(taskId);
-        _runStartedAt.Remove(taskId);
+        _taskElapsed.Remove(taskId);
 
         var task = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (task is not null)
@@ -193,14 +202,17 @@ public partial class MainWindowViewModel
     {
         var now = DateTimeOffset.UtcNow;
 
-        // Update elapsed for every currently-running task row.
+        // Update the overall elapsed for every currently-running task row: the
+        // task's own active time (sum of its stage segments + the live stage),
+        // NOT the wall-clock since planning — so it reconciles with the stage cards
+        // and excludes idle queue-wait.
         foreach (var taskId in _runningTaskIds)
         {
-            if (_runStartedAt.TryGetValue(taskId, out var startedAt))
+            if (_taskElapsed.TryGetValue(taskId, out var elapsed))
             {
                 var task = Tasks.FirstOrDefault(t => t.Id == taskId);
                 if (task is not null)
-                    task.RunningElapsedLabel = ElapsedFormatter.Label(now - startedAt);
+                    task.RunningElapsedLabel = ElapsedFormatter.Label(elapsed.Total(now));
             }
         }
 
@@ -282,15 +294,4 @@ public partial class MainWindowViewModel
         AddAttachmentsCommand.NotifyCanExecuteChanged();
     }
 
-    /// <summary>
-    /// Test seam: backdate the run-start anchor so a VM test can seed a past
-    /// start and call <see cref="UpdateRunningElapsedLabels"/> to assert the
-    /// label reflects it without any real wall-clock wait. Mirrors the
-    /// <see cref="StageRowViewModel.MarkRunning(DateTimeOffset)"/> precedent
-    /// of accepting a start instant as a parameter.
-    /// </summary>
-    internal void SetRunStartedAt(string taskId, DateTimeOffset startedAt)
-    {
-        _runStartedAt[taskId] = startedAt;
-    }
 }

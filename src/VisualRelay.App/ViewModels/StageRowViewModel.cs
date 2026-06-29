@@ -83,7 +83,10 @@ public sealed class StageRowViewModel : ViewModelBase
     private string _durationLabel = "No run yet";
     private string _costLabel = "No cost yet";
     private string _modelLabel = string.Empty;
-    private DateTimeOffset? _runningSince;
+    // Cumulative-across-attempts elapsed: a retried stage (e.g. Fix-verify) opens a
+    // new segment per attempt without discarding the time already banked, so the
+    // card shows the total stage time, not just the latest attempt.
+    private readonly CumulativeElapsed _elapsed = new();
     private string _elapsedLabel = string.Empty;
     public string Status
     {
@@ -94,10 +97,11 @@ public sealed class StageRowViewModel : ViewModelBase
             {
                 // Leaving Running (e.g. stage_done/flag) ends live ticking; drop
                 // the elapsed so the status row reverts from the live tick to the
-                // final "Completed in {DurationLabel}".
+                // final "Completed in {DurationLabel}". The banked cumulative total
+                // is retained (a retry re-opens a new segment on top of it).
                 if (value != "Running")
                 {
-                    _runningSince = null;
+                    _elapsed.StopSegment();
                     ElapsedLabel = string.Empty;
                 }
                 OnPropertyChanged(nameof(StatusLabel));
@@ -129,27 +133,39 @@ public sealed class StageRowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Marks this stage Running and captures the moment it started, so the
-    /// 1-second timer can tick its elapsed label. Mirrors the running-task
-    /// elapsed approach (a captured UtcNow start + periodic recompute).
+    /// Marks this stage Running and opens a new elapsed segment at
+    /// <paramref name="startedAt"/>. A retry/escalation re-opens a segment on top
+    /// of the already-banked attempts, so the 1-second timer ticks the CUMULATIVE
+    /// stage time rather than restarting at the latest attempt.
     /// </summary>
     public void MarkRunning(DateTimeOffset startedAt)
     {
-        _runningSince = startedAt;
+        _elapsed.StartSegment(startedAt);
         ElapsedLabel = string.Empty;
         Status = "Running";
     }
 
     /// <summary>
+    /// Banks a completed attempt's reported duration and shows the cumulative total
+    /// as the stage's recorded duration. Called on a live stage_done so a retried
+    /// stage's finished card reads the SUM across attempts, not just the last one.
+    /// </summary>
+    public void AccumulateCompletedDuration(TimeSpan reportedDuration)
+    {
+        _elapsed.CompleteSegment(reportedDuration);
+        DurationLabel = ElapsedFormatter.Label(_elapsed.Completed);
+    }
+
+    /// <summary>
     /// Per-tick refresh invoked by the 1-second DispatcherTimer. No-op unless the
-    /// stage is Running with a captured start; never touches the final
-    /// DurationLabel recorded on stage_done.
+    /// stage is Running; shows the cumulative elapsed (banked attempts + live
+    /// segment) and never touches the final DurationLabel recorded on stage_done.
     /// </summary>
     public void RefreshElapsed(DateTimeOffset now)
     {
-        if (Status == "Running" && _runningSince is { } since)
+        if (Status == "Running")
         {
-            ElapsedLabel = ElapsedFormatter.Label(now - since);
+            ElapsedLabel = ElapsedFormatter.Label(_elapsed.Total(now));
         }
     }
 
@@ -265,7 +281,7 @@ public sealed class StageRowViewModel : ViewModelBase
         TestDurationLabel = string.Empty;
         ReportPath = null;
         TraceDirectory = null;
-        _runningSince = null;
+        _elapsed.Reset();
         ElapsedLabel = string.Empty;
     }
 }

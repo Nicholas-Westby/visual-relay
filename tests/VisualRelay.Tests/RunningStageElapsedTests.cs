@@ -1,6 +1,7 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using static VisualRelay.Tests.RelayEventTestDispatch;
 
 namespace VisualRelay.Tests;
 
@@ -136,5 +137,62 @@ public sealed class RunningStageElapsedTests
         Assert.NotEqual("0s", stage.ElapsedLabel);
         Assert.Contains("m", stage.ElapsedLabel);
         Assert.Contains(stage.ElapsedLabel, stage.StatusLabel);
+    }
+
+    /// <summary>
+    /// Problem A: a stage that runs multiple attempts (the Fix-verify loop emits a
+    /// stage_start per attempt) must show the CUMULATIVE time across attempts, not
+    /// re-anchor to the latest attempt's start. Drives attempt 1 (reports 300 s,
+    /// done) then attempt 2 (just started) through the live event path and ticks.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task RetriedStage_RunningTimer_AccumulatesAcrossAttempts_NotPerAttemptReset()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var now = DateTimeOffset.UtcNow;
+        // Attempt 1: ran 300 s, completed.
+        Dispatch(viewModel, StageStart("alpha", 10, now - TimeSpan.FromSeconds(400)));
+        Dispatch(viewModel, StageDone("alpha", 10, now - TimeSpan.FromSeconds(100), seconds: 300));
+        // Attempt 2 (retry): started ~7 s ago, still running.
+        Dispatch(viewModel, StageStart("alpha", 10, now - TimeSpan.FromSeconds(7)));
+
+        viewModel.UpdateRunningElapsedLabels();
+
+        var stage = viewModel.Stages.First(s => s.Number == 10);
+        // Cumulative ≈ 300 s banked + ~7 s live ⇒ "5m 0Xs". The per-attempt reset
+        // bug would show only attempt 2's ~7 s.
+        Assert.StartsWith("5m", stage.ElapsedLabel);
+        Assert.NotEqual("7s", stage.ElapsedLabel);
+        Assert.StartsWith("Running 5m", stage.StatusLabel);
+    }
+
+    /// <summary>
+    /// Problem A (completed): once a retried stage finally goes green, its recorded
+    /// duration must be the SUM of all attempts, not just the last attempt — so the
+    /// done card reconciles with the cumulative running timer it just replaced.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task RetriedStage_DoneDuration_IsCumulativeAcrossAttempts()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var t = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(20);
+        Dispatch(viewModel, StageStart("alpha", 10, t));
+        Dispatch(viewModel, StageDone("alpha", 10, t.AddSeconds(180), seconds: 180)); // attempt 1: 3m
+        Dispatch(viewModel, StageStart("alpha", 10, t.AddSeconds(180)));
+        Dispatch(viewModel, StageDone("alpha", 10, t.AddSeconds(300), seconds: 120)); // attempt 2: 2m, green
+
+        var stage = viewModel.Stages.First(s => s.Number == 10);
+        // 180 + 120 = 300 s. The bug shows only the last attempt ("2m 00s").
+        Assert.Equal("Completed in 5m 00s", stage.StatusLabel);
     }
 }

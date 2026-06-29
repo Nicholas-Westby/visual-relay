@@ -35,7 +35,6 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly HashSet<string> _runningTaskIds = new(StringComparer.Ordinal);
     private readonly Dictionary<string, int?> _runningStageNumbers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _runningStageNames = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, DateTimeOffset> _runStartedAt = new(StringComparer.Ordinal);
     private string? _runningTaskId;
 
     // Rewrite state: separate from run state so rewrites don't block other tasks.

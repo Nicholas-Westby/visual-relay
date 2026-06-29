@@ -1,3 +1,4 @@
+using System.Globalization;
 using VisualRelay.Core.Costs;
 using VisualRelay.Domain;
 
@@ -29,10 +30,16 @@ public sealed partial class RelayDriver
             ? MoneyFormatter.Dollars(sessionCostUsd) + "?"
             : MoneyFormatter.Dollars(sessionCostUsd);
 
+        // Prefer the agent's reported (cost) duration; fall back to the measured
+        // stopwatch elapsed. Emitted BOTH formatted ("time") for display and as a
+        // raw number ("timeSeconds") so the GUI can sum per-attempt durations for a
+        // retried stage without re-parsing the formatted label.
+        var durationSeconds = cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds;
         var data = new Dictionary<string, string>
         {
             ["name"] = stage.Name,
-            ["time"] = FormatDuration(cost?.DurationSeconds > 0 ? cost.DurationSeconds : elapsed.TotalSeconds),
+            ["time"] = FormatDuration(durationSeconds),
+            ["timeSeconds"] = durationSeconds.ToString(CultureInfo.InvariantCulture),
             ["cost"] = costLabel,
             ["sessionCost"] = sessionLabel
         };
