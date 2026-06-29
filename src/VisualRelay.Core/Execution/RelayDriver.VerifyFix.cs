@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using VisualRelay.Core.Costs;
 using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
@@ -12,9 +11,16 @@ public sealed partial class RelayDriver
     /// <see cref="RelayConfig.BoostTurnsTaskIds"/>.</summary>
     private const int TurnBoostMultiplier = 10;
     /// <summary>
-    /// Runs the fix-verify loop: stage 10 → re-verify, bounded by <see cref="RelayConfig.MaxVerifyLoops"/>.
-    /// Returns null outcome when the suite turns green (success). Returns a Flagged outcome when all
-    /// attempts are exhausted or a non-retryable failure occurs (timeout / invalid subagent).
+    /// Runs the fix-verify loop for stage 10. Each iteration is an ESCALATION RUN: it
+    /// bumps the tier (cheap→balanced→frontier, capped) and doubles the turn + ceiling
+    /// budget (flat under the 10× boost) via <see cref="StageEscalation"/>, re-verifies,
+    /// and on red escalates again — up to <see cref="RelayConfig.MaxStageFailures"/> runs,
+    /// then flags. (The old fixed <c>MaxVerifyLoops</c> COUNT is subsumed by the 3-run
+    /// cap; MaxVerifyLoops now only gates whether this loop is entered at all — see
+    /// RunTaskAsync. The non-convergence early-flag is gone: a higher tier may change the
+    /// verdict, so every run is spent before flagging.) Returns null outcome on green;
+    /// a Flagged outcome when the runs are exhausted or a non-retryable / hard-abort
+    /// failure occurs (timeout / invalid subagent / absolute-ceiling / socket wedge).
     /// </summary>
     private async Task<(RelayTaskOutcome? Outcome, string PreviousSeal, string TaskHash, double SessionCostUsd, int UnknownCostStageCount)> RunVerifyFixLoopAsync(
         string rootPath,
@@ -42,14 +48,29 @@ public sealed partial class RelayDriver
         CancellationToken cancellationToken)
     {
         var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
-        var maxLoops = config.MaxVerifyLoops;
-        VerifyAttemptFingerprint? previousAttempt = null;
+        // The run cap is MaxStageFailures (the 3-run escalation model). The effective
+        // run-1 turn/ceiling base is the (already-boost-applied) config budget; the
+        // per-run doubling is suppressed in flat 10× mode while the tier escalates.
+        var maxRuns = Math.Max(1, config.MaxStageFailures);
+        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
+        var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
+        var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
 
-        for (var attempt = 1; attempt <= maxLoops; attempt++)
+        for (var run = 1; run <= maxRuns; run++)
         {
+            var tier = StageEscalation.TierForRun(stage.Tier, run);
+            var turns = StageEscalation.TurnsForRun(baseTurns, run, boosted);
+            var ceilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));
+            if (run > 1)
+            {
+                await PublishStageEscalatedAsync(rootPath, runId, taskId, stage, run, maxRuns,
+                    StageEscalation.TierForRun(stage.Tier, run - 1), tier,
+                    StageEscalation.TurnsForRun(baseTurns, run - 1, boosted), turns, cancellationToken);
+            }
+
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "info", "stage_start", runId, rootPath, taskId,
-                stage.Number, stage.Tier,
+                stage.Number, tier,
                 Data: new Dictionary<string, string> { ["name"] = stage.Name }), cancellationToken);
 
             MarkStatus(statusEntries, stage.Number, "Running");
@@ -57,17 +78,26 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
-                pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath);
+                    input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
+                    pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath)
+                with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs, MaxSelfEscalations = 0 };
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null) { sessionCostUsd += cost.CostUsd; } else { unknownCostStageCount++; }
 
             if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
             {
-                var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-                    result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
-                return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+                // Hard infra abort (absolute ceiling / socket wedge) flags now — re-running
+                // burns the budget. Any other in-process failure on a non-final run
+                // escalates (a higher tier may yet produce a valid result); the final run
+                // flags.
+                if (result.HardAbort || run >= maxRuns)
+                {
+                    var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
+                        result.Error ?? "invalid subagent result", result.RawText, statusEntries, cancellationToken);
+                    return (outcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
+                }
+                continue;
             }
 
             var body = result.Json;
@@ -119,7 +149,7 @@ public sealed partial class RelayDriver
             }
 
             var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
-                rootPath, config, stageNumber: 10, attempt: attempt, runId, taskId, cancellationToken);
+                rootPath, config, stageNumber: 10, attempt: run, runId, taskId, cancellationToken);
             await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage, verifyMutations, cancellationToken);
             var testDurationSeconds = (double?)testResult.Elapsed.TotalSeconds;
             if (testResult.TimedOut)
@@ -136,11 +166,11 @@ public sealed partial class RelayDriver
             var attemptFullOutput = check == "red"
                 ? BuildFullFailureOutput(testResult, guardFailureOutput, bootstrapFailingResult is not null, bootstrapFailingResult?.Output)
                 : null;
-            var attemptVerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput);
+            var attemptVerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput);
 
             // Record attempt in ledger with labeled section.
-            var header = maxLoops > 1
-                ? $"## Stage {stage.Number} - {stage.Name} (attempt {attempt}/{maxLoops})"
+            var header = maxRuns > 1
+                ? $"## Stage {stage.Number} - {stage.Name} (attempt {run}/{maxRuns})"
                 : $"## Stage {stage.Number} - {stage.Name}";
             ledger.AppendLine(header);
             ledger.AppendLine();
@@ -165,33 +195,21 @@ public sealed partial class RelayDriver
             if (check == "green")
                 return (null, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
 
-            // Convergence guard (R3): if this red attempt left the manifest tree unchanged
-            // AND the distilled failure is identical to the prior attempt, the loop cannot
-            // converge — flag now instead of burning the remaining attempts. The attempt is
-            // already recorded above (honest history), so we only flag and return here.
-            var distilledReason = SwivalSubagentRunner.ExtractFailureReason(testResult.Output);
-            var thisAttempt = new VerifyAttemptFingerprint(treeHash, distilledReason);
-            if (IsNonConvergent(attempt, check, thisAttempt, previousAttempt))
-            {
-                var reason = $"verify non-convergent: working tree unchanged, same failure persists ({distilledReason})";
-                var ncOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-                    reason, testResult.Output, statusEntries, cancellationToken);
-                return (ncOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
-            }
-            previousAttempt = thisAttempt;
-
-            // Build combined failure output for next fix-verify iteration, carrying the
-            // matching full-output artifact path so the next prompt can point the agent at it.
+            // No early non-convergence bail: a higher tier (next run) may change the
+            // verdict even when the tree/failure looks unchanged, so spend every run.
+            // Build combined failure output for the next iteration, carrying the matching
+            // full-output artifact path so the next prompt can point the agent at it.
             failingTestOutput = BuildFailureOutput(testResult, guardFailureOutput,
                 bootstrapFailingResult is not null, bootstrapFailingResult?.Output);
             failingVerifyOutputPath = attemptVerifyOutputPath;
         }
 
-        // All attempts exhausted — flag.
+        // All runs exhausted — flag.
         var finalOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-            $"verify failed after {maxLoops} fix-verify {(maxLoops == 1 ? "attempt" : "attempts")}", failingTestOutput, statusEntries, cancellationToken);
+            $"verify failed after {maxRuns} fix-verify {(maxRuns == 1 ? "attempt" : "attempts")}", failingTestOutput, statusEntries, cancellationToken);
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
+
     /// <summary>
     /// Snapshot the effective swival.toml content once at run start so task
     /// edits to swival.toml cannot change the profile for later stages.
@@ -210,86 +228,5 @@ public sealed partial class RelayDriver
             : SwivalProfileSession.DefaultToml;
         await File.WriteAllTextAsync(pinnedProfilePath, content, cancellationToken);
         return content;
-    }
-    private StageInvocation BuildInvocation(
-        string rootPath,
-        string runId,
-        string taskId,
-        string taskDirectory,
-        RelayConfig config,
-        RelayStageDefinition stage,
-        RelayTaskInput input,
-        StringBuilder ledger,
-        IReadOnlyList<string> manifest,
-        string? lastTestOutput = null,
-        string? testCommand = null,
-        string? pinnedSwivalProfileContent = null,
-        string? verifyOutputPath = null)
-    {
-        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;
-        var turns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
-        var ceilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
-        var attempt = RelayAttempt.Next(taskDirectory, stage.Number);
-        return new StageInvocation(
-            stage,
-            stage.Tier,
-            runId,
-            rootPath,
-            taskId,
-            input.Markdown,
-            ledger.ToString(),
-            manifest,
-            config.LogSources,
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}"),
-            Path.Combine(taskDirectory, $"stage{stage.Number}-attempt{attempt}.report.json"),
-            turns,
-            LastTestOutput: lastTestOutput,
-            TaskContext: input.Context,
-            TestCommand: testCommand,
-            PinnedSwivalProfileContent: pinnedSwivalProfileContent,
-            AbsoluteCeilingMs: ceilingMs,
-            VerifyOutputPath: verifyOutputPath,
-            IsTurnBoosted: boosted);
-    }
-    /// <summary>
-    /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.
-    /// Returns the updated <paramref name="previousSeal"/> and <paramref name="taskHash"/>.
-    /// </summary>
-    private async Task<(string PreviousSeal, string TaskHash)> RecordStageAsync(
-        string rootPath,
-        string runId,
-        string taskId,
-        string taskDirectory,
-        RelayStageDefinition stage,
-        string body,
-        string? check,
-        RelayCostEstimate? cost,
-        Stopwatch stopwatch,
-        StringBuilder ledger,
-        List<string> seals,
-        List<StageStatusEntry> statusEntries,
-        IReadOnlyList<string> manifest,
-        string previousSeal,
-        // ReSharper disable once UnusedParameter.Local — the running task hash is
-        // recomputed as the new seal (returned in .TaskHash); the prior value is
-        // intentionally not read here. Kept for call-site tuple symmetry across the
-        // 4 record sites: (previousSeal, taskHash) = await RecordStageAsync(…).
-        string taskHash,
-        double sessionCostUsd,
-        int unknownCostStageCount,
-        CancellationToken cancellationToken,
-        double? testDurationSeconds = null)
-    {
-        AppendLedgerSection(ledger, stage, body);
-        var treeHash = stage.Number >= 4 ? WorkingTreeHash(rootPath, manifest) : string.Empty;
-        var artifactHash = Hashing.Sha256Hex(stage.Number.ToString(), stage.Name, body);
-        var seal = Hashing.Sha256Hex(previousSeal, stage.Number.ToString(), DateTimeOffset.UtcNow.ToString("O"), artifactHash, treeHash, check ?? string.Empty);
-        seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
-        await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
-        stopwatch.Stop();
-        MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
-        await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
-        return (seal, seal);
     }
 }

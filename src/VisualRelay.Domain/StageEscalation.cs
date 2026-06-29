@@ -73,4 +73,15 @@ public static class StageEscalation
     /// </summary>
     public static int TurnsForRun(int baseTurns, int run, bool flatBoost) =>
         Scale(baseTurns, RunMultiplier(run, flatBoost));
+
+    /// <summary>
+    /// The single, shared Run-Log sentence for an escalation transition (used by both
+    /// escalation sites so the wording stays identical), e.g.
+    /// <c>"Stage 10 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400"</c>.
+    /// </summary>
+    public static string DescribeTransition(
+        int stageNumber, string stageName, int run, int maxRuns,
+        string fromTier, string toTier, int fromTurns, int toTurns) =>
+        $"Stage {stageNumber} {stageName} escalated (run {run}/{maxRuns}): " +
+        $"tier {fromTier}→{toTier}, max-turns {fromTurns}→{toTurns}";
 }

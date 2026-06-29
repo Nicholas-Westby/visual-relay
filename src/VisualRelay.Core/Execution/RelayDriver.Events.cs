@@ -61,6 +61,22 @@ public sealed partial class RelayDriver
             cancellationToken);
     }
 
+    // A clearly-labeled fix-verify escalation transition in the Run Log (the driver
+    // side of the same model RunAsync uses for in-process failures), e.g.
+    //   "Stage 10 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400".
+    private Task PublishStageEscalatedAsync(
+        string rootPath, string runId, string taskId, RelayStageDefinition stage,
+        int run, int maxRuns, string fromTier, string toTier, int fromTurns, int toTurns,
+        CancellationToken cancellationToken) =>
+        _dependencies.EventSink.PublishAsync(new RelayEvent(
+            DateTimeOffset.UtcNow, "warn", "stage_escalated", runId, rootPath, taskId,
+            stage.Number, toTier,
+            Data: new Dictionary<string, string>
+            {
+                ["message"] = StageEscalation.DescribeTransition(
+                    stage.Number, stage.Name, run, maxRuns, fromTier, toTier, fromTurns, toTurns)
+            }), cancellationToken);
+
     private async Task<RelayTaskOutcome> FlagAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         int stageNumber, string reason, string? details,

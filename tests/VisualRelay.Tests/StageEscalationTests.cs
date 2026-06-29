@@ -58,4 +58,12 @@ public sealed class StageEscalationTests
         Assert.Equal(int.MaxValue, StageEscalation.Scale(int.MaxValue, 4));
         Assert.Equal(int.MaxValue, StageEscalation.Scale(2_000_000_000, 2));
     }
+
+    [Fact]
+    public void DescribeTransition_MatchesTheRunLogSentenceShape()
+    {
+        Assert.Equal(
+            "Stage 10 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400",
+            StageEscalation.DescribeTransition(10, "Fix-verify", 2, 3, "balanced", "frontier", 200, 400));
+    }
 }

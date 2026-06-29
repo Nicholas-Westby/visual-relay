@@ -17,9 +17,9 @@ public sealed partial class SwivalSubagentRunner
     {
         if (_eventSink is null)
             return;
-        var message =
-            $"Stage {invocation.Stage.Number} {invocation.Stage.Name} escalated (run {run}/{maxRuns}): " +
-            $"tier {fromTier}→{toTier}, max-turns {fromTurns}→{toTurns}";
+        var message = StageEscalation.DescribeTransition(
+            invocation.Stage.Number, invocation.Stage.Name, run, maxRuns,
+            fromTier, toTier, fromTurns, toTurns);
         await _eventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "warn", "stage_escalated",
             invocation.RunId, invocation.TargetRoot, invocation.TaskName,
