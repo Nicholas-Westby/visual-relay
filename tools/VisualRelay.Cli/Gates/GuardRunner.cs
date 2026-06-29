@@ -68,4 +68,35 @@ public static class GuardRunner
             Console.Error.WriteLine($"shell too large: {v.Path} has {v.Count} logic lines (limit {v.Limit})");
         return violations.Count > 0 ? 1 : 0;
     }
+
+    /// <summary>
+    /// Runs <see cref="DeadConfigFieldGuard"/> over every <c>*.cs</c> under <c>src/</c>
+    /// (excluding bin/obj). Returns 0 when every config field the loader parses has a
+    /// consumer, 1 otherwise (printing each dead field to stderr). Catches config knobs
+    /// that are parsed-but-consumed-nowhere — which InspectCode structurally cannot see,
+    /// because <c>RelayConfigLoader</c> reads each field as its own fallback default
+    /// (<c>defaults.Field</c>), a phantom self-read. The authoritative gate is the
+    /// <c>DeadConfigFieldGuardTests</c> guard-as-test; this is the same check run as a
+    /// fast pre-build step so <c>check</c> fails early.
+    /// </summary>
+    public static int DeadConfigFields(RepoPaths paths)
+    {
+        var srcDir = Path.Combine(paths.Root, "src");
+        var files = Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
+            .Where(f => !IsBuildArtifact(f))
+            .Select(f => (Path.GetRelativePath(paths.Root, f), File.ReadAllText(f)))
+            .ToList();
+
+        var violations = DeadConfigFieldGuard.FindViolations(files);
+        foreach (var v in violations)
+            Console.Error.WriteLine($"dead config field: {v.Path}:{v.Line}: {v.Field} — {v.Reason}");
+        return violations.Count > 0 ? 1 : 0;
+    }
+
+    /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
+    private static bool IsBuildArtifact(string path)
+    {
+        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        return segments.Any(s => s is "bin" or "obj");
+    }
 }
