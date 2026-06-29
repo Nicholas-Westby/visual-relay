@@ -135,7 +135,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         lastTestOutput: stage9TestResult?.Output,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
-                    cost = TryEstimateCost(invocation.ReportFile);
+                    // Fold EVERY attempt RunAsync ran for this stage (an in-process escalation
+                    // writes a stage{n}-attempt{k}.report.json per run) so the one stage_done
+                    // card and sessionCostUsd match the archived squash, not just attempt 1.
+                    cost = EstimateStageCostCumulative(taskDirectory, stage.Number);
                     if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
                     {
