@@ -130,6 +130,43 @@ public sealed class RelayDriverBootstrapTests
     }
 
     /// <summary>
+    /// Fix #1 (complete log): the persisted verify-output file must be the FULL version of
+    /// the trimmed tail handed to the fix-verify agent. When the failure is a BOOTSTRAP
+    /// failure (the test command itself PASSES), the in-prompt tail carries the bootstrap
+    /// text, so the file the prompt calls "the complete log" must contain it too — not
+    /// merely the passing test output. Before the fix the seed file held only the passing
+    /// test output and lacked the bootstrap failure entirely.
+    /// </summary>
+    [Fact]
+    public async Task RunTaskAsync_BootstrapFailsTestPasses_PersistedFileIsTheCompleteLog()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteTask("bootstrap-complete-log", "# Bootstrap failure persisted in full\n");
+        var runner = new CapturingFlakeNixSubagentRunner();
+        var tests = new CommandAwareTestRunner();
+        var sink = new InMemoryRelayEventSink();
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "bootstrap-complete-log");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        // The stage-9 seed gate went red on the bootstrap failure even though the test passed.
+        var stage9 = sink.Events.Single(e => e is { EventName: "verify_result", StageNumber: 9 });
+        Assert.Equal("red", stage9.Data?["check"]);
+        var outputFile = stage9.Data?["outputFile"];
+        Assert.False(string.IsNullOrEmpty(outputFile));
+        var persisted = await File.ReadAllTextAsync(outputFile!);
+        // The complete log MUST carry the bootstrap failure text.
+        Assert.Contains("nix build of nono failed", persisted, StringComparison.Ordinal);
+        // And the file must match the SOURCE of the tail the agent actually received.
+        var stage10 = runner.Invocations.Single(i => i.Stage.Number == 10);
+        Assert.Contains("nix build of nono failed", stage10.LastTestOutput!, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Test (d): When <c>.relay/config.json</c> specifies custom
     /// <c>bootstrapFiles</c> globs and a <c>bootstrapCheckCmd</c>, those
     /// override the built-in defaults. The driver must scan the manifest

@@ -263,32 +263,4 @@ public sealed partial class RelayDriver
             && segment.EndsWith(post, StringComparison.OrdinalIgnoreCase)
             && segment.Length >= pre.Length + post.Length;
     }
-
-    /// <summary>
-    /// Builds the combined failure output string for the fix-verify loop
-    /// from test, guard, new-guard-probe, and bootstrap failures.
-    /// </summary>
-    private static string BuildFailureOutput(
-        TestRunResult testResult,
-        string? guardOutput,
-        bool bootstrapFailed,
-        string? bootstrapFailureOutput,
-        string? newGuardOutput = null)
-    {
-        var parts = new List<string>();
-        if (testResult.ExitCode != 0)
-            parts.Add(SwivalSubagentRunner.ExtractFailureReason(testResult.Output));
-        if (guardOutput is not null)
-            parts.Add("--- Guard check output ---\n" + guardOutput);
-        if (newGuardOutput is not null)
-            parts.Add("--- New guard probe ---\n" + newGuardOutput);
-        if (bootstrapFailed && bootstrapFailureOutput is not null)
-        {
-            if (testResult.ExitCode != 0)
-                parts.Add("--- Bootstrap check output ---\n" + bootstrapFailureOutput);
-            else
-                parts.Add("Bootstrap check failed:\n" + bootstrapFailureOutput);
-        }
-        return string.Join("\n\n", parts);
-    }
 }

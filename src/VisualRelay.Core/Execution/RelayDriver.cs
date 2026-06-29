@@ -201,10 +201,19 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                     if (stage.Number == 9)
                     {
-                        var stage9VerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9TestResult!.ExitCode == 0 && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null ? "green" : "red");
-                        check = stage9TestResult!.ExitCode == 0 ? "green" : "red";
-                        if (stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
-                            check = "red";
+                        // RED iff the test command failed OR any of bootstrap / guard /
+                        // new-guard-probe failed.
+                        var stage9Red = stage9TestResult!.ExitCode != 0 || stage9BootstrapFailed
+                            || stage9GuardFailed || stage9NewGuardOutput is not null;
+                        // The COMPLETE combined log persisted to the seed artifact: the full
+                        // test output PLUS any guard/bootstrap/new-guard text — the full version
+                        // of the trimmed tail the fix-verify agent receives (built once below as
+                        // failingTestOutput). Null on green so the file keeps the passing output.
+                        var stage9FullOutput = stage9Red
+                            ? BuildFullFailureOutput(stage9TestResult, stage9GuardOutput, stage9BootstrapFailed, stage9BootstrapFailureOutput, stage9NewGuardOutput)
+                            : null;
+                        var stage9VerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9Red ? "red" : "green", combinedFailureOutput: stage9FullOutput);
+                        check = stage9Red ? "red" : "green";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
                         {

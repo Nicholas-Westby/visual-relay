@@ -78,6 +78,33 @@ public sealed class VerifyOutputTailAndPathTests
             "the verify-output tail in the prompt must keep >= 1800 chars of the body");
     }
 
+    // ── (3) persisted full-output path is absolute ───────────────────────
+
+    [Fact]
+    public void TryPersistVerifyOutput_RelativeTaskDirectory_ReturnsAbsolutePath()
+    {
+        // Fix #2: the path handed to the agent (read under the sandbox's --allow-cwd grant)
+        // must be absolute regardless of how the root was passed. A RELATIVE task directory
+        // must still yield a fully-qualified path — a relative one would break the read.
+        var absoluteDir = Path.Combine(Path.GetTempPath(), "vr-verify-abspath", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(absoluteDir);
+        try
+        {
+            var relativeDir = Path.GetRelativePath(Directory.GetCurrentDirectory(), absoluteDir);
+            Assert.False(Path.IsPathFullyQualified(relativeDir),
+                "precondition: the task directory under test must be relative");
+
+            var path = RelayDriver.TryPersistVerifyOutput(relativeDir, 9, 1, "red", "some output");
+
+            Assert.NotNull(path);
+            Assert.True(Path.IsPathFullyQualified(path!), $"expected an absolute path, got: {path}");
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(absoluteDir);
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────
 
     private static StageInvocation MakeVerifyInvocation(string? lastTestOutput, string? verifyOutputPath) =>

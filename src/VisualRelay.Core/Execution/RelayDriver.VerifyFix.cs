@@ -130,7 +130,13 @@ public sealed partial class RelayDriver
             }
 
             check ??= testResult.ExitCode == 0 ? "green" : "red";
-            var attemptVerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken, overrideCheck: check);
+            // The COMPLETE combined log persisted to this attempt's artifact: the full test
+            // output PLUS any guard/bootstrap text — the full version of the trimmed tail the
+            // NEXT iteration shows the agent (built below as failingTestOutput). Null on green.
+            var attemptFullOutput = check == "red"
+                ? BuildFullFailureOutput(testResult, guardFailureOutput, bootstrapFailingResult is not null, bootstrapFailingResult?.Output)
+                : null;
+            var attemptVerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput);
 
             // Record attempt in ledger with labeled section.
             var header = maxLoops > 1
