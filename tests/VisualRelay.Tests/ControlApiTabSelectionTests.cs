@@ -72,17 +72,23 @@ public sealed class ControlApiTabSelectionTests
     }
 
     [AvaloniaFact]
-    public async Task SelectTab_OutOfRangeIndexOrUnknownName_IsRefused()
+    public async Task SelectTab_OutOfRangeIndexOrUnknownName_IsRefused_WithDistinctMessages()
     {
         var api = NewApi(out _);
 
-        var (oob, _) = await api.InvokeCommandAsync("select-activity-tab", "{\"index\":99}");
+        // An out-of-range INDEX and an unknown NAME are different mistakes; the 409
+        // message must distinguish them so a caller knows which to fix.
+        var (oob, oobJson) = await api.InvokeCommandAsync("select-activity-tab", "{\"index\":99}");
         Assert.Equal(409, oob);
+        using (var oobDoc = JsonDocument.Parse(oobJson))
+        {
+            Assert.Equal("tab index 99 out of range", oobDoc.RootElement.GetProperty("error").GetString());
+        }
 
         var (bad, badJson) = await api.InvokeCommandAsync("select-detail-tab", "{\"name\":\"Nope\"}");
         Assert.Equal(409, bad);
         using var doc = JsonDocument.Parse(badJson);
-        Assert.Equal("tab not found", doc.RootElement.GetProperty("error").GetString());
+        Assert.Equal("unknown tab name 'Nope'", doc.RootElement.GetProperty("error").GetString());
     }
 
     [AvaloniaFact]
