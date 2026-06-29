@@ -240,7 +240,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 : null;
                             if (!config.BaselineVerify || newFailures is not null || stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
                             {
-                                if (config.MaxVerifyLoops <= 0)
+                                if (!config.EnableFixVerify)
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
                                     return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, failingTestOutput, statusEntries, cancellationToken);

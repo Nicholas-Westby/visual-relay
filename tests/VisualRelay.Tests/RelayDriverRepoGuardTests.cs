@@ -33,7 +33,7 @@ public sealed class RelayDriverRepoGuardTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 2,
+              "enableFixVerify": true,
               "archiveOnDone": true,
               "guardCmd": "tools/guards/check-file-size.sh"
             }
@@ -92,7 +92,7 @@ public sealed class RelayDriverRepoGuardTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": true,
-              "maxVerifyLoops": 0,
+              "enableFixVerify": false,
               "archiveOnDone": true,
               "guardCmd": "tools/guards/check-file-size.sh"
             }
@@ -176,7 +176,7 @@ public sealed class RelayDriverRepoGuardTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 2,
+              "enableFixVerify": true,
               "archiveOnDone": true,
               "guardCmd": "tools/guards/check-file-size.sh"
             }

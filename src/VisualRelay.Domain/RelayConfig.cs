@@ -6,7 +6,13 @@ public sealed record RelayConfig(
     string TestFileCommand,
     IReadOnlyList<string> LogSources,
     IReadOnlyDictionary<string, string> TierProfiles,
-    int MaxVerifyLoops,
+    // When true (default), a red Verify (stage 9) enters the bounded Fix-verify
+    // escalation loop (stage 10) — which re-runs up to MaxStageFailures times,
+    // escalating tier + turns each run — before flagging. When false, a red Verify
+    // flags immediately with no fix-verify. (This replaces the misleading
+    // MaxVerifyLoops *count*: the run count is MaxStageFailures, so the old field
+    // only ever functioned as this on/off switch.)
+    bool EnableFixVerify,
     int MaxStageFailures,
     int MaxTurns,
     bool BaselineVerify,

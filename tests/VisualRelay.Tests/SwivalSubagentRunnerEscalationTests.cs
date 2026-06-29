@@ -54,7 +54,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
             TestFileCommand: "true",
             LogSources: [],
             TierProfiles: new Dictionary<string, string> { ["cheap"] = "cheap", ["balanced"] = "balanced", ["frontier"] = "frontier" },
-            MaxVerifyLoops: 1,
+            EnableFixVerify: true,
             MaxStageFailures: maxStageFailures,
             MaxTurns: maxTurns,
             BaselineVerify: false,

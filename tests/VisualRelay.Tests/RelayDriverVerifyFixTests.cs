@@ -9,7 +9,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunTaskAsync_FixableVerifyFailure_CommitsAfterFixVerifyLoop()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("fixable-verify", "# Fixable verify\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -36,10 +36,13 @@ public sealed partial class RelayDriverVerifyFixTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_MaxVerifyLoopsRespected_ExactAttemptCount()
+    public async Task RunVerifyFixLoop_RecoversOnSecondRun_StopsWithinMaxStageFailuresCap()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 3);
+        // The fix-verify run COUNT is MaxStageFailures (set explicitly to 3): the loop
+        // recovers on run 2 and must never spend run 3 — the "attempt N/3" labels track
+        // MaxStageFailures, not the (now removed) MaxVerifyLoops count.
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("retry-twice", "# Retry twice\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -68,7 +71,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunTaskAsync_FixVerifyLoop_AgentReceivesFailingOutput()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("fail-visible", "# Fail visible in full command\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -95,7 +98,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunTaskAsync_VerifyGreen_SkipsFixVerifyLlmCall_ButRecordsStage10Green()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("green-skip", "# Verify green, skip fix-verify\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -140,7 +143,7 @@ public sealed partial class RelayDriverVerifyFixTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1,
+              "enableFixVerify": true,
               "boostTurnsTaskIds": ["big-one"]
             }
             """);
@@ -177,7 +180,7 @@ public sealed partial class RelayDriverVerifyFixTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("normal-task", "# Normal task\n");
@@ -205,7 +208,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunVerifyFixLoop_EmitsVerifyResultEvent_AtStage9AndStage10_WithOutputFilePointer()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("verify-event", "# Verify event test\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -252,7 +255,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunTaskAsync_VerifyGreen_Stage9AgentReceivesCapturedTestOutput()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("stage9-green-output", "# Stage 9 receives green output\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -274,7 +277,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunTaskAsync_VerifyRed_Stage9AgentReceivesFailingTestOutput()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("stage9-fail-output", "# Stage 9 receives failing output\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");

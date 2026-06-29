@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 public sealed class RelayDriverNewGuardProbeTests
 {
     private static async Task<TestRepository> Setup(string taskId, string taskPrompt,
-        string? extraConfig = null, int maxVerifyLoops = 0, bool createGuardScript = false)
+        string? extraConfig = null, bool enableFixVerify = false, bool createGuardScript = false)
     {
         var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -21,7 +21,7 @@ public sealed class RelayDriverNewGuardProbeTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": {{maxVerifyLoops}},
+              "enableFixVerify": {{enableFixVerify.ToString().ToLowerInvariant()}},
               "archiveOnDone": true{{extraConfig ?? ""}}
             }
             """;
@@ -69,7 +69,7 @@ public sealed class RelayDriverNewGuardProbeTests
     [Fact]
     public async Task Stage9_NewGuardFailsProbe_EntersFixVerifyLoop()
     {
-        using var repo = await Setup("guard-fail", "# Guard fails probe\n", maxVerifyLoops: 2, createGuardScript: true);
+        using var repo = await Setup("guard-fail", "# Guard fails probe\n", enableFixVerify: true, createGuardScript: true);
         var subagent = new CapturingGuardedManifestSubagentRunner();
         var testRunner = new RecordingDispatchTestRunner(
             ("tools/guards/new.sh", [new TestRunResult(1, "ERROR: src/big.cs is 301 lines (limit: 300)")]),

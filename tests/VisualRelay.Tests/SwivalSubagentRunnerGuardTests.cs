@@ -65,7 +65,7 @@ public sealed partial class SwivalSubagentRunnerGuardTests
             "true",
             [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
-            1,
+            true,
             1,
             1,
             false,

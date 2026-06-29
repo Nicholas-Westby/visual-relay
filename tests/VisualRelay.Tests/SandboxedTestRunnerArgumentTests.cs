@@ -231,7 +231,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     private static RelayConfig TestConfig() =>
         new("llm-tasks", "true", "true", [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
-            1, 1, 1, false, true,
+            true, 1, 1, false, true,
             SubagentTimeoutMilliseconds: 5_000,
             TestTimeoutMilliseconds: 300_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>

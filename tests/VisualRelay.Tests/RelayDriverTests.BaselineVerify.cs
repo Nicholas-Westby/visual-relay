@@ -33,7 +33,7 @@ public sealed partial class RelayDriverTests
     public async Task BaselineVerify_True_NewFailure_FlagsWithNewFailures()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("full-suite", [], baselineVerify: true, maxVerifyLoops: 0);
+        repo.WriteConfig("full-suite", [], baselineVerify: true, enableFixVerify: false);
         repo.WriteTask("new-failure", "# New failure\n");
         InitGitRepo(repo.Root);
 
@@ -57,7 +57,7 @@ public sealed partial class RelayDriverTests
     public async Task BaselineVerify_False_AnyFailure_FlagsImmediately()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("any-failure", "# Any failure\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");

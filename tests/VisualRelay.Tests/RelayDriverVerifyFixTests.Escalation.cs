@@ -29,7 +29,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunVerifyFixLoop_EscalatesTierAndDoublesTurns_PerRun()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1, maxStageFailures: 3);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("fv-ladder", "# Fix-verify ladder\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -52,7 +52,7 @@ public sealed partial class RelayDriverVerifyFixTests
     public async Task RunVerifyFixLoop_EmitsLabeledEscalationRunLogEntries()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1, maxStageFailures: 3);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("fv-log", "# Fix-verify log\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -88,7 +88,7 @@ public sealed partial class RelayDriverVerifyFixTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1,
+              "enableFixVerify": true,
               "maxStageFailures": 3,
               "boostTurnsTaskIds": ["fv-boost"]
             }

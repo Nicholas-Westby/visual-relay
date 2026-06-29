@@ -26,7 +26,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1,
+              "enableFixVerify": true,
               "archiveOnDone": true,
               "guardCmd": "my-guard",
               "formatCmd": "my-formatter"
@@ -82,7 +82,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 2,
+              "enableFixVerify": true,
               "archiveOnDone": true,
               "guardCmd": "my-guard",
               "formatCmd": "my-formatter"
@@ -159,7 +159,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
               "testFileCmd": "dotnet test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 0,
+              "enableFixVerify": false,
               "archiveOnDone": true,
               "guardCmd": "my-guard"
             }

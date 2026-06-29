@@ -113,7 +113,7 @@ public sealed partial class RelayDriverGitCommitTests
             "true",
             [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
-            1, 1, 1,
+            true, 1, 1,
             false, true,
             5_000, 300_000,
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },

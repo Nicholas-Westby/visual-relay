@@ -103,7 +103,7 @@ public sealed class RelayDriverBootstrapTests
     public async Task RunTaskAsync_BootstrapFailsTestPasses_EntersFixVerifyWithBootstrapOutput()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("break-flake", "# Break flake\n");
 
         var capturingSubagent = new CapturingFlakeNixSubagentRunner();
@@ -141,7 +141,7 @@ public sealed class RelayDriverBootstrapTests
     public async Task RunTaskAsync_BootstrapFailsTestPasses_PersistedFileIsTheCompleteLog()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("bootstrap-complete-log", "# Bootstrap failure persisted in full\n");
         var runner = new CapturingFlakeNixSubagentRunner();
         var tests = new CommandAwareTestRunner();
@@ -187,7 +187,7 @@ public sealed class RelayDriverBootstrapTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 2,
+              "enableFixVerify": true,
               "archiveOnDone": true,
               "bootstrapFiles": ["custom.bootstrap", "*.env"],
               "bootstrapCheckCmd": "custom-bootstrap-check"

@@ -17,7 +17,7 @@ public sealed class RelayConfigLoaderTests
             {
               "testCmd": "dotnet test",
               "logSources": ["logs/app.log"],
-              "maxVerifyLoops": 2,
+              "enableFixVerify": false,
               "tierProfiles": { "cheap": "local-cheap" }
             }
             """);
@@ -28,7 +28,7 @@ public sealed class RelayConfigLoaderTests
         Assert.Equal("dotnet test", config.TestCommand);
         Assert.Equal("bun test {files}", config.TestFileCommand);
         Assert.Equal(["logs/app.log"], config.LogSources);
-        Assert.Equal(2, config.MaxVerifyLoops);
+        Assert.False(config.EnableFixVerify);
         Assert.True(config.BaselineVerify);
         Assert.True(config.ArchiveOnDone);
         Assert.Equal("local-cheap", config.TierProfiles["cheap"]);

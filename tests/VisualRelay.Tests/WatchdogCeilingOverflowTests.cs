@@ -45,7 +45,7 @@ public sealed class WatchdogCeilingOverflowTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1,
+              "enableFixVerify": true,
               "subagentTimeoutMs": 300000000,
               "boostTurnsTaskIds": ["overflow-task"]
             }

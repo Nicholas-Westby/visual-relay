@@ -21,7 +21,7 @@ public sealed class RelayDriverCumulativeCostTests
     public async Task RunTaskAsync_InProcessEscalatedStage_StageDoneCarriesCumulativeTurnsCostAndSessionCost_MatchingArchivedSquash()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("escalated", "# Escalated stage\n");
         // Stage 1 escalates in-process: RunAsync leaves THREE attempt reports
         // (2, 3, 5 turns → cumulative 10). No other stage writes a report, so the

@@ -37,7 +37,7 @@ internal sealed class TestRepository : IDisposable
     public string AttemptReportPath(string taskId, int stage, int attempt) =>
         Path.Combine(Root, ".relay", taskId, $"stage{stage}-attempt{attempt}.report.json");
 
-    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true, int maxVerifyLoops = 0, bool archiveOnDone = true, string? formatCmd = null, int maxStageFailures = 3)
+    public void WriteConfig(string testCommand, string[] logSources, bool baselineVerify = true, bool enableFixVerify = false, bool archiveOnDone = true, string? formatCmd = null, int maxStageFailures = 3)
     {
         Directory.CreateDirectory(Path.Combine(Root, ".relay"));
         var formatCmdLine = formatCmd is not null ? $",\n      \"formatCmd\": \"{formatCmd}\"" : "";
@@ -48,7 +48,7 @@ internal sealed class TestRepository : IDisposable
               "testCmd": "{{testCommand}}",
               "logSources": [{{string.Join(",", logSources.Select(s => $"\"{s}\""))}}],
               "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}},
-              "maxVerifyLoops": {{maxVerifyLoops}},
+              "enableFixVerify": {{enableFixVerify.ToString().ToLowerInvariant()}},
               "maxStageFailures": {{maxStageFailures}},
               "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}}{{formatCmdLine}}
             }
@@ -59,7 +59,7 @@ internal sealed class TestRepository : IDisposable
     /// Writes a config JSON with the <c>downshiftOnEarlyImplementation</c> flag
     /// explicitly set, so integration tests can exercise the kill-switch path.
     /// </summary>
-    public void WriteConfigWithDownshift(string testCommand, string[] logSources, bool downshiftOnEarlyImplementation, bool baselineVerify = true, int maxVerifyLoops = 0, bool archiveOnDone = true)
+    public void WriteConfigWithDownshift(string testCommand, string[] logSources, bool downshiftOnEarlyImplementation, bool baselineVerify = true, bool enableFixVerify = false, bool archiveOnDone = true)
     {
         Directory.CreateDirectory(Path.Combine(Root, ".relay"));
         File.WriteAllText(
@@ -69,7 +69,7 @@ internal sealed class TestRepository : IDisposable
               "testCmd": "{{testCommand}}",
               "logSources": [{{string.Join(",", logSources.Select(s => $"\"{s}\""))}}],
               "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}},
-              "maxVerifyLoops": {{maxVerifyLoops}},
+              "enableFixVerify": {{enableFixVerify.ToString().ToLowerInvariant()}},
               "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}},
               "downshiftOnEarlyImplementation": {{downshiftOnEarlyImplementation.ToString().ToLowerInvariant()}}
             }

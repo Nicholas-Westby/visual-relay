@@ -14,7 +14,7 @@ public sealed partial class RelayDriverVerifyFixTests
         // survives. The keychain block trails the summary on a real run, so an unfiltered
         // 600-char tail lands on it and truncates the real failure away.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("noise-strip", "# Noise strip test\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");

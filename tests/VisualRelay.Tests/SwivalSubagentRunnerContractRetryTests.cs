@@ -214,7 +214,7 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             "true",
             [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
-            1,
+            true,
             1,
             1,
             false,

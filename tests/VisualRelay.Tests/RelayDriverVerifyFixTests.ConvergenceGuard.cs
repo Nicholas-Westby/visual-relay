@@ -13,7 +13,7 @@ public sealed partial class RelayDriverVerifyFixTests
         // so the loop must spend ALL runs (MaxStageFailures, here 3) before flagging —
         // NOT bail on attempt 2.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 5, maxStageFailures: 3);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("non-convergent", "# Non-convergent\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -58,7 +58,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var srcPath = Path.Combine(repo.Root, "src");
         Directory.CreateDirectory(srcPath);
         File.WriteAllText(Path.Combine(srcPath, "app.cs"), "// v0");
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 3);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("convergent", "# Convergent\n");
 
         // Writes a manifest file on the first stage-10 invocation so the tree hash
@@ -92,7 +92,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var srcPath = Path.Combine(repo.Root, "src");
         Directory.CreateDirectory(srcPath);
         File.WriteAllText(Path.Combine(srcPath, "app.cs"), "// v0");
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2, maxStageFailures: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 2);
         repo.WriteTask("unfixable", "# Unfixable\n");
         // The genuine "agent keeps trying, verify stays red, loop exhausts the run cap"
         // path. (The run cap is now MaxStageFailures; here pinned to 2.)

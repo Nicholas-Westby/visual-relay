@@ -14,9 +14,9 @@ public sealed partial class RelayDriver
     /// bumps the tier (cheap→balanced→frontier, capped) and doubles the turn + ceiling
     /// budget (flat under the 10× boost) via <see cref="StageEscalation"/>, re-verifies,
     /// and on red escalates again — up to <see cref="RelayConfig.MaxStageFailures"/> runs,
-    /// then flags. (The old fixed <c>MaxVerifyLoops</c> COUNT is subsumed by the 3-run
-    /// cap; MaxVerifyLoops now only gates whether this loop is entered at all — see
-    /// RunTaskAsync. The non-convergence early-flag is gone: a higher tier may change the
+    /// then flags. (The run COUNT is <see cref="RelayConfig.MaxStageFailures"/>; the
+    /// boolean <see cref="RelayConfig.EnableFixVerify"/> only gates whether this loop is
+    /// entered at all — see RunTaskAsync. The non-convergence early-flag is gone: a higher tier may change the
     /// verdict, so every run is spent before flagging.) Returns null outcome on green;
     /// a Flagged outcome when the runs are exhausted or a non-retryable / hard-abort
     /// failure occurs (timeout / invalid subagent / absolute-ceiling / socket wedge).

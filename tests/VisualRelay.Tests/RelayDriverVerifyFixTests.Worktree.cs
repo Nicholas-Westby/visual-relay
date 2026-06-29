@@ -22,7 +22,7 @@ public sealed partial class RelayDriverVerifyFixTests
         TestGit.Run(repo.Root, "add", ".");
         TestGit.Run(repo.Root, "commit", "-m", "seed");
 
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("delta-exclusion", "# Delta exclusion\n");
 
         // Subagent runner that writes the agent's fix (src/app.cs) to the LIVE rootPath
@@ -84,7 +84,7 @@ public sealed partial class RelayDriverVerifyFixTests
         TestGit.Run(repo.Root, "add", ".");
         TestGit.Run(repo.Root, "commit", "-m", "seed");
 
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("mutating-verify", "# Mutating verify\n");
 
         // A test runner that writes a TRACKED file relative to the rootPath it RECEIVES

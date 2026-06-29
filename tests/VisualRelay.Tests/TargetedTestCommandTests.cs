@@ -159,7 +159,7 @@ public sealed class TargetedTestInvocationTests
               "testFileCmd": "bun test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("targeted-test", "# Targeted test\n");
@@ -200,7 +200,7 @@ public sealed class TargetedTestInvocationTests
               "testFileCmd": "dotnet test tests/MyProject.Tests/MyProject.Tests.csproj",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("fallback-test", "# Fallback test\n");
@@ -239,7 +239,7 @@ public sealed class TargetedTestInvocationTests
               "testFileCmd": "bun test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("verify-harness", "# Verify harness\n");
@@ -274,7 +274,7 @@ public sealed class TargetedTestInvocationTests
               "testFileCmd": "bun test {files}",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 2
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("fix-verify-targeted", "# Fix-verify targeted\n");

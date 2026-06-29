@@ -13,7 +13,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
     public async Task RetryFlakyVerify_TransientFailThenPass_CommitsGreen()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("transient", "# Transient failure\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -49,7 +49,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
     public async Task RetryFlakyVerify_PersistentFail_Flags()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("persistent", "# Persistent failure\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -82,7 +82,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
     public async Task RetryFlakyVerify_ReasonLabel_IsFirstRunNonzero_NotTransientFault()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("retry-label", "# Retry label\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -111,7 +111,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         // Acceptance (Approach 3): a failing test that passes on re-run is labeled
         // flaky and does NOT by itself hard-fail the gate.
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 0);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: false);
         repo.WriteTask("flaky", "# Flaky\n");
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -149,7 +149,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
               "testCmd": "dotnet test",
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 0,
+              "enableFixVerify": false,
               "retryFlakyVerify": false
             }
             """);

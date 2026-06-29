@@ -40,7 +40,7 @@ public sealed class PlanningWorktreeConfigCopyTests
         {
           "testCmd": "dotnet test",
           "logSources": [],
-          "maxVerifyLoops": 3
+          "enableFixVerify": false
         }
         """;
 
@@ -83,7 +83,7 @@ public sealed class PlanningWorktreeConfigCopyTests
             // End-to-end: LoadAsync (what planning calls) no longer throws.
             var config = await RelayConfigLoader.LoadAsync(worktree, CancellationToken.None);
             Assert.Equal("dotnet test", config.TestCommand);
-            Assert.Equal(3, config.MaxVerifyLoops);
+            Assert.False(config.EnableFixVerify);
         }
         finally
         {

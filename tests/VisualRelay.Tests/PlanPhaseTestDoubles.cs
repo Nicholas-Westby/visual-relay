@@ -31,7 +31,7 @@ internal static class PlanPhaseTestHelpers
             TestFileCommand: "dotnet test {files}",
             LogSources: [],
             TierProfiles: new Dictionary<string, string>(),
-            MaxVerifyLoops: 5,
+            EnableFixVerify: true,
             MaxStageFailures: 3,
             MaxTurns: 200,
             BaselineVerify: true,

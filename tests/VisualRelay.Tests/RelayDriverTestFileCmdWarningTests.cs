@@ -40,7 +40,7 @@ public sealed class RelayDriverTestFileCmdWarningTests
               "testFileCmd": {{System.Text.Json.JsonSerializer.Serialize(testFileCmd)}},
               "logSources": [],
               "baselineVerify": false,
-              "maxVerifyLoops": 1
+              "enableFixVerify": true
             }
             """);
         repo.WriteTask("warn-task", "# Warn task\n");

@@ -38,7 +38,7 @@ public sealed class VerifyAgentCommandTests
     public async Task Stage9_Verify_AgentGetsNoImperativeCommand_ButKeepsCapturedOutput()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 1);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("verify-no-cmd", "# Verify no command\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -70,7 +70,7 @@ public sealed class VerifyAgentCommandTests
     public async Task Stage10_FixVerify_AgentReceivesPlainTestCommand()
     {
         using var repo = TestRepository.Create();
-        repo.WriteConfig("dotnet test", [], baselineVerify: false, maxVerifyLoops: 2);
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("fixverify-plain", "# Fix-verify uses the plain test command\n");
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");

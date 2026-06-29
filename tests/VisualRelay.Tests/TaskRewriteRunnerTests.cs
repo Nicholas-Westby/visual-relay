@@ -36,7 +36,7 @@ public sealed class TaskRewriteRunnerTests
 
         Directory.CreateDirectory(Path.Combine(root, ".relay"));
         File.WriteAllText(Path.Combine(root, ".relay", "config.json"),
-            """{"testCmd":"dotnet test","logSources":[],"maxVerifyLoops":3}""");
+            """{"testCmd":"dotnet test","logSources":[],"enableFixVerify": true}""");
 
         var spec = taskMarkdown ?? OriginalSpec;
         var taskDir = Path.Combine(root, "llm-tasks", taskId);

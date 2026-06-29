@@ -19,7 +19,7 @@ public static class RelayConfigLoader
                 ["vision"] = "vision",
                 ["fallback"] = "fallback"
             },
-            MaxVerifyLoops: 5,
+            EnableFixVerify: true,
             MaxStageFailures: 3,
             MaxTurns: 200,
             BaselineVerify: true,
@@ -202,7 +202,7 @@ public static class RelayConfigLoader
                 TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
                 TestFileCommand = OptionalString(root, "testFileCmd", defaults.TestFileCommand),
                 TierProfiles = tiers,
-                MaxVerifyLoops = OptionalInt(root, "maxVerifyLoops", defaults.MaxVerifyLoops),
+                EnableFixVerify = OptionalBool(root, "enableFixVerify", defaults.EnableFixVerify),
                 MaxStageFailures = OptionalInt(root, "maxStageFailures", defaults.MaxStageFailures),
                 MaxTurns = OptionalInt(root, "maxTurns", defaults.MaxTurns),
                 BaselineVerify = OptionalBool(root, "baselineVerify", defaults.BaselineVerify),
