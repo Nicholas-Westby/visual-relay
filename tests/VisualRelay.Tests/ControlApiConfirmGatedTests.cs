@@ -155,6 +155,52 @@ public sealed class ControlApiConfirmGatedTests
     }
 
     [AvaloniaFact]
+    public async Task ConcurrentHumanInvocation_StillOpensModal_WhileApiConfirmGatedCommandInFlight()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], archiveOnDone: true);
+        repo.WriteNestedTask("api-rewrite", "# API Rewrite\n");
+        repo.WriteNestedTask("human-markdone", "# Human MarkDone\n");
+
+        var (api, vm) = await NewLoadedAsync(repo, "api-rewrite");
+
+        // ONE shared responder. The API (pre-confirmed) flow must skip it; a human
+        // flow must consult it. Records that it was consulted, then CANCELS.
+        var humanDialogShown = false;
+        vm.ShowConfirmationAsync = (_, _, _) => { humanDialogShown = true; return Task.FromResult(false); };
+
+        // Park an API confirm-gated rewrite mid-flight on the runner gate so its
+        // pre-confirmed background work is genuinely running while the human invokes.
+        var gate = new TaskCompletionSource();
+        vm.RewriteRunnerFactory = _ => new GatedRewriteRunner("# Rewritten\n", gate.Task);
+
+        var (status, _) = await api.InvokeCommandAsync("rewrite-selected", "{\"confirm\":true}");
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(200, status);
+        Assert.True(vm.IsSelectedTaskRewriting, "the API rewrite must be in-flight (parked on the gate)");
+        Assert.False(humanDialogShown, "the pre-confirmed API command must NOT consult the modal");
+
+        // While the API rewrite is parked, a HUMAN invokes a confirm-gated command in
+        // a SEPARATE async flow. ApiAutoConfirm is AsyncLocal (per-flow), so the human
+        // flow does NOT inherit the API's auto-confirm — the modal MUST open and
+        // Cancel MUST abort the archive. This locks the security-relevant isolation.
+        await Dispatcher.UIThread.InvokeAsync(() => vm.SelectedTask = vm.Tasks.Single(t => t.Id == "human-markdone"));
+        Dispatcher.UIThread.RunJobs();
+        await (vm.LastSelectionLoad ?? Task.CompletedTask);
+
+        await vm.MarkSelectedTaskDoneCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(humanDialogShown, "a concurrent human invocation must still open the confirmation modal");
+        Assert.Contains(vm.Tasks, t => t.Id == "human-markdone"); // Cancel aborted the archive
+
+        // Release the gate and let the API rewrite settle so no temp snapshot leaks.
+        gate.SetResult();
+        await vm.WaitForRewriteToFinishForTests("api-rewrite");
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
     public async Task ConfirmGatedCommand_NotInDestructiveSet_StillAutoResolves_ViaApi()
     {
         using var repo = TestRepository.Create();
