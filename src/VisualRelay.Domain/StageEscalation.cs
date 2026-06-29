@@ -28,7 +28,9 @@ public static class StageEscalation
     public static string NextTier(string tier) => tier switch
     {
         "cheap" => "balanced",
-        "balanced" => "frontier",
+        // "balanced" and "frontier" (and any unknown tier) all step to frontier —
+        // a single default arm; an explicit "balanced" => "frontier" arm would be
+        // redundant with it.
         _ => "frontier"
     };
 

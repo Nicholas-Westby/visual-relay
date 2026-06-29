@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using VisualRelay.Core.Traces;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -78,9 +77,11 @@ public sealed partial class RelayDriver
 
             var stopwatch = Stopwatch.StartNew();
             var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,
-                    input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
-                    pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath)
-                with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs, MaxSelfEscalations = 0 };
+                input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,
+                pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath);
+            // Pin this run's escalated tier + budget; MaxSelfEscalations=0 so the inner
+            // RunAsync does not also escalate (this loop owns the stage-10 run budget).
+            invocation = invocation with { Tier = tier, MaxTurns = turns, AbsoluteCeilingMs = ceilingMs, MaxSelfEscalations = 0 };
             var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
             var cost = TryEstimateCost(invocation.ReportFile);
             if (cost is not null) { sessionCostUsd += cost.CostUsd; } else { unknownCostStageCount++; }
