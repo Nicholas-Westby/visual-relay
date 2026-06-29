@@ -18,7 +18,7 @@ namespace VisualRelay.Tests;
 public sealed class ControlApiConfirmGatedTests
 {
     private static async Task<(ControlApi Api, MainWindowViewModel Vm)> NewLoadedAsync(
-        TestRepository repo, string taskId)
+        TestRepository repo, string taskId, IReadOnlyCollection<string>? confirmGated = null)
     {
         // Route ui-state persistence (and the rewrite path's XDG writes) to a
         // throwaway dir under the repo so tests never touch the real ~/.config.
@@ -29,7 +29,7 @@ public sealed class ControlApiConfirmGatedTests
         };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
+        var api = new ControlApi(vm, window, confirmGated);
 
         await Dispatcher.UIThread.InvokeAsync(() => vm.SelectedTask = vm.Tasks.Single(t => t.Id == taskId));
         Dispatcher.UIThread.RunJobs();
@@ -147,6 +147,50 @@ public sealed class ControlApiConfirmGatedTests
         Assert.False(dialogShown, "API-driven rewrite must not open the confirmation dialog");
         Assert.True(vm.IsSelectedTaskRewriting,
             "the rewrite must have actually started — confirmation was auto-resolved, not hung");
+
+        // Release the gate and let the rewrite settle so no temp snapshot leaks.
+        gate.SetResult();
+        await vm.WaitForRewriteToFinishForTests("subject");
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public async Task ConfirmGatedCommand_NotInDestructiveSet_StillAutoResolves_ViaApi()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteNestedTask("subject", "# Subject\n");
+
+        // rewrite-selected IS confirm-gated (its body awaits ConfirmAsync) but here
+        // it is deliberately ABSENT from the destructive {"confirm":true} set —
+        // simulating a FUTURE confirm-gated command added to ResolveCommand yet
+        // forgotten from the set. The never-hang guarantee is UNIVERSAL, so it must
+        // STILL auto-resolve via the API (no modal) rather than stall on a dialog
+        // nobody will answer. This is the exact latent bug the seam fix prevents.
+        var (api, vm) = await NewLoadedAsync(repo, "subject", confirmGated: new HashSet<string>());
+
+        // A modal would invoke this responder; the API path must NOT.
+        var dialogShown = false;
+        vm.ShowConfirmationAsync = (_, _, _) => { dialogShown = true; return Task.FromResult(true); };
+
+        var gate = new TaskCompletionSource();
+        vm.RewriteRunnerFactory = _ => new GatedRewriteRunner("# Rewritten\n", gate.Task);
+
+        // No {"confirm":true}: not destructive here, so confirm is not required; the
+        // point is purely that the modal auto-resolves for the API flow.
+        var (status, json) = await api.InvokeCommandAsync("rewrite-selected", null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(200, status);
+        using (var doc = JsonDocument.Parse(json))
+        {
+            Assert.True(doc.RootElement.GetProperty("ok").GetBoolean());
+        }
+
+        Assert.False(dialogShown,
+            "a confirm-gated command not in the destructive set must still auto-resolve via the API (universal pre-confirm), never open the modal");
+        Assert.True(vm.IsSelectedTaskRewriting,
+            "the rewrite must have actually started — confirmation auto-resolved, not hung on the modal");
 
         // Release the gate and let the rewrite settle so no temp snapshot leaks.
         gate.SetResult();

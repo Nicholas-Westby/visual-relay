@@ -19,7 +19,10 @@ namespace VisualRelay.App.Services;
 /// <see cref="ICommand.CanExecute(object)"/> exactly as the bound button would,
 /// refusing (HTTP 409) when the command is disabled rather than executing.
 /// </summary>
-public sealed partial class ControlApi(MainWindowViewModel viewModel, Window window)
+public sealed partial class ControlApi(
+    MainWindowViewModel viewModel,
+    Window window,
+    IReadOnlyCollection<string>? confirmGatedCommands = null)
 {
     /// <summary>
     /// Resolves the <see cref="ICommand"/> for a documented command name, or
@@ -51,12 +54,17 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
         ["select-task", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge",
          "select-activity-tab", "select-detail-tab"];
 
-    // Destructive, confirm-gated commands. Each awaits the VM's confirmation seam
-    // (a modal in the GUI). Driven via the API they are PRE-CONFIRMED — they run
-    // without opening the modal — but require an explicit {"confirm":true} body,
-    // mirroring the human clicking "confirm". Keyed on command identity.
-    private static readonly HashSet<string> ConfirmGatedCommands =
-        new(StringComparer.Ordinal) { "mark-done", "rewrite-selected" };
+    // Destructive commands that mirror a GUI confirm modal. Their SOLE role here is
+    // the {"confirm":true} gate: driven via the API they require an explicit confirm
+    // (else 409 + no-op) and are awaited to completion so {ok:true} means the effect
+    // took. They do NOT decide whether the modal auto-resolves — that is universal
+    // (see InvokeCommandOnUiThreadAsync). Defaults to the standard set; overridable
+    // via the constructor so tests can exercise the universal never-hang path with a
+    // confirm-gated command deliberately absent from this set.
+    private static readonly string[] DefaultConfirmGatedCommands = ["mark-done", "rewrite-selected"];
+
+    private readonly HashSet<string> _confirmGatedCommands =
+        new(confirmGatedCommands ?? DefaultConfirmGatedCommands, StringComparer.Ordinal);
 
     /// <summary>
     /// Invokes a documented command/action by name. Returns the HTTP status and
@@ -79,15 +87,22 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
                 return (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
             }
 
-            if (ConfirmGatedCommands.Contains(name))
+            var destructive = _confirmGatedCommands.Contains(name);
+
+            // SOLE gate of the confirm-gated set: a destructive command requires an
+            // explicit {"confirm":true} (the modal's equivalent) — refuse with 409
+            // BEFORE invoking when it is absent.
+            if (destructive && Json.ReadBool(body, "confirm") != true)
             {
-                return await InvokeConfirmGatedAsync(name, command, body);
+                return (409, Json.Object(("ok", false), ("command", name), ("error", "confirmation required")));
             }
 
-            // Non-confirm commands keep button-click semantics: fire and return
-            // immediately; long-running run commands are polled via /state.
-            command.Execute(null);
-            return (200, Json.Object(("ok", true), ("command", name)));
+            // Universal never-hang: EVERY resolved command runs inside the VM's
+            // pre-confirmed scope, so ConfirmAsync auto-resolves for THIS API flow —
+            // no command can stall on the modal, even a future confirm-gated command
+            // missing from the set above. (A concurrent human click is a separate
+            // async flow and still gets the modal.)
+            return await InvokePreConfirmedCommandAsync(name, command, awaitCompletion: destructive);
         }
 
         if (PropertyActions.Contains(name))
@@ -99,22 +114,25 @@ public sealed partial class ControlApi(MainWindowViewModel viewModel, Window win
     }
 
     /// <summary>
-    /// Runs a destructive, confirm-gated command via the pre-confirmed path: it
-    /// requires an explicit {"confirm":true} body (else 409 + no-op), then runs
-    /// inside the VM's auto-confirm scope so it completes WITHOUT the modal, and
-    /// AWAITS it to real completion — so {ok:true} means the effect took (e.g.
-    /// mark-done actually archived and the task left the queue, visible in /state).
+    /// Invokes a resolved <see cref="ICommand"/> inside the VM's pre-confirmed scope
+    /// so <c>ConfirmAsync</c> auto-resolves for THIS API flow — the UNIVERSAL
+    /// never-hang guarantee: no API-driven command can stall on the confirmation
+    /// modal, whether or not it is in the destructive confirm-gated set. (A
+    /// concurrent human button click runs in a different async flow and still opens
+    /// the modal; the scope is <see cref="AsyncLocal{T}"/>-confined.)
+    ///
+    /// A destructive command is awaited to real completion
+    /// (<paramref name="awaitCompletion"/>) so {ok:true} means its effect took (e.g.
+    /// mark-done archived, observable in /state). Other commands keep button-click
+    /// fire-and-forget semantics — they return immediately, so a caller should poll
+    /// /state to confirm a long-running run's effect.
     /// </summary>
-    private async Task<(int Status, string Json)> InvokeConfirmGatedAsync(string name, ICommand command, string? body)
+    private async Task<(int Status, string Json)> InvokePreConfirmedCommandAsync(
+        string name, ICommand command, bool awaitCompletion)
     {
-        if (Json.ReadBool(body, "confirm") != true)
-        {
-            return (409, Json.Object(("ok", false), ("command", name), ("error", "confirmation required")));
-        }
-
         await viewModel.InvokePreConfirmedAsync(async () =>
         {
-            if (command is IAsyncRelayCommand asyncCommand)
+            if (awaitCompletion && command is IAsyncRelayCommand asyncCommand)
             {
                 await asyncCommand.ExecuteAsync(null);
             }
