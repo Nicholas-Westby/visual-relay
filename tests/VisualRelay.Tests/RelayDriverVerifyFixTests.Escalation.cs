@@ -10,7 +10,7 @@ namespace VisualRelay.Tests;
 /// labeled Run-Log entry per transition. Verified through a CapturingSubagentRunner
 /// that records each stage-10 invocation's tier + turn budget.
 /// </summary>
-public sealed class RelayDriverVerifyFixEscalationTests
+public sealed partial class RelayDriverVerifyFixTests
 {
     // stage 5 red, stage 9 red (+ flaky retry), then N red fix-verify runs (gate +
     // flaky retry each) so the loop spends every run and flags.
