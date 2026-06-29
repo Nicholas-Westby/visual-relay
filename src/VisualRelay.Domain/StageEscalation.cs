@@ -83,7 +83,12 @@ public static class StageEscalation
     /// </summary>
     public static string DescribeTransition(
         int stageNumber, string stageName, int run, int maxRuns,
-        string fromTier, string toTier, int fromTurns, int toTurns) =>
-        $"Stage {stageNumber} {stageName} escalated (run {run}/{maxRuns}): " +
-        $"tier {fromTier}→{toTier}, max-turns {fromTurns}→{toTurns}";
+        string fromTier, string toTier, int fromTurns, int toTurns)
+    {
+        var entry = $"Stage {stageNumber} {stageName} escalated (run {run}/{maxRuns}): tier {fromTier}→{toTier}";
+        // Only report the turn budget when it actually changes. Under the 10× flat
+        // boost the per-escalation doubling is suppressed, so fromTurns == toTurns and
+        // the clause would read a no-op "2000→2000".
+        return fromTurns == toTurns ? entry : $"{entry}, max-turns {fromTurns}→{toTurns}";
+    }
 }

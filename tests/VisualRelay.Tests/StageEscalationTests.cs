@@ -66,4 +66,15 @@ public sealed class StageEscalationTests
             "Stage 10 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400",
             StageEscalation.DescribeTransition(10, "Fix-verify", 2, 3, "balanced", "frontier", 200, 400));
     }
+
+    [Fact]
+    public void DescribeTransition_OmitsTurnsClause_WhenTurnBudgetUnchanged()
+    {
+        // Under the 10× flat boost the per-escalation doubling is suppressed, so the
+        // budget is unchanged across runs; the "max-turns 2000→2000" clause is omitted
+        // and only the tier escalation is reported.
+        Assert.Equal(
+            "Stage 1 Frame escalated (run 2/3): tier cheap→balanced",
+            StageEscalation.DescribeTransition(1, "Frame", 2, 3, "cheap", "balanced", 2000, 2000));
+    }
 }
