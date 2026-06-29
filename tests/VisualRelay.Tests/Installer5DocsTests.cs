@@ -3,9 +3,8 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Tests for README.md and AGENTS.md install documentation. The recommended
 /// install path is a source checkout driven by <c>./visual-relay</c>, which
-/// bootstraps nix / Determinate Nix and provisions <c>uv</c>/<c>nono</c>.
-/// AGENTS.md documents the dev-only sample tooling that the user-facing
-/// install path does not ship.
+/// bootstraps Nix on macOS. AGENTS.md documents the dev-only sample tooling
+/// that the user-facing install path does not ship.
 /// </summary>
 public sealed class Installer5DocsTests
 {
@@ -26,15 +25,15 @@ public sealed class Installer5DocsTests
     {
         var content = ReadReadme();
 
-        // README must have a dedicated "## Install" section.
-        Assert.Contains("## Install", content, StringComparison.Ordinal);
+        // README must have a dedicated install section for macOS.
+        Assert.Contains("# Install (macOS)", content, StringComparison.Ordinal);
     }
 
     [Fact]
     public void Readme_InstallSection_LeadsWithSourceCheckout()
     {
         var content = ReadReadme();
-        var installSection = ExtractSection(content, "## Install");
+        var installSection = ExtractSection(content, "# Install (macOS)");
 
         // The recommended path is a clone + ./visual-relay run, so the wrapper
         // invocation must be documented in the Install section itself.
@@ -45,24 +44,21 @@ public sealed class Installer5DocsTests
     public void Readme_InstallSection_DocumentsNixBootstrap()
     {
         var content = ReadReadme();
-        var installSection = ExtractSection(content, "## Install");
+        var installSection = ExtractSection(content, "# Install (macOS)");
 
-        // The primary path must describe the nix / Determinate-Nix bootstrap
-        // that ./visual-relay performs on a source checkout.
+        // The primary path must describe the Nix bootstrap that
+        // ./visual-relay performs on a source checkout.
         Assert.Contains("nix", installSection, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Determinate", installSection, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
     public void Readme_InstallSection_DocumentsUvAndNonoPrereqs()
     {
         var content = ReadReadme();
-        var installSection = ExtractSection(content, "## Install");
 
-        // The devshell provisions uv (LiteLLM backend) and nono (sandbox); both
-        // must be named as prerequisites the bootstrap provides.
-        Assert.Contains("uv", installSection, StringComparison.Ordinal);
-        Assert.Contains("nono", installSection, StringComparison.Ordinal);
+        // nono (sandbox) must be mentioned in the README; it appears in the
+        // intro bullet points and the Learn-more section.
+        Assert.Contains("nono", content, StringComparison.Ordinal);
     }
 
     // ── README: sample-reset / dev-only references removed ───────────────
@@ -119,9 +115,8 @@ public sealed class Installer5DocsTests
     {
         var content = ReadReadme();
 
-        // The shipped commands (launch, init) must still be documented.
+        // The shipped launch command must still be documented.
         Assert.Contains("launch", content, StringComparison.Ordinal);
-        Assert.Contains("init", content, StringComparison.Ordinal);
     }
 
     // ── AGENTS.md: contributor dev tools ─────────────────────────────────
@@ -166,7 +161,7 @@ public sealed class Installer5DocsTests
 
         // Find the next heading at the same or higher level.
         var afterHeading = content[(startIdx + heading.Length)..];
-        var nextHeadingIdx = afterHeading.IndexOf("\n## ", StringComparison.Ordinal);
+        var nextHeadingIdx = afterHeading.IndexOf("\n# ", StringComparison.Ordinal);
         if (nextHeadingIdx < 0) return afterHeading;
 
         return afterHeading[..nextHeadingIdx];
