@@ -42,10 +42,15 @@ public sealed class CumulativeElapsed
 
     /// <summary>
     /// Closes the open segment, banking its <paramref name="reportedDuration"/>
-    /// (the measured/cost duration). No-op banking for non-positive durations.
+    /// (the measured/cost duration). Guarded on an open segment — like the
+    /// <see cref="CompleteSegment(DateTimeOffset)"/> overload — so banking happens
+    /// once per open segment: a duplicate/unpaired completion (no segment open)
+    /// is a no-op and cannot double-count. No-op banking for non-positive durations.
     /// </summary>
     public void CompleteSegment(TimeSpan reportedDuration)
     {
+        if (_segmentStart is null)
+            return;
         if (reportedDuration > TimeSpan.Zero)
             _completed += reportedDuration;
         _segmentStart = null;

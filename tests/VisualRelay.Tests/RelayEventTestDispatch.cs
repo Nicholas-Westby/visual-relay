@@ -38,6 +38,12 @@ internal static class RelayEventTestDispatch
                 ["cost"] = "$0.01"
             });
 
+    /// <summary>A stage-abandoned (flagged) event. Carries no reported duration,
+    /// so the VM drops the open segment WITHOUT banking the partial attempt.</summary>
+    public static RelayEvent Flagged(string taskId, int stage, DateTimeOffset at) =>
+        new(at, "warn", "flagged", "test-run", "/root", taskId, stage, "balanced",
+            Data: new Dictionary<string, string> { ["name"] = $"Stage {stage}" });
+
     /// <summary>Parses an <see cref="ElapsedFormatter"/>/duration label ("7s",
     /// "1m 04s") back to whole seconds so a test can sum stage cards and compare
     /// to the overall.</summary>

@@ -40,6 +40,21 @@ public sealed class CumulativeElapsedTests
     }
 
     [Fact]
+    public void DuplicateCompleteSegment_DoesNotDoubleBankReportedDuration()
+    {
+        var elapsed = new CumulativeElapsed();
+        elapsed.StartSegment(T0);
+        elapsed.CompleteSegment(TimeSpan.FromSeconds(120)); // legitimate done banks 120 s
+        // A DUPLICATE done for the same attempt (no segment re-opened) must be a
+        // no-op — banking once per open segment, not once per call.
+        elapsed.CompleteSegment(TimeSpan.FromSeconds(120));
+
+        // Still 120 s, not 240 s — the duplicate did not double-count.
+        Assert.Equal(TimeSpan.FromSeconds(120), elapsed.Total(T0 + TimeSpan.FromHours(1)));
+        Assert.False(elapsed.IsRunning);
+    }
+
+    [Fact]
     public void Retry_AccumulatesAcrossAttempts_ReportedPlusLive()
     {
         var elapsed = new CumulativeElapsed();
@@ -72,7 +87,8 @@ public sealed class CumulativeElapsedTests
     public void StopSegment_DropsLiveWithoutBanking()
     {
         var elapsed = new CumulativeElapsed();
-        elapsed.CompleteSegment(TimeSpan.FromSeconds(50)); // bank 50 s
+        elapsed.StartSegment(T0);
+        elapsed.CompleteSegment(TimeSpan.FromSeconds(50)); // bank 50 s from a completed segment
         elapsed.StartSegment(T0);
         elapsed.StopSegment(); // abandon the live segment (e.g. flagged) without banking it
 
@@ -94,8 +110,9 @@ public sealed class CumulativeElapsedTests
     public void Reset_ClearsBankedAndLive()
     {
         var elapsed = new CumulativeElapsed();
-        elapsed.CompleteSegment(TimeSpan.FromSeconds(120));
         elapsed.StartSegment(T0);
+        elapsed.CompleteSegment(TimeSpan.FromSeconds(120)); // bank 120 s from a completed segment
+        elapsed.StartSegment(T0);                           // open a fresh live segment too
         elapsed.Reset();
 
         Assert.Equal(TimeSpan.Zero, elapsed.Total(T0 + TimeSpan.FromSeconds(60)));

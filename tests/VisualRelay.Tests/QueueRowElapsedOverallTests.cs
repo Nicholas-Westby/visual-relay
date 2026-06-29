@@ -192,6 +192,74 @@ public sealed class QueueRowElapsedOverallTests
         }
     }
 
+    /// <summary>
+    /// A Run All drain plans/executes tasks the user may not be viewing. The
+    /// overall active-time accrual runs BEFORE the selected-task gate in
+    /// <c>HandleRelayEvent</c>, so a BACKGROUND (non-selected) task's overall timer
+    /// keeps advancing instead of freezing. Pins that ordering so a refactor can't
+    /// silently move the accrual behind the gate (which would freeze background rows).
+    /// </summary>
+    [AvaloniaFact]
+    public async Task BackgroundTask_NotSelected_OverallTimerStillAdvances()
+    {
+        var repo = TestRepository.Create();
+        using (repo)
+        {
+            repo.WriteConfig("dotnet test", []);
+            repo.WriteTask("alpha", "# alpha\n");
+            repo.WriteTask("beta", "# beta\n");
+            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            await viewModel.LoadInitialAsync();
+
+            // alpha is the viewed task; beta runs in the background (NOT selected).
+            viewModel.RestoreRunningTaskState("beta", stageNumber: null, stageName: null);
+            Assert.Equal("alpha", viewModel.SelectedTask?.Id); // precondition: beta not viewed
+
+            var beta = viewModel.Tasks.First(t => t.Id == "beta");
+
+            // A background stage completes (120 s): beta's overall must advance even
+            // though it is not the selected task — not frozen at 0s.
+            Dispatch(viewModel, StageStart("beta", 1, Anchor));
+            Dispatch(viewModel, StageDone("beta", 1, Anchor.AddSeconds(120), seconds: 120));
+            viewModel.UpdateRunningElapsedLabels();
+            Assert.Equal("2m 00s", beta.RunningElapsedLabel);
+
+            // A second background stage completes — the overall keeps advancing.
+            Dispatch(viewModel, StageStart("beta", 5, Anchor.AddSeconds(120)));
+            Dispatch(viewModel, StageDone("beta", 5, Anchor.AddSeconds(300), seconds: 180));
+            viewModel.UpdateRunningElapsedLabels();
+            Assert.Equal("5m 00s", beta.RunningElapsedLabel);
+        }
+    }
+
+    /// <summary>
+    /// VM-level flagged-attempt exclusion: a flagged (abandoned) stage drops its
+    /// open segment WITHOUT banking the partial time, so an incomplete attempt
+    /// never inflates the overall. The primitive covers StopSegment in isolation;
+    /// this pins it through the live HandleRelayEvent → AccumulateTaskActiveTime path.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task FlaggedAttempt_DroppedFromOverall_WithoutBankingPartial()
+    {
+        var (viewModel, repo) = await LoadTaskAsync("gamma");
+        using (repo)
+        {
+            viewModel.RestoreRunningTaskState("gamma", stageNumber: null, stageName: null);
+
+            // One stage completes (120 s banked); then a stage runs 60 s and is FLAGGED.
+            Dispatch(viewModel, StageStart("gamma", 1, Anchor));
+            Dispatch(viewModel, StageDone("gamma", 1, Anchor.AddSeconds(120), seconds: 120));
+            Dispatch(viewModel, StageStart("gamma", 10, Anchor.AddSeconds(120)));
+            Dispatch(viewModel, Flagged("gamma", 10, Anchor.AddSeconds(180)));
+
+            viewModel.UpdateRunningElapsedLabels();
+
+            var row = viewModel.Tasks.First(t => t.Id == "gamma");
+            // Only the 120 s completed stage counts; the flagged 60 s partial is excluded.
+            Assert.Equal("2m 00s", row.RunningElapsedLabel);
+        }
+    }
+
     private static string StripCompleted(string statusLabel) =>
         statusLabel.Replace("Completed in ", "", StringComparison.Ordinal);
 }
