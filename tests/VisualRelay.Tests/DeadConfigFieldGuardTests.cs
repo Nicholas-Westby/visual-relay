@@ -199,6 +199,39 @@ public sealed class DeadConfigFieldGuardTests
     }
 
     /// <summary>
+    /// A config field consumed ONLY in a tools/ file (e.g. a CLI-display knob, product
+    /// code outside src/) is NOT reported. Candidates come from the src set (where the
+    /// loader lives); consumers are counted across BOTH src and tools. With its consumer
+    /// only in the src set the field is flagged dead; adding the tools/ file to the
+    /// consumer set clears it.
+    /// </summary>
+    [Fact]
+    public void ConfigField_ConsumedOnlyInToolsSet_IsNotReported()
+    {
+        const string record = "public sealed record Cfg(int Knob);";
+        const string loader = """
+            public static class CfgLoader
+            {
+                public static Cfg Load(Cfg defaults, JsonElement root) =>
+                    defaults with { Knob = OptionalInt(root, "knob", defaults.Knob) };
+            }
+            """;
+        const string toolsConsumer = "public class Cli { public int Show(Cfg c) => c.Knob; }";
+
+        (string Path, string Source)[] src = [("src/Cfg.cs", record), ("src/CfgLoader.cs", loader)];
+
+        // Candidate present, no consumer in the src set → dead.
+        var dead = Assert.Single(DeadConfigFieldGuard.FindViolations(src));
+        Assert.Equal("Knob", dead.Field);
+
+        // Same src candidates, but the consumer lives in the tools/ consumer set → live.
+        var violations = DeadConfigFieldGuard.FindViolations(
+            candidateFiles: src,
+            consumerFiles: [.. src, ("tools/Cli.cs", toolsConsumer)]);
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
     /// Precision: a field loaded WITHOUT a self-default (e.g.
     /// <c>OptionalStringArray(root, "key")</c>, no <c>defaults.Field</c> fallback) is
     /// not a candidate — it carries no phantom self-read, so InspectCode's own
@@ -250,29 +283,36 @@ public sealed class DeadConfigFieldGuardTests
 
     /// <summary>
     /// The live enforcing gate: every <c>RelayConfig</c> field that VR's
-    /// <c>RelayConfigLoader</c> loads via the <c>defaults.&lt;Field&gt;</c>
-    /// self-default has a genuine consumer somewhere in <c>src/</c>. This is the
-    /// in-suite mirror of the <c>./visual-relay check</c> step. It currently reports
-    /// ZERO dead config fields — any newly-added config knob that is parsed but
-    /// consumed nowhere flips the guard to a build failure (consume it, or drop it).
+    /// <c>RelayConfigLoader</c> loads via the <c>defaults.&lt;Field&gt;</c> self-default
+    /// (now including the by-tier dictionary-merge fields) has a genuine consumer in
+    /// <c>src/</c> or <c>tools/</c> — but NOT counting <c>tests/</c>, since a field used
+    /// only by tests is effectively dead in the product. This is the in-suite mirror of the
+    /// <c>./visual-relay check</c> step. It currently reports ZERO dead config fields — any
+    /// newly-added config knob that is parsed but consumed nowhere flips the guard to a
+    /// build failure (consume it, or drop it).
     /// </summary>
     [Fact]
     public void LiveTree_HasNoDeadConfigFields()
     {
-        var srcDir = Path.Combine(RepoSetup.Root, "src");
+        // Candidates from src/ (the config record + loader); consumers from src/ + tools/.
+        var candidateFiles = EnumerateCs("src");
+        var consumerFiles = EnumerateCs("src", "tools");
 
-        var files = Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
-            .ToList();
-
-        var violations = DeadConfigFieldGuard.FindViolations(files);
+        var violations = DeadConfigFieldGuard.FindViolations(candidateFiles, consumerFiles);
 
         Assert.True(violations.Count == 0,
             "dead-config-field guard found config fields parsed by the loader but consumed " +
-            "nowhere in src/ (consume the field, or remove it from the config record + loader):\n" +
+            "nowhere in src/ or tools/ (consume the field, or remove it from the config record + loader):\n" +
             string.Join("\n", violations.Select(v => $"{v.Path}:{v.Line}: {v.Field} — {v.Reason}")));
     }
+
+    /// <summary>Reads every non-build-artifact <c>*.cs</c> under the given repo-relative dirs as (relPath, source) pairs.</summary>
+    private static List<(string Path, string Source)> EnumerateCs(params string[] dirs) =>
+        dirs.SelectMany(d =>
+                Directory.EnumerateFiles(Path.Combine(RepoSetup.Root, d), "*.cs", SearchOption.AllDirectories))
+            .Where(f => !IsBuildArtifact(f))
+            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
+            .ToList();
 
     /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
     private static bool IsBuildArtifact(string path)

@@ -19,19 +19,24 @@ namespace VisualRelay.Guards;
 /// <para><b>Detection rule.</b> Keys on the <i>loader pattern</i>, not a hard-coded
 /// type name, so it generalises to any config record loaded the same way:</para>
 /// <list type="number">
-///   <item><b>Candidates</b> — for every <c>operand with { Field = Call(…, operand.Field) }</c>
-///         whose LAST argument is the self-default <c>operand.Field</c> (receiver
-///         identifier == the <c>with</c> operand, member name == the assigned field),
-///         and where <c>Field</c> is a real record property (so XAML-bound
-///         <c>[ObservableProperty]</c>/VM/DI members, which are never loaded this way,
-///         are structurally out of scope). The matched <c>operand.Field</c> node is
-///         recorded as the self-default to EXCLUDE.</item>
-///   <item><b>Consumers</b> — a candidate is "consumed" if ANY source reads it via a
-///         <c>.Field</c> member access (e.g. <c>config.Field</c>) that is NOT the
-///         recorded self-default, OR via a property-pattern subpattern
-///         (<c>cfg is { Field: … }</c>). The record declaration and the
-///         <c>with</c>-initializer write (<c>Field =</c>) are naturally non-consumers
-///         (neither is a member-access/property-pattern read).</item>
+///   <item><b>Candidates</b> — for every <c>operand with { Field = …operand.Field… }</c>
+///         where the self-default <c>operand.Field</c> (receiver == the <c>with</c>
+///         operand, member == the assigned field) is passed AS A CALL/CTOR ARGUMENT — the
+///         <c>OptionalX(…, operand.Field)</c> fallback or the
+///         <c>new Dictionary&lt;…&gt;(operand.Field)</c> seed, inline or via a local the
+///         assignment aliases — and <c>Field</c> is a real record property (so XAML-bound
+///         <c>[ObservableProperty]</c>/VM/DI members, never loaded this way, are
+///         structurally out of scope). Requiring a call/ctor argument keeps ordinary
+///         self-referential copies (<c>x with { N = x.N + 1 }</c>) out: those are plain
+///         reads InspectCode already sees. Every matched <c>operand.Field</c> read is
+///         recorded as a self-default to EXCLUDE.</item>
+///   <item><b>Consumers</b> — a candidate is "consumed" if ANY consumer source reads it
+///         by name: a <c>.Field</c> member access (<c>config.Field</c>) that is NOT the
+///         recorded self-default, a null-conditional <c>?.Field</c> binding
+///         (<c>config?.Field</c>, chained <c>h?.Cfg?.Field</c>), or a property-pattern
+///         read (<c>cfg is { Field: … }</c>, extended <c>{ Field.Sub: … }</c>). The record
+///         declaration and the <c>with</c>-initializer write (<c>Field =</c>) are naturally
+///         non-consumers.</item>
 /// </list>
 /// A candidate with zero consumers is reported. Bias is toward false NEGATIVES, never
 /// false positives: any read of the field by name marks it live, so a genuinely-used
@@ -43,6 +48,16 @@ namespace VisualRelay.Guards;
 /// vs <c>RelayConfig.MaxTurns</c>) can also mark a config <c>Field</c> live. A collision only
 /// ever ADDS a consumer — never removes one — so it can suppress a fire but never cause one,
 /// consistent with the false-negative bias; it cannot break the gate.</para>
+///
+/// <para><b>Scanned file set.</b> CANDIDATES are detected from <c>src/</c> (where the
+/// config record + <c>RelayConfigLoader</c> live); a candidate is live if any CONSUMER
+/// source reads it, scanned across BOTH <c>src/</c> AND <c>tools/</c> — product code, so a
+/// field consumed only by a CLI-display path under <c>tools/</c> still counts and is not
+/// false-flagged. <c>tests/</c> is deliberately NOT a consumer source: a config field
+/// referenced only by tests drives no product behaviour, so it is effectively dead and
+/// should be flagged. bin/obj build output is excluded by the caller. The single-set
+/// <see cref="FindViolations(System.Collections.Generic.IEnumerable{System.ValueTuple{string,string}})"/>
+/// overload draws candidates and consumers from one set (used by unit tests).</para>
 ///
 /// <para>This polices VR's OWN source (like the other
 /// <c>tools/VisualRelay.Guards/*Guard.cs</c>), so the loader-pattern knowledge is
@@ -58,7 +73,7 @@ namespace VisualRelay.Guards;
 /// riskier), so this scoped guard is preferred; the refactor is the path to take if
 /// the loader is ever reworked.</para>
 /// </summary>
-public static class DeadConfigFieldGuard
+public static partial class DeadConfigFieldGuard
 {
     /// <summary>A config field parsed by the loader but consumed nowhere in the scanned sources.</summary>
     public sealed record Violation(string Field, string Path, int Line, string Reason);
@@ -66,37 +81,67 @@ public static class DeadConfigFieldGuard
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);
 
     /// <summary>
-    /// Returns every dead config field across <paramref name="files"/>, ordered by
-    /// field name (ordinal). Empty when every loaded field has a consumer.
+    /// Returns every dead config field, ordered by field name (ordinal). Candidates AND
+    /// consumers are drawn from the same <paramref name="files"/> set. Empty when every
+    /// loaded field has a consumer.
     /// </summary>
     public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)
     {
-        var parsed = files
-            .Select(f =>
+        var list = files as IReadOnlyCollection<(string Path, string Source)> ?? files.ToList();
+        return FindViolations(list, list);
+    }
+
+    /// <summary>
+    /// Returns every dead config field, ordered by field name (ordinal). CANDIDATES (the
+    /// config record + its loader) come from <paramref name="candidateFiles"/>; a candidate
+    /// is live if ANY of <paramref name="consumerFiles"/> reads it. The two sets typically
+    /// overlap (consumers ⊇ candidates); each unique path is parsed ONCE so a recorded
+    /// self-default node is reference-identical across the candidate and consumer passes.
+    /// </summary>
+    public static IReadOnlyList<Violation> FindViolations(
+        IEnumerable<(string Path, string Source)> candidateFiles,
+        IEnumerable<(string Path, string Source)> consumerFiles)
+    {
+        var parsed = new Dictionary<string, (SyntaxNode Root, SourceText Text, bool Candidate, bool Consumer)>(
+            StringComparer.Ordinal);
+
+        void Register(string path, string source, bool candidate, bool consumer)
+        {
+            if (parsed.TryGetValue(path, out var p))
+                parsed[path] = (p.Root, p.Text, p.Candidate || candidate, p.Consumer || consumer);
+            else
             {
-                var tree = CSharpSyntaxTree.ParseText(f.Source, ParseOptions);
-                return (f.Path, Root: tree.GetRoot(), Text: tree.GetText());
-            })
-            .ToList();
+                var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);
+                parsed[path] = (tree.GetRoot(), tree.GetText(), candidate, consumer);
+            }
+        }
 
-        // Record properties (positional params + init-only props): name -> declaration site.
+        foreach (var (path, source) in candidateFiles)
+            Register(path, source, candidate: true, consumer: false);
+        foreach (var (path, source) in consumerFiles)
+            Register(path, source, candidate: false, consumer: true);
+
+        // Record properties + loader self-default candidates come from the candidate set;
+        // the matched `operand.Field` nodes are recorded so the consumer pass excludes them.
         var declarations = new Dictionary<string, (string Path, int Line)>(StringComparer.Ordinal);
-        foreach (var (path, root, text) in parsed)
-            CollectDeclarations(path, root, text, declarations);
+        foreach (var (path, entry) in parsed)
+            if (entry.Candidate)
+                CollectDeclarations(path, entry.Root, entry.Text, declarations);
 
-        // Loader self-default candidates + the exact `operand.Field` nodes to exclude.
         var candidates = new Dictionary<string, (string Path, int Line)>(StringComparer.Ordinal);
         var selfDefaults = new HashSet<SyntaxNode>();
-        foreach (var (_, root, _) in parsed)
-            CollectCandidates(root, declarations, candidates, selfDefaults);
+        foreach (var entry in parsed.Values)
+            if (entry.Candidate)
+                CollectCandidates(entry.Root, declarations, candidates, selfDefaults);
 
         if (candidates.Count == 0)
             return [];
 
-        // A candidate is live if any source reads it (excluding its self-default).
+        // A candidate is live if any consumer source reads it (excluding its self-default).
         var consumed = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var (_, root, _) in parsed)
-            CollectConsumers(root, candidates, selfDefaults, consumed);
+        foreach (var entry in parsed.Values)
+            if (entry.Consumer)
+                CollectConsumers(entry.Root, candidates, selfDefaults, consumed);
 
         return candidates
             .Where(c => !consumed.Contains(c.Key))
@@ -106,170 +151,4 @@ public static class DeadConfigFieldGuard
                 "but has no consumer — a dead config field InspectCode cannot see"))
             .ToList();
     }
-
-    /// <summary>Records each record's positional parameters and init-only properties (first site wins).</summary>
-    private static void CollectDeclarations(
-        string path, SyntaxNode root, SourceText text, Dictionary<string, (string, int)> sink)
-    {
-        foreach (var record in root.DescendantNodes().OfType<RecordDeclarationSyntax>())
-        {
-            if (record.ParameterList is { } parameterList)
-                foreach (var parameter in parameterList.Parameters)
-                    AddDeclaration(sink, parameter.Identifier, path, text);
-
-            foreach (var property in record.Members.OfType<PropertyDeclarationSyntax>())
-                AddDeclaration(sink, property.Identifier, path, text);
-        }
-    }
-
-    private static void AddDeclaration(
-        Dictionary<string, (string, int)> sink, SyntaxToken identifier, string path, SourceText text)
-    {
-        if (!sink.ContainsKey(identifier.Text))
-            sink[identifier.Text] = (path, LineOf(text, identifier.SpanStart));
-    }
-
-    /// <summary>
-    /// Finds the loader self-default shape — <c>operand with { Field = …operand.Field… }</c>
-    /// where <c>operand.Field</c> is passed AS A CALL/CONSTRUCTOR ARGUMENT (the fallback in
-    /// <c>OptionalX(…, operand.Field)</c> or the seed in <c>new Dictionary&lt;…&gt;(operand.Field)</c>,
-    /// inline or via a local the assignment aliases). Only real record properties become
-    /// candidates; EVERY matched <c>operand.Field</c> read is recorded so the consumer pass
-    /// excludes it. Requiring the self-read to be a call/ctor argument (not merely present
-    /// anywhere in the RHS) keeps ordinary self-referential copies — <c>x with { N = x.N + 1 }</c>,
-    /// <c>x with { H = y ?? x.H }</c> — out of scope: those are plain reads InspectCode can see.
-    /// </summary>
-    private static void CollectCandidates(
-        SyntaxNode root,
-        Dictionary<string, (string Path, int Line)> declarations,
-        Dictionary<string, (string Path, int Line)> candidates,
-        HashSet<SyntaxNode> selfDefaults)
-    {
-        foreach (var with in root.DescendantNodes().OfType<WithExpressionSyntax>())
-        {
-            if (with.Expression is not IdentifierNameSyntax operand)
-                continue;
-
-            foreach (var assignment in with.Initializer.Expressions.OfType<AssignmentExpressionSyntax>())
-            {
-                if (assignment.Left is not IdentifierNameSyntax field)
-                    continue;
-
-                var name = field.Identifier.Text;
-                if (!declarations.TryGetValue(name, out var location))
-                    continue; // not a real record property — out of scope
-
-                var reads = SelfDefaultReads(assignment.Right, operand, name, with);
-                if (!reads.Any(IsCallArgument))
-                    continue; // self-read isn't a parse fallback/seed — not a loaded field
-
-                foreach (var read in reads)
-                    selfDefaults.Add(read);
-                candidates.TryAdd(name, location);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Every <c>operand.Field</c> self-read supplying this assignment's value — in the RHS
-    /// directly, plus (one level) the initializer of a local the RHS aliases (<c>Field = local</c>
-    /// where <c>var local = …operand.Field…</c>, the loader's by-tier dictionary-merge shape).
-    /// </summary>
-    private static IReadOnlyList<MemberAccessExpressionSyntax> SelfDefaultReads(
-        ExpressionSyntax rhs, IdentifierNameSyntax operand, string field, WithExpressionSyntax with)
-    {
-        var reads = SelfReadsIn(rhs, operand, field).ToList();
-        if (rhs is IdentifierNameSyntax alias && FindLocalInitializer(alias, with) is { } init)
-            reads.AddRange(SelfReadsIn(init, operand, field));
-        return reads;
-    }
-
-    /// <summary>The <c>operand.Field</c> member-access reads anywhere within <paramref name="scope"/>.</summary>
-    private static IEnumerable<MemberAccessExpressionSyntax> SelfReadsIn(
-        SyntaxNode scope, IdentifierNameSyntax operand, string field) =>
-        scope.DescendantNodesAndSelf()
-            .OfType<MemberAccessExpressionSyntax>()
-            .Where(m => m.Expression is IdentifierNameSyntax receiver
-                        && receiver.Identifier.Text == operand.Identifier.Text
-                        && m.Name.Identifier.Text == field);
-
-    /// <summary>The initializer of the local named <paramref name="alias"/> in the enclosing method/local-function, or null.</summary>
-    private static ExpressionSyntax? FindLocalInitializer(IdentifierNameSyntax alias, WithExpressionSyntax with)
-    {
-        var scope = with.Ancestors()
-            .FirstOrDefault(a => a is BaseMethodDeclarationSyntax or LocalFunctionStatementSyntax);
-        var declarator = scope?.DescendantNodes()
-            .OfType<VariableDeclaratorSyntax>()
-            .FirstOrDefault(v => v.Identifier.Text == alias.Identifier.Text && v.Initializer is not null);
-        return declarator?.Initializer?.Value;
-    }
-
-    /// <summary>True when <paramref name="node"/> is an argument to an invocation or object-creation (a parse fallback/seed).</summary>
-    private static bool IsCallArgument(SyntaxNode node) =>
-        node.Parent is ArgumentSyntax
-        {
-            Parent: ArgumentListSyntax { Parent: InvocationExpressionSyntax or BaseObjectCreationExpressionSyntax }
-        };
-
-    /// <summary>
-    /// Marks a candidate live on any read by name: a <c>.Field</c> member access (not its
-    /// recorded self-default), a null-conditional <c>?.Field</c> member binding
-    /// (<c>c?.Field</c>, chained <c>h?.Cfg?.Field</c>), or a property-pattern read
-    /// (<c>{ Field: … }</c> / extended <c>{ Field.Sub: … }</c>).
-    /// </summary>
-    private static void CollectConsumers(
-        SyntaxNode root,
-        Dictionary<string, (string Path, int Line)> candidates,
-        HashSet<SyntaxNode> selfDefaults,
-        HashSet<string> consumed)
-    {
-        foreach (var node in root.DescendantNodes())
-        {
-            switch (node)
-            {
-                case MemberAccessExpressionSyntax memberAccess
-                    when candidates.ContainsKey(memberAccess.Name.Identifier.Text)
-                         && !selfDefaults.Contains(memberAccess):
-                    consumed.Add(memberAccess.Name.Identifier.Text);
-                    break;
-
-                // `c?.Field` / chained `h?.Cfg?.Field` compile to a MemberBinding, not a
-                // MemberAccess; a self-default (`operand.Field`) is never null-conditional,
-                // so a binding read is always a genuine consumer.
-                case MemberBindingExpressionSyntax memberBinding
-                    when candidates.ContainsKey(memberBinding.Name.Identifier.Text):
-                    consumed.Add(memberBinding.Name.Identifier.Text);
-                    break;
-
-                case SubpatternSyntax subpattern
-                    when PropertyPatternName(subpattern) is { } name && candidates.ContainsKey(name):
-                    consumed.Add(name);
-                    break;
-            }
-        }
-    }
-
-    /// <summary>
-    /// The config field a subpattern reads — its OUTER segment: <c>{ Name: … }</c> → Name;
-    /// extended <c>{ Field.Sub: … }</c> → Field (the field, not the inner member <c>Sub</c>).
-    /// </summary>
-    private static string? PropertyPatternName(SubpatternSyntax subpattern) =>
-        subpattern.ExpressionColon?.Expression switch
-        {
-            IdentifierNameSyntax id => id.Identifier.Text,
-            MemberAccessExpressionSyntax memberAccess => LeftmostName(memberAccess),
-            _ => null,
-        };
-
-    /// <summary>The leftmost identifier of a dotted access (<c>Field.Sub.Deep</c> → Field), or null.</summary>
-    private static string? LeftmostName(MemberAccessExpressionSyntax memberAccess)
-    {
-        ExpressionSyntax expression = memberAccess;
-        while (expression is MemberAccessExpressionSyntax inner)
-            expression = inner.Expression;
-        return expression is IdentifierNameSyntax id ? id.Identifier.Text : null;
-    }
-
-    private static int LineOf(SourceText text, int position) =>
-        text.Lines.GetLinePosition(position).Line + 1;
 }

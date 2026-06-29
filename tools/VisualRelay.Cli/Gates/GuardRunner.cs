@@ -70,28 +70,34 @@ public static class GuardRunner
     }
 
     /// <summary>
-    /// Runs <see cref="DeadConfigFieldGuard"/> over every <c>*.cs</c> under <c>src/</c>
-    /// (excluding bin/obj). Returns 0 when every config field the loader parses has a
-    /// consumer, 1 otherwise (printing each dead field to stderr). Catches config knobs
-    /// that are parsed-but-consumed-nowhere — which InspectCode structurally cannot see,
-    /// because <c>RelayConfigLoader</c> reads each field as its own fallback default
-    /// (<c>defaults.Field</c>), a phantom self-read. The authoritative gate is the
-    /// <c>DeadConfigFieldGuardTests</c> guard-as-test; this is the same check run as a
+    /// Runs <see cref="DeadConfigFieldGuard"/> with CANDIDATES from <c>src/</c> (the config
+    /// record + loader) and CONSUMERS from <c>src/</c> + <c>tools/</c> (product code;
+    /// bin/obj excluded). <c>tests/</c> is intentionally not a consumer source — a field
+    /// used only by tests is effectively dead in the product. Returns 0 when every config
+    /// field the loader parses has a consumer, 1 otherwise (printing each dead field to
+    /// stderr). Catches config knobs that are parsed-but-consumed-nowhere — which InspectCode
+    /// structurally cannot see, because <c>RelayConfigLoader</c> reads each field as its own
+    /// fallback default (<c>defaults.Field</c>), a phantom self-read. The authoritative gate
+    /// is the <c>DeadConfigFieldGuardTests</c> guard-as-test; this is the same check run as a
     /// fast pre-build step so <c>check</c> fails early.
     /// </summary>
     public static int DeadConfigFields(RepoPaths paths)
     {
-        var srcDir = Path.Combine(paths.Root, "src");
-        var files = Directory.EnumerateFiles(srcDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(paths.Root, f), File.ReadAllText(f)))
-            .ToList();
+        var candidateFiles = EnumerateCs(paths, "src");
+        var consumerFiles = EnumerateCs(paths, "src", "tools");
 
-        var violations = DeadConfigFieldGuard.FindViolations(files);
+        var violations = DeadConfigFieldGuard.FindViolations(candidateFiles, consumerFiles);
         foreach (var v in violations)
             Console.Error.WriteLine($"dead config field: {v.Path}:{v.Line}: {v.Field} — {v.Reason}");
         return violations.Count > 0 ? 1 : 0;
     }
+
+    /// <summary>Reads every non-build-artifact <c>*.cs</c> under the given repo-relative dirs as (relPath, source) pairs.</summary>
+    private static List<(string Path, string Source)> EnumerateCs(RepoPaths paths, params string[] dirs) =>
+        dirs.SelectMany(d => Directory.EnumerateFiles(Path.Combine(paths.Root, d), "*.cs", SearchOption.AllDirectories))
+            .Where(f => !IsBuildArtifact(f))
+            .Select(f => (Path.GetRelativePath(paths.Root, f), File.ReadAllText(f)))
+            .ToList();
 
     /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
     private static bool IsBuildArtifact(string path)
