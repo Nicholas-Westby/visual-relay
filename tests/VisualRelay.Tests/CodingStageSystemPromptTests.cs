@@ -115,4 +115,31 @@ public sealed class CodingStageSystemPromptTests
         // find the targeted test command.
         Assert.Contains("## Verify command", prompt, StringComparison.Ordinal);
     }
+
+    // ── Visual Relay idiom absence ───────────────────────────────────────
+
+    /// <summary>
+    /// All coding-stage system prompts must be portable across repositories.
+    /// They must NOT mention <c>./visual-relay check</c> or any other
+    /// Visual Relay-specific command, because the prompts flow verbatim to
+    /// every repo the tool runs on.
+    /// </summary>
+    [Theory]
+    [InlineData("Author-tests")]
+    [InlineData("Implement")]
+    [InlineData("Review")]
+    [InlineData("Fix")]
+    [InlineData("Fix-verify")]
+    public void CodingStageSystemPrompt_DoesNotContainVisualRelayCheck(string stageName)
+    {
+        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        Assert.DoesNotContain("./visual-relay check", stage.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ConfirmImplementationPrompt_DoesNotContainVisualRelayCheck()
+    {
+        Assert.DoesNotContain("./visual-relay check",
+            RelayStages.ConfirmImplementationSystemPrompt, StringComparison.Ordinal);
+    }
 }

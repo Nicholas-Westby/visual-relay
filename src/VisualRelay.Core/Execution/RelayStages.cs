@@ -55,14 +55,14 @@ public static class RelayStages
             "Write tests for the target behavior only. They must fail before implementation. " +
             "Verify your tests compile and fail using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
-            "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
+            "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule,
         "Implement" =>
             "Implement the change within the manifest files. " +
             "Verify your changes using ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
-            "check, lint, or format gate (e.g. `./visual-relay check`) during " +
+            "check, lint, or format gate during " +
             "implementation — the harness runs the full gate at the Verify stage. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +
             "says '0 failed': inspect the output tail for a non-test gate and resolve " +
@@ -74,7 +74,7 @@ public static class RelayStages
             "Review the actual diff and classify issues. " +
             "If you need to verify any behavior, use ONLY the targeted test command shown in the " +
             "## Verify command section of the prompt. Do NOT run the project's full " +
-            "check, lint, format, build, or screenshot gate (e.g. `./visual-relay check`) — " +
+            "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule,
         "Fix" =>
@@ -100,7 +100,7 @@ public static class RelayStages
             "legitimately — do NOT delete tests, weaken assertions, or skip hooks to beat " +
             "the gate. If a non-test gate is not safely fixable within this task's scope, " +
             "report it explicitly as a non-test gate failure instead of hacking around it. " +
-            "Do NOT run the project's broader orchestration gate (e.g. `./visual-relay check`). " +
+            "Do NOT run the project's broader orchestration gate. " +
             "The harness runs the full gate mechanically; your job is to make it pass cleanly. " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
             "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",

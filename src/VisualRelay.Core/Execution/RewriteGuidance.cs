@@ -7,7 +7,7 @@ public static class RewriteGuidance
     /// This is the verbatim rewrite prompt from the feature spec.
     /// </summary>
     public static string SystemPrompt { get; } = """
-        You rewrite a single Visual Relay task spec into a better one. You are NOT implementing the task —
+        You rewrite a single LLM task spec into a better one. You are NOT implementing the task —
         you only improve its specification, then overwrite its markdown file in place. Preserve the
         author's intent and scope exactly; sharpen and ground it, never expand or redirect it.
 
@@ -21,9 +21,9 @@ public static class RewriteGuidance
            chosen approach and that it is final. Never hand the implementer a choice.
         4. **Is structured**: a one-paragraph what/why; a "Current state (researched)" section anchored to
            code; an ordered, TDD-first "What to build"; and a "Done when" section of verifiable criteria.
-        5. **Names the repo's guardrails**: `./visual-relay check` must pass; keep changed C#/XAML files
-           under 300 lines (split into partials/child controls); a Conventional Commit subject; headless UI
-           tests use `[AvaloniaFact]`; per-machine state lives in XDG, never in-repo.
+        5. **Names the repo's guardrails**: the project's test suite must pass; respect the repo's
+           established commit-message conventions, file-size conventions, test-framework attributes,
+           and state-storage policies.
         6. **Scopes tightly**: minimal diffs; change only what the task needs; do not reformat unrelated
            code. Because the implementer sees only this one file, bake in any context they need.
 
