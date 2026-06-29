@@ -12,30 +12,10 @@ public sealed partial class SwivalSubagentRunner
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        // Pre-flight guard: _probe is the test-supplied fake (used verbatim) or the default retrying probe (see ProcessRunners.cs).
-        var readiness = await _probe(cancellationToken);
-        if (!readiness.IsReady)
-            return new SubagentResult(string.Empty, null, false, readiness.Message);
-
-        // Fail fast when a required launch tool isn't on PATH — avoids the doomed
-        // launch and nono's advisory WARN dump, and names the real cause.
-        var missingTools = MissingRequiredTools(_config, swivalBinary: _swivalBinary);
-        if (missingTools.Count > 0)
-            return new SubagentResult(string.Empty, null, false,
-                ErrorHintClassifier.WithHint(MissingToolsMessage(missingTools)));
-
-        // Resolve whitelist against PATH so missing optional tools degrade
-        // instead of crashing swival's startup preflight. Emit a
-        // command_dropped event per unresolvable name.
-        var resolvedCommands = ResolveCommandsOnPath(invocation.Stage.Commands, _eventSink, invocation);
-        if (string.IsNullOrWhiteSpace(resolvedCommands))
-        {
-            return new SubagentResult(string.Empty, null, false,
-                $"All whitelisted commands are missing from PATH. " +
-                $"Commands: [{invocation.Stage.Commands}]. " +
-                $"After dropping unresolvable names, no commands remain — refusing to run " +
-                $"because swival treats an empty whitelist as unrestricted.");
-        }
+        // Pre-flight: backend readiness, required tools, PATH-resolved command whitelist.
+        var (preflightFailure, resolvedCommands) = await PreflightAsync(invocation, cancellationToken);
+        if (preflightFailure is not null)
+            return preflightFailure;
 
         // SubagentTimeoutMilliseconds is now an optional absolute ceiling (0 = disabled).
         var absoluteCeilingMs = invocation.AbsoluteCeilingMs > 0
@@ -48,15 +28,54 @@ public sealed partial class SwivalSubagentRunner
         var maxStallAttempts = _config.MaxStallRetries + 1;
         var stallRetriesLeft = _config.MaxStallRetries;
         var contractRetriesLeft = _config.MaxContractRetries;
-        var escalationUsed = false;
         var attempt = startAttempt;
         var currentInvocation = invocation;
         string? correctivePriorOutput = null;
         string? correctiveShapeError = null;
 
+        // Generalized escalation: ANY in-process failure (contract/shape reject,
+        // nonzero exit, persistent stall) re-runs the stage at the next tier
+        // (cheap→balanced→frontier, capped) with a DOUBLED turn + ceiling budget,
+        // up to MaxStageFailures runs (original + escalations) — then it fails. The
+        // run-1 base is the (already-boost-applied) invocation budget; the doubling
+        // is suppressed in flat 10× mode while the tier still escalates. Hard infra
+        // aborts (absolute ceiling, socket wedge) never escalate. MaxSelfEscalations
+        // (0 for the fix-verify loop, which owns escalation externally) caps this.
+        var baseTurns = invocation.MaxTurns;
+        var baseCeilingMs = absoluteCeilingMs;
+        var flatBoost = invocation.IsTurnBoosted;
+        var maxEscalations = Math.Min(Math.Max(0, _config.MaxStageFailures - 1), invocation.MaxSelfEscalations);
+        var escalationCount = 0;
+
         // Compute nono --skip-dir basenames ONCE (target root is constant across retries).
         var skipDirs = await NonoRollbackSkipDirs.ComputeAsync(
             invocation.TargetRoot, _gitInvoker, cancellationToken);
+
+        // One escalation rung: bump tier (capped at frontier), scale turns + ceiling
+        // (×2 per run; flat under the 10× boost), reset the within-run stall/contract
+        // budgets and corrective prompt (a higher tier re-runs fresh), re-resolve
+        // commands for the new tier, and log the transition. False at the run cap.
+        async Task<bool> TryEscalateAsync(int currentAttempt)
+        {
+            if (escalationCount >= maxEscalations)
+                return false;
+            var fromTier = currentInvocation.Tier;
+            var fromTurns = currentInvocation.MaxTurns;
+            escalationCount++;
+            var run = escalationCount + 1;
+            var toTier = StageEscalation.NextTier(fromTier);
+            var toTurns = StageEscalation.TurnsForRun(baseTurns, run, flatBoost);
+            currentInvocation = currentInvocation with { Tier = toTier, MaxTurns = toTurns };
+            absoluteCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, flatBoost));
+            stallRetriesLeft = _config.MaxStallRetries;
+            contractRetriesLeft = _config.MaxContractRetries;
+            correctivePriorOutput = null;
+            correctiveShapeError = null;
+            resolvedCommands = ResolveCommandsOnPath(currentInvocation.Stage.Commands, _eventSink, currentInvocation);
+            await PublishEscalationAsync(currentInvocation, currentAttempt, run, maxEscalations + 1,
+                fromTier, toTier, fromTurns, toTurns, cancellationToken);
+            return true;
+        }
 
         while (true)
         {
@@ -129,41 +148,37 @@ public sealed partial class SwivalSubagentRunner
                         traceDirParent, stageNum, attempt, wdResult,
                         currentFirstOutputMs, currentInactivityMs, killedProcess.Output);
 
-                    // Publish stall/kill event with signal details.
-                    if (_eventSink is not null)
-                    {
-                        await _eventSink.PublishAsync(new RelayEvent(
-                            DateTimeOffset.UtcNow, "warn", "stall_kill",
-                            attemptInvocation.RunId, attemptInvocation.TargetRoot,
-                            attemptInvocation.TaskName, attemptInvocation.Stage.Number,
-                            attemptInvocation.Tier, attempt,
-                            Data: new Dictionary<string, string>
-                            {
-                                ["reason"] = wdResult.Outcome switch
-                                {
-                                    ActivityWatchdog.Outcome.FiredAbsoluteCeiling => "absolute_ceiling",
-                                    ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
-                                    _ => "stall"
-                                },
-                                ["lastSignal"] = wdResult.LastPulseSource,
-                                ["silenceMs"] = wdResult.SilenceMs.ToString(),
-                                ["firstOutputTimeoutMs"] = currentFirstOutputMs.ToString(),
-                                ["inactivityTimeoutMs"] = currentInactivityMs.ToString(),
-                                ["outputBytes"] = killedProcess.Output.Length.ToString(),
-                                ["outputSaved"] = killedOutputPath ?? "(persist failed)"
-                            }), cancellationToken);
-                    }
+                    await PublishStallKillAsync(attemptInvocation, attempt, wdResult,
+                        currentFirstOutputMs, currentInactivityMs, killedProcess.Output.Length,
+                        killedOutputPath, cancellationToken);
 
+                    // Hard infra aborts never escalate (re-running burns the budget):
+                    // the absolute wall-clock ceiling and the backend socket wedge.
                     if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling)
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
                             ErrorHintClassifier.WithHint(
                                 $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
-                                $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."));
+                                $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."),
+                            HardAbort: true);
                     }
+                    else if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredSocketWedge)
+                    {
+                        stallResult = new SubagentResult(string.Empty, null, false,
+                            ErrorHintClassifier.WithHint(
+                                $"swival socket-wedged: the backend connection stayed ESTABLISHED but the agent " +
+                                $"subtree was idle for {wdResult.SilenceMs}ms. Last signal: {wdResult.LastPulseSource}."),
+                            HardAbort: true);
+                    }
+                    // Plain stall: retry at the same tier within budget, then escalate.
                     else if (stallRetriesLeft > 0)
                     {
                         stallRetriesLeft--;
+                        attempt++;
+                        continue;
+                    }
+                    else if (await TryEscalateAsync(attempt))
+                    {
                         attempt++;
                         continue;
                     }
@@ -190,7 +205,7 @@ public sealed partial class SwivalSubagentRunner
                 var reason = $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
                     "If swival was running a test command that hung, fix the hang and re-run only the specific " +
                     "tests you need (use a targeted subset, e.g. the TestFileCommand \"{files}\" pattern).";
-                return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
+                return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason), HardAbort: true);
             }
 
             if (result.ExitCode != 0)
@@ -202,33 +217,27 @@ public sealed partial class SwivalSubagentRunner
                 var killedOutputPath = TryPersistKilledOutput(
                     traceDirParent, stageNum, attempt, $"exit_{result.ExitCode}", result.Output);
 
-                if (_eventSink is not null)
-                {
-                    await _eventSink.PublishAsync(new RelayEvent(
-                        DateTimeOffset.UtcNow, "warn", "nonzero_exit",
-                        attemptInvocation.RunId, attemptInvocation.TargetRoot,
-                        attemptInvocation.TaskName, attemptInvocation.Stage.Number,
-                        attemptInvocation.Tier, attempt,
-                        Data: new Dictionary<string, string>
-                        {
-                            ["exitCode"] = result.ExitCode.ToString(),
-                            ["outputBytes"] = result.Output.Length.ToString(),
-                            ["outputSaved"] = killedOutputPath ?? "(persist failed)"
-                        }), cancellationToken);
-                }
+                await PublishNonzeroExitAsync(attemptInvocation, attempt, result.ExitCode,
+                    result.Output.Length, killedOutputPath, cancellationToken);
 
-                // Retry within the shared stall-retry budget (combined
-                // stall+crash attempts stay bounded).
+                // Retry within the shared stall-retry budget (combined stall+crash
+                // attempts stay bounded), then escalate tier+turns before giving up.
                 if (stallRetriesLeft > 0)
                 {
                     stallRetriesLeft--;
                     attempt++;
                     continue;
                 }
+                if (await TryEscalateAsync(attempt))
+                {
+                    attempt++;
+                    continue;
+                }
 
-                // Retries exhausted — surface the real error. BuildNonzeroExitReason
-                // distills swival's output; when that yields no usable diagnostic (just
-                // the echoed prompt) it folds in the proxy log's model-backend cause.
+                // Retries + escalations exhausted — surface the real error.
+                // BuildNonzeroExitReason distills swival's output; when that yields no
+                // usable diagnostic (just the echoed prompt) it folds in the proxy
+                // log's model-backend cause.
                 var reason = BuildNonzeroExitReason(
                     result.ExitCode, result.Output, arguments[^1], _proxyLogReader(), killedOutputPath);
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason));
@@ -255,6 +264,8 @@ public sealed partial class SwivalSubagentRunner
 
             if (json is null)
             {
+                // Within a run: nudge for the missing/rejected JSON block at the same
+                // tier (corrective prompt). When that budget is spent, escalate.
                 if (contractRetriesLeft > 0)
                 {
                     contractRetriesLeft--;
@@ -263,30 +274,10 @@ public sealed partial class SwivalSubagentRunner
                     attempt++;
                     continue;
                 }
-
-                // Try one tier escalation before giving up.
-                // Only escalate when corrective retries were configured but exhausted —
-                // MaxContractRetries:0 means fail-fast across the board.
-                if (_config.MaxContractRetries > 0 && !escalationUsed)
+                if (await TryEscalateAsync(attempt))
                 {
-                    var nextTier = NextTier(currentInvocation.Tier);
-                    if (nextTier is not null)
-                    {
-                        escalationUsed = true;
-                        correctivePriorOutput = result.Output;
-                        currentInvocation = currentInvocation with { Tier = nextTier };
-                        // Re-resolve commands against PATH for the escalated tier's stage.
-                        resolvedCommands = ResolveCommandsOnPath(currentInvocation.Stage.Commands, _eventSink, currentInvocation);
-                        if (string.IsNullOrWhiteSpace(resolvedCommands))
-                        {
-                            return new SubagentResult(string.Empty, null, false,
-                                $"All whitelisted commands are missing from PATH after tier escalation. " +
-                                $"Commands: [{currentInvocation.Stage.Commands}].");
-                        }
-                        await PublishContractRetryAsync(attemptInvocation, attempt, cancellationToken);
-                        attempt++;
-                        continue;
-                    }
+                    attempt++;
+                    continue;
                 }
 
                 return new SubagentResult(result.Output, null, false,

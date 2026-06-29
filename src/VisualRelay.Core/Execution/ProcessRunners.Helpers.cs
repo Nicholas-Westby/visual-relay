@@ -78,13 +78,8 @@ public sealed partial class SwivalSubagentRunner
     }
 
     // BuildPrompt / BuildCorrectivePrompt moved to ProcessRunners.Prompt.cs (file-size split).
-
-    private static string? NextTier(string tier) => tier switch
-    {
-        "cheap" => "balanced",
-        "balanced" => "frontier",
-        _ => null
-    };
+    // Tier escalation (NextTier) moved to the shared VisualRelay.Domain.StageEscalation
+    // policy, consumed by both RunAsync and the driver's fix-verify loop.
 
     /// <summary>
     /// Validates that <paramref name="json"/> is a JSON object whose root contains

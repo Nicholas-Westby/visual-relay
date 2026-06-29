@@ -248,7 +248,8 @@ public sealed partial class RelayDriver
             TestCommand: testCommand,
             PinnedSwivalProfileContent: pinnedSwivalProfileContent,
             AbsoluteCeilingMs: ceilingMs,
-            VerifyOutputPath: verifyOutputPath);
+            VerifyOutputPath: verifyOutputPath,
+            IsTurnBoosted: boosted);
     }
     /// <summary>
     /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.
