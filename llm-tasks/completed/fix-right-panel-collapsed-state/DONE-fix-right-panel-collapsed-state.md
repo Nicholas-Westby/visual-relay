@@ -1,3 +1,0 @@
-When the right panel is collapesed, it leaves a bunch of space to the left and right of it. The middle column should take up that space. The left panel behaves properly, so that could be used as a guideline for how it ought to look.
-
-Also, it has a vertical caret instead of a horizontal caret. And that caret should probably appear to the left of the right panel's header. Should point right when expanded and left when collapsed.

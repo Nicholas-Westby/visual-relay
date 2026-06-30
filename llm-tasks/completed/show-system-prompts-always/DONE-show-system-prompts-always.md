@@ -1,1 +1,0 @@
-On the right, there is a "System" tab that shows the systemp prompt for the current stage. This doesn't seem to work when I click a stage at startup (e.g., without any tasks running). It ought to (since the system prompt doesn't depend on a given task).

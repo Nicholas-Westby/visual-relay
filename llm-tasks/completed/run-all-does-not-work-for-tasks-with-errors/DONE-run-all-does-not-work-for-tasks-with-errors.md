@@ -1,1 +1,0 @@
-When tasks have an error, it seems that "Run All" doesn't apply to them. It ought to. Fix.

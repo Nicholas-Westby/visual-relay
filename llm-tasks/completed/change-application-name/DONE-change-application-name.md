@@ -1,1 +1,0 @@
-In the Apple menu, the app is called "Avalonia Application". Change it to "Visual Relay". See screenshot.

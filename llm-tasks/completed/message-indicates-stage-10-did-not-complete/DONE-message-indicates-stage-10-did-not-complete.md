@@ -1,3 +1,0 @@
-When I looked at a task in the archive and clicked "Fix-verify" (stage 10), the output tab says "Output for Stage 10 (Fix-verify) will appear once the stage completes."
-
-However, that stage was already completed (which makes sense since all stages were completed0> Maybe this stage got skipped due to there not being any feedback in Verify? If so, that's what the messaging should indicate in that situation.

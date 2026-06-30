@@ -1,1 +1,0 @@
-I added an app icon in the attached zip file. Make that the icon for this app. Use whatever files make sense from it (it has the icon in various resolutions). Should be the app that, for example, shows in the taskbar.

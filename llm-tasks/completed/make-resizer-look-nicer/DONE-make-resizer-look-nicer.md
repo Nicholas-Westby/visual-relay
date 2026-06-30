@@ -1,1 +1,0 @@
-The color scheme and graphical display of the resizer bar for the right panel doesn't look good. Make it look nicer. It should conform to standard guidelines for Avalonia apps (or other decent UI/UX guidelines).
