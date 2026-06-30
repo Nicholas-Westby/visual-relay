@@ -1,0 +1,675 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-06-30T20:44:44.992638+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: recognize-new-tasks-for-run-all\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Recognize New Tasks for \"Run All\"\n\nWhen someone clicks \"Run All\", all of the tasks are indeed processed. However, that is just all the tasks that existed at the time that button was clicked.\n\nIf new tasks are created while a run is happening, those new tasks are not included in the run. They ought to be. However, to give the person time to make edits to new tasks (such as including attachments), those new tasks shouldn't be touched until the current batch is fully processed. That is especially important with a \"Standard\" run all given that allows for parallel processing of tasks. For the \"Sequential\" run all, it would naturally wait for the existing tasks to be processed before the new one is processed.\n\nIf someone decides to reorder a new task during a \"Sequential\" run all, that task should be processed in the chosen order rather than waiting for the full existing batch to complete.\n\n## Manifest\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\ntests/VisualRelay.Tests/RelayQueueControllerTests.cs\ntests/VisualRelay.Tests/TestDoubles.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"New tasks created during a 'Run All' execution are currently excluded. They should be recognized and eventually processed \u2014 Standard mode processes them after the current batch completes; Sequential mode picks them up at task boundaries, honoring any reorder the user applied. Three approaches: (A) phased batches that auto-start a new batch after the current one finishes, (B) a rolling queue with a cooldown/deferred-enqueue for new tasks, (C) an event-driven pending set checked at natural boundaries.\",\n  \"options\": [\n    \"Option A: Checkpoint Batches \u2014 snapshot the task list as Batch N, process it fully, then auto-start Batch N+1 with any new tasks. Sequential reordering promotes a reordered task into the next batch at its new position.\",\n    \"Option B: Rolling Queue with Deferred Enqueue \u2014 stage new tasks with a cooldown timer; merge staged tasks into the queue at task-completion boundaries. Sequential reordering sets future queue insertion order.\",\n    \"Option C: Event-Driven Polling + Pending Queue \u2014 maintain a Pending Set of new tasks; runner checks it at natural boundaries (task end in Sequential, batch end in Standard). Sequential reordering assigns a priority index for sorted merge.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The RelayQueueController.DrainAsync snapshots the task list at start (var queue = Tasks.ToList(), line 115) and never re-examines it. New tasks created during a drain (CreateNewTaskAsync writes to disk and calls ReloadTaskListAsync for the GUI collection only) are invisible to the running drain. The controller's own Tasks ObservableCollection is separate from the GUI's Tasks collection \u2014 they're in sync only via RefreshAsync() before the drain. Sequential mode skips Phase 1 entirely (no parallel planning) and iterates one task at a time. Standard mode does parallel planning (Phase 1) then serial execution (Phase 2). Reordering is supported at the GUI level (via TaskOrderStore) and controller level (MoveUp/MoveDown/ApplyOrder) but the snapshot prevents mid-drain reorders from taking effect. Pause is checked at each Phase-2 loop top. The circuit breaker can halt on consecutive failures. Lifecycle callbacks (DrainLifecycleCallbacks) fire at plan-start/plan-done/execute-start/execute-done boundaries. The existing test DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext explicitly validates the current exclusion behavior.\",\n  \"constraints\": [\n    \"New tasks must not be picked up mid-batch \u2014 they must wait until the current snapshot's tasks are fully processed (Standard) or at task boundaries (Sequential), to give the user time to edit content/add attachments.\",\n    \"Sequential mode must honor user reordering of new tasks: a reordered task should be processed at its new position, not forced to wait for the full original batch to complete.\",\n    \"Standard mode's parallel Phase 1 cannot be interrupted \u2014 new tasks must wait until the entire Phase 1 + Phase 2 cycle finishes before being considered.\",\n    \"The snapshot-based isolation (var queue = Tasks.ToList()) must be replaced or augmented without introducing race conditions from concurrent task creation/renaming/deletion.\",\n    \"The circuit breaker halt (consecutive failures) must still apply \u2014 new tasks discovered after a halt should run on the next drain, not be carried over into a halted run.\",\n    \"Pause/resume semantics must remain correct: pausing at a task boundary should not skip newly discovered tasks; resuming should eventually include them.\",\n    \"The controller's Tasks ObservableCollection is the source of truth for what to run \u2014 any new-task detection must reconcile with this collection rather than the GUI's TaskRowViewModel list.\",\n    \"Phase 1 (parallel planning) and Phase 2 (serial execution) have different lifecycle callbacks (plan vs execute) \u2014 new-task lifecycle events need a consistent integration point.\",\n    \"ArchiveOnDone moves committed task specs out of llm-tasks/; new tasks are created in llm-tasks/ \u2014 directory-watching or periodic refresh is needed to detect new files on disk during a drain.\",\n    \"The DrainSummaryLog (per-runId .log file) records all milestones \u2014 new-task tracking must not pollute this existing log format or duplicate entries.\",\n    \"Existing tests (especially DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext and DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate) must be updated to reflect the new behavior, or new tests added alongside them.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The root cause is in RelayQueueController.DrainAsync at line 115: `var queue = Tasks.ToList();`. This snapshots the controller's Tasks collection into a local list at the start of the drain and never re-examines it. The Phase 2 loop at line 199 (`while (queue.Count > 0)`) processes only items from this frozen snapshot. There is no mechanism to detect tasks added to the controller's Tasks collection during the drain.\\n\\nTwo separate Task collections exist: (1) the GUI ViewModel's `Tasks` collection, populated by `ReloadTaskListAsync` which reads from disk; (2) the `RelayQueueController.Tasks` ObservableCollection, which is only synced before `DrainAsync` starts via `RefreshAsync()` (reads disk + applies order) and `ApplyOrder()`. When `CreateNewTaskAsync` writes a new task to disk and calls `ReloadTaskListAsync`, only the GUI collection is updated \u2014 the controller's collection is untouched. The drain, already running against its snapshot, never sees the new task.\\n\\nThe existing test `DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext` (RelayQueueControllerTests.cs:221-249) explicitly validates this exclusion as correct behavior: it adds a task directly to `controller.Tasks` mid-drain and asserts the task was NOT run by the current drain but remains in the collection for the next one. Another test, `DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate` (lines 252-279), similarly validates that a refresh mid-drain does not disrupt the in-flight snapshot.\",\n  \"excerpts\": [\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs:115 \u2014 `var queue = Tasks.ToList();` snapshots the task list at drain start; never re-examined during the drain.\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs:199 \u2014 `while (queue.Count > 0)` iterates only the frozen snapshot; new tasks added to `Tasks` after line 115 are invisible.\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.cs:221-249 \u2014 `DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext` explicitly validates that a task added mid-drain is NOT run: `Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\"], runner.TasksRun);` and `Assert.Contains(controller.Tasks, t => t.Id == \\\"delta\\\");`.\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.cs:252-279 \u2014 `DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate` validates that `RefreshAsync()` during a drain does not alter the in-flight order: `Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\"], runner.TasksRun);`.\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs:253-281 \u2014 `CreateNewTaskAsync` writes a new task to disk via `RelayTaskWriter.CreateAsync`, then calls `ReloadTaskListAsync(slug)` which updates only the GUI's Tasks collection.\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs:123-148 \u2014 `ReloadTaskListAsync` rebuilds the GUI's `Tasks` collection from disk; it does not touch the `RelayQueueController.Tasks` collection.\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs:90-116 \u2014 `DrainQueueAsync` creates a fresh `RelayQueueController`, calls `RefreshAsync()` and `ApplyOrder()` to sync it with the GUI order, then calls `DrainAsync(mode:)`. After `DrainAsync` returns, `RefreshTasksAfterDrainAsync` reloads the GUI list.\"\n  ],\n  \"repro\": \"1. Create a workspace with 3 tasks (alpha, beta, gamma).\\n2. Start a \\\"Run All\\\" (Sequential mode) \u2014 the drain begins processing alpha.\\n3. While alpha is running, click \\\"New Task\\\" and create a task named \\\"delta\\\".\\n4. Observe: delta appears in the GUI queue but the drain continues processing only beta then gamma; delta is never executed during this drain.\\n5. After the drain completes, delta remains in the queue and is only processed on the next manual \\\"Run All\\\" click.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Summary\\n\\nReplace the one-shot snapshot (`var queue = Tasks.ToList()`) in `RelayQueueController.DrainAsync` with a loop that discovers new tasks at natural boundaries, honoring the run mode:\\n\\n- **Standard mode**: Process the current batch (Phase 1 planning + Phase 2 execution) to completion, then check for new tasks in `Tasks`. If found, start a new Phase-1+Phase-2 cycle for just those new tasks. Repeat until no new tasks remain.\\n- **Sequential mode**: At each Phase 2 task boundary (after a task completes, before the next one starts), check `Tasks` for new non-NeedsReview tasks not yet seen. Merge them into the execution queue ordered by their position in the controller's `Tasks` ObservableCollection \u2014 so a user reorder (MoveUp/MoveDown) is naturally honoured.\\n\\nA `HashSet<string> processedIds` tracks every task ID that has ever been queued in the current drain, preventing re-collection or duplication even if `RefreshAsync()` is called mid-drain.\\n\\nCircuit breaker halts and pause requests still short-circuit immediately \u2014 new tasks discovered up to that point are left in `Tasks` for the next drain call.\\n\\n---\\n\\n## Step 1: Add two private helper methods to `RelayQueueController`\\n\\n**File**: `src/VisualRelay.Core/Queue/RelayQueueController.cs`\\n\\nInsert after `IndexOf` (after line 287, before the closing `}` of the class):\\n\\n### `CollectNewTasks`\\n\\n```csharp\\n/// <summary>\\n/// Returns tasks from <see cref=\\\"Tasks\\\"/> that have not yet been queued in\\n/// this drain and do not need review. Used to discover tasks that were added\\n/// to the controller's collection after the drain started.\\n/// </summary>\\nprivate static List<RelayTaskItem> CollectNewTasks(\\n    IList<RelayTaskItem> tasks,\\n    HashSet<string> seenIds)\\n{\\n    return tasks.Where(t => !t.NeedsReview && !seenIds.Contains(t.Id)).ToList();\\n}\\n```\\n\\n### `MergeNewTasksIntoQueue`\\n\\n```csharp\\n/// <summary>\\n/// Merges newly-discovered tasks into the current execution queue, preserving\\n/// the existing queue's relative order while inserting new tasks at their\\n/// position in <paramref name=\\\"tasks\\\"/> (honouring any user reorder). New\\n/// tasks never jump ahead of the task currently being processed.\\n/// </summary>\\nprivate static List<RelayTaskItem> MergeNewTasksIntoQueue(\\n    List<RelayTaskItem> currentQueue,\\n    List<RelayTaskItem> newTasks,\\n    IList<RelayTaskItem> tasks)\\n{\\n    var rank = new Dictionary<string, int>(StringComparer.Ordinal);\\n    for (var i = 0; i < tasks.Count; i++)\\n        rank[tasks[i].Id] = i;\\n\\n    var newSorted = newTasks.OrderBy(t => rank.GetValueOrDefault(t.Id, int.MaxValue)).ToList();\\n    var merged = new List<RelayTaskItem>(currentQueue.Count + newSorted.Count);\\n    var newIdx = 0;\\n\\n    for (var i = 0; i < currentQueue.Count; i++)\\n    {\\n        var currentRank = rank.GetValueOrDefault(currentQueue[i].Id, int.MaxValue);\\n        while (newIdx < newSorted.Count &&\\n               rank.GetValueOrDefault(newSorted[newIdx].Id, int.MaxValue) < currentRank)\\n        {\\n            merged.Add(newSorted[newIdx]);\\n            newIdx++;\\n        }\\n        merged.Add(currentQueue[i]);\\n    }\\n    while (newIdx < newSorted.Count)\\n    {\\n        merged.Add(newSorted[newIdx]);\\n        newIdx++;\\n    }\\n    return merged;\\n}\\n```\\n\\n---\\n\\n## Step 2: Restructure `DrainAsync`\\n\\nReplace the body of `DrainAsync` (lines 105\u2013260) with the loop-based version below. The existing variable declarations (`results`, `circuitBreaker`, `_pauseRequested`, `drainCts`, `drainRunId`, `configResult`, `skipPlanning`) remain unchanged; the snapshot line 115 is replaced and the Phase-1 and Phase-2 blocks are wrapped in a `while (true)` loop with a `firstPass` guard.\\n\\n### Key structural changes\\n\\n1. **Line 115** \u2014 Change `var queue = Tasks.ToList();` to:\\n   ```csharp\\n   var queue = Tasks.Where(t => !t.NeedsReview).ToList();\\n   var seenIds = new HashSet<string>(queue.Select(t => t.Id), StringComparer.Ordinal);\\n   var firstPass = true;\\n   ```\\n\\n2. **Wrap Phase 1 + Phase 2** in `while (true) { ... }`:\\n   - At the top of the loop, after `firstPass`: collect new tasks via `CollectNewTasks(Tasks, seenIds)`. If none, `break`. Add their IDs to `seenIds` and assign to `queue`.\\n\\n3. **Phase 1** \u2014 Add `seenIds.Add(taskId)` in the flagged/failed path (after line 154 `queue.Remove(queueTask)`) so planning-failed tasks are never re-collected.\\n\\n4. **Phase 2** \u2014 Add `seenIds.Add(task.Id)` immediately after `queue.RemoveAt(0)` / before execution (line 208 area).\\n\\n5. **Sequential-only new-task check** \u2014 After the lifecycle/summary-log block for a completed task and before the circuit-breaker check, insert:\\n   ```csharp\\n   if (skipPlanning)\\n   {\\n       var newTasks = CollectNewTasks(Tasks, seenIds);\\n       if (newTasks.Count > 0)\\n       {\\n           foreach (var nt in newTasks) seenIds.Add(nt.Id);\\n           queue = MergeNewTasksIntoQueue(queue, newTasks, Tasks);\\n       }\\n   }\\n   ```\\n\\n6. **After Phase 2 loop** \u2014 For Sequential mode, `break` the outer loop. For Standard mode, the outer loop continues (back to step 2, which collects new tasks).\\n\\n---\\n\\n## Step 3: Update existing tests\\n\\n**File**: `tests/VisualRelay.Tests/RelayQueueControllerTests.cs`\\n\\n### Test A: `DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext` (line 221)\\n\\n**Rename** to `DrainAsync_TaskAddedMidRun_IsPickedUpAfterBatch`.\\n\\n**Change assertions**:\\n- `Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\", \\\"delta\\\"], runner.TasksRun);`\\n- `Assert.DoesNotContain(controller.Tasks, t => t.Id == \\\"delta\\\");` (committed \u2192 removed)\\n- `Assert.Equal(RelayQueueState.Completed, controller.State);` (unchanged)\\n\\n### Test B: `DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate` (line 252)\\n\\n**Change assertions**:\\n- `Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\", \\\"aardvark\\\"], runner.TasksRun);`\\n- `Assert.DoesNotContain(controller.Tasks, t => t.Id == \\\"aardvark\\\");` (committed)\\n- `Assert.Equal(RelayQueueState.Completed, controller.State);` (unchanged)\\n\\n---\\n\\n## Step 4: Add new tests\\n\\nInsert after `DrainAsync_IncludesTasksWithNeedsReview` (after line 298, before the closing `}`):\\n\\n### Test 1: `DrainAsync_Sequential_PicksUpNewTaskBetweenTasks`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_Sequential_PicksUpNewTaskBetweenTasks()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var runner = new RecordingTaskRunner();\\n    var controller = new RelayQueueController(repo.Root, runner);\\n    runner.AfterRun = () =>\\n    {\\n        if (runner.TasksRun.Count == 1)\\n            controller.Tasks.Add(new RelayTaskItem(\\\"delta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"delta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n    };\\n\\n    await controller.RefreshAsync();\\n    await controller.DrainAsync(mode: RunAllMode.Sequential);\\n\\n    Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\", \\\"delta\\\"], runner.TasksRun);\\n    Assert.Equal(RelayQueueState.Completed, controller.State);\\n    Assert.DoesNotContain(controller.Tasks, t => t.Id == \\\"delta\\\");\\n}\\n```\\n\\n### Test 2: `DrainAsync_Sequential_NewTaskReordered_ProcessedInNewPosition`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_Sequential_NewTaskReordered_ProcessedInNewPosition()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var runner = new RecordingTaskRunner();\\n    var controller = new RelayQueueController(repo.Root, runner);\\n    runner.AfterRun = () =>\\n    {\\n        if (runner.TasksRun.Count == 1)\\n        {\\n            controller.Tasks.Add(new RelayTaskItem(\\\"delta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"delta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n            // Move delta up twice: [alpha,beta,gamma,delta] \u2192 [alpha,beta,delta,gamma]\\n            controller.MoveUp(\\\"delta\\\");\\n            controller.MoveUp(\\\"delta\\\");\\n        }\\n    };\\n\\n    await controller.RefreshAsync();\\n    await controller.DrainAsync(mode: RunAllMode.Sequential);\\n\\n    // Delta was reordered before gamma \u2192 runs before gamma.\\n    Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"delta\\\", \\\"gamma\\\"], runner.TasksRun);\\n    Assert.Equal(RelayQueueState.Completed, controller.State);\\n}\\n```\\n\\n### Test 3: `DrainAsync_Standard_NewTaskWaitsForFullBatch`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_Standard_NewTaskWaitsForFullBatch()\\n{\\n    // Even in Standard mode (the default), new tasks are picked up \u2014 but only\\n    // after the entire initial batch finishes, not at each task boundary.\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var runner = new RecordingTaskRunner();\\n    var controller = new RelayQueueController(repo.Root, runner);\\n    runner.AfterRun = () =>\\n    {\\n        if (runner.TasksRun.Count == 1)\\n            controller.Tasks.Add(new RelayTaskItem(\\\"delta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"delta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n    };\\n\\n    await controller.RefreshAsync();\\n    await controller.DrainAsync(mode: RunAllMode.Standard);\\n\\n    // Delta runs last, after the original three finish.\\n    Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\", \\\"delta\\\"], runner.TasksRun);\\n    Assert.Equal(RelayQueueState.Completed, controller.State);\\n    Assert.DoesNotContain(controller.Tasks, t => t.Id == \\\"delta\\\");\\n}\\n```\\n\\n### Test 4: `DrainAsync_NewTaskAfterHalt_IsNotRun`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_NewTaskAfterHalt_IsNotRun()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var controller = new RelayQueueController(repo.Root, new CommitRejectingTaskRunner());\\n    // Inject a new task after the first flag (during phase 2).\\n    var added = false;\\n    var runner = new CommitRejectingTaskRunner();\\n    // Wrap so we can inject the new task.\\n    var inner = runner;\\n    var injector = new InjectingTaskRunner(inner, () =>\\n    {\\n        if (!added)\\n        {\\n            added = true;\\n            controller.Tasks.Add(new RelayTaskItem(\\\"delta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"delta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n        }\\n    });\\n    var c2 = new RelayQueueController(repo.Root, injector);\\n\\n    await c2.RefreshAsync();\\n    var results = await c2.DrainAsync();\\n\\n    // Alpha + beta flagged \u2192 halt. Gamma and delta never start.\\n    Assert.Equal([\\\"alpha\\\", \\\"beta\\\"], results.Select(r => r.TaskId));\\n    Assert.Equal(RelayQueueState.Failed, c2.State);\\n    Assert.Contains(c2.Tasks, t => t is { Id: \\\"gamma\\\", NeedsReview: false });\\n    Assert.Contains(c2.Tasks, t => t is { Id: \\\"delta\\\", NeedsReview: false });\\n}\\n```\\n\\nNote: the `InjectingTaskRunner` test double does not exist yet. It will be a small wrapper in `TestDoubles.cs` that delegates to an inner runner and calls an `Action` before each `RunTaskAsync`. Add it alongside the existing test doubles.\\n\\n### Test 5: `DrainAsync_Sequential_MultipleNewTasks_MergedInOrder`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_Sequential_MultipleNewTasks_MergedInOrder()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var runner = new RecordingTaskRunner();\\n    var controller = new RelayQueueController(repo.Root, runner);\\n    runner.AfterRun = () =>\\n    {\\n        if (runner.TasksRun.Count == 1)\\n        {\\n            controller.Tasks.Add(new RelayTaskItem(\\\"epsilon\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"epsilon.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n            controller.Tasks.Add(new RelayTaskItem(\\\"zeta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"zeta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n            // Move zeta before epsilon \u2192 [..., epsilon, zeta] \u2192 [..., zeta, epsilon]\\n            controller.MoveUp(\\\"zeta\\\");\\n        }\\n    };\\n\\n    await controller.RefreshAsync();\\n    await controller.DrainAsync(mode: RunAllMode.Sequential);\\n\\n    Assert.Equal([\\\"alpha\\\", \\\"beta\\\", \\\"gamma\\\", \\\"zeta\\\", \\\"epsilon\\\"], runner.TasksRun);\\n    Assert.Equal(RelayQueueState.Completed, controller.State);\\n}\\n```\\n\\n### Test 6: `DrainAsync_PauseWithNewTasks_WaitsForNextDrain`\\n\\n```csharp\\n[Fact]\\npublic async Task DrainAsync_PauseWithNewTasks_WaitsForNextDrain()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    repo.WriteTask(\\\"beta\\\", \\\"# Beta\\\\n\\\");\\n    repo.WriteTask(\\\"gamma\\\", \\\"# Gamma\\\\n\\\");\\n    var runner = new RecordingTaskRunner();\\n    var controller = new RelayQueueController(repo.Root, runner);\\n    runner.AfterRun = () =>\\n    {\\n        if (runner.TasksRun.Count == 1)\\n        {\\n            controller.RequestPause();\\n            controller.Tasks.Add(new RelayTaskItem(\\\"delta\\\",\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\", \\\"delta.md\\\"),\\n                Path.Combine(repo.Root, \\\"llm-tasks\\\")!, false, []));\\n        }\\n    };\\n\\n    await controller.RefreshAsync();\\n    var results = await controller.DrainAsync(mode: RunAllMode.Sequential);\\n\\n    // Only alpha ran before pause; delta never started.\\n    Assert.Equal([\\\"alpha\\\"], runner.TasksRun);\\n    Assert.Equal(RelayQueueState.Paused, controller.State);\\n    // Delta remains for the next drain.\\n    Assert.Contains(controller.Tasks, t => t is { Id: \\\"delta\\\", NeedsReview: false });\\n}\\n```\\n\\n---\\n\\n## Step 5: Add `InjectingTaskRunner` test double\\n\\n**File**: `tests/VisualRelay.Tests/TestDoubles.cs`\\n\\nInsert after `RecordingTaskRunner` (after line 208, before `CommitRejectingTaskRunner`):\\n\\n```csharp\\ninternal sealed class InjectingTaskRunner(IRelayTaskRunner inner, Action beforeRun) : IRelayTaskRunner\\n{\\n    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)\\n    {\\n        beforeRun();\\n        return await inner.RunTaskAsync(rootPath, taskId, cancellationToken);\\n    }\\n}\\n```\\n\\n---\\n\\n## Step 6 (optional): Update the headless drain tool\\n\\n**File**: `tools/VisualRelay.DrainQueue/Program.cs`\\n\\nNo changes needed \u2014 the headless tool creates a `RelayQueueController` and calls `DrainAsync()`. The new behavior is transparent: new tasks created concurrently (e.g., by a separate process writing `.md` files into `llm-tasks/`) will be picked up by the loop logic. However, the headless tool does not call `RefreshAsync` mid-drain, so new tasks won't appear unless they are somehow added to the controller's `Tasks` collection. In the headless case, the drain runs once and exits \u2014 there is no long-running server to observe new files. The loop-back for Standard mode would check `Tasks` and find nothing new, exiting normally. This is acceptable.\"\n,\n  \"manifest\": [\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.cs\",\n    \"tests/VisualRelay.Tests/TestDoubles.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.cs\",\n    \"tests/VisualRelay.Tests/TestDoubles.cs\"\n  ],\n  \"rationale\": \"Wrote 8 tests for the new 'recognize new tasks during run-all' behavior. Modified 2 existing tests (DrainAsync_TaskAddedMidRun_IsPickedUpAfterBatch, DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate) to expect new tasks are picked up. Added 6 new tests: Sequential_PicksUpNewTaskBetweenTasks, Sequential_NewTaskReordered_ProcessedInNewPosition, Standard_NewTaskWaitsForFullBatch, NewTaskAfterHalt_IsNotRun, Sequential_MultipleNewTasks_MergedInOrder, PauseWithNewTasks_WaitsForNextDrain. Added InjectingTaskRunner test double for the halt test. Verified: build succeeds with 0 errors, test run shows 6 failures (the positive-behavior tests correctly fail pre-implementation) and 10 passes (original tests + negative-behavior tests that should remain passing).\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 24,
+    "tool_calls_total": 31,
+    "tool_calls_succeeded": 30,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 6,
+        "failed": 1
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 24,
+    "total_llm_time_s": 145.233,
+    "prompt_cache": {
+      "cached_tokens": 730112,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 11.375,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 5,
+      "completed": 5,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.04,
+      "prompt_tokens_est": 10529,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read existing test files and test doubles",
+          "Read RelayQueueController source",
+          "Write new/updated tests per the plan",
+          "Add InjectingTaskRunner test double",
+          "Verify tests compile and fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 374
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.877,
+      "prompt_tokens_est": 11006,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 15651
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11153
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14763
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.945,
+      "prompt_tokens_est": 20889,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RelayTaskItem",
+        "include": "*.cs",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.017,
+      "result_length": 101
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RunAllMode",
+        "include": "*.cs",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 17
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2362
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.16,
+      "prompt_tokens_est": 21769,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayTaskItem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1371
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RunAllMode",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.218,
+      "result_length": 2538
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 12.536,
+      "prompt_tokens_est": 22911,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DrainCircuitBreaker",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 115
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.307,
+      "prompt_tokens_est": 24414,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Queue/DrainCircuitBreaker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2892
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 12.061,
+      "prompt_tokens_est": 25146,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read existing test files and test doubles",
+          "Read RelayQueueController source"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 373
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.232,
+      "prompt_tokens_est": 26399,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "Makefile*"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 29
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 13
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.ps1"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 16
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 1.726,
+      "prompt_tokens_est": 26469,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "test.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 729
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.242,
+      "prompt_tokens_est": 26734,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "visual-relay.ps1"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 5227
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 15.936,
+      "prompt_tokens_est": 28477,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "old_string": "internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner",
+        "new_string": "internal sealed class InjectingTaskRunner(IRelayTaskRunner inner, Action beforeRun) : IRelayTaskRunner\n{\n    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)\n    {\n        beforeRun();\n        return await inner.RunTaskAsync(rootPath, taskId, cancellationToken);\n    }\n}\n\ninternal sealed class CommitRejectingTaskRunner : IRelayTaskRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 65
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 6.31,
+      "prompt_tokens_est": 30114,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "old_string": "    [Fact]\n    public async Task DrainAsync_TaskAddedMidRun_IsNotRunByCurrentDrainButRemainsForNext()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync();\n\n        // Delta was added mid-drain and must NOT have been entered.\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        // Delta remains available for the next drain.\n        Assert.Contains(controller.Tasks, t => t.Id == \"delta\");\n    }",
+        "new_string": "    [Fact]\n    public async Task DrainAsync_TaskAddedMidRun_IsPickedUpAfterBatch()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync();\n\n        // Delta was added mid-drain but is picked up after the original batch.\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"delta\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        // Delta was committed and removed.\n        Assert.DoesNotContain(controller.Tasks, t => t.Id == \"delta\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 79
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 5.313,
+      "prompt_tokens_est": 30917,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "new_string": "    [Fact]\n    public async Task DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRunAsync = async () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                // New task on disk mid-run; refresh re-sorts so aardvark shifts before beta.\n                repo.WriteTask(\"aardvark\", \"# Aardvark\\n\");\n                await controller.RefreshAsync();\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync();\n\n        // Original batch runs first, then aardvark is picked up as a new task.\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"aardvark\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        Assert.DoesNotContain(controller.Tasks, t => t.Id == \"aardvark\");\n    }",
+        "old_string": "    [Fact]\n    public async Task DrainAsync_InterleavedRefreshDoesNotChangeOrderOrDuplicate()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRunAsync = async () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                // New task on disk mid-run; refresh re-sorts so aardvark shifts before beta.\n                repo.WriteTask(\"aardvark\", \"# Aardvark\\n\");\n                await controller.RefreshAsync();\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync();\n\n        // Snapshot preserves order; aardvark must NOT displace in-flight drain.\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        Assert.Contains(controller.Tasks, t => t.Id == \"aardvark\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 79
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 14.415,
+      "prompt_tokens_est": 31701,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "new_string": "    [Fact]\n    public async Task DrainAsync_IncludesTasksWithNeedsReview()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        // Write the NEEDS-REVIEW marker before RefreshAsync so the test\n        // exercises the production path (repository \u2192 controller \u2192 drain).\n        Directory.CreateDirectory(Path.Combine(repo.Root, \".relay\", \"alpha\"));\n        await File.WriteAllTextAsync(Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\"), \"prior flag\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n        Assert.True(controller.Tasks[0].NeedsReview);\n        var results = await controller.DrainAsync();\n        Assert.Contains(\"alpha\", runner.TasksRun);\n        Assert.Contains(results, r => r.TaskId == \"alpha\");\n    }\n\n    [Fact]\n    public async Task DrainAsync_Sequential_PicksUpNewTaskBetweenTasks()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"delta\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        Assert.DoesNotContain(controller.Tasks, t => t.Id == \"delta\");\n    }\n\n    [Fact]\n    public async Task DrainAsync_Sequential_NewTaskReordered_ProcessedInNewPosition()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n                // Move delta up twice: [alpha,beta,gamma,delta] \u2192 [alpha,beta,delta,gamma]\n                controller.MoveUp(\"delta\");\n                controller.MoveUp(\"delta\");\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        // Delta was reordered before gamma \u2192 runs before gamma.\n        Assert.Equal([\"alpha\", \"beta\", \"delta\", \"gamma\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n    }\n\n    [Fact]\n    public async Task DrainAsync_Standard_NewTaskWaitsForFullBatch()\n    {\n        // Even in Standard mode (the default), new tasks are picked up \u2014 but only\n        // after the entire initial batch finishes, not at each task boundary.\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync(mode: RunAllMode.Standard);\n\n        // Delta runs last, after the original three finish.\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"delta\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n        Assert.DoesNotContain(controller.Tasks, t => t.Id == \"delta\");\n    }\n\n    [Fact]\n    public async Task DrainAsync_NewTaskAfterHalt_IsNotRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var added = false;\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        var injector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>\n        {\n            if (!added)\n            {\n                added = true;\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                // We add directly to the controller's Tasks collection, but the\n                // controller reference isn't available inside this closure yet.\n                // The InjectingTaskRunner captures the action; we'll add delta\n                // via a captured list that the test inspects afterward.\n            }\n        });\n        var controller = new RelayQueueController(repo.Root, injector);\n        // Re-attach the injection with controller access.\n        var innerInjector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>\n        {\n            if (!added)\n            {\n                added = true;\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        });\n        // Replace the runner on the controller by creating a new one.\n        // Actually, we need controller reference inside the action \u2014 use a\n        // local function capture to avoid the chicken-and-egg problem.\n\n        // Re-create with the correct injector:\n        controller = new RelayQueueController(repo.Root, innerInjector);\n\n        await controller.RefreshAsync();\n        var results = await controller.DrainAsync();\n\n        // Alpha + beta flagged \u2192 halt. Gamma and delta never start.\n        Assert.Equal([\"alpha\", \"beta\"], results.Select(r => r.TaskId));\n        Assert.Equal(RelayQueueState.Failed, controller.State);\n        Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }",
+        "old_string": "    [Fact]\n    public async Task DrainAsync_IncludesTasksWithNeedsReview()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        // Write the NEEDS-REVIEW marker before RefreshAsync so the test\n        // exercises the production path (repository \u2192 controller \u2192 drain).\n        Directory.CreateDirectory(Path.Combine(repo.Root, \".relay\", \"alpha\"));\n        await File.WriteAllTextAsync(Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\"), \"prior flag\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n        Assert.True(controller.Tasks[0].NeedsReview);\n        var results = await controller.DrainAsync();\n        Assert.Contains(\"alpha\", runner.TasksRun);\n        Assert.Contains(results, r => r.TaskId == \"alpha\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 79
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 9.026,
+      "prompt_tokens_est": 33865,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "new_string": "    [Fact]\n    public async Task DrainAsync_NewTaskAfterHalt_IsNotRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var added = false;\n        RelayQueueController? capturedController = null;\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        var injector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>\n        {\n            if (!added && capturedController is not null)\n            {\n                added = true;\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                capturedController.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        });\n        var controller = new RelayQueueController(repo.Root, injector);\n        capturedController = controller;\n\n        await controller.RefreshAsync();\n        var results = await controller.DrainAsync();\n\n        // Alpha + beta flagged \u2192 halt. Gamma and delta never start.\n        Assert.Equal([\"alpha\", \"beta\"], results.Select(r => r.TaskId));\n        Assert.Equal(RelayQueueState.Failed, controller.State);\n        Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }",
+        "old_string": "    [Fact]\n    public async Task DrainAsync_NewTaskAfterHalt_IsNotRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var added = false;\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        var injector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>\n        {\n            if (!added)\n            {\n                added = true;\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                // We add directly to the controller's Tasks collection, but the\n                // controller reference isn't available inside this closure yet.\n                // The InjectingTaskRunner captures the action; we'll add delta\n                // via a captured list that the test inspects afterward.\n            }\n        });\n        var controller = new RelayQueueController(repo.Root, injector);\n        // Re-attach the injection with controller access.\n        var innerInjector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>\n        {\n            if (!added)\n            {\n                added = true;\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        });\n        // Replace the runner on the controller by creating a new one.\n        // Actually, we need controller reference inside the action \u2014 use a\n        // local function capture to avoid the chicken-and-egg problem.\n\n        // Re-create with the correct injector:\n        controller = new RelayQueueController(repo.Root, innerInjector);\n\n        await controller.RefreshAsync();\n        var results = await controller.DrainAsync();\n\n        // Alpha + beta flagged \u2192 halt. Gamma and delta never start.\n        Assert.Equal([\"alpha\", \"beta\"], results.Select(r => r.TaskId));\n        Assert.Equal(RelayQueueState.Failed, controller.State);\n        Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 79
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 6.99,
+      "prompt_tokens_est": 35138,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "new_string": "        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n\n    [Fact]\n    public async Task DrainAsync_Sequential_MultipleNewTasks_MergedInOrder()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var epsilonPath = Path.Combine(repo.Root, \"llm-tasks\", \"epsilon.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"epsilon\", epsilonPath,\n                    Path.GetDirectoryName(epsilonPath)!, false, []));\n                var zetaPath = Path.Combine(repo.Root, \"llm-tasks\", \"zeta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"zeta\", zetaPath,\n                    Path.GetDirectoryName(zetaPath)!, false, []));\n                // Move zeta before epsilon \u2192 [..., epsilon, zeta] \u2192 [..., zeta, epsilon]\n                controller.MoveUp(\"zeta\");\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"zeta\", \"epsilon\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n    }\n\n    [Fact]\n    public async Task DrainAsync_PauseWithNewTasks_WaitsForNextDrain()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                controller.RequestPause();\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        var results = await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        // Only alpha ran before pause; delta never started.\n        Assert.Equal([\"alpha\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Paused, controller.State);\n        // Delta remains for the next drain.\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n}",
+        "old_string": "        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n}"
+      },
+      "succeeded": false,
+      "duration_s": 0.005,
+      "result_length": 716,
+      "error": "error: edit_file: old_string not found. The file's whitespace, casing, or punctuation may differ from what you sent. A near-match is shown below. If it is the intended target, retry with the actual text from the file. Otherwise reread the relevant section.\nclosest window in file (lines 423-425, similarity 0.67):\n  your old_string:\n            Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n        }\n    }\n  actual in file:\n            Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n            Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n        } (in tests/VisualRelay.Tests/RelayQueueControllerTests.cs)"
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 2.016,
+      "prompt_tokens_est": 36240,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "offset": 400
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1464
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 6.413,
+      "prompt_tokens_est": 36625,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "old_string": "        Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n\n}",
+        "new_string": "        Assert.Contains(controller.Tasks, t => t is { Id: \"gamma\", NeedsReview: false });\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n\n    [Fact]\n    public async Task DrainAsync_Sequential_MultipleNewTasks_MergedInOrder()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                var epsilonPath = Path.Combine(repo.Root, \"llm-tasks\", \"epsilon.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"epsilon\", epsilonPath,\n                    Path.GetDirectoryName(epsilonPath)!, false, []));\n                var zetaPath = Path.Combine(repo.Root, \"llm-tasks\", \"zeta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"zeta\", zetaPath,\n                    Path.GetDirectoryName(zetaPath)!, false, []));\n                // Move zeta before epsilon \u2192 [..., epsilon, zeta] \u2192 [..., zeta, epsilon]\n                controller.MoveUp(\"zeta\");\n            }\n        };\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        Assert.Equal([\"alpha\", \"beta\", \"gamma\", \"zeta\", \"epsilon\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Completed, controller.State);\n    }\n\n    [Fact]\n    public async Task DrainAsync_PauseWithNewTasks_WaitsForNextDrain()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha\\n\");\n        repo.WriteTask(\"beta\", \"# Beta\\n\");\n        repo.WriteTask(\"gamma\", \"# Gamma\\n\");\n        var runner = new RecordingTaskRunner();\n        var controller = new RelayQueueController(repo.Root, runner);\n        // ReSharper disable once AccessToDisposedClosure \u2014 fires during DrainAsync; repo alive until method exit.\n        runner.AfterRun = () =>\n        {\n            if (runner.TasksRun.Count == 1)\n            {\n                controller.RequestPause();\n                var deltaPath = Path.Combine(repo.Root, \"llm-tasks\", \"delta.md\");\n                controller.Tasks.Add(new RelayTaskItem(\"delta\", deltaPath,\n                    Path.GetDirectoryName(deltaPath)!, false, []));\n            }\n        };\n\n        await controller.RefreshAsync();\n        var results = await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        // Only alpha ran before pause; delta never started.\n        Assert.Equal([\"alpha\"], runner.TasksRun);\n        Assert.Equal(RelayQueueState.Paused, controller.State);\n        // Delta remains for the next drain.\n        Assert.Contains(controller.Tasks, t => t is { Id: \"delta\", NeedsReview: false });\n    }\n\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 79
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.768,
+      "prompt_tokens_est": 37545,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write new/updated tests per the plan",
+          "Add InjectingTaskRunner test double"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 371
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 2.22,
+      "prompt_tokens_est": 37880,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "build",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.791,
+      "result_length": 1261
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.042,
+      "prompt_tokens_est": 38346,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RelayQueueControllerTests",
+          "--no-build"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 2.936,
+      "result_length": 4583
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 14.777,
+      "prompt_tokens_est": 39683,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Verify tests compile and fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 370
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 2.739,
+      "prompt_tokens_est": 41296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.cs",
+        "offset": 220
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 13551
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 208
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2291
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 6.141,
+      "prompt_tokens_est": 45045,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -207,6 +207,15 @@ internal sealed class RecordingTaskRunner : IRelayTaskRunner
     }
 }
 
+internal sealed class InjectingTaskRunner(IRelayTaskRunner inner, Action beforeRun) : IRelayTaskRunner
+{
+    public async Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default)
+    {
+        beforeRun();
+        return await inner.RunTaskAsync(rootPath, taskId, cancellationToken);
+    }
+}
+
 internal sealed class CommitRejectingTaskRunner : IRelayTaskRunner
 {
     public Task<RelayTaskOutcome> RunTaskAsync(string rootPath, string taskId, CancellationToken cancellationToken = default) =>
