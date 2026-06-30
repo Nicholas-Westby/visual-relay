@@ -46,7 +46,7 @@ public sealed partial class SettingsPanelUiTests
                 Assert.True(row.SelectableModels.Count > 0,
                     $"Editable tier '{row.Tier}' should have selectable models.");
             else
-                Assert.Equal("fallback", row.Tier);
+                Assert.Contains(row.Tier, new[] { "fallback", "claude" });
         }
 
         dialog.Close();
@@ -85,6 +85,55 @@ public sealed partial class SettingsPanelUiTests
 
         dialog.Close();
         Dispatcher.UIThread.RunJobs();
+    }
+
+    [AvaloniaFact]
+    public async Task ClaudeMissingKey_HasNoComboBox()
+    {
+        // ── arrange: Settings with only HF_TOKEN (no ANTHROPIC_API_KEY) ──
+        EnsureNoUserEnv();
+        _env["HF_TOKEN"] = "hf-dummy";
+        using var repo = TestRepository.Create();
+        WriteCommitConfig(repo, commitProofArtifacts: false);
+        using var _ = SeedUserEnv(repo, "");
+        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        await vm.LoadInitialAsync();
+        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        try
+        {
+            var dialog = OpenSettings(window);
+            Assert.NotNull(dialog);
+
+            Dispatcher.UIThread.RunJobs();
+
+            var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
+            var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
+            Assert.NotNull(litTierItems);
+
+            // ── act: count visible ComboBox descendants vs editable rows ──
+            var comboBoxes = litTierItems
+                .GetVisualDescendants()
+                .OfType<ComboBox>()
+                .Where(c => c.IsVisible)
+                .ToList();
+
+            var rows = litTierItems.ItemsSource?.Cast<MainWindowViewModel.TierModelRow>().ToList();
+            Assert.NotNull(rows);
+            var editableCount = rows!.Count(r => r.IsEditable);
+
+            // ── assert: only editable rows get a visible ComboBox ──
+            Assert.Equal(editableCount, comboBoxes.Count);
+
+            dialog.Close();
+        }
+        finally
+        {
+            _env["HF_TOKEN"] = null;
+            Dispatcher.UIThread.RunJobs();
+        }
     }
 
     [AvaloniaFact]

@@ -104,9 +104,24 @@ public sealed partial class BackendConfigGeneratorTests
 
             if (row.Tier == "fallback")
                 Assert.False(row.IsEditable, "fallback tier must not be editable");
+            else if (row.Tier == "claude" && !row.KeyPresent)
+                Assert.False(row.IsEditable, "claude tier must not be editable when key is absent");
             else
                 Assert.True(row.IsEditable, $"tier '{row.Tier}' must be editable");
         }
+    }
+
+    [Fact]
+    public void GetTierRows_MissingKeyTierIsNotEditable()
+    {
+        var rows = BackendConfigGenerator.GetTierRows(
+            presentKeys: new HashSet<string> { "HF_TOKEN" });
+
+        var claude = rows.FirstOrDefault(r => r.Tier == "claude");
+        Assert.NotNull(claude);
+        Assert.False(claude!.IsEditable,
+            "claude must not be editable when ANTHROPIC_API_KEY is absent");
+        Assert.False(claude.KeyPresent);
     }
 
     // ── Helpers (augmented for override threading) ───────────────────────

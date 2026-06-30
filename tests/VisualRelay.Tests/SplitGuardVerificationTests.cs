@@ -139,7 +139,7 @@ public sealed partial class SplitGuardVerificationTests
         // (BackendConfigGeneratorTests.Selectable.cs: Override_WinsWhenKeyPresent,
         // Override_IgnoredWhenKeyAbsent, SelectableModels_PerTierShapeAndCapped,
         // GetTierRows_ExposesIsEditableAndSelectableModels).
-        const int baseline = 163;
+        const int baseline = 164;
 
         string[] prefixes =
         [

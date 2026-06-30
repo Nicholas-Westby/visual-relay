@@ -117,7 +117,7 @@ public static partial class BackendConfigGenerator
                     FallbackChainText: null)
                 {
                     SelectableModels = SelectableModels.TryGetValue("claude", out var sm) ? sm : [],
-                    IsEditable = true,
+                    IsEditable = false,
                 });
                 continue;
             }
