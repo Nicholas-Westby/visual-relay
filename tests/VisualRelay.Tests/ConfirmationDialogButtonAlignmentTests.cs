@@ -18,6 +18,9 @@ namespace VisualRelay.Tests;
 /// the theme's <c>ButtonPadding</c> (with vertical inset) that masks the
 /// Top default; the confirm button's <c>Padding = (12, 0)</c> zeroes the
 /// vertical padding and exposes it, gluing the label to the top edge.
+///
+/// After the centralized-button refactor, <c>CreateConfirmButton</c>
+/// returns a <c>CommonButton</c> with <c>Appearance = Primary</c>.
 /// </summary>
 [Collection("Headless")]
 public sealed class ConfirmationDialogButtonAlignmentTests
@@ -42,5 +45,30 @@ public sealed class ConfirmationDialogButtonAlignmentTests
         Assert.Equal(80.0, button.MinWidth);
         Assert.Equal(new Thickness(12, 0), button.Padding);
         Assert.Equal("Rewrite and Replace", button.Content);
+    }
+
+    /// <summary>
+    /// After the centralized-button refactor, <c>CreateConfirmButton</c>
+    /// must return a <c>CommonButton</c> (not a raw <c>Button</c>) and its
+    /// <c>Appearance</c> must be <c>Primary</c> so it renders as a blue
+    /// primary-action button.
+    /// </summary>
+    [AvaloniaFact]
+    public void ConfirmButton_IsCommonButton_WithPrimaryAppearance()
+    {
+        var button = App.App.CreateConfirmButton("Rewrite and Replace");
+
+        // The factory must return a CommonButton, not a raw Button.
+        var type = button.GetType();
+        Assert.Equal("CommonButton", type.Name);
+
+        // CommonButton must expose an Appearance property …
+        var appearanceProp = type.GetProperty("Appearance");
+        Assert.NotNull(appearanceProp);
+
+        // … and it must be set to Primary (the first enum member, value 0).
+        var appearanceValue = appearanceProp!.GetValue(button);
+        Assert.NotNull(appearanceValue);
+        Assert.Equal(0, (int)appearanceValue!);
     }
 }

@@ -6,6 +6,7 @@ using Avalonia.Media;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.App;
 
@@ -73,11 +74,12 @@ public partial class App : Application
     /// Exposed as internal static so tests can assert its structural
     /// properties without spinning up a full headless window.
     /// </summary>
-    internal static Button CreateConfirmButton(string confirmLabel)
+    internal static CommonButton CreateConfirmButton(string confirmLabel)
     {
-        return new Button
+        return new CommonButton
         {
             Content = confirmLabel,
+            Appearance = ButtonAppearance.Primary,
             // Grow to fit a longer label (e.g. "Rewrite and Replace")
             // rather than clipping at a fixed width.
             MinWidth = 80,
@@ -129,7 +131,7 @@ public partial class App : Application
                         [Grid.RowProperty] = 1,
                         Children =
                         {
-                            new Button
+                            new CommonButton
                             {
                                 Content = "Cancel",
                                 Width = 80,
