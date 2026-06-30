@@ -39,12 +39,29 @@ public static class ArchiveDayGrouping
             }
         }
 
+        string heading;
         if (localDay == today)
-            return "Today";
+            heading = "Today";
+        else if (localDay == today.AddDays(-1))
+            heading = "Yesterday";
+        else
+            heading = localDay.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture);
 
-        if (localDay == today.AddDays(-1))
-            return "Yesterday";
+        // Sum CostUsd across all tasks sharing the same local calendar day.
+        var dayTotal = 0.0;
+        foreach (var t in orderedTasks)
+        {
+            if (t.CompletedAt is { } ct)
+            {
+                var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);
+                if (d == localDay)
+                    dayTotal += t.CostUsd;
+            }
+        }
 
-        return localDay.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture);
+        if (dayTotal > 0)
+            heading = $"{heading} ({MoneyFormatter.Dollars(dayTotal)})";
+
+        return heading;
     }
 }

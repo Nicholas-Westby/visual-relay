@@ -191,6 +191,11 @@ public sealed class TaskDetailScrollBottomReachabilityTests
         var panel = await LoadPanelAsync(repo, "scroll-md-extent", 0, height: 900);
         Dispatcher.UIThread.RunJobs();
         var (sv, tb) = FindTextBlockScroller(panel, 21);
+        // In headless mode the TextBlock may not receive a non-zero width
+        // from the parent ScrollViewer, causing TextWrapping to mismeasure.
+        // Give it a minimum width so the text wraps and overflows vertically.
+        tb.MinWidth = 600;
+        Dispatcher.UIThread.RunJobs();
         Assert.True(tb.Bounds.Height > sv.Viewport.Height, "Content must overflow viewport.");
         var bottom = ContentBottom(tb, sv);
         Assert.True(sv.Extent.Height >= bottom,

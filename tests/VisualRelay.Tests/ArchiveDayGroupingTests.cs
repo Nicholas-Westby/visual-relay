@@ -176,6 +176,107 @@ public sealed class ArchiveDayGroupingTests
         Assert.Equal("Today", heading);
     }
 
+    [Fact]
+    public void Today_WithCost_IncludesTotalCost()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            Archived("a", AtLocal(2026, 6, 20, 5, 0), costUsd: 1.54),
+        };
+
+        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
+
+        Assert.Equal("Today ($1.54)", heading);
+    }
+
+    [Fact]
+    public void Yesterday_WithMultipleTasks_SumsCosts()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            Archived("a", AtLocal(2026, 6, 19, 10, 0), costUsd: 0.10),
+            Archived("b", AtLocal(2026, 6, 19, 14, 0), costUsd: 0.11),
+        };
+
+        Assert.Equal("Yesterday ($0.21)", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
+        Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));
+    }
+
+    [Fact]
+    public void FullDate_WithCost_IncludesTotalCost()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            Archived("a", AtLocal(2026, 6, 17, 8, 0), costUsd: 5.00),
+        };
+
+        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
+
+        Assert.NotNull(heading);
+        Assert.Contains("($5.00)", heading, StringComparison.Ordinal);
+        Assert.Contains("17", heading, StringComparison.Ordinal);
+        Assert.Contains("2026", heading, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FirstOfNewDay_CostOnlyOnHeadingRow()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            // Day 1: June 20 (today) — two tasks, total 1.00+2.00=3.00
+            Archived("a", AtLocal(2026, 6, 20, 14, 0), costUsd: 1.00),
+            Archived("b", AtLocal(2026, 6, 20, 10, 0), costUsd: 2.00),
+            // Day 2: June 18 — one task, cost 0.50
+            Archived("c", AtLocal(2026, 6, 18, 9, 0), costUsd: 0.50),
+            // Day 3: June 15 — two tasks, total 0.30+0.70=1.00
+            Archived("d", AtLocal(2026, 6, 15, 18, 0), costUsd: 0.30),
+            Archived("e", AtLocal(2026, 6, 15, 8, 0), costUsd: 0.70),
+        };
+
+        Assert.Equal("Today ($3.00)", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
+        Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));
+        var day2 = ArchiveDayGrouping.HeadingFor(tasks, 2, today);
+        Assert.NotNull(day2);
+        Assert.Contains("($0.50)", day2, StringComparison.Ordinal);
+        Assert.NotEqual("Today", day2);
+        Assert.Equal("Thursday, June 18, 2026 ($0.50)", ArchiveDayGrouping.HeadingFor(tasks, 2, today));
+        Assert.Equal("Monday, June 15, 2026 ($1.00)", ArchiveDayGrouping.HeadingFor(tasks, 3, today));
+        Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 4, today));
+    }
+
+    [Fact]
+    public void ZeroCost_OmitsCostSuffix()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            Archived("a", AtLocal(2026, 6, 20, 5, 0), costUsd: 0),
+        };
+
+        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
+
+        Assert.Equal("Today", heading);
+    }
+
+    [Fact]
+    public void MultipleTasksSameDayZeroTotal_OmitsCostSuffix()
+    {
+        var today = new DateOnly(2026, 6, 20);
+        var tasks = new[]
+        {
+            Archived("a", AtLocal(2026, 6, 20, 10, 0), costUsd: 0),
+            Archived("b", AtLocal(2026, 6, 20, 14, 0), costUsd: 0),
+        };
+
+        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
+
+        Assert.Equal("Today", heading);
+    }
+
     // Builds a DateTimeOffset at the given LOCAL wall-clock time using the
     // machine's own UTC offset for that instant. HeadingFor groups by
     // .ToLocalTime().Date, so anchoring construction to local time keeps every
@@ -186,7 +287,7 @@ public sealed class ArchiveDayGroupingTests
         return new DateTimeOffset(local);
     }
 
-    private static RelayTaskItem Archived(string id, DateTimeOffset completedAt) =>
+    private static RelayTaskItem Archived(string id, DateTimeOffset completedAt, double costUsd = 0) =>
         new(id, $"/tmp/{id}.md", "/tmp", false, [],
-            IsArchived: true, CompletedAt: completedAt);
+            IsArchived: true, CompletedAt: completedAt, CostUsd: costUsd);
 }
