@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.ObsidianBridge;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
@@ -69,6 +70,13 @@ public partial class MainWindowViewModel
     {
         var folder = await _folderPicker.PickFolderAsync();
         if (folder is not null) ObsidianVaultRoot = folder;
+    }
+
+    [RelayCommand]
+    private void RevealVaultRoot()
+    {
+        if (!string.IsNullOrWhiteSpace(ObsidianVaultRoot))
+            FileReveal.Reveal(ObsidianVaultRoot);
     }
 
     /// <summary>
