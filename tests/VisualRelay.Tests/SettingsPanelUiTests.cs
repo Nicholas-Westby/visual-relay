@@ -11,7 +11,7 @@ using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
 [Collection("Headless")]
-public sealed class SettingsPanelUiTests
+public sealed partial class SettingsPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
 

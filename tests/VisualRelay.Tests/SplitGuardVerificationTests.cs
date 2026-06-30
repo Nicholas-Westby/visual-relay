@@ -134,7 +134,12 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 154→159 on 2026-06-28: realigned to the actual oversized-family
         // [Fact] count, which had drifted +5 across intervening commits (the
         // verify build-warm + flailing-watchdog work) without a matching baseline bump.
-        const int baseline = 159;
+        // Bumped 159→163 on 2026-06-29: per-tier LLM model selection dropdowns
+        // added 4 [Fact]s to the BackendConfigGeneratorTests family
+        // (BackendConfigGeneratorTests.Selectable.cs: Override_WinsWhenKeyPresent,
+        // Override_IgnoredWhenKeyAbsent, SelectableModels_PerTierShapeAndCapped,
+        // GetTierRows_ExposesIsEditableAndSelectableModels).
+        const int baseline = 163;
 
         string[] prefixes =
         [

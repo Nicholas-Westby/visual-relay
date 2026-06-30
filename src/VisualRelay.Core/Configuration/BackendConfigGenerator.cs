@@ -6,7 +6,7 @@ namespace VisualRelay.Core.Configuration;
 /// blocks based on which provider keys are present. <c>model_list</c> and
 /// <c>litellm_settings</c> are preserved verbatim from the template.
 /// </summary>
-public static class BackendConfigGenerator
+public static partial class BackendConfigGenerator
 {
     /// <summary>Fallback-floor model the <c>fallback</c> tier alias resolves to.</summary>
     private const string FallbackFloorModel = "hf-qwen3-coder-next";
@@ -87,7 +87,7 @@ public static class BackendConfigGenerator
         .ToDictionary(c => c.Model, c => c.RequiredKey);
 
     /// <summary>Structured per-tier row for UI rendering.</summary>
-    public sealed record TierConfigRow(
+    public sealed partial record TierConfigRow(
         string Tier,
         string Model,
         string ProviderName,
@@ -98,9 +98,11 @@ public static class BackendConfigGenerator
     /// Returns one row per tier with the resolved model, provider, and
     /// key-present status for UI display.
     /// </summary>
-    public static IReadOnlyList<TierConfigRow> GetTierRows(ISet<string> presentKeys)
+    public static IReadOnlyList<TierConfigRow> GetTierRows(
+        ISet<string> presentKeys,
+        IReadOnlyDictionary<string, string>? overrides = null)
     {
-        var (aliases, fallbacks) = ResolveTiers(presentKeys);
+        var (aliases, fallbacks) = ResolveTiers(presentKeys, overrides);
         var rows = new List<TierConfigRow>();
 
         foreach (var tier in Chains.Keys)
@@ -112,14 +114,18 @@ public static class BackendConfigGenerator
                     Model: "(key missing)",
                     ProviderName: "Anthropic",
                     KeyPresent: false,
-                    FallbackChainText: null));
+                    FallbackChainText: null)
+                {
+                    SelectableModels = SelectableModels.TryGetValue("claude", out var sm) ? sm : [],
+                    IsEditable = true,
+                });
                 continue;
             }
 
             if (!aliases.TryGetValue(tier, out var model))
                 continue;
 
-            var requiredKey = model == "fallback" ? "HF_TOKEN" : ModelToKey[model];
+            var requiredKey = model == "fallback" ? "HF_TOKEN" : GetRequiredKey(model);
             var chainText = fallbacks.TryGetValue(tier, out var fb) && fb.Count > 0
                 ? string.Join(", ", fb)
                 : null;
@@ -129,7 +135,11 @@ public static class BackendConfigGenerator
                 Model: model,
                 ProviderName: ProviderNames[requiredKey],
                 KeyPresent: presentKeys.Contains(requiredKey),
-                FallbackChainText: chainText));
+                FallbackChainText: chainText)
+            {
+                SelectableModels = SelectableModels.TryGetValue(tier, out var slm) ? slm : [],
+                IsEditable = tier != FallbackTier,
+            });
         }
 
         return rows;
@@ -146,7 +156,10 @@ public static class BackendConfigGenerator
     /// A tuple of the generated YAML text and a one-line human-readable summary
     /// of tier→model resolutions and detected keys.
     /// </returns>
-    public static (string Yaml, string Summary) Generate(ISet<string> presentKeys, string templatePath)
+    public static (string Yaml, string Summary) Generate(
+        ISet<string> presentKeys,
+        string templatePath,
+        IReadOnlyDictionary<string, string>? overrides = null)
     {
         var lines = File.ReadAllLines(templatePath);
 
@@ -163,7 +176,7 @@ public static class BackendConfigGenerator
             throw new InvalidOperationException(
                 "Template is missing required sections (model_group_alias / litellm_settings).");
 
-        var (aliases, fallbacks) = ResolveTiers(presentKeys);
+        var (aliases, fallbacks) = ResolveTiers(presentKeys, overrides);
 
         // Reassemble the YAML: verbatim prefix + generated aliases/fallbacks + verbatim suffix.
         var result = new List<string>(lines.Length);
@@ -210,7 +223,7 @@ public static class BackendConfigGenerator
     /// given set of present keys.
     /// </summary>
     private static (Dictionary<string, string> Aliases, Dictionary<string, List<string>> Fallbacks)
-        ResolveTiers(ISet<string> presentKeys)
+        ResolveTiers(ISet<string> presentKeys, IReadOnlyDictionary<string, string>? overrides = null)
     {
         var aliases = new Dictionary<string, string>();
         var fallbacks = new Dictionary<string, List<string>>();
@@ -221,14 +234,22 @@ public static class BackendConfigGenerator
             if (tier == "claude" && !presentKeys.Contains("ANTHROPIC_API_KEY"))
                 continue;
 
-            var survivors = candidates
+            // --- Override path ---
+            if (overrides is not null && overrides.TryGetValue(tier, out var ov))
+            {
+                if (TryApplyOverride(tier, ov, presentKeys, candidates, aliases, fallbacks))
+                    continue;
+                // Key absent → ignore override, fall through to auto-resolve.
+            }
+
+            var chain = candidates
                 .Where(c => presentKeys.Contains(c.RequiredKey))
                 .Select(c => c.Model)
                 .ToList();
 
             // Degenerate: no key at all. Still produce a valid alias so the
             // proxy boots (the model defs exist, just no api_key value).
-            if (survivors.Count == 0)
+            if (chain.Count == 0)
             {
                 if (tier == "claude") continue;
                 aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier;
@@ -241,29 +262,30 @@ public static class BackendConfigGenerator
             // directly so the floor is always reached through one indirection.
             string alias;
             int chainStart;
-            if (tier != FallbackTier && survivors[0] == FallbackFloorModel)
+            if (tier != FallbackTier && chain[0] == FallbackFloorModel)
             {
                 alias = FallbackTier;
                 chainStart = 1; // hf-qwen3-coder-next is reachable via fallback
             }
             else
             {
-                alias = survivors[0];
+                alias = chain[0];
                 chainStart = 1;
             }
 
             aliases[tier] = alias;
 
-            var chain = survivors.Skip(chainStart).ToList();
+            var fb = chain.Skip(chainStart).ToList();
 
             // Every non-claude chain must terminate in the fallback tier.
-            if (tier != "claude" && (chain.Count == 0 || chain[^1] != FallbackTier))
-                chain.Add(FallbackTier);
+            if (tier != "claude" && (fb.Count == 0 || fb[^1] != FallbackTier))
+                fb.Add(FallbackTier);
 
-            if (chain.Count > 0)
-                fallbacks[tier] = chain;
+            if (fb.Count > 0)
+                fallbacks[tier] = fb;
         }
 
         return (aliases, fallbacks);
     }
+
 }

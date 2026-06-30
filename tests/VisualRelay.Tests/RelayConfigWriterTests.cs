@@ -5,7 +5,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayConfigWriterTests
+public sealed partial class RelayConfigWriterTests
 {
     [Fact]
     public async Task Write_WithCommand_ProducesLoadableConfig()

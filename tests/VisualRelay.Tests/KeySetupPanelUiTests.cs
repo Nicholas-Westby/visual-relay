@@ -15,8 +15,7 @@ public sealed class KeySetupPanelUiTests
 {
     private readonly DictionaryEnvironmentAccessor _env = new();
 
-    // Thin forwarders to SettingsTestHelpers (shared with the other UI test
-    // classes) so this file stays under the source-size guard.
+    // Thin forwarders to SettingsTestHelpers so this file stays under the source-size guard.
     private IDisposable SeedUserEnv(TestRepository repo, string content) =>
         SettingsTestHelpers.SeedUserEnv(_env, repo, content);
     private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
@@ -181,7 +180,7 @@ public sealed class KeySetupPanelUiTests
 
         var claudeRow = rows.First(row => row.Tier == "claude");
         Assert.False(claudeRow.KeyPresent);
-        Assert.Equal("(key missing)", claudeRow.Model);
+        Assert.Equal("(key missing)", claudeRow.SelectedModel);
         Assert.Equal("Anthropic", claudeRow.ProviderName);
 
         // After adding DeepSeek, balanced resolves to a DeepSeek model.
@@ -193,7 +192,7 @@ public sealed class KeySetupPanelUiTests
         var balancedRow = rows.First(row => row.Tier == "balanced");
         Assert.True(balancedRow.KeyPresent);
         Assert.Equal("DeepSeek", balancedRow.ProviderName);
-        Assert.Contains("deepseek", balancedRow.Model, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("deepseek", balancedRow.SelectedModel, StringComparison.OrdinalIgnoreCase);
     }
 
     [AvaloniaFact]
@@ -211,10 +210,12 @@ public sealed class KeySetupPanelUiTests
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var itemsControl = panel.FindControl<ItemsControl>("LitTierItems")!;
         Assert.NotNull(itemsControl);
-        var grids = itemsControl.GetVisualDescendants().OfType<Grid>().ToList();
+        // Filter by column count: ComboBox-internal grids don't match the 4-col DataTemplate.
+        var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 4).ToList();
         Assert.Equal(6, grids.Count);
-        Assert.Contains(grids, g => g.GetVisualDescendants().OfType<TextBlock>()
-            .Any(tb => tb.Text == "(key missing)"));
+        // Each DataTemplate grid has a ComboBox as a direct child.
+        foreach (var g in grids)
+            Assert.NotNull(g.GetVisualChildren().OfType<ComboBox>().FirstOrDefault());
         foreach (var grid in grids)
         {
             var dots = grid.GetVisualDescendants().OfType<Ellipse>().ToList();

@@ -1,4 +1,5 @@
 using VisualRelay.Core.Configuration;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
@@ -42,7 +43,7 @@ public static class BackendConfigStep
 
         try
         {
-            var generated = await GenerateWithTimeoutAsync(paths, template, timeout, cancellationToken);
+            var generated = await GenerateWithTimeoutAsync(paths, template, repoRoot, timeout, cancellationToken);
             log($"generated key-aware config at {paths.GeneratedConfig}");
             return generated;
         }
@@ -61,6 +62,7 @@ public static class BackendConfigStep
     private static async Task<string> GenerateWithTimeoutAsync(
         BackendPaths paths,
         string template,
+        string? repoRoot,
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
@@ -70,14 +72,14 @@ public static class BackendConfigStep
         // Generation is CPU-bound file work; run it on a pool thread so the
         // CancelAfter deadline can abandon a pathological template parse.
         var token = cts.Token;
-        var yaml = await Task.Run(() => Generate(template), token);
+        var yaml = await Task.Run(() => Generate(template, repoRoot), token);
 
         Directory.CreateDirectory(paths.Scratch);
         await File.WriteAllTextAsync(paths.GeneratedConfig, yaml, token);
         return paths.GeneratedConfig;
     }
 
-    private static string Generate(string template)
+    private static string Generate(string template, string? repoRoot)
     {
         var present = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (key, _) in KeyEnvFile.Read())
@@ -86,7 +88,16 @@ public static class BackendConfigStep
             if (Environment.GetEnvironmentVariable(key) is not null)
                 present.Add(key);
 
-        var (yaml, _) = BackendConfigGenerator.Generate(present, template);
+        // Load tier model overrides from .relay/config.json.
+        IReadOnlyDictionary<string, string>? overrides = null;
+        if (repoRoot is not null)
+        {
+            var configResult = RelayConfigLoader.TryLoadAsync(repoRoot).GetAwaiter().GetResult();
+            if (configResult.Status == RelayConfigStatus.Loaded)
+                overrides = configResult.Config.TierModelOverrides;
+        }
+
+        var (yaml, _) = BackendConfigGenerator.Generate(present, template, overrides);
         return yaml;
     }
 }

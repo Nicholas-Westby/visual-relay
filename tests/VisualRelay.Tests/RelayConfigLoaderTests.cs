@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayConfigLoaderTests
+public sealed partial class RelayConfigLoaderTests
 {
     [Fact]
     public async Task LoadAsync_MergesRepositoryConfigWithRelayDefaults()

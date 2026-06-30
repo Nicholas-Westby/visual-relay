@@ -3,6 +3,8 @@ using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Init;
+using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
@@ -94,7 +96,7 @@ public partial class MainWindowViewModel
     /// Structured per-tier rows for the Live Tiers UI, populated by
     /// <see cref="RefreshLitTiers"/> from <see cref="BackendConfigGenerator.GetTierRows"/>.
     /// </summary>
-    public ObservableCollection<BackendConfigGenerator.TierConfigRow> LitTierRows { get; } = [];
+    public ObservableCollection<TierModelRow> LitTierRows { get; } = [];
 
     /// <summary>Remediation message shown when HF_TOKEN is missing.</summary>
     public string HfGateMessage => IsHuggingFaceConfigured
@@ -170,11 +172,12 @@ public partial class MainWindowViewModel
             OnPropertyChanged(nameof(ShowHfGate));
         }
 
-        RefreshLitTiers();
-        await Task.CompletedTask;
+        await RefreshLitTiersAsync();
     }
 
-    private void RefreshLitTiers()
+    private bool _suppressLitTierPersist;
+
+    private async Task RefreshLitTiersAsync()
     {
         try
         {
@@ -185,12 +188,21 @@ public partial class MainWindowViewModel
                     presentKeys.Add(state.Row.EnvVarName);
             }
 
+            // Load tier model overrides from config.
+            IReadOnlyDictionary<string, string>? overrides = null;
+            if (Directory.Exists(RootPath))
+            {
+                var configResult = await RelayConfigLoader.TryLoadAsync(RootPath);
+                if (configResult.Status == RelayConfigStatus.Loaded)
+                    overrides = configResult.Config.TierModelOverrides;
+            }
+
             // Resolve the template the same way the tests do: walk up from the
             // app base directory until we find the repo root, then into tools/backend.
             var templatePath = LocateTemplate();
             if (templatePath is not null && File.Exists(templatePath))
             {
-                var (_, summary) = BackendConfigGenerator.Generate(presentKeys, templatePath);
+                var (_, summary) = BackendConfigGenerator.Generate(presentKeys, templatePath, overrides);
                 LitTiersSummary = summary;
             }
             else
@@ -198,15 +210,60 @@ public partial class MainWindowViewModel
                 LitTiersSummary = "(template not found)";
             }
 
+            _suppressLitTierPersist = true;
             LitTierRows.Clear();
-            foreach (var row in BackendConfigGenerator.GetTierRows(presentKeys))
-                LitTierRows.Add(row);
+            foreach (var row in BackendConfigGenerator.GetTierRows(presentKeys, overrides))
+            {
+                // SelectedModel = the override from config (if present and valid)
+                // else the auto-resolved model.
+                var selected = overrides is not null
+                    && overrides.TryGetValue(row.Tier, out var ov)
+                    && row.SelectableModels.Contains(ov, StringComparer.Ordinal)
+                        ? ov
+                        : row.Model;
+
+                LitTierRows.Add(new TierModelRow
+                {
+                    Tier = row.Tier,
+                    SelectedModel = selected,
+                    ProviderName = row.ProviderName,
+                    KeyPresent = row.KeyPresent,
+                    IsEditable = row.IsEditable,
+                    SelectableModels = row.SelectableModels,
+                    OnSelectedModelPersist = PersistTierOverrideAsync,
+                });
+            }
+            _suppressLitTierPersist = false;
         }
         catch
         {
             LitTiersSummary = "(unavailable)";
             LitTierRows.Clear();
         }
+    }
+
+    private async Task PersistTierOverrideAsync(string _)
+    {
+        if (_suppressLitTierPersist || !Directory.Exists(RootPath))
+            return;
+
+        var overrides = new Dictionary<string, string>();
+        foreach (var row in LitTierRows)
+        {
+            if (!row.IsEditable)
+                continue;
+            if (string.IsNullOrWhiteSpace(row.SelectedModel))
+                continue;
+            // Only persist models that are in the tier's selectable list —
+            // auto-resolved values like "fallback" or "(key missing)" are
+            // transient and must not land in .relay/config.json.
+            if (!row.SelectableModels.Contains(row.SelectedModel, StringComparer.Ordinal))
+                continue;
+            overrides[row.Tier] = row.SelectedModel;
+        }
+
+        if (overrides.Count > 0)
+            RelayConfigWriter.UpsertTierModelOverrides(RootPath, overrides);
     }
 
     private static string? LocateTemplate()

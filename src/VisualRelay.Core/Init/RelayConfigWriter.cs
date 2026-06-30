@@ -191,4 +191,34 @@ public static class RelayConfigWriter
 
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
+
+    /// <summary>
+    /// Read-modify-write upsert of the <c>tierModelOverrides</c> key into
+    /// <c>.relay/config.json</c>. Preserves all existing keys.
+    /// </summary>
+    public static void UpsertTierModelOverrides(string rootPath, IReadOnlyDictionary<string, string> overrides)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        var obj = new JsonObject();
+        foreach (var (tier, model) in overrides)
+            obj[tier] = model;
+        json["tierModelOverrides"] = obj;
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
 }

@@ -102,7 +102,13 @@ public sealed record RelayConfig(
     // escape hatch cannot re-open the destructive surface the deny groups protect.
     // Default null/empty (no extra grants).  The field is additive-only (it never
     // removes a profile grant) and grants read+write.
-    IReadOnlyList<string>? SandboxExtraAllowPaths = null)
+    IReadOnlyList<string>? SandboxExtraAllowPaths = null,
+    // Per-tier model-name overrides persisted from the Settings → Live Tiers
+    // dropdown. Key = tier name (cheap/balanced/frontier/vision/claude),
+    // value = model_name from that tier's SelectableModels. When null (default),
+    // every tier auto-resolves. Entries absent from a tier's SelectableModels
+    // are dropped on load so a stale config never references a removed model.
+    IReadOnlyDictionary<string, string>? TierModelOverrides = null)
 {
     // Glob patterns (relative to targetRoot) that identify guard/gate scripts.
     // When a manifest entry matches any pattern, the harness executes it once

@@ -1,0 +1,620 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-06-30T02:52:56.926240+00:00",
+  "task": "# Relay stage 7: Review\nTask: llm-models-configurable-in-the-ui\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# LLM Models Configurable in the UI\n\nLet the user pick which concrete model each tier uses, from a dropdown per tier in Settings \u2192 \"Live Tiers\". Today that panel is read-only: it shows the auto-resolved model per tier but offers no way to change it. Add a curated dropdown (\u22646 options per tier, drawn only from the five provider APIs already in use \u2014 Hugging Face, DeepSeek, Moonshot, Anthropic, OpenAI), persist the choice per-repo, and wire it through so the generated backend config actually honors it.\n\n## Current state (researched)\n\n- **Tiers** live in `BackendConfigGenerator.Chains` (`src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs`), a `Dictionary<string, List<(string Model, string RequiredKey)>>` keyed by `cheap`, `balanced`, `frontier`, `vision`, `claude`, `fallback`.\n- **Real models** are the `model_name` entries in `tools/backend/litellm-config.yaml` `model_list`: `glm-5.2`(HF), `kimi-k2`(Moonshot), `deepseek-v4-pro`/`deepseek-v4-flash`(DeepSeek), `hf-qwen3-coder-next`(HF), `hf-qwen3-vl-235b`/`hf-qwen3-vl-30b`(HF), `claude-opus-1m`/`claude-sonnet`(Anthropic), `gpt-5`(OpenAI). All five providers are represented; `gpt-5` is defined and priced (`RelayPricing.Default[\"gpt-5\"]`) but currently sits in no tier chain.\n- **Resolution** is automatic: `BackendConfigGenerator.ResolveTiers(ISet<string> presentKeys)` picks each tier's first chain candidate whose key is present; `GetTierRows(presentKeys)` and `Generate(presentKeys, templatePath)` take **only** `presentKeys` today \u2014 there is no override path.\n- **UI**: `SettingsPanel.axaml` \"Live Tiers\" `ItemsControl` binds `LitTierRows` with a `DataTemplate x:DataType=\"cfg:BackendConfigGenerator+TierConfigRow\"` rendering `Tier`/`Model`/`ProviderName`/`KeyPresent` as static `TextBlock`s (no input). `TierConfigRow` is an immutable `record`.\n- **VM**: `MainWindowViewModel.Keys.cs` \u2014 `LitTierRows` is `ObservableCollection<BackendConfigGenerator.TierConfigRow>`; `RefreshLitTiers()` calls `GetTierRows` (+ `Generate` for the summary). `RefreshKeyStatesAsync()` rebuilds it.\n- **Effect path**: `BackendLifecycle.LaunchProxyAsync` \u2192 `BackendConfigStep.ResolveAsync(_paths, _options.RepoRoot, \u2026)` \u2192 `BackendConfigStep.Generate` reads env keys and calls `BackendConfigGenerator.Generate(present, template)`, writing `.relay-scratch/litellm-config.generated.yaml`. Applied at backend start.\n- **Persistence pattern**: `RelayConfigWriter.UpsertX` does read-modify-write on `.relay/config.json` preserving all other keys (e.g. `UpsertCommitProofArtifacts`); `RelayConfigLoader.TryLoadAsync` reads into `RelayConfig`; the VM's `OnXChanged` calls the writer. `RelayConfig` already has `TierProfiles` (tier\u2192profile name).\n\n## What to build (TDD-first)\n\n1. **Curated selectable lists.** Add to `BackendConfigGenerator` a `SelectableModels` map: tier \u2192 ordered list of `model_name`s (\u22646 each, only the five providers, only real `model_list` models). Use exactly these (defaults match today's auto-resolution):\n   - `frontier`: `glm-5.2`, `kimi-k2`, `deepseek-v4-pro`, `claude-opus-1m`, `gpt-5`, `hf-qwen3-coder-next`\n   - `balanced`: `deepseek-v4-pro`, `kimi-k2`, `deepseek-v4-flash`, `gpt-5`, `hf-qwen3-coder-next`, `claude-sonnet`\n   - `cheap`: `deepseek-v4-flash`, `deepseek-v4-pro`, `hf-qwen3-coder-next`, `gpt-5`\n   - `vision`: `hf-qwen3-vl-235b`, `hf-qwen3-vl-30b`, `kimi-k2`\n   - `claude`: `claude-opus-1m`, `claude-sonnet`\n   - `fallback`: `hf-qwen3-coder-next` \u2014 **not user-editable** (it is the always-available HF floor; keep it display-only).\n2. **Override-aware resolution.** Thread an optional `IReadOnlyDictionary<string,string>? overrides` through `BackendConfigGenerator.ResolveTiers` / `GetTierRows` / `Generate`. Semantics, final: when a tier has an override **and** that model's required key is present, the override is the alias and the fallback chain is the remaining survivors (still terminating in `fallback` for non-`claude` tiers). When the override's key is absent, **ignore it** and auto-resolve \u2014 preserving the existing dead-primary-elimination guarantee so a missing key never breaks boot. `GetTierRows` rows additionally expose `SelectableModels` and `IsEditable` (`false` only for `fallback`).\n3. **Persist + load.** Add `RelayConfig.TierModelOverrides` (`IReadOnlyDictionary<string,string>?`, default null). `RelayConfigLoader.TryLoadAsync` reads a new `tierModelOverrides` object from `.relay/config.json`, dropping any entry whose value is not in that tier's `SelectableModels`. Add `RelayConfigWriter.UpsertTierModelOverrides(rootPath, IReadOnlyDictionary<string,string>)` mirroring `UpsertCommitProofArtifacts` (read-modify-write, preserve other keys).\n4. **VM wiring** (`MainWindowViewModel.Keys.cs`): replace the bare `TierConfigRow` binding with a per-tier observable row carrying two-way `SelectedModel`, `SelectableModels`, `IsEditable`, `ProviderName`, `KeyPresent`. Hydrate `SelectedModel` from the loaded `RelayConfig.TierModelOverrides` (falling back to the auto-resolved model) on `LoadInitialAsync`/`OpenSettingsAsync`. On `SelectedModel` change: `RelayConfigWriter.UpsertTierModelOverrides` then `RefreshLitTiers`.\n5. **UI** (`SettingsPanel.axaml`): in the \"Live Tiers\" `DataTemplate`, replace the static `Model` `TextBlock` with a `ComboBox` (`ItemsSource` = `SelectableModels`, `SelectedItem` two-way = `SelectedModel`, `IsEnabled` = `IsEditable`). Keep the tier name + provider/key dot as today.\n6. **Effect path**: `BackendConfigStep.Generate` loads `RelayConfig.TierModelOverrides` from the repo root (or receives them from `BackendLifecycle.LaunchProxyAsync`, which already has `_options.RepoRoot`) and passes them to `BackendConfigGenerator.Generate`, so the generated `litellm-config.generated.yaml` honors overrides at the next backend (re)start. State this \"applies on next backend start\" in the UI (a short note under Live Tiers).\n\n**Test order (write red first):** `BackendConfigGeneratorTests` \u2014 override wins when key present; override ignored when key absent; chain still terminates in `fallback`; `SelectableModels` per-tier shape + \u22646; `GetTierRows` exposes `IsEditable`/`SelectableModels`. `RelayConfigLoader`/`RelayConfigWriter` \u2014 round-trip of `tierModelOverrides`, invalid entries dropped, other keys preserved. `SettingsPanelUiTests` (`[AvaloniaFact]`) \u2014 a `ComboBox` per editable tier with the right options; changing `SelectedModel` writes `tierModelOverrides` to `.relay/config.json` and survives reload; `fallback` row's combo is disabled.\n\n## Done when\n\n- Each editable tier (`cheap`, `balanced`, `frontier`, `vision`, `claude`) shows a dropdown with \u22646 options, all from the five in-use providers' real `model_list` models; `fallback` is display-only.\n- Selecting a model persists `tierModelOverrides` to `.relay/config.json`, survives a config reload, and is reflected as the tier's alias in `BackendConfigGenerator.Generate` output **when its provider key is present**.\n- An override whose key is absent is ignored at resolution (tier auto-resolves; boot never breaks).\n- The fallback chain for every non-`claude` tier still terminates in `fallback`.\n- `./visual-relay check` is green (file-size guard, format, build, tests, screenshot).\n\n## Guardrails\n\n- Run the full gate: `./visual-relay check`. Keep C# and Avalonia XAML source \u2264300 lines \u2014 `BackendConfigGenerator.cs` (~269) and `SettingsPanel.axaml` (~295) are near the limit; split into partials (e.g. `BackendConfigGenerator.Selectable.cs`) or a small sub-control rather than bloating them.\n- Core tests use xUnit v3 `[Fact]`; UI tests use `[AvaloniaFact]` + `[Collection(\"Headless\")]`; `HeadlessUnitTestSession` is banned. **`BackendConfigGeneratorTests` is an oversized family**: any new `[Fact]` added there requires bumping `const int baseline = 159` in `SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline` (UI `[AvaloniaFact]`s are not counted).\n- Conventional Commits directly on `main` (no PRs); the `commit-msg` hook enforces subject rules. Minimal diffs \u2014 change only what this task needs; do not reformat unrelated code.\n- No new provider APIs or keys; reuse the existing five. No pricing changes (the run report's `model` is the tier/profile name, not the alias target, so pricing is unaffected and out of scope).\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs\nsrc/VisualRelay.Core/Configuration/RelayConfigLoader.TierModelOverrides.cs\ntests/VisualRelay.Tests/BackendConfigGeneratorTests.Selectable.cs\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\nsrc/VisualRelay.Domain/RelayConfig.cs\nsrc/VisualRelay.Core/Configuration/RelayConfigLoader.cs\nsrc/VisualRelay.Core/Init/RelayConfigWriter.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\nsrc/VisualRelay.App/Views/Controls/SettingsPanel.axaml\nsrc/VisualRelay.Core/Execution/BackendConfigStep.cs\ntests/VisualRelay.Tests/SplitGuardVerificationTests.cs\ntests/VisualRelay.Tests/SettingsPanelUiTests.cs\ntests/VisualRelay.Tests/RelayConfigLoaderTests.cs\ntests/VisualRelay.Tests/RelayConfigWriterTests.cs\ntests/VisualRelay.Tests/KeySetupPanelUiTests.cs\n\n## Task context\n### Screenshot 2026-06-29 at 6.40.16\u202fPM.png (16381 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add LLM model selection dropdowns per tier in Settings \u2192 Live Tiers. The feature spans a static SelectableModels map (partial class), override-aware resolution threading, persistence via tierModelOverrides in .relay/config.json, a richer ViewModel row, ComboBox UI, and effect-path wiring. Key constraints: 300-line file limits, 159-fact baseline in BackendConfigGeneratorTests, no new providers, TDD-first.\",\n  \"options\": [\n    \"Option A (recommended): Static SelectableModels dictionary in a new BackendConfigGenerator.Selectable.cs partial; thread optional overrides through existing methods; minimal VM/UI changes; simplest diff and best fit for \u22646 fixed options.\",\n    \"Option B: Store selectable model lists in .relay/config.json alongside TierProfiles; fully data-driven but over-engineered for the fixed set and adds config migration complexity.\",\n    \"Option C: Extract a TierModelSelector service class for selection/persistence logic; cleaner separation but heavier refactor than needed for this scope.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\"findings\": \"BackendConfigGenerator.Chains defines 6 tiers (cheap, balanced, frontier, vision, claude, fallback) with 10 real models across 5 providers. The UI is read-only static TextBlocks in a DataTemplate. RelayConfig has TierProfiles but no TierModelOverrides. RelayConfigWriter follows read-modify-write on .relay/config.json. BackendConfigStep.Generate reads env keys and calls BackendConfigGenerator.Generate(present, template) with no override path. Key file line counts: BackendConfigGenerator.cs=269, SettingsPanel.axaml=295 (both near 300), RelayConfigLoader.cs=297 (near limit). Baseline fact count=159, any new [Fact] in BackendConfigGeneratorTests requires bumping it.\", \"constraints\": [\"BackendConfigGenerator.cs (269 lines) and SettingsPanel.axaml (295 lines) are near the 300-line file-size guard \u2014 need partial class split or sub-control extraction\", \"Baseline [Fact] count in SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline is 159; every [Fact] added to BackendConfigGeneratorTests requires bumping it\", \"RelayConfigLoader.cs (297 lines) near the 300 limit \u2014 tierModelOverrides loading must be minimal\", \"No new provider APIs or keys \u2014 reuse HL_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY only\", \"No pricing changes \u2014 the run report model is the tier/profile name, not the alias target\", \"UI tests use [AvaloniaFact] + [Collection(\\\"Headless\\\")] \u2014 these are NOT counted in the 159 baseline\", \"Conventional Commits directly on main; commit-msg hook enforces subject rules\", \"The gpt-5 model is defined and priced but sits in no tier chain today \u2014 must be added to selectable lists\", \"fallback tier must remain display-only (IsEditable=false) as per task spec\"]}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The Live Tiers panel in Settings is read-only (static TextBlocks in SettingsPanel.axaml line 259-284). The task requires adding per-tier ComboBox dropdowns with curated model options, persisting choices to .relay/config.json, and threading overrides through BackendConfigGenerator so the backend config honors them. The codebase is in a known-clean starting state: no SelectableModels map, no TierModelOverrides field on RelayConfig, no override parameter on ResolveTiers/GetTierRows/Generate, and no UpsertTierModelOverrides writer method exist. The effect path (BackendConfigStep.Generate \u2192 BackendConfigGenerator.Generate) reads env keys only with no override path. Three files are at or near the 300-line guard limit: BackendConfigGenerator.cs (269 lines), SettingsPanel.axaml (295 lines), and RelayConfigLoader.cs (297 lines), requiring partial-class splits or sub-control extraction for new code. The BackendConfigGeneratorTests oversized family has 20 [Fact]s (9 main + 7 PerModelTimeout + 3 KimiK2_7Upstream + 1 AliasConsistency), and the SplitGuardVerificationTests baseline is 159 total across all oversized families; each new [Fact] in this family requires bumping the constant. gpt-5 (OpenAI) exists in model_list and RelayPricing but is absent from all tier Chains \u2014 it must be added to the selectable lists for frontier/balanced/cheap. The BoolNotConverter referenced in the XAML (line 270) is in the controls namespace as controls:BoolNotConverter.Instance \u2014 this pattern should be followed for consistency.\",\n  \"excerpts\": [\n    \"BackendConfigGenerator.cs:269 \u2014 TierConfigRow is an immutable record with Tier/Model/ProviderName/KeyPresent/FallbackChainText. No SelectableModels, no IsEditable, no override threading.\",\n    \"BackendConfigGenerator.cs:101-136 \u2014 GetTierRows takes only ISet<string> presentKeys; returns IReadOnlyList<TierConfigRow> with no SelectableModels or IsEditable fields.\",\n    \"BackendConfigGenerator.cs:149-206 \u2014 Generate takes (ISet<string> presentKeys, string templatePath); no overrides parameter.\",\n    \"BackendConfigGenerator.cs:212-268 \u2014 ResolveTiers is private and takes only ISet<string> presentKeys; no optional IReadOnlyDictionary<string,string>? overrides.\",\n    \"SettingsPanel.axaml:259-284 \u2014 DataTemplate x:DataType='cfg:BackendConfigGenerator+TierConfigRow' renders Tier/Model/ProviderName as static TextBlocks; no ComboBox/input controls.\",\n    \"SettingsPanel.axaml:295 \u2014 File is at 295 lines, 5 below the 300-line guard.\",\n    \"RelayConfig.cs:3-127 \u2014 sealed record has TierProfiles (IReadOnlyDictionary<string,string>) but no TierModelOverrides field.\",\n    \"RelayConfigLoader.cs:297 \u2014 at 300-line limit; TryLoadAsync reads tierProfiles but no tierModelOverrides handling exists.\",\n    \"RelayConfigWriter.cs:113-134 \u2014 UpsertCommitProofArtifacts is the read-modify-write pattern to follow; no UpsertTierModelOverrides yet.\",\n    \"MainWindowViewModel.Keys.cs:97 \u2014 LitTierRows is ObservableCollection<BackendConfigGenerator.TierConfigRow> (the immutable record, not an observable VM row).\",\n    \"MainWindowViewModel.Keys.cs:177-210 \u2014 RefreshLitTiers calls GetTierRows(presentKeys) and Generate(presentKeys, templatePath); no override loading or passing.\",\n    \"BackendConfigStep.cs:80-91 \u2014 Generate method reads env keys via KeyEnvFile.Read() + Environment.GetEnvironmentVariable, builds HashSet, calls BackendConfigGenerator.Generate(present, template) with no overrides.\",\n    \"MainWindowViewModel.Settings.cs:74-78 \u2014 OpenSettingsAsync calls RefreshKeyStatesAsync which calls RefreshLitTiers; no config reload for tierModelOverrides.\",\n    \"SplitGuardVerificationTests.cs:95-174 \u2014 baseline=159; BackendConfigGeneratorTests family included in the 12 oversized-family prefixes. New [Fact]s require baseline bump.\",\n    \"litellm-config.yaml:144-148 \u2014 gpt-5 defined with openai/gpt-5 upstream, api_key=os.environ/OPENAI_API_KEY, timeout=300. Present in model_list but absent from all tier Chains.\",\n    \"BackendConfigGenerator.Chains:31-70 \u2014 6 tiers; gpt-5 missing from all chains. frontier chain: glm-5.2, kimi-k2, deepseek-v4-pro, hf-qwen3-coder-next, fallback. balanced: deepseek-v4-pro, kimi-k2, deepseek-v4-flash, fallback. cheap: deepseek-v4-flash, deepseek-v4-pro, fallback.\",\n    \"BackendConfigGenerator.ModelToKey:83-87 \u2014 maps model_name\u2192env var; gpt-5 would map to OPENAI_API_KEY when added.\"\n  ],\n  \"repro\": \"1. Open Settings \u2192 Live Tiers panel: all rows are read-only TextBlocks (Tier, Model, ProviderName). No dropdown/ComboBox exists. 2. Check BackendConfigGenerator: no SelectableModels dictionary, no override parameter on ResolveTiers/GetTierRows/Generate. 3. Check RelayConfig record: no TierModelOverrides. 4. Check RelayConfigLoader: no tierModelOverrides read path. 5. Check RelayConfigWriter: no UpsertTierModelOverrides. 6. Run `./visual-relay check`: verify all tests pass (baseline 159). 7. Add a tier model override test to BackendConfigGeneratorTests \u2014 the fact-count baseline must be bumped from 159.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## LLM Models Configurable in the UI \u2014 Implementation Plan\\n\\n### Overview\\nAdd a per-tier model-selection dropdown (ComboBox) to Settings \u2192 \\\"Live Tiers\\\", persist the choice in `.relay/config.json` under `tierModelOverrides`, and thread overrides through `BackendConfigGenerator` so the generated litellm config honors them. `fallback` tier stays read-only.\\n\\n---\\n\\n### Step 1: Test-first \u2014 BackendConfigGeneratorTests.Selectable.cs (new, red)\\n\\nCreate `tests/VisualRelay.Tests/BackendConfigGeneratorTests.Selectable.cs` with 4 new `[Fact]`s:\\n\\n1. **`Override_WinsWhenKeyPresent`** \u2014 Given overrides `{ \\\"cheap\\\": \\\"deepseek-v4-pro\\\" }` with `DEEPSEEK_API_KEY` present \u2192 the cheap tier alias is `deepseek-v4-pro` and its fallback chain terminates in `fallback`.\\n2. **`Override_IgnoredWhenKeyAbsent`** \u2014 Override model's required key absent (e.g., `gpt-5` without `OPENAI_API_KEY`) \u2192 override is silently ignored, tier auto-resolves via normal chain.\\n3. **`SelectableModels_PerTierShapeAndCapped`** \u2014 Each tier's list is \u22646 entries, all entries come from the real `model_list` names, only five providers.\\n4. **`GetTierRows_ExposesIsEditableAndSelectableModels`** \u2014 `IsEditable` is `true` for all tiers except `fallback` (which is `false`); `SelectableModels` populated for every tier including fallback.\\n\\n**Bump baseline:** In `SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline`, change `const int baseline = 159` \u2192 `const int baseline = 163`.\\n\\n---\\n\\n### Step 2: BackendConfigGenerator.Selectable.cs (new partial)\\n\\nCreate `src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs` containing:\\n\\n- **`SelectableModels`** static `IReadOnlyDictionary<string, IReadOnlyList<string>>`:\\n  - `frontier`: `glm-5.2`, `kimi-k2`, `deepseek-v4-pro`, `claude-opus-1m`, `gpt-5`, `hf-qwen3-coder-next`\\n  - `balanced`: `deepseek-v4-pro`, `kimi-k2`, `deepseek-v4-flash`, `gpt-5`, `hf-qwen3-coder-next`, `claude-sonnet`\\n  - `cheap`: `deepseek-v4-flash`, `deepseek-v4-pro`, `hf-qwen3-coder-next`, `gpt-5`\\n  - `vision`: `hf-qwen3-vl-235b`, `hf-qwen3-vl-30b`, `kimi-k2`\\n  - `claude`: `claude-opus-1m`, `claude-sonnet`\\n  - `fallback`: `hf-qwen3-coder-next` (display-only, not editable)\\n- **`ModelToRequiredKey`** extension dict: supplement `ModelToKey` with `(\\\"gpt-5\\\", \\\"OPENAI_API_KEY\\\")` so models not in any chain still resolve their env var.\\n- Add to `TierConfigRow` (partial record):\\n  - `IReadOnlyList<string> SelectableModels { get; init; } = Array.Empty<string>();`\\n  - `bool IsEditable { get; init; } = true;`\\n\\n---\\n\\n### Step 3: BackendConfigGenerator.cs \u2014 override threading\\n\\nModify `src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs`:\\n\\n1. Mark class `partial` (line 26: `public static class BackendConfigGenerator` \u2192 `public static partial class BackendConfigGenerator`).\\n2. Mark `TierConfigRow` record `partial` (line 269).\\n3. **`ResolveTiers`**: Add `IReadOnlyDictionary<string, string>? overrides = null` parameter. Logic:\\n   - For each tier, if `overrides.TryGetValue(tier, out var ov)` and the override model's required key (from `ModelToKey` \u222a `ModelToRequiredKey`) \u2208 `presentKeys` \u2192 alias = `ov`, fallbacks = all chain survivors (excluding `ov`), still terminating in `fallback` for non-`claude` tiers.\\n   - Otherwise, auto-resolve as before.\\n4. **`GetTierRows`**: Add `IReadOnlyDictionary<string, string>? overrides = null`. For each tier row, set `SelectableModels` = `SelectableModels[tier]`, `IsEditable` = tier != `\\\"fallback\\\"`.\\n5. **`Generate`**: Add `IReadOnlyDictionary<string, string>? overrides = null`, pass to `ResolveTiers`.\\n\\n---\\n\\n### Step 4: RelayConfig \u2014 TierModelOverrides field\\n\\nModify `src/VisualRelay.Domain/RelayConfig.cs`:\\n\\n- Add to the sealed record: `public IReadOnlyDictionary<string, string>? TierModelOverrides { get; init; }` (default null).\\n- Add to `Defaults()` factory: `TierModelOverrides = null`.\\n\\n---\\n\\n### Step 5: RelayConfigLoader.TierModelOverrides.cs (new partial) + RelayConfigLoader.cs\\n\\n1. Mark `RelayConfigLoader` as `partial class` (line 14).\\n2. Create `src/VisualRelay.Core/Configuration/RelayConfigLoader.TierModelOverrides.cs`:\\n   - Static helper `TryParseTierModelOverrides(JsonElement el)` \u2192 `IReadOnlyDictionary<string, string>?`: parse `tierModelOverrides` JSON object, validate each value against `BackendConfigGenerator.SelectableModels[tier]`, drop invalid entries, return null if empty/missing.\\n3. In `RelayConfigLoader.TryLoadAsync`, after `tierProfiles` reading block (~line 105), add a 1-line call: if `root.TryGetProperty(\\\"tierModelOverrides\\\", out var tmoEl)`, call `TryParseTierModelOverrides(tmoEl)` and assign to `config = config with { TierModelOverrides = parsed }`.\\n\\n---\\n\\n### Step 6: RelayConfigWriter \u2014 UpsertTierModelOverrides\\n\\nModify `src/VisualRelay.Core/Init/RelayConfigWriter.cs`:\\n\\n- Add `public static void UpsertTierModelOverrides(string rootPath, IReadOnlyDictionary<string, string> overrides)` following the `UpsertCommitProofArtifacts` pattern: read `.relay/config.json`, parse as `JsonNode`, set `tierModelOverrides` object node, serialize back, write.\\n\\n---\\n\\n### Step 7: MainWindowViewModel.Keys.cs \u2014 TierModelRow + wiring\\n\\nModify `src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs`:\\n\\n1. Add nested `TierModelRow : ObservableObject` class:\\n   - `[ObservableProperty] string _tier`, `_selectedModel`, `_providerName`\\n   - `bool _keyPresent`, `bool _isEditable`\\n   - `IReadOnlyList<string> _selectableModels`\\n   - `partial void OnSelectedModelChanged(string value)` \u2192 calls a VM-level persist action (delegated).\\n2. Change `LitTierRows` type to `ObservableCollection<TierModelRow>`.\\n3. **`RefreshLitTiers`**:\\n   - Load `RelayConfig` via `RelayConfigLoader.TryLoadAsync(RootPath)`, extract `TierModelOverrides`.\\n   - Call `BackendConfigGenerator.GetTierRows(presentKeys, overrides: TierModelOverrides)`.\\n   - Map each `TierConfigRow` \u2192 `TierModelRow`:\\n     - `SelectedModel` = override from config (if present and key present) else auto-resolved `Model`.\\n     - `SelectableModels` = row.SelectableModels, `IsEditable` = row.IsEditable.\\n4. On `SelectedModel` change \u2192 detect diff \u2192 `RelayConfigWriter.UpsertTierModelOverrides(RootPath, newOverrides)` \u2192 call `RefreshLitTiers()` to reflect.\\n\\n---\\n\\n### Step 8: SettingsPanel.axaml \u2014 ComboBox per tier\\n\\nModify `src/VisualRelay.App/Views/Controls/SettingsPanel.axaml`:\\n\\n1. Change the Live Tiers `DataTemplate` `x:DataType` from `cfg:BackendConfigGenerator+TierConfigRow` to `vm:MainWindowViewModel+TierModelRow`.\\n2. Replace the `TextBlock` bound to `Model` (line ~270) with:\\n   ```xml\\n   <ComboBox ItemsSource=\\\"{Binding SelectableModels}\\\"\\n             SelectedItem=\\\"{Binding SelectedModel, Mode=TwoWay}\\\"\\n             IsEnabled=\\\"{Binding IsEditable}\\\"\\n             MinWidth=\\\"180\\\" />\\n   ```\\n3. Add a `TextBlock` below the Live Tiers header: \\\"Changes apply on the next backend start.\\\"\\n4. Add `xmlns:vm=\\\"using:VisualRelay.App.ViewModels\\\"` if not already present.\\n\\n---\\n\\n### Step 9: BackendConfigStep \u2014 effect path\\n\\nModify `src/VisualRelay.Core/Execution/BackendConfigStep.cs`:\\n\\n- In `Generate` method (line ~80-91), after building `presentKeys` HashSet, load `RelayConfig` from `repoRoot` via `RelayConfigLoader.TryLoadAsync`, extract `TierModelOverrides`, pass to `BackendConfigGenerator.Generate(present, template, overrides: config.TierModelOverrides)`.\\n\\n---\\n\\n### Step 10: Tests \u2014 green\\n\\n**`RelayConfigLoaderTests.cs`** (5 new `[Fact]`s):\\n- `TierModelOverrides_RoundTrip` \u2014 write config with `tierModelOverrides`, verify loader returns them.\\n- `TierModelOverrides_InvalidEntryDropped` \u2014 entry not in `SelectableModels` is dropped.\\n- `TierModelOverrides_MissingKey_DefaultsToNull` \u2014 no `tierModelOverrides` \u2192 `TierModelOverrides` is null.\\n- `TierModelOverrides_EmptyObject_DefaultsToNull` \u2014 `{}` \u2192 null.\\n- `TierModelOverrides_OtherKeysPreserved` \u2014 writer preserves existing keys.\\n\\n**`RelayConfigWriterTests.cs`** (2 new `[Fact]`s):\\n- `UpsertTierModelOverrides_WritesAndSurvivesRoundTrip` \u2014 set overrides, reload, verify.\\n- `UpsertTierModelOverrides_PreservesExistingKeys` \u2014 set overrides, verify other config keys intact.\\n\\n**`SettingsPanelUiTests.cs`** (3 new `[AvaloniaFact]`s):\\n- `LiveTiers_HasComboBoxPerEditableTier` \u2014 each editable tier row has a ComboBox with correct options.\\n- `FallbackTier_ComboBoxIsDisabled` \u2014 fallback row's combo `IsEnabled` is false.\\n- `SelectingModel_WritesTierModelOverrides` \u2014 select a different model, verify `tierModelOverrides` in `.relay/config.json` survives reload.\\n\\n---\\n\\n### Step 11: Gate \u2014 `./visual-relay check`\\n\\nRun the full gate: format, build, all tests pass, file-size guards pass (no newly oversized file, baseline bumped correctly), screenshot comparison. Commit with a Conventional Commit message like `feat: per-tier LLM model selection in Live Tiers panel`.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs\",\n    \"+src/VisualRelay.Core/Configuration/RelayConfigLoader.TierModelOverrides.cs\",\n    \"+tests/VisualRelay.Tests/BackendConfigGeneratorTests.Selectable.cs\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\",\n    \"src/VisualRelay.Domain/RelayConfig.cs\",\n    \"src/VisualRelay.Core/Configuration/RelayConfigLoader.cs\",\n    \"src/VisualRelay.Core/Init/RelayConfigWriter.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\",\n    \"src/VisualRelay.App/Views/Controls/SettingsPanel.axaml\",\n    \"src/VisualRelay.Core/Execution/BackendConfigStep.cs\",\n    \"tests/VisualRelay.Tests/SplitGuardVerificationTests.cs\",\n    \"tests/VisualRelay.Tests/SettingsPanelUiTests.cs\",\n    \"tests/VisualRelay.Tests/RelayConfigLoaderTests.cs\",\n    \"tests/VisualRelay.Tests/RelayConfigWriterTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 7, untracked deleted: 3.\n\n> **Manifest merge (stage 5)**: added 1 authored test file(s).\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorTests.Selectable.cs\",\n    \"tests/VisualRelay.Tests/SplitGuardVerificationTests.cs\",\n    \"tests/VisualRelay.Tests/KeySetupPanelUiTests.cs\"\n  ],\n  \"rationale\": \"Implemented per-tier LLM model selection in Settings \u2192 Live Tiers. Created BackendConfigGenerator.Selectable.cs with SelectableModels dictionary (6 tiers, \u22646 models each, all from 5 real providers). Added override-aware resolution: ResolveTiers/GetTierRows/Generate now accept optional IReadOnlyDictionary<string,string>? overrides \u2014 when an override model's key is present it wins as the alias with remaining survivors as fallback chain (still terminating in fallback for non-claude tiers); absent key \u2192 override silently ignored. Added RelayConfig.TierModelOverrides field, RelayConfigLoader.TryParseTierModelOverrides (validates against SelectableModels, drops invalid), and RelayConfigWriter.UpsertTierModelOverrides (read-modify-write). Extracted TierModelRow (ObservableObject with two-way SelectedModel) into MainWindowViewModel.TierModelRow.cs, updated LitTierRows binding and RefreshLitTiers to hydrate from config overrides. Replaced static Model TextBlock with ComboBox in SettingsPanel.axaml DataTemplate (ItemsSource=SelectableModels, SelectedItem=SelectedModel, IsEnabled=IsEditable), added 'Changes apply on next backend start' note. BackendConfigStep.ResolveAsync now loads overrides from .relay/config.json and passes through to Generate. All file sizes \u2264300 lines. Baseline bumped 159\u2192163 for the 4 new [Fact]s in BackendConfigGeneratorTests family (Override_WinsWhenKeyPresent, Override_IgnoredWhenKeyAbsent, SelectableModels_PerTierShapeAndCapped, GetTierRows_ExposesIsEditableAndSelectableModels). Core tests: 73 passed (24+18+16+15). Build clean, 0 warnings.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented per-tier LLM model selection in Settings \u2192 Live Tiers. Created BackendConfigGenerator.Selectable.cs with SelectableModels dictionary (6 tiers, \u22646 models each, all from 5 real providers). Added override-aware resolution: ResolveTiers/GetTierRows/Generate now accept optional IReadOnlyDictionary<string,string>? overrides \u2014 when an override model's key is present it wins as the alias with remaining survivors as fallback chain (still terminating in fallback for non-claude tiers); absent key \u2192 override silently ignored. Added RelayConfig.TierModelOverrides field, RelayConfigLoader.TryParseTierModelOverrides (validates against SelectableModels, drops invalid), and RelayConfigWriter.UpsertTierModelOverrides (read-modify-write). Extracted TierModelRow (ObservableObject with two-way SelectedModel and OnSelectedModelPersist delegate) into MainWindowViewModel.TierModelRow.cs, updated LitTierRows binding and RefreshLitTiers to hydrate from config overrides. Replaced static Model TextBlock with ComboBox in SettingsPanel.axaml DataTemplate (ItemsSource=SelectableModels, SelectedItem=SelectedModel, IsEnabled=IsEditable), added 'Changes apply on next backend start' note. BackendConfigStep.ResolveAsync now loads overrides from .relay/config.json and passes through to Generate. Baseline bumped 159\u2192163. Split oversized test files into partials. All 90 targeted tests pass.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 2000,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Working tree is fully intact (all 13 modified files + new files present; pre-existing stashes untouched). I now have a complete picture.\n\n## Review Summary\n\n**What's good:**\n- `BackendConfigGenerator.Selectable.cs` correctly defines `SelectableModels` (6 tiers, \u22646 each, only the 5 in-use providers' real `model_list` models; `fallback` is `hf-qwen3-coder-next` only).\n- Override-aware resolution is sound: `TryApplyOverride` wins when the override's key is present (alias = override, fallback chain = remaining survivors still terminating in `fallback`), and silently falls through to auto-resolve when the key is absent \u2014 preserving boot safety. The `gpt-5`\u2192`OPENAI_API_KEY` mapping is added via `ModelToRequiredKey`/`GetRequiredKey`.\n- Persistence round-trips: `RelayConfig.TierModelOverrides`, `RelayConfigLoader.TryParseTierModelOverrides` (validates + drops invalid), `RelayConfigWriter.UpsertTierModelOverrides` (read-modify-write preserving other keys). `BackendConfigStep.Generate` loads overrides from repo root and passes them through.\n- File sizes all \u2264300 (`RelayConfigLoader.cs`=300, `SettingsPanel.axaml`=300, inclusive OK). SplitGuard baseline bumped 159\u2192163 and the actual `[Fact]` count across oversized families is exactly 163. \u2713\n- The 80 core tests (BackendConfigGenerator/RelayConfigLoader/RelayConfigWriter/SplitGuard) and all 3 new `SettingsPanelUiTests` pass; build is clean.\n\n**The problem \u2014 2 pre-existing UI tests regress (would fail `./visual-relay check`):**\n\nRun 2 (`SettingsPanelUiTests` + `KeySetupPanelUiTests`) \u2192 **Failed: 2, Passed: 16**. Both failures are in `KeySetupPanelUiTests.cs`, which the task manifest listed but only received the `.Model`\u2192`.SelectedModel` rename \u2014 it was not adjusted for two behavioral changes the implementation introduced.\n\n1. `RefreshLitTiers` was changed from synchronous `private void` to `private async void` (`MainWindowViewModel.Keys.cs:181`) and is still called without `await` from `RefreshKeyStatesAsync` (`:175`). It now `await`s `RelayConfigLoader.TryLoadAsync`, which performs real async file I/O (`File.OpenRead`/`JsonDocument.ParseAsync`) and **yields**, so `LitTierRows` is no longer populated by the time `RefreshKeyStatesAsync`/`LoadInitialAsync` return. This breaks `LitTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek` (a `[Fact]` that reads `vm.LitTierRows` right after `await vm.LoadInitialAsync()`) \u2014 `Assert.NotEmpty(rows)` fails with an empty collection. Fix: make `RefreshLitTiers` return `Task` and `await` it in `RefreshKeyStatesAsync` (drop the `await Task.CompletedTask;` stub).\n\n2. Replacing the Model `TextBlock` with a `ComboBox` (`SettingsPanel.axaml:~278`) injects the ComboBox template's `Grid` into the visual tree. `LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots` asserts `Assert.Equal(6, grids.Count)` over **all** `Grid` descendants of the `LitTierItems` `ItemsControl`; it now sees 12 (6 row grids + 6 ComboBox grids) \u2192 fails. The test must be rescoped to the per-row grids (or otherwise account for the ComboBox), and re-checked that the `(key missing)` TextBlock assertion still holds now that the model cell is a ComboBox whose `SelectedItem` (\"(key missing)\") is not in `SelectableModels`.\n\nThese are gate-blocking: the test stage of `./visual-relay check` will fail until both are resolved.\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"Regression: RefreshLitTiers was changed from 'private void' to 'private async void' (MainWindowViewModel.Keys.cs:181) and is still called without await from RefreshKeyStatesAsync (:175). It now awaits RelayConfigLoader.TryLoadAsync, which does real async file I/O (File.OpenRead/JsonDocument.ParseAsync) and yields, so LitTierRows is no longer populated by the time RefreshKeyStatesAsync/LoadInitialAsync return. This breaks the pre-existing [Fact] KeySetupPanelUiTests.LitTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek (reads vm.LitTierRows right after await vm.LoadInitialAsync(); Assert.NotEmpty(rows) fails with empty collection). Fix: make RefreshLitTiers return Task and await it in RefreshKeyStatesAsync (remove the 'await Task.CompletedTask;' stub).\", \"Regression: replacing the Model TextBlock with a ComboBox (SettingsPanel.axaml:~278) injects the ComboBox template's Grid into the visual tree. The pre-existing [AvaloniaFact] KeySetupPanelUiTests.LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots asserts Assert.Equal(6, grids.Count) over ALL Grid descendants of the LitTierItems ItemsControl; it now sees 12 (6 row grids + 6 ComboBox grids) and fails. The test was listed in the task manifest but only got the .Model->.SelectedModel rename; it must be rescoped to the per-row grids (and re-verified that the '(key missing)' TextBlock assertion still holds, since the model cell is now a ComboBox whose SelectedItem '(key missing)' is not in SelectableModels).\", \"Secondary (non-blocking): PersistTierOverrideAsync (MainWindowViewModel.Keys.cs) writes ALL editable tiers' SelectedModel to config, including auto-resolved values. When a tier auto-resolves to the 'fallback' alias (e.g. cheap/balanced with only HF_TOKEN) or '(key missing)', that value is NOT in the tier's SelectableModels, so transient invalid entries are written to .relay/config.json (they self-correct on reload via TryParseTierModelOverrides validation, but the file is momentarily dirty). Consider persisting only the explicitly-changed tier, or mapping the 'fallback' alias back to a selectable model.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 22,
+    "tool_calls_total": 33,
+    "tool_calls_succeeded": 33,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 20,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 22,
+    "total_llm_time_s": 788.792,
+    "prompt_cache": {
+      "cached_tokens": 655040,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 17.847,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 11.803,
+      "prompt_tokens_est": 11813,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestky/Dev/visual-relay/ && git status && echo \"---BRANCH---\" && git branch --show-current"
+      },
+      "succeeded": true,
+      "duration_s": 0.06,
+      "result_length": 101
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestky/Dev/visual-relay/ && git log --oneline -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.045,
+      "result_length": 101
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 9.159,
+      "prompt_tokens_est": 12066,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "pwd && ls"
+      },
+      "succeeded": true,
+      "duration_s": 0.089,
+      "result_length": 382
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 11.485,
+      "prompt_tokens_est": 12218,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git status && echo \"---BRANCH---\" && git branch --show-current && echo \"---LOG---\" && git log --oneline -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.174,
+      "result_length": 2324
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 9.754,
+      "prompt_tokens_est": 12931,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff --stat && echo \"---UNTRACKED---\" && git status --porcelain | grep '^??'"
+      },
+      "succeeded": true,
+      "duration_s": 0.135,
+      "result_length": 1470
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff .relay/config.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.073,
+      "result_length": 805
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 15.254,
+      "prompt_tokens_est": 13668,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.11,
+      "result_length": 7340
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4654
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 7.765,
+      "prompt_tokens_est": 17040,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff src/VisualRelay.Domain/RelayConfig.cs src/VisualRelay.Core/Configuration/RelayConfigLoader.cs src/VisualRelay.Core/Init/RelayConfigWriter.cs src/VisualRelay.Core/Execution/BackendConfigStep.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.112,
+      "result_length": 7777
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.TierModelOverrides.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1466
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 7.568,
+      "prompt_tokens_est": 19301,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs src/VisualRelay.App/Views/Controls/SettingsPanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 7500
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1261
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 6.956,
+      "prompt_tokens_est": 21272,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff tests/VisualRelay.Tests/SplitGuardVerificationTests.cs tests/VisualRelay.Tests/KeySetupPanelUiTests.cs tests/VisualRelay.Tests/RelayConfigLoaderTests.cs tests/VisualRelay.Tests/RelayConfigWriterTests.cs tests/VisualRelay.Tests/SettingsPanelUiTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.1,
+      "result_length": 3785
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorTests.Selectable.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5849
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 9.109,
+      "prompt_tokens_est": 23880,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayConfigLoaderTests.TierModelOverrides.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4416
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayConfigWriterTests.TierModelOverrides.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2188
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5405
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 14.309,
+      "prompt_tokens_est": 26916,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10463
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 64.695,
+      "prompt_tokens_est": 30045,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13000
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 314.234,
+      "prompt_tokens_est": 36602,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "echo \"=== Modified/new source file line counts (limit 300) ===\" && for f in src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs src/VisualRelay.Core/Configuration/RelayConfigLoader.cs src/VisualRelay.Core/Configuration/RelayConfigLoader.TierModelOverrides.cs src/VisualRelay.Core/Init/RelayConfigWriter.cs src/VisualRelay.Core/Execution/BackendConfigStep.cs src/VisualRelay.Domain/RelayConfig.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.TierModelRow.cs src/VisualRelay.App/Views/Controls/SettingsPanel.axaml; do printf \"%5s  %s\\n\" \"$(wc -l < \"$f\")\" \"$f\"; done"
+      },
+      "succeeded": true,
+      "duration_s": 0.121,
+      "result_length": 709
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "echo \"=== [Fact] count across oversized families ===\" && cd tests/VisualRelay.Tests && total=0; for p in SwivalSubagentRunnerWatchdogTests Installer5LauncherTests GitCommitterTests GitCommitterAutoIncludeTests RelayDriverResumeTests BackendConfigGeneratorTests RelayDriverGitCommitTests SwivalSubagentRunnerCommandFilterTests SwivalSubagentRunnerTests RelayDriverTests NoCommitContaminationTests PlanPhaseRunnerTests; do n=$(grep -rho '\\[Fact\\]' ${p}.cs ${p}.*.cs 2>/dev/null | wc -l | tr -d ' '); echo \"$p: $n\"; total=$((total+n)); done; echo \"TOTAL: $total (baseline expects 163)\""
+      },
+      "succeeded": true,
+      "duration_s": 0.086,
+      "result_length": 437
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 29.581,
+      "prompt_tokens_est": 40306,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git show HEAD:src/VisualRelay.Core/Execution/BackendConfigStep.cs | sed -n '30,95p'"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 2487
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "sed -n '1,20p' src/VisualRelay.Core/Configuration/RelayConfigLoader.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.054,
+      "result_length": 759
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 41.928,
+      "prompt_tokens_est": 42001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cat test.sh 2>/dev/null | head -40; echo \"---check---\"; sed -n '1,60p' visual-relay 2>/dev/null | grep -n -i \"test\\|dotnet\" | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 1818
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 13.408,
+      "prompt_tokens_est": 43796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "ls tests/VisualRelay.Tests/*.csproj; echo \"---\"; dotnet --version 2>/dev/null || echo \"no dotnet on PATH directly\""
+      },
+      "succeeded": true,
+      "duration_s": 0.166,
+      "result_length": 62
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 12.622,
+      "prompt_tokens_est": 44108,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~BackendConfigGeneratorTests|FullyQualifiedName~RelayConfigLoaderTests|FullyQualifiedName~RelayConfigWriterTests|FullyQualifiedName~SplitGuardVerificationTests\" --nologo --verbosity minimal 2>&1 | tail -45",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 4.555,
+      "result_length": 1666
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 7.823,
+      "prompt_tokens_est": 44802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~SettingsPanelUiTests|FullyQualifiedName~KeySetupPanelUiTests\" --nologo --verbosity minimal 2>&1 | tail -30",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 6.142,
+      "result_length": 2743
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 14.942,
+      "prompt_tokens_est": 45805,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/KeySetupPanelUiTests.cs",
+        "offset": 150,
+        "limit": 90
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 4511
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 28.417,
+      "prompt_tokens_est": 47314,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RefreshLitTiers",
+        "include": "*.cs",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.252,
+      "result_length": 497
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RefreshKeyStatesAsync|RefreshLitTiers",
+        "path": "src/VisualRelay.App/ViewModels",
+        "include": "*.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2459
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 77.686,
+      "prompt_tokens_est": 49319,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs",
+        "offset": 52,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1388
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git stash list; echo \"=== check these 2 tests pass on clean HEAD ===\"; git stash push -- src tests .relay/config.json -q 2>&1 | tail -2 && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName=VisualRelay.Tests.KeySetupPanelUiTests.LitTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek|FullyQualifiedName=VisualRelay.Tests.KeySetupPanelUiTests.LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots\" --nologo --verbosity minimal 2>&1 | tail -6; echo \"=== restoring changes ===\"; git stash pop -q 2>&1 | tail -3",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 5.139,
+      "result_length": 850
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 26.669,
+      "prompt_tokens_est": 53733,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git status --porcelain | head -30; echo \"=== stash list (should be unchanged from before) ===\"; git stash list"
+      },
+      "succeeded": true,
+      "duration_s": 0.126,
+      "result_length": 1897
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 53.626,
+      "prompt_tokens_est": 55237,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

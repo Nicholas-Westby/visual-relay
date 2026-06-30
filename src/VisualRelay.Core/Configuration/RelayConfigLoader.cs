@@ -1,9 +1,8 @@
 using System.Text.Json;
 using VisualRelay.Domain;
-
 namespace VisualRelay.Core.Configuration;
 
-public static class RelayConfigLoader
+public static partial class RelayConfigLoader
 {
     public static RelayConfig Defaults(string testCommand = "bun test", IReadOnlyList<string>? logSources = null) =>
         new(
@@ -41,11 +40,11 @@ public static class RelayConfigLoader
             CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
             DownshiftOnEarlyImplementation: true,
-            RetryFlakyVerify: true)
+            RetryFlakyVerify: true,
+            TierModelOverrides: null)
         {
             NewGuardPatterns = ["tools/guards/**/*.sh"]
         };
-
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
         var result = await TryLoadAsync(rootPath, cancellationToken);
@@ -197,6 +196,10 @@ public static class RelayConfigLoader
                 }
             }
 
+            IReadOnlyDictionary<string, string>? tierModelOverrides =
+                root.TryGetProperty("tierModelOverrides", out var tmo)
+                    ? TryParseTierModelOverrides(tmo) : null;
+
             var config = defaults with
             {
                 TasksDir = OptionalString(root, "tasksDir", defaults.TasksDir),
@@ -218,15 +221,16 @@ public static class RelayConfigLoader
                 InactivityTimeoutMsByTier = inactivityTiers,
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
                 TestIdleGraceMilliseconds = OptionalInt(root, "testIdleGraceMs", defaults.TestIdleGraceMilliseconds),
-                BootstrapFiles = OptionalStringArray(root, "bootstrapFiles"),
+                BootstrapFiles = OptionalStringArray(root, "bootstrapFiles", []),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
-                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds"),
+                BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds", []),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
                 RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify),
-                SandboxExtraAllowPaths = sandboxExtraAllowPaths
+                SandboxExtraAllowPaths = sandboxExtraAllowPaths,
+                TierModelOverrides = tierModelOverrides
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }
@@ -272,13 +276,6 @@ public static class RelayConfigLoader
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : fallback;
-    // Absent or non-array → empty list; present array → string values.
-    private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name)
-    {
-        if (!root.TryGetProperty(name, out var element) || element.ValueKind != JsonValueKind.Array)
-            return [];
-        return element.EnumerateArray().Select(x => x.GetString() ?? string.Empty).Where(x => x.Length > 0).ToArray();
-    }
     // Absent or non-array → fallback; present array → string values.
     private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name, IReadOnlyList<string> fallback)
     {
