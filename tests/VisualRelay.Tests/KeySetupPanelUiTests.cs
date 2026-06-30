@@ -210,20 +210,20 @@ public sealed class KeySetupPanelUiTests
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var itemsControl = panel.FindControl<ItemsControl>("LitTierItems")!;
         Assert.NotNull(itemsControl);
-        // Filter by column count: ComboBox-internal grids don't match the 4-col DataTemplate.
-        var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 4).ToList();
+        // Filter by column count: ComboBox-internal grids don't match the 3-col DataTemplate.
+        var grids = itemsControl.GetVisualDescendants().OfType<Grid>().Where(g => g.ColumnDefinitions.Count == 3).ToList();
         Assert.Equal(6, grids.Count);
-        // Each DataTemplate grid has a ComboBox as a direct child.
-        foreach (var g in grids)
-            Assert.NotNull(g.GetVisualChildren().OfType<ComboBox>().FirstOrDefault());
         foreach (var grid in grids)
         {
+            Assert.NotNull(grid.GetVisualChildren().OfType<ComboBox>().FirstOrDefault());
             var dots = grid.GetVisualDescendants().OfType<Ellipse>().ToList();
             Assert.True(dots.Count == 2 && (dots[0].IsVisible ^ dots[1].IsVisible));
+            // No child should sit at column 3 (the former ProviderName slot).
+            foreach (var child in grid.Children)
+                Assert.NotEqual(3, Grid.GetColumn(child));
         }
         dialog.Close(); Dispatcher.UIThread.RunJobs();
     }
-
     [Fact]
     public async Task IsHuggingFaceConfigured_FlipsWithHfTokenPresence()
     {
