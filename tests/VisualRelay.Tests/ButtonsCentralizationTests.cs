@@ -205,6 +205,84 @@ public sealed class ButtonsCentralizationTests
             + $"Violations:\n{string.Join("\n", violations)}");
     }
 
+    // ── Button inheritance scan ─────────────────────────────────────────
+
+    /// <summary>
+    /// Reads a .cs file and finds every line where a class inherits from
+    /// <c>Button</c> (e.g. <c>class X : Button</c>), returning
+    /// line-numbered matches.  Does not match <c>ButtonBase</c> or other
+    /// types whose name merely starts with "Button".
+    /// </summary>
+    private static List<(int Line, string Text)> FindButtonInheritance(string filePath)
+    {
+        var results = new List<(int, string)>();
+        var lines = File.ReadAllLines(filePath);
+        // Match "class ClassName : Button" where Button is a whole word
+        // (word boundary after Button).  This avoids matching ButtonBase,
+        // ButtonAppearance, etc.
+        var regex = new Regex(@"\bclass\s+\w+\s*:\s*Button\b", RegexOptions.IgnoreCase);
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (regex.IsMatch(line))
+                results.Add((i + 1, line.Trim()));
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// No class may inherit directly from <c>Button</c> outside the central
+    /// Buttons directory.  The existing button components
+    /// (<c>CommonButton</c>, <c>IconButton</c>, <c>StageCardButton</c>) are
+    /// grandfathered in; any new class that inherits from <c>Button</c>
+    /// anywhere else in the source tree will fail this test.
+    /// </summary>
+    [Fact]
+    public void NoClassInheritsFromButton()
+    {
+        var violations = new List<string>();
+        var appsrcDir = Path.Combine(RepoRoot, "src", "VisualRelay.App");
+        if (!Directory.Exists(appsrcDir))
+        {
+            Assert.Fail($"Source directory does not exist: {appsrcDir}");
+            return;
+        }
+
+        var files = Directory.GetFiles(appsrcDir, "*.cs", SearchOption.AllDirectories)
+            .OrderBy(f => f)
+            .ToList();
+
+        Assert.True(files.Count > 0,
+            $"No .cs files found under {appsrcDir}. "
+            + "The source directory must exist and contain C# files.");
+
+        foreach (var file in files)
+        {
+            // Allowed: the three grandfathered button components inside the
+            // central Buttons directory (CommonButton, IconButton,
+            // StageCardButton).  They inherit from Button so the Fluent
+            // theme applies correctly via StyleKeyOverride.
+            if (IsInButtonsDirectory(file))
+                continue;
+
+            var matches = FindButtonInheritance(file);
+            if (matches.Count > 0)
+            {
+                var relativePath = Path.GetRelativePath(RepoRoot, file);
+                foreach (var (line, text) in matches)
+                    violations.Add($"  {relativePath}:{line}  →  {text}");
+            }
+        }
+
+        Assert.True(violations.Count == 0,
+            $"Found {violations.Count} class(es) inheriting from Button outside "
+            + "Views/Controls/Buttons/.  New button types must not inherit "
+            + "directly from Button; use the existing centralized button "
+            + "components (CommonButton, IconButton, StageCardButton) instead.\n\n"
+            + $"Violations:\n{string.Join("\n", violations)}");
+    }
+
     // ── Central directory existence ──────────────────────────────────────
 
     /// <summary>
