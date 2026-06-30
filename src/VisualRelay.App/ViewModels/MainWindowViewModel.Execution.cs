@@ -113,7 +113,7 @@ public partial class MainWindowViewModel
             if (PauseRequested)
                 controller.RequestPause();
 
-            var results = await controller.DrainAsync();
+            var results = await controller.DrainAsync(mode: SelectedRunAllMode);
 
             var flaggedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Flagged);
             var committedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Committed);

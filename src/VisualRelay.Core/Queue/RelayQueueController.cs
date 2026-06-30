@@ -99,7 +99,9 @@ public sealed class RelayQueueController
         foreach (var t in sorted) Tasks.Add(t);
     }
 
-    public async Task<IReadOnlyList<RelayTaskOutcome>> DrainAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<RelayTaskOutcome>> DrainAsync(
+        CancellationToken cancellationToken = default,
+        RunAllMode mode = RunAllMode.Standard)
     {
         var results = new List<RelayTaskOutcome>();
         var circuitBreaker = new DrainCircuitBreaker();
@@ -116,7 +118,8 @@ public sealed class RelayQueueController
         RelayConfigResult? configResult = null;
 
         // ── Phase 1: parallel planning ──
-        if (_planSubagentRunnerFactory is not null && _planTestRunner is not null)
+        var skipPlanning = mode == RunAllMode.Sequential;
+        if (!skipPlanning && _planSubagentRunnerFactory is not null && _planTestRunner is not null)
         {
             configResult = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
             if (configResult.IsRunnable)

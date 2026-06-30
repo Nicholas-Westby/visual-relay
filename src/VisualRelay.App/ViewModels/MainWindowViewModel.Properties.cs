@@ -1,10 +1,15 @@
 using Avalonia.Media;
+using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    public RunAllMode SelectedRunAllMode { get; set; } = RunAllMode.Standard;
+
+    public static IReadOnlyList<RunAllMode> RunAllModeOptions { get; } =
+        [RunAllMode.Standard, RunAllMode.Sequential];
     public string Version
     {
         get
