@@ -1,0 +1,1148 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T08:09:35.038008+00:00",
+  "task": "# Relay stage 2: Research\nTask: 03-resume-restores-flagged-work\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Resume Actually Restores Flagged Work\n\n## Problem\n\nWhen a task flags mid-pipeline (stages 5\u201310), the harness **discards the working-tree edits** so the\nnext drained task starts clean. `WorktreeResetter.ResetAsync`\n(`src/VisualRelay.Core/Execution/WorktreeResetter.cs`) runs `git reset -q HEAD` + `git checkout -- .`\nand deletes the task-authored untracked files. The per-stage seals record git tree hashes, but those\nobjects are not durable (the ephemeral run worktree is removed and unreferenced trees are pruned).\n\nSo today \"Resume\" cannot actually resume. On resume, `LoadResumeState`\n(`src/VisualRelay.Core/Execution/RelayDriver.Resume.cs`) only reloads bookkeeping (status, ledger,\nseals, manifest, cost, and the seal-*chain* hash) and computes `firstStageToRun` from the first\nnon-`Done` stage \u2014 it never restores the working tree. `ValidateCommitGateResumeAsync`\n(`src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs`) is the only code that re-validates tree\nstate, and it is gated to `firstStageToRun == 11` (the Commit stage only). A stage-10 flag therefore\nre-runs fix-verify against a **clean** tree \u2014 none of the authored tests or implementation present \u2014\nproducing a vacuous or nonsensical result. (And separately, the Resume button is disabled by a\ncommand-wiring bug; see Part 4.)\n\n## Goal\n\nOn flag, durably snapshot the flagged working tree **off main and git-ignored**. On resume, re-apply\nthat snapshot onto the current working tree (3-way, conflict-aware) **before** re-entering the flagged\nstage, so fix-verify continues from the real work with a fresh attempt budget. Also make the Resume\nbutton reachable.\n\n---\n\n## Part 1 \u2014 Snapshot the flagged work (harness-side, hook-free, git-ignored)\n\n**When.** At flag time, *before* the working tree is reset. Integrate in the flag path\n(`RelayDriver.FlagAsync`, `src/VisualRelay.Core/Execution/RelayDriver.Events.cs`) so the snapshot is\ncaptured regardless of who resets afterward (the drain calls `WorktreeResetter.ResetAsync` after a flag;\na single GUI run may not). The snapshot must be taken while the edits are still on disk.\n\n**How (no hooks, no HEAD/index/working-tree disturbance).** Use git **plumbing** through the harness's\n`GitInvoker` (`src/VisualRelay.Core/Execution/GitInvoker.cs`). `GitInvoker` runs `git` directly and is\n**not** the sandboxed agent command path, so the command-guard middleware and the agent commit/hook-bypass\nrestrictions do not apply \u2014 and plumbing commands never fire hooks anyway. Build a snapshot commit\nagainst a **temporary index** so HEAD, the real index, and the working tree are untouched:\n\n1. `GIT_INDEX_FILE=<temp>` `git add -A` \u2014 stage tracked edits **and** task-authored untracked files.\n   Reuse the same authored-file set the committer already computes (`preRunUntracked` /\n   `GitCommitter.Untracked`) so pre-existing untracked files are **excluded**.\n2. `git write-tree` \u2192 snapshot tree.\n3. `git commit-tree <tree> -p <runBaseSha>` \u2192 snapshot commit. `runBaseSha` is the run base recorded in\n   `.relay/<taskId>/run-base.txt` (HEAD at the task's first run). No hooks run for any of these.\n\n**Store (git-ignored, off main).** Write the snapshot as a **git bundle** to\n`.relay/<taskId>/flagged-work.bundle`. This path matches `.gitignore`'s `.relay/*` rule, so it is\n**automatically ignored and never committed** \u2014 do **not** add it to the `CommitProofArtifacts` set in\n`ExecuteCommitStageAsync`. Create it with `git bundle create <path> <runBaseSha>..<snapshotCommit>`\n(records the base as a prerequisite; the base is reachable on main so unbundle can verify it). Also\nwrite a small sidecar `.relay/<taskId>/flagged-work.json` = `{ baseSha, createdUtc, flaggedStage }` for\nthe resume step and diagnostics (`createdUtc` supplied by the caller; do not call `DateTime.Now` in a\nway that breaks determinism guards).\n\n**Why a bundle (not a raw patch).** A bundle carries exact objects (binary-safe, exact blobs) and a real\ncommit, which lets resume do a proper 3-way merge that produces conflict markers. A `git diff` +\n`git apply --3way` is weaker: binary handling is lossy and it needs the base blobs present. Use a bundle.\n\n**Robustness.** The snapshot is best-effort: if any step fails, log it and continue with the existing\nreset. Snapshotting must never block or fail the flag itself.\n\n---\n\n## Part 2 \u2014 Restore on resume (3-way, conflict-aware)\n\n**When.** On a resume run (`_options.Resume`), after `LoadResumeState` / `ValidateCommitGateResumeAsync`\ncompute `firstStageToRun`, and **before** the stage loop reaches the flagged stage \u2014 but only when\n`firstStageToRun` is a mid-pipeline stage (5\u201310) **and** `.relay/<taskId>/flagged-work.bundle` exists.\nDo not disturb the existing stage-11 commit-gate resume path.\n\n**How.**\n1. `git bundle verify <path>` \u2014 confirms the base prerequisite is reachable. If the base is gone (history\n   rewritten) or verify fails, treat as un-restorable: keep the bundle, log, and fall back to a normal\n   full re-run from stage 1 (do not silently pretend to resume).\n2. Fetch the snapshot commit from the bundle into the object DB (e.g. `git fetch <bundle> <ref>`),\n   capturing the snapshot SHA.\n3. 3-way apply the delta `base \u2192 snapshot` onto the **current** working tree (clean, at current HEAD,\n   which may have advanced past the base). Recommended mechanism: `git cherry-pick -n <snapshot>` (a\n   3-way merge with base = the snapshot's parent, ours = current HEAD, theirs = snapshot), then\n   `git cherry-pick --quit` to clear the sequencer state while **keeping** the applied changes in the\n   working tree. (`git merge-tree` / `read-tree -m -u` are acceptable equivalents.)\n4. Detect conflicts via unmerged paths (`git ls-files -u`) and/or conflict markers.\n\n**Clean apply \u2192** proceed to `firstStageToRun` (the flagged stage) normally. Fix-verify gets its fresh\n3-attempt budget, now operating on the restored work re-based onto current HEAD.\n\n**Conflict \u2192 conflict-aware resume (do not discard, do not silently fall back).** The base moving while\na task was flagged is expected (a real run advanced from one HEAD to another with unrelated commits in\nbetween). Leave the conflict markers in the working tree and run a dedicated **conflict-resolution step\nbefore the flagged stage**:\n- A harness-driven subagent turn (a new stage/driver step, modeled on the existing stage runners) given\n  the list of conflicted files (markers in place), the task intent, and the ledger, and instructed to\n  resolve every conflict so the intended feature is preserved and adapted to the upstream changes.\n- The resolver is an ordinary agent turn: it may **not** commit or bypass hooks (the harness owns all\n  git writes, as everywhere else).\n- After the turn, a guard verifies **zero** unmerged paths / conflict markers remain before proceeding.\n  If markers remain, retry within a bounded budget; if still unresolved, flag with a clear\n  `resume conflict unresolved` reason and preserve the bundle for manual recovery.\n\n---\n\n## Part 3 \u2014 Lifecycle / cleanup\n\n- On successful commit (`ExecuteCommitStageAsync`, stage 11) or task retirement/archive\n  (`TaskCompletionArchive.RetireAsync`), delete `.relay/<taskId>/flagged-work.bundle` and its sidecar.\n- On re-add / fresh-run detection (`DetectReAddAndArchive`, or `firstStageToRun == 1`), clear any stale\n  snapshot so a genuinely fresh run does not resurrect old work.\n- Add a defensive prune for orphaned snapshots (the repo currently accumulates thousands of leftover\n  worktree dirs \u2014 cleanup discipline matters here).\n- Re-confirm the snapshot never enters a commit: it lives under `.relay/*` (git-ignored) and must not be\n  in the proof-artifact set.\n\n---\n\n## Part 4 \u2014 Enable the Resume button (folded in, required for the feature to be reachable)\n\n**Bug.** `ResumeSelectedCommand` and `RunSelectedCommand` share the same\n`CanExecute = nameof(CanRunSelected)` predicate (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs`).\nBut the observable properties that gate it \u2014 `SelectedTask`, `IsBusy`, `PauseRequested`\n(`MainWindowViewModel.cs`), and the Hugging-Face-gate flag (`MainWindowViewModel.Keys.cs`) \u2014 carry only\n`[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]`, never for `ResumeSelectedCommand`. So Resume\nnever re-evaluates its enabled state when a task is selected and stays stuck at its initial (no task\nselected \u2192 `false`) value; the only place it is refreshed today is after a rewrite\n(`MainWindowViewModel.Rewrite.cs`). That is why \"Run selected\" enables but \"Resume\" stays greyed.\n\n**Fix.** Add `[NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]` next to every existing\n`RunSelectedCommand` notify attribute on those observable properties, so Resume tracks the same enabled\nstate as Run selected. Add a test asserting `ResumeSelectedCommand.CanExecute` becomes `true` when a\nnon-archived task is selected (mirror any existing `RunSelected` enablement test).\n\n---\n\n## Constraints & done criteria\n\n- No agent commits and no hook bypass by agents; **all** git writes here are harness-side plumbing via\n  `GitInvoker`.\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines; no deleting/skipping/weakening tests.\n- The snapshot file must be git-ignored and absent from every commit.\n- Tests (use the existing `RelayDriver` test seams):\n  - flagging a mid-pipeline task creates `.relay/<taskId>/flagged-work.bundle`, and `git status` stays\n    clean (it is ignored, not committed);\n  - resume restores the work onto an **advanced** base (feature files reappear) and re-runs the flagged\n    stage;\n  - resume with an overlapping upstream change produces conflicts that the resolver step drives to zero\n    markers before proceeding;\n  - the bundle is deleted on successful commit / retirement.\n- Manual verification: flag a task, confirm the bundle exists and is ignored, advance HEAD with an\n  unrelated commit, click Resume, confirm the work is re-applied and the flagged stage re-runs.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.Core/Execution/RelayDriver.Events.cs` \u2014 snapshot inside/adjacent to `FlagAsync`\n- a new snapshot/store helper, e.g. `src/VisualRelay.Core/Execution/FlaggedWorkStore.cs`\n- `src/VisualRelay.Core/Execution/RelayDriver.cs` / `RelayDriver.Resume.cs` \u2014 the restore + resolve step\n- `src/VisualRelay.Core/Execution/WorktreeResetter.cs` \u2014 ensure snapshot precedes reset (if integrated here)\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` and `MainWindowViewModel.Keys.cs` \u2014 button wiring\n- tests under `tests/VisualRelay.Tests/`\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Make Resume restore flagged working trees by snapshotting them as git bundles before reset (durable, off-main, git-ignored), applying a 3-way cherry-pick on resume with conflict-resolution via subagent, cleaning up on commit/retire, and fixing the disabled Resume button by adding the missing CanExecuteChanged notification attribute.\",\n  \"options\": [\n    \"A \u2014 Bundle snapshot + git cherry-pick -n resume (full 3-way, binary-safe, durable, as-described in the spec)\",\n    \"B \u2014 Patch snapshot + git apply --3way resume (simpler plumbing, weaker binary/merge, less robust for base-advancement)\",\n    \"C \u2014 Stash-based snapshot + stash apply resume (minimal code, but stashes are ephemeral and fail the durability constraint)\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"findings\": string, \"constraints\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Here are my findings and constraints from investigating the full codebase:\n\n## Findings\n\n**Flag/Snapshot path (`RelayDriver.Events.cs`):** `FlagAsync` (lines 88-127) writes `NEEDS-REVIEW` file and event sink. The snapshot hook should be placed *before* the method body that writes `NEEDS-REVIEW` or at the top of `FlagAsync` so the working tree is captured before any reset. The method is best-effort (catches all exceptions).\n\n**Worktree reset (`WorktreeResetter.cs`):** `ResetAsync` (lines 16-65) runs `git reset -q HEAD` + `git checkout -- .` + deletes task-authored untracked files. It's called from the drain path after flag, so the snapshot must happen inside `FlagAsync` before this reset runs.\n\n**GitInvoker (`GitInvoker.cs`):** Runs `git -C <rootPath> <args>` directly via `ProcessCapture.RunAsync`. No hook bypass restrictions. The `RunAsync` method supports custom environment variables, timeouts, etc. Perfect for harness-side git plumbing.\n\n**Git plumbing for snapshot (spec says):** `GIT_INDEX_FILE=<temp> git add -A` then `git write-tree` then `git commit-tree <tree> -p <runBaseSha>` then `git bundle create <path> <runBaseSha>..<snapshotCommit>`. All through `GitInvoker.RunAsync` with `environment` dictionary for `GIT_INDEX_FILE`.\n\n**Pre-run untracked snapshot (`RelayDriver.Snapshot.cs`):** `CapturePreRunUntrackedAsync` (line 46) saves `.relay/<taskId>/pre-run-untracked.txt`. The committer uses this to exclude pre-existing files. Reusable for the flagged-work snapshot to include only task-authored untracked files.\n\n**Run base SHA (`RelayDriver.Snapshot.cs`):** `CaptureRunBaseShaAsync` (line 83) saves `run-base.txt` = HEAD at run start. Already persisted and reused on resume. The snapshot commit uses this as parent.\n\n**Resume flow (`RelayDriver.cs` lines 57-76):** `LoadResumeState` \u2192 `ValidateCommitGateResumeAsync` \u2192 `DetectReAddAndArchive` \u2192 pre-run-untracked + run-base capture \u2192 stage loop. The restore hook goes between `DetectReAddAndArchive` and the stage loop, gated on `firstStageToRun` being 5-10 and bundle exists.\n\n**LoadResumeState (`RelayDriver.Resume.cs` lines 14-75):** Only loads bookkeeping (status, ledger, seals, manifest, cost). Never restores working tree. Sets `firstStageToRun` from first non-Done entry.\n\n**Commit gate resume (`RelayDriver.CommitGate.cs` lines 16-111):** `ValidateCommitGateResumeAsync` only handles `firstStageToRun == 11`. Sets `firstStageToRun = 5` on failure. The only tree-validation code in resume today.\n\n**Cleanup points:**\n- `ExecuteCommitStageAsync` (lines 141-181) \u2014 on successful commit, delete flagged-work bundle\n- `TaskCompletionArchive.RetireAsync` \u2014 on retirement, delete flagged-work bundle  \n- `DetectReAddAndArchive` / `ArchivePriorRunState` (line 106-107) \u2014 moves entire task dir, so bundle moves too\n- `firstStageToRun == 1` in resume \u2014 clear stale snapshot\n\n**Part 4 (Resume button) findings (`MainWindowViewModel.cs`):**\n- Lines 80-89: `_pauseRequested` has `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` \u2014 missing `ResumeSelectedCommand`\n- Lines 91-100: `_rootPath` has `RunSelectedCommand` \u2014 missing `ResumeSelectedCommand`\n- Lines 102-109: `_selectedTask` has `RunSelectedCommand` \u2014 missing `ResumeSelectedCommand`\n- Lines 137-142: `_showArchive` has `RunSelectedCommand` \u2014 missing `ResumeSelectedCommand`\n- Lines 192-198: `_isBusy` has `RunSelectedCommand` \u2014 missing `ResumeSelectedCommand`\n- `MainWindowViewModel.Keys.cs` line 74: `_isHuggingFaceConfigured` has `RunSelectedCommand` \u2014 missing `ResumeSelectedCommand`\n- `CanRunSelected()` (line 212 of `MainWindowViewModel.Helpers.cs`) is shared by both commands\n- `MainWindowViewModel.Execution.cs` lines 14 and 35: Both `RunSelectedAsync` and `ResumeSelectedAsync` use `CanExecute = nameof(CanRunSelected)`\n- `RaiseRewriteStateChanged()` (line 272) is the only place `ResumeSelectedCommand.NotifyCanExecuteChanged()` is called today\n\n**Tests:**\n- `RelayDriverResumeTests.CommitGate.cs` \u2014 existing resume tests with test doubles\n- `SubagentRunnerTestDoubles.cs` \u2014 `ScriptedSubagentRunner`, `CapturingSubagentRunner`\n- `TestDoubles.cs` \u2014 `TestRepository`, `ScriptedTestRunner`, `RecordingTestRunner`, `InMemoryRelayEventSink`\n- `TestGit.cs` \u2014 synchronous git helper for tests\n- `ScratchRepo.cs` \u2014 throwaway git repo via real `GitInvoker`\n- `MainWindowViewModelTests.cs` has `CanExecute` assertion patterns\n\n**`.gitignore` (line 14-15):** `.relay/*` already git-ignores the bundle path. `!.relay/config.json` allows tracking the config.\n\n**Constraints:**\n1. All git writes must be harness-side via `GitInvoker` (no agent commits/hooks)\n2. Each edited file \u2264300 lines\n3. Bundle under `.relay/*` (already git-ignored), never in `CommitProofArtifacts`\n4. Snapshot best-effort, must never block/break flag\n5. On `DetectReAddAndArchive` or `firstStageToRun==1`, clear stale snapshot\n6. `DateTime.Now` must not break determinism guards \u2014 caller supplies `createdUtc`\n7. No deleting/skipping/weakening existing tests\n\n```json\n{\n  \"findings\": \"The codebase currently has no mechanism to snapshot flagged work for resume. `FlagAsync` in `RelayDriver.Events.cs` (line 88) writes NEEDS-REVIEW and publishes an event \u2014 the snapshot hook goes here before reset. `WorktreeResetter.ResetAsync` runs `git reset -q HEAD` + `git checkout -- .` + deletes authored untrackeds. `LoadResumeState` (line 14) only reloads bookkeeping (status, ledger, seals, manifest) and computes `firstStageToRun` from first non-Done stage \u2014 never restores working tree. `ValidateCommitGateResumeAsync` handles only stage 11. The resume flow in `RelayDriver.cs` (line 58-76) runs: LoadResumeState \u2192 ValidateCommitGateResumeAsync \u2192 DetectReAddAndArchive \u2192 pre-run snapshots \u2192 stage loop. The restore hook goes between DetectReAddAndArchive and the loop, gated on firstStageToRun 5-10 + bundle exists. `GitInvoker.RunAsync` supports custom environment variables (for `GIT_INDEX_FILE`). The pre-run-untracked snapshot (line 46) and run-base-sha snapshot (line 83) already exist in `RelayDriver.Snapshot.cs` and their patterns are directly reusable. `CapturePreRunUntrackedAsync` via `GitCommitter.CaptureUntrackedSnapshotAsync` uses `git ls-files --others --exclude-standard`. Cleanup points: `ExecuteCommitStageAsync` (successful commit), `TaskCompletionArchive.RetireAsync` (retirement), `DetectReAddAndArchive` (re-add detection resets to fresh state which archives the task dir including any bundle). Part 4: Resume button is disabled because `_pauseRequested`, `_rootPath`, `_selectedTask`, `_showArchive`, `_isBusy`, and `_isHuggingFaceConfigured` all have `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` but never for `ResumeSelectedCommand`, even though both `RunSelectedAsync` and `ResumeSelectedAsync` share `CanExecute = nameof(CanRunSelected)` predicate. The only place that refreshes both is `RaiseRewriteStateChanged()` in `MainWindowViewModel.Rewrite.cs` (line 272). Existing test infrastructure: `TestRepository`, `TestGit`, `ScriptedSubagentRunner`, `CapturingSubagentRunner`, `ScriptedTestRunner`, `RecordingTestRunner`, `InMemoryRelayEventSink`, `CommitGateGuardSubagentRunner`, `ScratchRepo`. Existing resume tests in `RelayDriverResumeTests.CommitGate.cs`.\",\n  \"constraints\": [\n    \"All git writes must be harness-side via GitInvoker plumbing (no agent commits, no hook bypass)\",\n    \"Every edited .cs/.axaml file must be \u2264300 lines\",\n    \"The flagged-work bundle lives under .relay/* (already git-ignored), must never be in CommitProofArtifacts set\",\n    \"Snapshot must be best-effort: if any git step fails, log and continue \u2014 never block or fail the flag itself\",\n    \"On DetectReAddAndArchive or firstStageToRun==1, clear any stale flagged-work bundle\",\n    \"DateTime.Now must not break determinism guards \u2014 use caller-supplied createdUtc timestamp\",\n    \"No deleting/skipping/weakening existing tests\",\n    \"On resume with unreachable base (history rewritten), treat as un-restorable, keep bundle, log, fall back to full re-run from stage 1\",\n    \"Conflict resolution must be a harness-driven subagent turn that leaves zero conflict markers before proceeding (bounded retry budget)\",\n    \"The flagged-work bundle must be deleted on successful commit (ExecuteCommitStageAsync) and on task retirement (TaskCompletionArchive.RetireAsync)\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 27,
+    "tool_calls_total": 72,
+    "tool_calls_succeeded": 71,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 52,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 27,
+    "total_llm_time_s": 118.114,
+    "prompt_cache": {
+      "cached_tokens": 1347200,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.429,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 0,
+      "restores": 1,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 38079
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.31,
+      "prompt_tokens_est": 6555,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 406
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.123,
+      "prompt_tokens_est": 6742,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Core/Execution/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.073,
+      "result_length": 4843
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/ViewModels/MainWindowViewModel*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 1525
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/**/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.068,
+      "result_length": 5781
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.896,
+      "prompt_tokens_est": 10051,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6599
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Resume.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3801
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5379
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/GitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10529
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10547
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.03,
+      "prompt_tokens_est": 18718,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 22588
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriverOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 395
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13248
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3948
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.493,
+      "prompt_tokens_est": 27557,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11787
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12495
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/IGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 957
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3948
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.563,
+      "prompt_tokens_est": 34674,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13782
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTests.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11775
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2355
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RelayDriverTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 16953
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.655,
+      "prompt_tokens_est": 45439,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12082
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4983
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7365
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5182
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.651,
+      "prompt_tokens_est": 52831,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/Interfaces.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 607
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6620
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TaskCompletionArchive",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 180
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.gitignore"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1064
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.144,
+      "prompt_tokens_est": 55052,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2740
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TaskCompletionArchive",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Tasks"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 303
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class TaskCompletionArchive",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 129
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.799,
+      "prompt_tokens_est": 55931,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11471
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12634
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11797
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.005,
+      "prompt_tokens_est": 64419,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8297
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CanRunSelected",
+        "path": "/Users/admin/Dev/temp-visual-relay/src",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.038,
+      "result_length": 460
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "NotifyCanExecuteChangedFor.*ResumeSelectedCommand",
+        "path": "/Users/admin/Dev/temp-visual-relay/src",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 17
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.13,
+      "prompt_tokens_est": 66761,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+        "offset": 200,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1471
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2346
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15045
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.858,
+      "prompt_tokens_est": 71306,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ResumeSelected",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.128,
+      "result_length": 17
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CanExecute.*Resume",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.032,
+      "result_length": 17
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs",
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5524
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 12.406,
+      "prompt_tokens_est": 72715,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "summary": "# Codebase Investigation Summary\n\n## Key Files and Findings\n\n### Part 1 \u2014 Snapshot at flag time (FlaggedWorkStore)\n- **`RelayDriver.Events.cs`** (line 88-127): `FlagAsync` writes NEEDS-REVIEW + status.json. Snapshot hook goes here *before* reset, best-effort, non-blocking.\n- **`WorktreeResetter.cs`** (line 16-65): `ResetAsync` runs `git reset -q HEAD` + `git checkout -- .` + deletes task-authored untrackeds. Called from drain/queue paths after flag.\n- **`GitInvoker.cs`**: Runs `git` directly via `ProcessCapture.RunAsync`. Has `RunAsync(rootPath, arguments, ct, ...)`. Harness-side, no hook restrictions.\n- **`GitCommitter.Untracked.cs`**: `CaptureUntrackedSnapshotAsync` returns `git ls-files --others --exclude-standard`. Same logic the committer uses to compute `preRunUntracked`.\n- **`RelayDriver.Snapshot.cs`** (line 46-71): `CapturePreRunUntrackedAsync` saves/pre-reads pre-run-untracked.txt. `CaptureRunBaseShaAsync` saves/reads run-base.txt. These are the mechanism we reuse for computing task-authored vs pre-existing untracked files.\n\n### Part 2 \u2014 Restore on resume\n- **`RelayDriver.cs`** (line 58-60): Resume flow: `LoadResumeState` \u2192 `ValidateCommitGateResumeAsync` \u2192 `DetectReAddAndArchive`. The restore hook goes between `ValidateCommitGateResumeAsync` return and the `foreach` stage loop start (line 76), but only when `firstStageToRun` is 5-10 and `.relay/<taskId>/flagged-work.bundle` exists.\n- **`RelayDriver.Resume.cs`** (line 14-75): `LoadResumeState` \u2014 just loads bookkeeping, no tree restore.\n- **`RelayDriver.CommitGate.cs`** (line 16-111): `ValidateCommitGateResumeAsync` \u2014 only handles stage==11 commit gate case.\n- **`RelayDriver.ReAdd.cs`**: `DetectReAddAndArchive` archives stale state on re-add. Must also clean up any stale flagged-work snapshot.\n\n### Part 3 \u2014 Lifecycle/cleanup\n- **`RelayDriver.CommitGate.cs`** (line 118-220): `ExecuteCommitStageAsync` \u2014 on successful commit, must delete flagged-work.bundle.\n- **`TaskCompletionArchive.cs`**: `RetireAsync` on task retirement. Must also delete flagged-work.bundle.\n- **`.gitignore`** (line 14): `.relay/*` already git-ignores the bundle path.\n- **`RelayStages.cs`**: Stages 1-11. Mid-pipeline = 5-10.\n\n### Part 4 \u2014 Resume button fix\n- **`MainWindowViewModel.Execution.cs`** (lines 14, 35): Both `RunSelectedAsync` and `ResumeSelectedAsync` have `[RelayCommand(CanExecute = nameof(CanRunSelected))]`.\n- **`MainWindowViewModel.cs`** (lines 80-109): Observable properties `_pauseRequested` (line 80), `_rootPath` (line 91), `_selectedTask` (line 102), `_showArchive` (line 137), `_isBusy` (line 188) all have `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` but **none** have `[NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]`.\n- **`MainWindowViewModel.Keys.cs`** (line 74): `_isHuggingFaceConfigured` has `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` but **not** for `ResumeSelectedCommand`.\n- **`MainWindowViewModel.Helpers.cs`** (line 212): `CanRunSelected()` \u2014 shared predicate.\n- **`MainWindowViewModel.Rewrite.cs`** (line 272-273): Only place Resume is refreshed \u2014 `RunSelectedCommand.NotifyCanExecuteChanged()` and `ResumeSelectedCommand.NotifyCanExecuteChanged()`.\n- **`MainWindowViewModel.RunOne.cs`** (line 27): `Resume: resume` option properly wired to `RelayDriverOptions`.\n\n### Test Infrastructure\n- **`TestDoubles.cs`**: `TestRepository`, `ScriptedSubagentRunner`, `ScriptedTestRunner`, `InMemoryRelayEventSink`, `RecordingTestRunner`, `CapturingSubagentRunner` etc.\n- **`RelayDriverResumeTests.CommitGate.cs`**: Existing resume test helpers like `SetupCommitGateResumeScenario`, `ComputeTreeHash`.\n- **`RelayDriverTests.cs`**: Various end-to-end driver tests.\n- **`MainWindowViewModelTests.cs`**: VM tests, including `RunSelectedCommand.CanExecute` assertions.\n\n### Key Constraints\n1. All git writes must be harness-side via `GitInvoker` (no agent commits, no hook bypass).\n2. New/edited .cs/.axaml files must be \u2264 300 lines.\n3. Bundle must be git-ignored (`.relay/*` in .gitignore) and not in proof-artifact set.\n4. Tasks dir is configurable (`config.TasksDir`, default `llm-tasks`).\n5. Snapshot is best-effort \u2014 never block/fail the flag.\n6. On `DetectReAddAndArchive` (firstStageToRun==1) or fresh run, clear stale snapshot.\n7. `RunBaseSha` is persisted in `.relay/<taskId>/run-base.txt`.",
+        "label": "codebase-investigation",
+        "force": true
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 43,
+      "error": "error: summary exceeds 4000 character limit"
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 8.152,
+      "prompt_tokens_est": 73966,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "force": true,
+        "label": "codebase-investigation",
+        "summary": "# Codebase Investigation \u2014 Resume Restores Flagged Work\n\n## Key Files Read\n- `RelayDriver.Events.cs`: FlagAsync (line 88-127) \u2014 snapshot hook goes here before reset, best-effort.\n- `WorktreeResetter.cs` (line 16-65): ResetAsync runs `git reset -q HEAD` + `git checkout -- .` + deletes task-authored untrackeds.\n- `GitInvoker.cs`: Harness-side git plumbing via RunAsync(rootPath, args, ct). No hook bypass restrictions.\n- `GitCommitter.Untracked.cs`: CaptureUntrackedSnapshotAsync (`git ls-files --others --exclude-standard`) computes task-authored files.\n- `RelayDriver.Snapshot.cs`: CapturePreRunUntrackedAsync saves pre-run-untracked.txt. CaptureRunBaseShaAsync saves run-base.txt (HEAD at run start).\n- `RelayDriver.cs` (line 58-76): Resume flow: LoadResumeState \u2192 ValidateCommitGateResumeAsync \u2192 DetectReAddAndArchive \u2192 stage loop. Restore hook goes before loop, gated on firstStageToRun 5-10 + bundle exists.\n- `RelayDriver.Resume.cs`: LoadResumeState just loads bookkeeping, no tree restore.\n- `RelayDriver.CommitGate.cs`: ValidateCommitGateResumeAsync handles only stage-11. ExecuteCommitStageAsync \u2014 cleanup on commit.\n- `RelayDriver.ReAdd.cs`: DetectReAddAndArchive archives stale state. Must also clear flagged-work bundle.\n- `TaskCompletionArchive.cs`: RetireAsync \u2014 cleanup on retire.\n- `.gitignore`: `.relay/*` already git-ignores the bundle path.\n- `RelayStages.cs`: Stages 1-11. Mid-pipeline = 5-10.\n\n## Part 4 Key Finding\n- `MainWindowViewModel.Execution.cs` (lines 14,35): Both RunSelectedAsync AND ResumeSelectedAsync use `CanExecute = nameof(CanRunSelected)`.\n- `MainWindowViewModel.cs` (lines 80-109): `_pauseRequested`, `_rootPath`, `_selectedTask`, `_showArchive`, `_isBusy` all have `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` but NOT for ResumeSelectedCommand.\n- `MainWindowViewModel.Keys.cs` (line 74): `_isHuggingFaceConfigured` same \u2014 missing ResumeSelectedCommand notify.\n- `MainWindowViewModel.Helpers.cs` (line 212): CanRunSelected() \u2014 shared predicate.\n- `MainWindowViewModel.Rewrite.cs` (line 272-273): Only place both are refreshed.\n- `MainWindowViewModel.RunOne.cs` (line 27): Resume: resume properly wired to RelayDriverOptions.\n\n## Tests\n- `TestDoubles.cs`: TestRepository, ScriptedSubagentRunner, ScriptedTestRunner, InMemoryRelayEventSink, RecordingTestRunner.\n- `RelayDriverResumeTests.CommitGate.cs`: Existing resume tests.\n- `MainWindowViewModelTests.cs`: VM tests with CanExecute assertions.\n- No existing tests for ResumeSelectedCommand enablement.\n\n## Constraints\n1. All git writes via GitInvoker (harness-side plumbing, no agent commits/hooks).\n2. Files \u2264300 lines.\n3. Bundle under `.relay/*` (already git-ignored), not in proof-artifact set.\n4. Snapshot best-effort, never blocks flag.\n5. On DetectReAddAndArchive or firstStageToRun==1, clear stale snapshot.\n6. DateTime.Now must not break determinism guards \u2014 use caller-supplied timestamp."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 90
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 4.178,
+      "prompt_tokens_est": 36575,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7365
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4983
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8297
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.045,
+      "prompt_tokens_est": 41756,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13782
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11342
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.gitignore"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1064
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 3.553,
+      "prompt_tokens_est": 48109,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11797
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2740
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TaskCompletionArchive",
+        "include": "*.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.161,
+      "result_length": 3413
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.097,
+      "prompt_tokens_est": 52571,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 11471
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTests.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11775
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2355
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.445,
+      "prompt_tokens_est": 58694,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RunSelectedCommand.*CanExecute|CanRunSelected|ResumeSelectedCommand",
+        "include": "*Tests*.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.092,
+      "result_length": 2296
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "NotifyCanExecuteChangedFor.*ResumeSelected",
+        "include": "*.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.114,
+      "result_length": 17
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 2.67,
+      "prompt_tokens_est": 59385,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5182
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14333
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 3.144,
+      "prompt_tokens_est": 64082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "WorkingTreeHash",
+        "include": "*.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.159,
+      "result_length": 4010
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12082
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.366,
+      "prompt_tokens_est": 68109,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs",
+        "offset": 160,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1562
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class CapturingSubagentRunner|class ScriptedSubagentRunner",
+        "context_lines": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.134,
+      "result_length": 1234
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/ScratchRepo.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6187
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.914,
+      "prompt_tokens_est": 70556,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1627
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestGit|TestGit\\.Run",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.155,
+      "result_length": 23496
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 3.597,
+      "prompt_tokens_est": 77581,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs",
+        "limit": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TestGit",
+        "context_lines": 0,
+        "path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 2.428,
+      "prompt_tokens_est": 77766,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "TestGit.cs",
+        "context_lines": 3,
+        "pattern": ".*"
+      },
+      "succeeded": true,
+      "duration_s": 0.068,
+      "result_length": 1911
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 19.462,
+      "prompt_tokens_est": 78360,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

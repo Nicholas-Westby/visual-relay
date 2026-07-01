@@ -1,0 +1,1251 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T08:26:04.017050+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 03-resume-restores-flagged-work\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Resume Actually Restores Flagged Work\n\n## Problem\n\nWhen a task flags mid-pipeline (stages 5\u201310), the harness **discards the working-tree edits** so the\nnext drained task starts clean. `WorktreeResetter.ResetAsync`\n(`src/VisualRelay.Core/Execution/WorktreeResetter.cs`) runs `git reset -q HEAD` + `git checkout -- .`\nand deletes the task-authored untracked files. The per-stage seals record git tree hashes, but those\nobjects are not durable (the ephemeral run worktree is removed and unreferenced trees are pruned).\n\nSo today \"Resume\" cannot actually resume. On resume, `LoadResumeState`\n(`src/VisualRelay.Core/Execution/RelayDriver.Resume.cs`) only reloads bookkeeping (status, ledger,\nseals, manifest, cost, and the seal-*chain* hash) and computes `firstStageToRun` from the first\nnon-`Done` stage \u2014 it never restores the working tree. `ValidateCommitGateResumeAsync`\n(`src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs`) is the only code that re-validates tree\nstate, and it is gated to `firstStageToRun == 11` (the Commit stage only). A stage-10 flag therefore\nre-runs fix-verify against a **clean** tree \u2014 none of the authored tests or implementation present \u2014\nproducing a vacuous or nonsensical result. (And separately, the Resume button is disabled by a\ncommand-wiring bug; see Part 4.)\n\n## Goal\n\nOn flag, durably snapshot the flagged working tree **off main and git-ignored**. On resume, re-apply\nthat snapshot onto the current working tree (3-way, conflict-aware) **before** re-entering the flagged\nstage, so fix-verify continues from the real work with a fresh attempt budget. Also make the Resume\nbutton reachable.\n\n---\n\n## Part 1 \u2014 Snapshot the flagged work (harness-side, hook-free, git-ignored)\n\n**When.** At flag time, *before* the working tree is reset. Integrate in the flag path\n(`RelayDriver.FlagAsync`, `src/VisualRelay.Core/Execution/RelayDriver.Events.cs`) so the snapshot is\ncaptured regardless of who resets afterward (the drain calls `WorktreeResetter.ResetAsync` after a flag;\na single GUI run may not). The snapshot must be taken while the edits are still on disk.\n\n**How (no hooks, no HEAD/index/working-tree disturbance).** Use git **plumbing** through the harness's\n`GitInvoker` (`src/VisualRelay.Core/Execution/GitInvoker.cs`). `GitInvoker` runs `git` directly and is\n**not** the sandboxed agent command path, so the command-guard middleware and the agent commit/hook-bypass\nrestrictions do not apply \u2014 and plumbing commands never fire hooks anyway. Build a snapshot commit\nagainst a **temporary index** so HEAD, the real index, and the working tree are untouched:\n\n1. `GIT_INDEX_FILE=<temp>` `git add -A` \u2014 stage tracked edits **and** task-authored untracked files.\n   Reuse the same authored-file set the committer already computes (`preRunUntracked` /\n   `GitCommitter.Untracked`) so pre-existing untracked files are **excluded**.\n2. `git write-tree` \u2192 snapshot tree.\n3. `git commit-tree <tree> -p <runBaseSha>` \u2192 snapshot commit. `runBaseSha` is the run base recorded in\n   `.relay/<taskId>/run-base.txt` (HEAD at the task's first run). No hooks run for any of these.\n\n**Store (git-ignored, off main).** Write the snapshot as a **git bundle** to\n`.relay/<taskId>/flagged-work.bundle`. This path matches `.gitignore`'s `.relay/*` rule, so it is\n**automatically ignored and never committed** \u2014 do **not** add it to the `CommitProofArtifacts` set in\n`ExecuteCommitStageAsync`. Create it with `git bundle create <path> <runBaseSha>..<snapshotCommit>`\n(records the base as a prerequisite; the base is reachable on main so unbundle can verify it). Also\nwrite a small sidecar `.relay/<taskId>/flagged-work.json` = `{ baseSha, createdUtc, flaggedStage }` for\nthe resume step and diagnostics (`createdUtc` supplied by the caller; do not call `DateTime.Now` in a\nway that breaks determinism guards).\n\n**Why a bundle (not a raw patch).** A bundle carries exact objects (binary-safe, exact blobs) and a real\ncommit, which lets resume do a proper 3-way merge that produces conflict markers. A `git diff` +\n`git apply --3way` is weaker: binary handling is lossy and it needs the base blobs present. Use a bundle.\n\n**Robustness.** The snapshot is best-effort: if any step fails, log it and continue with the existing\nreset. Snapshotting must never block or fail the flag itself.\n\n---\n\n## Part 2 \u2014 Restore on resume (3-way, conflict-aware)\n\n**When.** On a resume run (`_options.Resume`), after `LoadResumeState` / `ValidateCommitGateResumeAsync`\ncompute `firstStageToRun`, and **before** the stage loop reaches the flagged stage \u2014 but only when\n`firstStageToRun` is a mid-pipeline stage (5\u201310) **and** `.relay/<taskId>/flagged-work.bundle` exists.\nDo not disturb the existing stage-11 commit-gate resume path.\n\n**How.**\n1. `git bundle verify <path>` \u2014 confirms the base prerequisite is reachable. If the base is gone (history\n   rewritten) or verify fails, treat as un-restorable: keep the bundle, log, and fall back to a normal\n   full re-run from stage 1 (do not silently pretend to resume).\n2. Fetch the snapshot commit from the bundle into the object DB (e.g. `git fetch <bundle> <ref>`),\n   capturing the snapshot SHA.\n3. 3-way apply the delta `base \u2192 snapshot` onto the **current** working tree (clean, at current HEAD,\n   which may have advanced past the base). Recommended mechanism: `git cherry-pick -n <snapshot>` (a\n   3-way merge with base = the snapshot's parent, ours = current HEAD, theirs = snapshot), then\n   `git cherry-pick --quit` to clear the sequencer state while **keeping** the applied changes in the\n   working tree. (`git merge-tree` / `read-tree -m -u` are acceptable equivalents.)\n4. Detect conflicts via unmerged paths (`git ls-files -u`) and/or conflict markers.\n\n**Clean apply \u2192** proceed to `firstStageToRun` (the flagged stage) normally. Fix-verify gets its fresh\n3-attempt budget, now operating on the restored work re-based onto current HEAD.\n\n**Conflict \u2192 conflict-aware resume (do not discard, do not silently fall back).** The base moving while\na task was flagged is expected (a real run advanced from one HEAD to another with unrelated commits in\nbetween). Leave the conflict markers in the working tree and run a dedicated **conflict-resolution step\nbefore the flagged stage**:\n- A harness-driven subagent turn (a new stage/driver step, modeled on the existing stage runners) given\n  the list of conflicted files (markers in place), the task intent, and the ledger, and instructed to\n  resolve every conflict so the intended feature is preserved and adapted to the upstream changes.\n- The resolver is an ordinary agent turn: it may **not** commit or bypass hooks (the harness owns all\n  git writes, as everywhere else).\n- After the turn, a guard verifies **zero** unmerged paths / conflict markers remain before proceeding.\n  If markers remain, retry within a bounded budget; if still unresolved, flag with a clear\n  `resume conflict unresolved` reason and preserve the bundle for manual recovery.\n\n---\n\n## Part 3 \u2014 Lifecycle / cleanup\n\n- On successful commit (`ExecuteCommitStageAsync`, stage 11) or task retirement/archive\n  (`TaskCompletionArchive.RetireAsync`), delete `.relay/<taskId>/flagged-work.bundle` and its sidecar.\n- On re-add / fresh-run detection (`DetectReAddAndArchive`, or `firstStageToRun == 1`), clear any stale\n  snapshot so a genuinely fresh run does not resurrect old work.\n- Add a defensive prune for orphaned snapshots (the repo currently accumulates thousands of leftover\n  worktree dirs \u2014 cleanup discipline matters here).\n- Re-confirm the snapshot never enters a commit: it lives under `.relay/*` (git-ignored) and must not be\n  in the proof-artifact set.\n\n---\n\n## Part 4 \u2014 Enable the Resume button (folded in, required for the feature to be reachable)\n\n**Bug.** `ResumeSelectedCommand` and `RunSelectedCommand` share the same\n`CanExecute = nameof(CanRunSelected)` predicate (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs`).\nBut the observable properties that gate it \u2014 `SelectedTask`, `IsBusy`, `PauseRequested`\n(`MainWindowViewModel.cs`), and the Hugging-Face-gate flag (`MainWindowViewModel.Keys.cs`) \u2014 carry only\n`[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]`, never for `ResumeSelectedCommand`. So Resume\nnever re-evaluates its enabled state when a task is selected and stays stuck at its initial (no task\nselected \u2192 `false`) value; the only place it is refreshed today is after a rewrite\n(`MainWindowViewModel.Rewrite.cs`). That is why \"Run selected\" enables but \"Resume\" stays greyed.\n\n**Fix.** Add `[NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]` next to every existing\n`RunSelectedCommand` notify attribute on those observable properties, so Resume tracks the same enabled\nstate as Run selected. Add a test asserting `ResumeSelectedCommand.CanExecute` becomes `true` when a\nnon-archived task is selected (mirror any existing `RunSelected` enablement test).\n\n---\n\n## Constraints & done criteria\n\n- No agent commits and no hook bypass by agents; **all** git writes here are harness-side plumbing via\n  `GitInvoker`.\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines; no deleting/skipping/weakening tests.\n- The snapshot file must be git-ignored and absent from every commit.\n- Tests (use the existing `RelayDriver` test seams):\n  - flagging a mid-pipeline task creates `.relay/<taskId>/flagged-work.bundle`, and `git status` stays\n    clean (it is ignored, not committed);\n  - resume restores the work onto an **advanced** base (feature files reappear) and re-runs the flagged\n    stage;\n  - resume with an overlapping upstream change produces conflicts that the resolver step drives to zero\n    markers before proceeding;\n  - the bundle is deleted on successful commit / retirement.\n- Manual verification: flag a task, confirm the bundle exists and is ignored, advance HEAD with an\n  unrelated commit, click Resume, confirm the work is re-applied and the flagged stage re-runs.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.Core/Execution/RelayDriver.Events.cs` \u2014 snapshot inside/adjacent to `FlagAsync`\n- a new snapshot/store helper, e.g. `src/VisualRelay.Core/Execution/FlaggedWorkStore.cs`\n- `src/VisualRelay.Core/Execution/RelayDriver.cs` / `RelayDriver.Resume.cs` \u2014 the restore + resolve step\n- `src/VisualRelay.Core/Execution/WorktreeResetter.cs` \u2014 ensure snapshot precedes reset (if integrated here)\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` and `MainWindowViewModel.Keys.cs` \u2014 button wiring\n- tests under `tests/VisualRelay.Tests/`\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/FlaggedWorkStore.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Events.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs\nsrc/VisualRelay.Core/Tasks/TaskCompletionArchive.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\ntests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Make Resume restore flagged working trees by snapshotting them as git bundles before reset (durable, off-main, git-ignored), applying a 3-way cherry-pick on resume with conflict-resolution via subagent, cleaning up on commit/retire, and fixing the disabled Resume button by adding the missing CanExecuteChanged notification attribute.\",\n  \"options\": [\n    \"A \u2014 Bundle snapshot + git cherry-pick -n resume (full 3-way, binary-safe, durable, as-described in the spec)\",\n    \"B \u2014 Patch snapshot + git apply --3way resume (simpler plumbing, weaker binary/merge, less robust for base-advancement)\",\n    \"C \u2014 Stash-based snapshot + stash apply resume (minimal code, but stashes are ephemeral and fail the durability constraint)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase currently has no mechanism to snapshot flagged work for resume. `FlagAsync` in `RelayDriver.Events.cs` (line 88) writes NEEDS-REVIEW and publishes an event \u2014 the snapshot hook goes here before reset. `WorktreeResetter.ResetAsync` runs `git reset -q HEAD` + `git checkout -- .` + deletes authored untrackeds. `LoadResumeState` (line 14) only reloads bookkeeping (status, ledger, seals, manifest) and computes `firstStageToRun` from first non-Done stage \u2014 never restores working tree. `ValidateCommitGateResumeAsync` handles only stage 11. The resume flow in `RelayDriver.cs` (line 58-76) runs: LoadResumeState \u2192 ValidateCommitGateResumeAsync \u2192 DetectReAddAndArchive \u2192 pre-run snapshots \u2192 stage loop. The restore hook goes between DetectReAddAndArchive and the loop, gated on firstStageToRun 5-10 + bundle exists. `GitInvoker.RunAsync` supports custom environment variables (for `GIT_INDEX_FILE`). The pre-run-untracked snapshot (line 46) and run-base-sha snapshot (line 83) already exist in `RelayDriver.Snapshot.cs` and their patterns are directly reusable. `CapturePreRunUntrackedAsync` via `GitCommitter.CaptureUntrackedSnapshotAsync` uses `git ls-files --others --exclude-standard`. Cleanup points: `ExecuteCommitStageAsync` (successful commit), `TaskCompletionArchive.RetireAsync` (retirement), `DetectReAddAndArchive` (re-add detection resets to fresh state which archives the task dir including any bundle). Part 4: Resume button is disabled because `_pauseRequested`, `_rootPath`, `_selectedTask`, `_showArchive`, `_isBusy`, and `_isHuggingFaceConfigured` all have `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` but never for `ResumeSelectedCommand`, even though both `RunSelectedAsync` and `ResumeSelectedAsync` share `CanExecute = nameof(CanRunSelected)` predicate. The only place that refreshes both is `RaiseRewriteStateChanged()` in `MainWindowViewModel.Rewrite.cs` (line 272). Existing test infrastructure: `TestRepository`, `TestGit`, `ScriptedSubagentRunner`, `CapturingSubagentRunner`, `ScriptedTestRunner`, `RecordingTestRunner`, `InMemoryRelayEventSink`, `CommitGateGuardSubagentRunner`, `ScratchRepo`. Existing resume tests in `RelayDriverResumeTests.CommitGate.cs`.\",\n  \"constraints\": [\n    \"All git writes must be harness-side via GitInvoker plumbing (no agent commits, no hook bypass)\",\n    \"Every edited .cs/.axaml file must be \u2264300 lines\",\n    \"The flagged-work bundle lives under .relay/* (already git-ignored), must never be in CommitProofArtifacts set\",\n    \"Snapshot must be best-effort: if any git step fails, log and continue \u2014 never block or fail the flag itself\",\n    \"On DetectReAddAndArchive or firstStageToRun==1, clear any stale flagged-work bundle\",\n    \"DateTime.Now must not break determinism guards \u2014 use caller-supplied createdUtc timestamp\",\n    \"No deleting/skipping/weakening existing tests\",\n    \"On resume with unreachable base (history rewritten), treat as un-restorable, keep bundle, log, fall back to full re-run from stage 1\",\n    \"Conflict resolution must be a harness-driven subagent turn that leaves zero conflict markers before proceeding (bounded retry budget)\",\n    \"The flagged-work bundle must be deleted on successful commit (ExecuteCommitStageAsync) and on task retirement (TaskCompletionArchive.RetireAsync)\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The codebase has zero mechanism to snapshot flagged working trees or restore them on resume. When a task flags mid-pipeline (stages 5-10), the working-tree edits are permanently discarded with no durable record, and Resume runs the flagged stage against a clean tree \u2014 producing vacuous results.\\n\\n**Path from flag to loss:**\\n1. `FlagAsync` (`RelayDriver.Events.cs:88-127`) writes NEEDS-REVIEW, updates status entries, publishes an event \u2014 no snapshot of working tree.\\n2. `WorktreeResetter.ResetAsync` (`WorktreeResetter.cs:16-65`) runs `git reset -q HEAD`, `git checkout -- .`, and deletes task-authored untracked files \u2014 permanently destroying all edits.\\n3. No `flagged-work.bundle`, `flagged-work.json`, or any snapshot file exists at `.relay/<taskId>/`.\\n\\n**Resume path never restores:**\\n4. `LoadResumeState` (`RelayDriver.Resume.cs:14-75`) reloads only bookkeeping: status.json, ledger.md, seals, manifest, costs, seal-chain hash, and computes `firstStageToRun` from the first non-Done stage. No working-tree restoration.\\n5. `ValidateCommitGateResumeAsync` (`RelayDriver.CommitGate.cs:16-111`) is gated to `firstStageToRun == 11` (line 28) \u2014 never executes for stages 5-10. It is the only code that re-validates tree state.\\n6. The main resume flow (`RelayDriver.cs:58-76`): LoadResumeState \u2192 ValidateCommitGateResumeAsync \u2192 DetectReAddAndArchive \u2192 pre-run snapshots \u2192 enters the stage loop at `firstStageToRun` with no restore step.\\n7. The existing resume test (`RelayDriverResumeTests.cs:9-92`) flags at stage 3 (pre-code stages) and never verifies working-tree content \u2014 it only checks bookkeeping (status, seals, ledger).\\n\\n**Resume button permanently disabled (Part 4):**\\n8. Both `RunSelectedAsync` and `ResumeSelectedAsync` (`MainWindowViewModel.Execution.cs:14,35`) share `CanExecute = nameof(CanRunSelected)`, but the observable properties that gate it carry only `[NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]` \u2014 never for `ResumeSelectedCommand`:\\n   - `_pauseRequested` (`MainWindowViewModel.cs:81`): RunSelected only\\n   - `_rootPath` (`MainWindowViewModel.cs:94`): RunSelected only\\n   - `_selectedTask` (`MainWindowViewModel.cs:104`): RunSelected only\\n   - `_showArchive` (`MainWindowViewModel.cs:138`): RunSelected only\\n   - `_isBusy` (`MainWindowViewModel.cs:193`): RunSelected only\\n   - `_isHuggingFaceConfigured` (`MainWindowViewModel.Keys.cs:74`): RunSelected only\\n9. The only place `ResumeSelectedCommand.CanExecute` is refreshed is `RaiseRewriteStateChanged()` (`MainWindowViewModel.Rewrite.cs:273`), invoked only after a rewrite \u2014 a user who never rewrites can never enable Resume.\\n\\n**Git infrastructure exists but unused:**\\n10. `GitInvoker.RunAsync` (`GitInvoker.cs:38-60`) supports custom environment variables (parameter `environment` at line 43) \u2014 needed for `GIT_INDEX_FILE=<temp>`.\\n11. `.relay/*` is git-ignored (`.gitignore:14`) \u2014 `.relay/<taskId>/flagged-work.bundle` would be automatically ignored.\\n12. `CapturePreRunUntrackedAsync` (`RelayDriver.Snapshot.cs:46-71`) already uses `GitCommitter.CaptureUntrackedSnapshotAsync` for untracked-file detection \u2014 this pattern is reusable.\\n13. `CaptureRunBaseShaAsync` (`RelayDriver.Snapshot.cs:83-109`) already persists HEAD SHA to `.relay/<taskId>/run-base.txt` \u2014 the base for a bundle prerequisite.\\n14. Zero references to git bundle, cherry-pick, read-tree -m, merge-tree, or flagged-work snapshot exist anywhere in the codebase (grep confirmed across all .cs files).\",\n  \"excerpts\": [\n    \"RelayDriver.Events.cs:88-127 \u2014 FlagAsync writes NEEDS-REVIEW and publishes event; no snapshot of working tree before reset\",\n    \"WorktreeResetter.cs:26-27 \u2014 'git reset -q HEAD' + 'git checkout -- .' permanently discard all tracked edits\",\n    \"WorktreeResetter.cs:29-52 \u2014 deletes task-authored untracked files not in pre-run snapshot\",\n    \"RelayDriver.Resume.cs:14-24 \u2014 LoadResumeState: 'var priorStatus = StageStatusRecord.Read(taskDirectory); ... var firstNonDone = priorStatus.FirstOrDefault(e => e.Status != \\\"Done\\\"); firstStageToRun = firstNonDone?.Stage ...' \u2014 only reloads bookkeeping, never restores working tree\",\n    \"RelayDriver.cs:58 \u2014 'if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);' \u2014 no restore step follows\",\n    \"RelayDriver.cs:76 \u2014 'foreach (var stage in RelayStages.All) { if (stage.Number < firstStageToRun) continue; ... }' \u2014 flagged stage re-runs against clean tree\",\n    \"RelayDriver.CommitGate.cs:28 \u2014 'if (_options.Resume && firstStageToRun == 11 ...)' \u2014 commit-gate validation gated to stage 11 only, never 5-10\",\n    \"MainWindowViewModel.cs:81-89 \u2014 _pauseRequested: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.cs:93-100 \u2014 _rootPath: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.cs:102-109 \u2014 _selectedTask: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.cs:136-142 \u2014 _showArchive: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.cs:190-198 \u2014 _isBusy: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.Keys.cs:73-78 \u2014 _isHuggingFaceConfigured: [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))] but no ResumeSelectedCommand\",\n    \"MainWindowViewModel.Execution.cs:14,35 \u2014 both RunSelectedAsync and ResumeSelectedAsync share 'CanExecute = nameof(CanRunSelected)'\",\n    \"MainWindowViewModel.Rewrite.cs:272-273 \u2014 'RunSelectedCommand.NotifyCanExecuteChanged(); ResumeSelectedCommand.NotifyCanExecuteChanged();' \u2014 the only place Resume is refreshed, only after a rewrite\",\n    \".gitignore:14 \u2014 '.relay/*' confirms .relay/<taskId>/flagged-work.bundle is already git-ignored\"\n  ],\n  \"repro\": \"1. Create a task that reaches stage 5 (author-tests) or later.\\n2. Arrange for stage 6 (implement) to flag mid-pipeline.\\n3. Observe: the agent-authored implementation files are present on disk before the flag.\\n4. After the flag, observe `WorktreeResetter.ResetAsync` wipes the working tree \u2014 implementation files are gone.\\n5. Click Resume on the flagged task. Observe: the Resume button is greyed out (disabled) even when a task is selected and idle (Part 4 bug).\\n6. If Resume were reachable, observe: `LoadResumeState` sets `firstStageToRun` to the flagged stage (e.g. 7), the stage loop re-enters fix-verify against a clean tree with none of the authored files present \u2014 producing a vacuous or nonsensical result.\\n7. Confirm: no `.relay/<taskId>/flagged-work.bundle` exists anywhere on disk.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation Plan\\n\\n### Part 1 \u2014 Snapshot on flag (`FlaggedWorkStore.CaptureAsync`)\\n\\n**New file: `+src/VisualRelay.Core/Execution/FlaggedWorkStore.cs`** (\u2248120 lines)\\nStatic helper class with three public methods and internal plumbing:\\n\\n1. **`CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage, gitInvoker, createdUtc, ct)`** \u2014 best-effort snapshot:\\n   - Read `runBaseSha` from `.relay/<taskId>/run-base.txt`; skip if missing.\\n   - Read `preRunUntracked` from `.relay/<taskId>/pre-run-untracked.txt` (may be absent).\\n   - Create a temp file path for `GIT_INDEX_FILE`.\\n   - `GIT_INDEX_FILE=<temp> git add -A` \u2192 stage all tracked edits + untracked files into the temp index.\\n   - For each path in `preRunUntracked` that the temp index now contains, `GIT_INDEX_FILE=<temp> git rm --cached -q -- <path>` to unstage pre-existing untracked files.\\n   - `GIT_INDEX_FILE=<temp> git write-tree` \u2192 tree SHA.\\n   - `git commit-tree <tree> -p <runBaseSha> -m \\\"flagged-work snapshot stage <flaggedStage>\\\"` \u2192 snapshot commit SHA.\\n   - `git bundle create .relay/<taskId>/flagged-work.bundle <runBaseSha>..<snapshotSha>`.\\n   - Write sidecar `.relay/<taskId>/flagged-work.json` = `{\\\"baseSha\\\":\\\"\u2026\\\",\\\"createdUtc\\\":\\\"\u2026\\\",\\\"flaggedStage\\\":N}`.\\n   - Every git step is wrapped in try/catch returning early; the caller discards the return value.\\n   - Uses `IGitInvoker` for testability; `DateTimeOffset.UtcNow` supplied by caller (the driver).\\n\\n2. **`RestoreAsync(rootPath, taskId, taskDirectory, gitInvoker, ct)`** \u2192 `RestoreResult` (Success / Conflicts / Unrestorable):\\n   - Guard: if `.relay/<taskId>/flagged-work.bundle` missing \u2192 return Unrestorable.\\n   - `git bundle verify <bundlePath>` \u2192 if fails, log and return Unrestorable.\\n   - Read sidecar JSON for `baseSha`.\\n   - `git fetch <bundlePath> +refs/heads/*:refs/relay-resume/<taskId>` \u2192 fetches the snapshot commit.\\n   - Resolve fetched SHA via `git rev-parse refs/relay-resume/<taskId>`.\\n   - `git cherry-pick -n <snapshotSha>` \u2192 3-way apply onto current HEAD.\\n   - `git cherry-pick --quit` \u2192 clear sequencer state (keeps working-tree changes).\\n   - `git ls-files -u` \u2192 detect unmerged paths.\\n   - If zero unmerged \u2192 return Success.\\n   - If unmerged \u2192 return Conflicts with the list of conflicted paths.\\n\\n3. **`DeleteAsync(taskDirectory)`** \u2014 delete `flagged-work.bundle` + `flagged-work.json` from the task directory (plain File.Delete, no git needed).\\n\\n**Edit `src/VisualRelay.Core/Execution/RelayDriver.Events.cs`** (+7 lines, 128\u2192135):\\nIn `FlagAsync`, after `MarkStatusFlagged`/`WriteStatusAsync` and before `File.WriteAllTextAsync(\\\"NEEDS-REVIEW\\\")`, insert a best-effort snapshot call:\\n```csharp\\n// Capture flagged working tree for resume (best-effort).\\n_ = FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage,\\n    _dependencies.GitInvoker, DateTimeOffset.UtcNow, cancellationToken);\\n```\\nThe discard (`_ =`) signals intentional fire-and-forget; the method itself catches all exceptions.\\n\\n---\\n\\n### Part 2 \u2014 Restore on resume (`RelayDriver.FlaggedWork.cs`)\\n\\n**New file: `+src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs`** (\u2248100 lines)\\nPartial class with:\\n\\n1. **`RestoreFlaggedWorkIfNeededAsync(rootPath, taskId, taskDirectory, firstStageToRun, ct)`** \u2192 `int` (new `firstStageToRun`):\\n   - Guard: `_options.Resume && firstStageToRun is >= 5 and <= 10` \u2192 else return unchanged.\\n   - Call `FlaggedWorkStore.RestoreAsync(\u2026)`.\\n   - **Unrestorable** \u2192 clear stale bundle via `FlaggedWorkStore.DeleteAsync`, set `firstStageToRun = 1`, append ledger note, return 1.\\n   - **Success** \u2192 return `firstStageToRun` unchanged (proceed to flagged stage).\\n   - **Conflicts** \u2192 run `ResolveConflictsAsync(\u2026)`.\\n\\n2. **`ResolveConflictsAsync(rootPath, taskId, taskDirectory, firstStageToRun, conflictedFiles, ledger, ct)`** \u2192 `int`:\\n   - Build a one-off `StageInvocation` with a system prompt instructing the subagent to resolve all conflict markers in the listed files, preserving the intended feature and adapting to upstream changes. The prompt includes the task ledger for context.\\n   - Run via `_dependencies.SubagentRunner.RunAsync(invocation, ct)`.\\n   - After the turn, check `git ls-files -u` for remaining conflicts.\\n   - If zero conflicts \u2192 return `firstStageToRun` unchanged.\\n   - If conflicts remain \u2192 retry up to **2 more times** (3 total).\\n   - If still conflicted after budget \u2192 flag via `FlagAsync(\u2026, reason: \\\"resume conflict unresolved\\\")` and return `firstStageToRun = int.MaxValue` (effectively skip the loop, outcome is flagged).\\n   - The subagent may NOT commit; the harness owns all git writes.\\n\\n**Edit `src/VisualRelay.Core/Execution/RelayDriver.cs`** (+1 line, trim 1 blank line to stay at 300):\\nAfter line 61 (`EnsureTaskInputHash(statusEntries, input.Markdown);`), insert:\\n```csharp\\nfirstStageToRun = await RestoreFlaggedWorkIfNeededAsync(rootPath, taskId, taskDirectory, firstStageToRun, cancellationToken);\\n```\\nRemove one blank line elsewhere (e.g. between run-start publish and WarnTestFileCmd) to stay at 300.\\n\\n---\\n\\n### Part 3 \u2014 Lifecycle / cleanup\\n\\n**Edit `src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs`** (+3 lines, 221\u2192224):\\nIn `ExecuteCommitStageAsync`, after the successful commit path (after line ~214, the archive event publish), add:\\n```csharp\\nFlaggedWorkStore.DeleteAsync(taskDirectory);\\n```\\n\\n**Edit `src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs`** (+3 lines, 273\u2192276):\\nAt the top of `RetireAsync`, after the early-return guards, compute `.relay/<taskId>/` path and call:\\n```csharp\\nFlaggedWorkStore.DeleteAsync(Path.Combine(rootPath, \\\".relay\\\", taskId));\\n```\\nThis is fire-and-forget (best-effort cleanup).\\n\\n**Edit `src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs`** (+3 lines, 121\u2192124):\\nIn `DetectReAddAndArchive`, when `mismatch` is false but `_options.Resume && firstStageToRun == 1` (fresh run on resume, no prior status), defensively clear any stale snapshot:\\n```csharp\\nif (!mismatch && firstStageToRun == 1)\\n    FlaggedWorkStore.DeleteAsync(taskDirectory);\\n```\\n(No-op when the bundle doesn't exist.)\\n\\n---\\n\\n### Part 4 \u2014 Enable the Resume button\\n\\n**Edit `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs`** (6 \u00d7 1-line attribute additions, 296\u2192302):\\nAdd `[NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]` next to the existing `RunSelectedCommand` attribute on:\\n- `_pauseRequested` (line 81)\\n- `_rootPath` (line 93)\\n- `_selectedTask` (line 103)\\n- `_showArchive` (line 137)\\n- `_isBusy` (line 192)\\n\\n**Edit `src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs`** (+1 attribute line, 286\u2192287):\\nAdd `[NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]` on `_isHuggingFaceConfigured` (line 73).\\n\\n---\\n\\n### Tests\\n\\n**New file: `+tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs`** (\u2248180 lines)\\n- `FlagAsync_CreatesFlaggedWorkBundle_WhenMidPipelineStageFlags` \u2014 flag at stage 6, verify `.relay/<taskId>/flagged-work.bundle` exists, sidecar JSON exists, and `git status` reports clean (bundle is gitignored).\\n- `Resume_RestoresWork_WhenBundleExistsAndBaseReachable` \u2014 flag at stage 6, write feature files into working tree before flag, resume, verify feature files reappear and the flagged stage re-runs.\\n- `Resume_RestoresWork_OntoAdvancedBase` \u2014 flag at stage 6, then advance HEAD with an unrelated commit, resume, verify feature files are cherry-picked onto the new HEAD.\\n- `Resume_ProducesConflicts_WhenUpstreamOverlaps` \u2014 flag at stage 6 with feature file `src/Foo.cs`, advance HEAD with a conflicting edit to `src/Foo.cs`, resume, verify conflict markers appear and the resolver subagent is invoked.\\n- `Resume_ResolverClearsConflicts_BeforeProceeding` \u2014 conflict scenario where the resolver subagent succeeds, verify zero unmerged paths and stage loop proceeds.\\n- `Resume_FallsBackToStage1_WhenBundleVerifyFails` \u2014 corrupt the bundle, resume, verify `firstStageToRun == 1`.\\n- `FlaggedWorkBundle_Deleted_OnSuccessfulCommit` \u2014 flag at stage 6, resume + complete full run, verify bundle is deleted.\\n- `FlaggedWorkBundle_Deleted_OnReAdd` \u2014 flag at stage 6, then modify the task markdown and resume (triggers re-add), verify bundle is gone from the new task directory.\\n\\n**New file: `+tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs`** (\u224830 lines)\\n- `ResumeSelectedCommand_CanExecute_True_WhenNonArchivedTaskSelected` \u2014 create a task, select it, verify `ResumeSelectedCommand.CanExecute(null)` is `true`.\\n- `ResumeSelectedCommand_CanExecute_False_WhenNoTaskSelected` \u2014 verify disabled with no selection.\\n- `ResumeSelectedCommand_CanExecute_False_WhenArchivedTaskSelected` \u2014 toggle archive, select archived task, verify disabled.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Execution/FlaggedWorkStore.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Events.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs\",\n    \"src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs\",\n    \"+tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All tests compile and produce the expected failure pattern:\n\n- **9 failures** \u2014 the 6 flagged-work feature tests (bundle creation, restore, conflicts, cleanup) and 3 `CanExecuteChanged` notification tests \u2014 all fail because the snapshot/restore and button-wiring features are not yet implemented.\n- **5 passes** \u2014 the `CanExecute(null)` mirror tests pass because `CanRunSelected()` evaluates correctly on each direct call even without the notification fix.\n\n```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs\"\n  ],\n  \"rationale\": \"9 tests fail as expected (flagged-work snapshot/restore not implemented; ResumeSelectedCommand.CanExecuteChanged never fires). 5 CanExecute(null) mirror tests pass because the direct predicate call works regardless of notification wiring \u2014 these match the existing RunSelected enablement test pattern. All files \u2264300 lines.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 44,
+    "tool_calls_total": 67,
+    "tool_calls_succeeded": 67,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 33,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 1,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 44,
+    "total_llm_time_s": 445.811,
+    "prompt_cache": {
+      "cached_tokens": 2410880,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 100.839,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 4,
+      "completed": 4,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.977,
+      "prompt_tokens_est": 12144,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read existing test patterns and source files",
+          "Write tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+          "Write tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs",
+          "Verify tests compile and fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 382
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.813,
+      "prompt_tokens_est": 12379,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8311
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 12095
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.086,
+      "prompt_tokens_est": 17536,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11058
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6664
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestGit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1445
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ScratchRepo.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6187
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.599,
+      "prompt_tokens_est": 24019,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6599
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 22588
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Resume.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3801
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1627
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 5.199,
+      "prompt_tokens_est": 31612,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read existing test patterns and source files"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 382
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12082
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestFileSystem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2692
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.584,
+      "prompt_tokens_est": 35406,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5182
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10529
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13782
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.478,
+      "prompt_tokens_est": 42525,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12495
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11787
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "interface IGitInvoker",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.104,
+      "result_length": 100
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.792,
+      "prompt_tokens_est": 48406,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15045
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11775
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 5.337,
+      "prompt_tokens_est": 54862,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/IGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 957
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2087
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayStages",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.093,
+      "result_length": 103
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.128,
+      "prompt_tokens_est": 55738,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2130
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.ReAdd.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1420
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7365
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 5.619,
+      "prompt_tokens_est": 58626,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class.*: IGitInvoker"
+      },
+      "succeeded": true,
+      "duration_s": 0.106,
+      "result_length": 228
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriverOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 395
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.838,
+      "prompt_tokens_est": 59023,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TransientGitShim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2498
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.ReAdd.cs",
+        "offset": 80,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3153
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.602,
+      "prompt_tokens_est": 60504,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2362
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "offset": 1,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1273
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "ExecuteCommitStageAsync",
+        "path": "src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 433
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 56.383,
+      "prompt_tokens_est": 61784,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read existing test patterns and source files"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 382
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 57.362,
+      "prompt_tokens_est": 64877,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed partial class RelayDriverResumeTests\n{\n    [Fact]\n    public async Task FlagAsync_CreatesFlaggedWorkBundle_WhenMidPipelineStageFlags()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"snapshot-me\", \"# Snapshot me\\n\");\n\n        // Runner that writes test files at stage 5, then flags at stage 6.\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"snapshot-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"snapshot-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"flagged-work.bundle should be created at flag time\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"flagged-work.json sidecar should be created\");\n\n        // git status must be clean (bundle is gitignored under .relay/*).\n        var status = TestGit.Run(repo.Root, \"status\", \"--porcelain\");\n        Assert.Empty(status.Trim());\n    }\n\n    [Fact]\n    public async Task Resume_RestoresWork_WhenBundleExistsAndBaseReachable()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"restore-me\", \"# Restore me\\n\");\n\n        // Run 1: write feature files at stage 5, then flag at stage 6.\n        var fileWriter1 = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter1);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        var outcome1 = await driver1.RunTaskAsync(repo.Root, \"restore-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome1.Status);\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"restore-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")));\n\n        // Sanity: the feature file should NOT be in the working tree after flag\n        // (WorktreeResetter wiped it).\n        var featurePath = Path.Combine(repo.Root, \"tests\", \"my.test\");\n        Assert.False(File.Exists(featurePath),\n            \"feature file should be gone after WorktreeResetter reset\");\n\n        // Run 2: resume \u2014 the bundle should restore the file.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"restore-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // Feature file must reappear after restore.\n        Assert.True(File.Exists(featurePath),\n            \"feature file should be restored from flagged-work bundle on resume\");\n\n        // The flagged stage (6) must have been re-invoked.\n        Assert.Contains(capturing.Invocations, inv => inv.Stage.Number == 6);\n\n        // Stages 1\u20135 must NOT be re-invoked (they were Done).\n        Assert.DoesNotContain(capturing.Invocations, inv => inv.Stage.Number <= 5);\n    }\n\n    [Fact]\n    public async Task Resume_RestoresWork_OntoAdvancedBase()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"advance-me\", \"# Advance me\\n\");\n\n        // Run 1: write feature files at stage 5, flag at stage 6.\n        var fileWriter1 = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter1);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"advance-me\");\n\n        // Advance HEAD with an unrelated commit.\n        File.WriteAllText(Path.Combine(repo.Root, \"unrelated.txt\"), \"unrelated\");\n        TestGit.Run(repo.Root, \"add\", \"unrelated.txt\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"unrelated change\");\n\n        // Run 2: resume \u2014 the feature file must reappear on top of the new HEAD.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"advance-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // Feature file restored.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \"tests\", \"my.test\")));\n\n        // Unrelated commit still present.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \"unrelated.txt\")));\n    }\n\n    [Fact]\n    public async Task Resume_ProducesConflicts_WhenUpstreamOverlaps()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n\n        // Seed a file that both the task and the upstream commit will touch.\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"src\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"original\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"conflict-me\", \"# Conflict me\\n\");\n\n        // Run 1: overwrite Foo.cs at stage 5, then flag at stage 6.\n        var overwriter = new FileWritingSubagentRunner(\n            writeAtStage: 5,\n            file: \"src/Foo.cs\",\n            content: \"task-authored version of Foo.cs\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: overwriter);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"conflict-me\");\n\n        // Advance HEAD with a conflicting edit to the same file.\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"upstream conflicting edit\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"upstream change to Foo.cs\");\n\n        // Run 2: resume \u2014 should produce conflict markers.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"conflict-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // The file must be restored \u2014 either cleanly or with resolved conflicts.\n        var fooContent = File.ReadAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"));\n        Assert.DoesNotContain(\"<<<<<<<\", fooContent);\n        Assert.DoesNotContain(\"=======\", fooContent);\n        Assert.DoesNotContain(\">>>>>>>\", fooContent);\n\n        // The resolver subagent must have been invoked (the conflict stage).\n        Assert.Contains(capturing.Invocations,\n            inv => inv.Stage.Number >= 5 && inv.Stage.Number <= 6);\n    }\n\n    [Fact]\n    public async Task FlaggedWorkBundle_Deleted_OnSuccessfulCommit()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"cleanup-me\", \"# Cleanup me\\n\");\n\n        // Run 1: flag at stage 6.\n        var fileWriter1 = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter1);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"cleanup-me\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"cleanup-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")));\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")));\n\n        // Run 2: resume and complete the full run.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"cleanup-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // Bundle and sidecar must be deleted on successful commit.\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"flagged-work.bundle should be deleted after successful commit\");\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"flagged-work.json should be deleted after successful commit\");\n    }\n\n    [Fact]\n    public async Task FlaggedWorkBundle_Deleted_OnReAdd()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"readd-me\", \"# Original task\\n\");\n\n        // Run 1: flag at stage 6.\n        var fileWriter1 = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter1);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"readd-me\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"readd-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")));\n\n        // Simulate re-add: overwrite the task .md with new content.\n        repo.WriteTask(\"readd-me\", \"# Completely new task \u2014 different content\\n\");\n\n        // Run 2: resume \u2192 re-add detection triggers, old state archived, bundle gone.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        await driver2.RunTaskAsync(repo.Root, \"readd-me\");\n\n        // The bundle in the OLD task directory may still exist (archived), but\n        // the NEW task directory must NOT have a stale bundle.\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"stale flagged-work.bundle should be deleted when task is re-added\");\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"stale flagged-work.json should be deleted when task is re-added\");\n    }\n\n    /// <summary>\n    /// Writes a specified file (and content) to the target root at a given stage,\n    /// then delegates to <see cref=\"ScriptedSubagentRunner\"/> for JSON responses.\n    /// </summary>\n    private sealed class FileWritingSubagentRunner : ISubagentRunner\n    {\n        private readonly int _writeAtStage;\n        private readonly string _file;\n        private readonly string _content;\n        private readonly ScriptedSubagentRunner _inner = new();\n\n        public FileWritingSubagentRunner(int writeAtStage, string file, string? content = null)\n        {\n            _writeAtStage = writeAtStage;\n            _file = file;\n            _content = content ?? \"authored content\";\n        }\n\n        public async Task<SubagentResult> RunAsync(\n            StageInvocation invocation, CancellationToken cancellationToken = default)\n        {\n            if (invocation.Stage.Number == _writeAtStage)\n            {\n                var fullPath = Path.Combine(invocation.TargetRoot, _file);\n                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);\n                await File.WriteAllTextAsync(fullPath, _content, cancellationToken);\n            }\n\n            return await _inner.RunAsync(invocation, cancellationToken);\n        }\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 102
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 8.613,
+      "prompt_tokens_est": 69300,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.App.ViewModels;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed partial class MainWindowViewModelTests\n{\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenNoTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_True_WhenNonArchivedTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n\n        Assert.True(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenArchivedTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"done-1\", \"/tmp/llm-tasks/completed/done-1.md\", \"/tmp/llm-tasks\", false, [])));\n        // Mark as archived \u2014 archived tasks are not runnable.\n        viewModel.SelectedTask = viewModel.Tasks[0];\n        viewModel.ShowArchive = true;\n\n        // When viewing archive, CanRunSelected returns false (and so does Resume).\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenPauseRequested()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n        viewModel.PauseRequested = true;\n\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenBusy()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n        viewModel.IsBusy = true;\n\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n}\n",
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 104
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 5.491,
+      "prompt_tokens_est": 69968,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+          "Write tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 380
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 4.879,
+      "prompt_tokens_est": 70301,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "dotnet test.*--filter",
+        "path": "/Users/admin/Dev/temp-visual-relay",
+        "include": "*.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 200
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TargetedTestCommand|targeted.test|test.command\"",
+        "include": "*.cs",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.049,
+      "result_length": 1877
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 2.622,
+      "prompt_tokens_est": 70931,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/dotnet-test-files.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1055
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 4.855,
+      "prompt_tokens_est": 71315,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet build tests/VisualRelay.Tests/VisualRelay.Tests.csproj -p:UseSharedCompilation=false 2>&1 | tail -50",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 15.999,
+      "result_length": 1597
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.678,
+      "prompt_tokens_est": 72024,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlaggedWork\" 2>&1 | tail -60",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.538,
+      "result_length": 2726
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 22.067,
+      "prompt_tokens_est": 72908,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlagAsync_CreatesFlaggedWorkBundle|FullyQualifiedName~RelayDriverResumeTests.Resume_RestoresWork|FullyQualifiedName~RelayDriverResumeTests.Resume_ProducesConflicts|FullyQualifiedName~RelayDriverResumeTests.FlaggedWorkBundle_Deleted|FullyQualifiedName~MainWindowViewModelTests.ResumeSelectedCommand\" 2>&1 | tail -80",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 11.276,
+      "result_length": 5243
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 21.894,
+      "prompt_tokens_est": 75677,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CanRunSelected",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.034,
+      "result_length": 460
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 22.243,
+      "prompt_tokens_est": 77119,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record RelayTaskItem|class RelayTaskItem",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.013,
+      "result_length": 101
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 2.448,
+      "prompt_tokens_est": 78483,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayTaskItem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1371
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 4.226,
+      "prompt_tokens_est": 78890,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TaskRowViewModel\"",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 17
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TaskRowViewModel",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 149
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 6.284,
+      "prompt_tokens_est": 79074,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunSelectedCommand.CanExecute",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.059,
+      "result_length": 558
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 3.092,
+      "prompt_tokens_est": 79504,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/KeySetupPanelUiTests.cs",
+        "offset": 75,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1477
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 27.803,
+      "prompt_tokens_est": 79931,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.App.ViewModels;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed partial class MainWindowViewModelTests\n{\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenNoTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_True_WhenNonArchivedTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n\n        Assert.True(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenArchivedTaskSelected()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"done-1\", \"/tmp/llm-tasks/completed/done-1.md\",\n                \"/tmp/llm-tasks\", false, [], IsArchived: true)));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenPauseRequested()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n        viewModel.PauseRequested = true;\n\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecute_False_WhenBusy()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n        viewModel.SelectedTask = viewModel.Tasks[0];\n        viewModel.IsBusy = true;\n\n        Assert.False(viewModel.ResumeSelectedCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecuteChanged_Raises_WhenSelectedTaskChanges()\n    {\n        var viewModel = new MainWindowViewModel();\n        viewModel.Tasks.Add(new TaskRowViewModel(\n            new RelayTaskItem(\"alpha\", \"/tmp/llm-tasks/alpha.md\", \"/tmp/llm-tasks\", false, [])));\n\n        var raised = false;\n        viewModel.ResumeSelectedCommand.CanExecuteChanged += (_, _) => raised = true;\n\n        viewModel.SelectedTask = viewModel.Tasks[0];\n\n        Assert.True(raised,\n            \"ResumeSelectedCommand.CanExecuteChanged must fire when SelectedTask changes\");\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecuteChanged_Raises_WhenIsBusyChanges()\n    {\n        var viewModel = new MainWindowViewModel();\n        var raised = false;\n        viewModel.ResumeSelectedCommand.CanExecuteChanged += (_, _) => raised = true;\n\n        viewModel.IsBusy = true;\n\n        Assert.True(raised,\n            \"ResumeSelectedCommand.CanExecuteChanged must fire when IsBusy changes\");\n    }\n\n    [Fact]\n    public void ResumeSelectedCommand_CanExecuteChanged_Raises_WhenPauseRequestedChanges()\n    {\n        var viewModel = new MainWindowViewModel();\n        var raised = false;\n        viewModel.ResumeSelectedCommand.CanExecuteChanged += (_, _) => raised = true;\n\n        viewModel.PauseRequested = true;\n\n        Assert.True(raised,\n            \"ResumeSelectedCommand.CanExecuteChanged must fire when PauseRequested changes\");\n    }\n}\n",
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 104
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 4.466,
+      "prompt_tokens_est": 81937,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlagAsync_CreatesFlaggedWorkBundle|FullyQualifiedName~RelayDriverResumeTests.Resume_RestoresWork|FullyQualifiedName~RelayDriverResumeTests.Resume_ProducesConflicts|FullyQualifiedName~RelayDriverResumeTests.FlaggedWorkBundle_Deleted|FullyQualifiedName~MainWindowViewModelTests.ResumeSelectedCommand\" 2>&1 | tail -60",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 18.243,
+      "result_length": 4387
+    },
+    {
+      "turn": 31,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83189,
+      "tokens_after": 32821
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 44.593,
+      "prompt_tokens_est": 32821,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+        "old_string": "    [Fact]\n    public async Task Resume_ProducesConflicts_WhenUpstreamOverlaps()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n\n        // Seed a file that both the task and the upstream commit will touch.\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"src\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"original\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"conflict-me\", \"# Conflict me\\n\");\n\n        // Run 1: overwrite Foo.cs at stage 5, then flag at stage 6.\n        var overwriter = new FileWritingSubagentRunner(\n            writeAtStage: 5,\n            file: \"src/Foo.cs\",\n            content: \"task-authored version of Foo.cs\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: overwriter);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"conflict-me\");\n\n        // Advance HEAD with a conflicting edit to the same file.\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"upstream conflicting edit\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"upstream change to Foo.cs\");\n\n        // Run 2: resume \u2014 should produce conflict markers.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"conflict-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // The file must be restored \u2014 either cleanly or with resolved conflicts.\n        var fooContent = File.ReadAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"));\n        Assert.DoesNotContain(\"<<<<<<<\", fooContent);\n        Assert.DoesNotContain(\"=======\", fooContent);\n        Assert.DoesNotContain(\">>>>>>>\", fooContent);\n\n        // The resolver subagent must have been invoked (the conflict stage).\n        Assert.Contains(capturing.Invocations,\n            inv => inv.Stage.Number >= 5 && inv.Stage.Number <= 6);\n    }",
+        "new_string": "    [Fact]\n    public async Task Resume_ProducesConflicts_WhenUpstreamOverlaps()\n    {\n        using var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n\n        // Seed a file that both the task and the upstream commit will touch.\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"src\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"original\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"conflict-me\", \"# Conflict me\\n\");\n\n        const string taskAuthored = \"task-authored version of Foo.cs\";\n\n        // Run 1: overwrite Foo.cs at stage 5, then flag at stage 6.\n        var overwriter = new FileWritingSubagentRunner(\n            writeAtStage: 5,\n            file: \"src/Foo.cs\",\n            content: taskAuthored);\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: overwriter);\n        var driver1 = new RelayDriver(\n            RelayDriverDependencies.ForTests(flagger, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\")), new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true));\n\n        await driver1.RunTaskAsync(repo.Root, \"conflict-me\");\n\n        // Advance HEAD with a conflicting edit to the same file.\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"upstream conflicting edit\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"upstream change to Foo.cs\");\n\n        // Run 2: resume \u2014 the restore must re-apply flagged work, producing (then\n        // resolving) conflicts.  Without the feature the task-authored content\n        // never reappears, so this test fails.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverDependencies.ForTests(capturing,\n                new ScriptedTestRunner(\n                    new TestRunResult(1, \"red\"),\n                    new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            new RelayDriverOptions(CreateGitCommit: true, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"conflict-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        var fooContent = File.ReadAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"));\n\n        // After restore AND conflict resolution, the file must have no markers.\n        Assert.DoesNotContain(\"<<<<<<<\", fooContent);\n        Assert.DoesNotContain(\"=======\", fooContent);\n        Assert.DoesNotContain(\">>>>>>>\", fooContent);\n\n        // The restored task-authored content MUST be present \u2014 without the\n        // snapshot / restore feature the file still holds \"upstream conflicting\n        // edit\", which makes this assertion fail properly.\n        Assert.Contains(taskAuthored, fooContent,\n            \"task-authored content must survive conflict resolution\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 88
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 3.696,
+      "prompt_tokens_est": 36046,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlagAsync_CreatesFlaggedWorkBundle|FullyQualifiedName~RelayDriverResumeTests.Resume_RestoresWork|FullyQualifiedName~RelayDriverResumeTests.Resume_ProducesConflicts|FullyQualifiedName~RelayDriverResumeTests.FlaggedWorkBundle_Deleted|FullyQualifiedName~MainWindowViewModelTests.ResumeSelectedCommand\" 2>&1 | tail -50",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 6.939,
+      "result_length": 1795
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 2.988,
+      "prompt_tokens_est": 36739,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+        "offset": 210,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1107
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 5.548,
+      "prompt_tokens_est": 37069,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+        "old_string": "        Assert.Contains(taskAuthored, fooContent,\n            \"task-authored content must survive conflict resolution\");",
+        "new_string": "        Assert.Contains(taskAuthored, fooContent);\n        Assert.True(fooContent.Contains(taskAuthored, StringComparison.Ordinal),\n            \"task-authored content must survive conflict resolution\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 88
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 3.768,
+      "prompt_tokens_est": 37300,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs",
+        "new_string": "        Assert.Contains(taskAuthored, fooContent);",
+        "old_string": "        Assert.Contains(taskAuthored, fooContent);\n        Assert.True(fooContent.Contains(taskAuthored, StringComparison.Ordinal),\n            \"task-authored content must survive conflict resolution\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 88
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 3.208,
+      "prompt_tokens_est": 37494,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet build tests/VisualRelay.Tests/VisualRelay.Tests.csproj -p:UseSharedCompilation=false 2>&1 | tail -15",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 9.189,
+      "result_length": 1225
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 3.703,
+      "prompt_tokens_est": 37939,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlagAsync_CreatesFlaggedWorkBundle|FullyQualifiedName~RelayDriverResumeTests.Resume_RestoresWork|FullyQualifiedName~RelayDriverResumeTests.Resume_ProducesConflicts|FullyQualifiedName~RelayDriverResumeTests.FlaggedWorkBundle_Deleted|FullyQualifiedName~MainWindowViewModelTests.ResumeSelectedCommand\" 2>&1 | tail -60",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 11.202,
+      "result_length": 4138
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 7.734,
+      "prompt_tokens_est": 39165,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs tests/VisualRelay.Tests/MainWindowViewModelTests.ResumeButton.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.087,
+      "result_length": 151
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 31.035,
+      "prompt_tokens_est": 39755,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed partial class RelayDriverResumeTests\n{\n    [Fact]\n    public async Task FlagAsync_CreatesFlaggedWorkBundle_WhenMidPipelineStageFlags()\n    {\n        using var repo = CreateGitRepo();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"snapshot-me\", \"# Snapshot me\\n\");\n\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n        var driver = MakeDriver(flagger, CreateGitCommit: true);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"snapshot-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"snapshot-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"flagged-work.bundle should be created at flag time\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"flagged-work.json sidecar should be created\");\n\n        // git status must be clean (bundle is gitignored under .relay/*).\n        Assert.Empty(TestGit.Run(repo.Root, \"status\", \"--porcelain\").Trim());\n    }\n\n    [Fact]\n    public async Task Resume_RestoresWork_WhenBundleExistsAndBaseReachable()\n    {\n        using var repo = CreateGitRepo();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"restore-me\", \"# Restore me\\n\");\n\n        // Run 1: write feature file, flag at stage 6.\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n        var outcome1 = await MakeDriver(flagger, CreateGitCommit: true)\n            .RunTaskAsync(repo.Root, \"restore-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome1.Status);\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"restore-me\", \"flagged-work.bundle\")));\n\n        // Feature file must be gone after WorktreeResetter reset.\n        Assert.False(File.Exists(Path.Combine(repo.Root, \"tests\", \"my.test\")));\n\n        // Run 2: resume \u2014 the bundle should restore the file.\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = MakeDriver(capturing, CreateGitCommit: true, Resume: true);\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"restore-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        Assert.True(File.Exists(Path.Combine(repo.Root, \"tests\", \"my.test\")),\n            \"feature file should be restored from flagged-work bundle on resume\");\n        Assert.Contains(capturing.Invocations, inv => inv.Stage.Number == 6);\n        Assert.DoesNotContain(capturing.Invocations, inv => inv.Stage.Number <= 5);\n    }\n\n    [Fact]\n    public async Task Resume_RestoresWork_OntoAdvancedBase()\n    {\n        using var repo = CreateGitRepo();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"advance-me\", \"# Advance me\\n\");\n\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n        await MakeDriver(flagger, CreateGitCommit: true)\n            .RunTaskAsync(repo.Root, \"advance-me\");\n\n        // Advance HEAD with an unrelated commit.\n        File.WriteAllText(Path.Combine(repo.Root, \"unrelated.txt\"), \"unrelated\");\n        TestGit.Run(repo.Root, \"add\", \"unrelated.txt\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"unrelated change\");\n\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var outcome = await MakeDriver(capturing, CreateGitCommit: true, Resume: true)\n            .RunTaskAsync(repo.Root, \"advance-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        Assert.True(File.Exists(Path.Combine(repo.Root, \"tests\", \"my.test\")));\n        Assert.True(File.Exists(Path.Combine(repo.Root, \"unrelated.txt\")));\n    }\n\n    [Fact]\n    public async Task Resume_ProducesConflicts_WhenUpstreamOverlaps()\n    {\n        using var repo = CreateGitRepo();\n\n        // Seed a file both the task and the upstream commit will touch.\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"src\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"original\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"conflict-me\", \"# Conflict me\\n\");\n        const string taskAuthored = \"task-authored version of Foo.cs\";\n\n        var overwriter = new FileWritingSubagentRunner(\n            writeAtStage: 5, file: \"src/Foo.cs\", content: taskAuthored);\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: overwriter);\n        await MakeDriver(flagger, CreateGitCommit: true)\n            .RunTaskAsync(repo.Root, \"conflict-me\");\n\n        // Advance HEAD with a conflicting edit.\n        File.WriteAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"), \"upstream conflicting edit\");\n        TestGit.Run(repo.Root, \"add\", \"src/Foo.cs\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"upstream change to Foo.cs\");\n\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var outcome = await MakeDriver(capturing, CreateGitCommit: true, Resume: true)\n            .RunTaskAsync(repo.Root, \"conflict-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        var fooContent = File.ReadAllText(Path.Combine(repo.Root, \"src\", \"Foo.cs\"));\n        Assert.DoesNotContain(\"<<<<<<<\", fooContent);\n        Assert.DoesNotContain(\"=======\", fooContent);\n        Assert.DoesNotContain(\">>>>>>>\", fooContent);\n        // Without restore the file still holds \"upstream conflicting edit\".\n        Assert.Contains(taskAuthored, fooContent);\n    }\n\n    [Fact]\n    public async Task FlaggedWorkBundle_Deleted_OnSuccessfulCommit()\n    {\n        using var repo = CreateGitRepo();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"cleanup-me\", \"# Cleanup me\\n\");\n\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n        await MakeDriver(flagger, CreateGitCommit: true)\n            .RunTaskAsync(repo.Root, \"cleanup-me\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"cleanup-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")));\n\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var outcome = await MakeDriver(capturing, CreateGitCommit: true, Resume: true)\n            .RunTaskAsync(repo.Root, \"cleanup-me\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"flagged-work.bundle should be deleted after successful commit\");\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"flagged-work.json should be deleted after successful commit\");\n    }\n\n    [Fact]\n    public async Task FlaggedWorkBundle_Deleted_OnReAdd()\n    {\n        using var repo = CreateGitRepo();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"readd-me\", \"# Original task\\n\");\n\n        var fileWriter = new FileWritingSubagentRunner(writeAtStage: 5, file: \"tests/my.test\");\n        var flagger = new FlagAtStageSubagentRunner(flagAtStage: 6, inner: fileWriter);\n        await MakeDriver(flagger, CreateGitCommit: true)\n            .RunTaskAsync(repo.Root, \"readd-me\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"readd-me\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")));\n\n        // Simulate re-add: overwrite task markdown.\n        repo.WriteTask(\"readd-me\", \"# Completely new task\\n\");\n\n        var capturing = new CapturingSubagentRunner();\n        capturing.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        await MakeDriver(capturing, CreateGitCommit: true, Resume: true)\n            .RunTaskAsync(repo.Root, \"readd-me\");\n\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.bundle\")),\n            \"stale flagged-work.bundle should be deleted when task is re-added\");\n        Assert.False(File.Exists(Path.Combine(taskDir, \"flagged-work.json\")),\n            \"stale flagged-work.json should be deleted when task is re-added\");\n    }\n\n    // ---- helpers ----\n\n    private static TestRepository CreateGitRepo()\n    {\n        var repo = TestRepository.Create();\n        TestGit.Run(repo.Root, \"init\");\n        TestGit.Run(repo.Root, \"config\", \"user.email\", \"test@test\");\n        TestGit.Run(repo.Root, \"config\", \"user.name\", \"Test\");\n        File.WriteAllText(Path.Combine(repo.Root, \"README.md\"), \"# Test\");\n        TestGit.Run(repo.Root, \"add\", \"README.md\");\n        TestGit.Run(repo.Root, \"commit\", \"-m\", \"initial\");\n        return repo;\n    }\n\n    private static RelayDriver MakeDriver(ISubagentRunner subagents,\n        bool CreateGitCommit = false, bool Resume = false)\n    {\n        var deps = RelayDriverDependencies.ForTests(\n            subagents,\n            new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")),\n            new InMemoryRelayEventSink());\n        return new RelayDriver(deps,\n            new RelayDriverOptions(CreateGitCommit: CreateGitCommit, Resume: Resume));\n    }\n\n    private sealed class FileWritingSubagentRunner : ISubagentRunner\n    {\n        private readonly int _writeAtStage;\n        private readonly string _file;\n        private readonly string _content;\n        private readonly ScriptedSubagentRunner _inner = new();\n\n        public FileWritingSubagentRunner(int writeAtStage, string file, string? content = null)\n        {\n            _writeAtStage = writeAtStage;\n            _file = file;\n            _content = content ?? \"authored content\";\n        }\n\n        public async Task<SubagentResult> RunAsync(\n            StageInvocation invocation, CancellationToken ct = default)\n        {\n            if (invocation.Stage.Number == _writeAtStage)\n            {\n                var fullPath = Path.Combine(invocation.TargetRoot, _file);\n                Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);\n                await File.WriteAllTextAsync(fullPath, _content, ct);\n            }\n            return await _inner.RunAsync(invocation, ct);\n        }\n    }\n}\n",
+        "file_path": "tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 102
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 2.475,
+      "prompt_tokens_est": 42984,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 66
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 3.542,
+      "prompt_tokens_est": 43044,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet build tests/VisualRelay.Tests/VisualRelay.Tests.csproj -p:UseSharedCompilation=false 2>&1 | tail -10",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 8.337,
+      "result_length": 565
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 3.915,
+      "prompt_tokens_est": 43347,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverResumeTests.FlagAsync_CreatesFlaggedWorkBundle|FullyQualifiedName~RelayDriverResumeTests.Resume_RestoresWork|FullyQualifiedName~RelayDriverResumeTests.Resume_ProducesConflicts|FullyQualifiedName~RelayDriverResumeTests.FlaggedWorkBundle_Deleted|FullyQualifiedName~MainWindowViewModelTests.ResumeSelectedCommand\" 2>&1 | tail -40",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 13.314,
+      "result_length": 2685
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 5.23,
+      "prompt_tokens_est": 44219,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Verify tests compile and fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 379
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 5.918,
+      "prompt_tokens_est": 44490,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

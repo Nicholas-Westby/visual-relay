@@ -51,6 +51,8 @@ public sealed partial class RelayDriver
         }
 
         StampTaskInputHash(statusEntries, currentTaskInputHash);
+        if (!mismatch && firstStageToRun == 1)
+            FlaggedWorkStore.Delete(taskDirectory);
         return mismatch;
     }
 

@@ -216,6 +216,7 @@ public sealed partial class RelayDriver
         }
         MarkStatus(statusEntries, 11, "Done");
         await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+        FlaggedWorkStore.Delete(taskDirectory);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
     }
 }

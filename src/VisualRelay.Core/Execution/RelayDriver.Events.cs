@@ -106,6 +106,10 @@ public sealed partial class RelayDriver
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             }
 
+            // Capture flagged working tree for resume (best-effort).
+            await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage,
+                _dependencies.GitInvoker, DateTimeOffset.UtcNow, cancellationToken);
+
             await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,

@@ -139,7 +139,13 @@ public sealed partial class SplitGuardVerificationTests
         // (BackendConfigGeneratorTests.Selectable.cs: Override_WinsWhenKeyPresent,
         // Override_IgnoredWhenKeyAbsent, SelectableModels_PerTierShapeAndCapped,
         // GetTierRows_ExposesIsEditableAndSelectableModels).
-        const int baseline = 164;
+        // Bumped 163→164 on 2026-06-29: fix-verify baseline catchup for
+        // Selectable.cs [Fact] that landed without a bump.
+        // Bumped 164→176 on 2026-07-01: resume-restores-flagged-work added
+        // RelayDriverResumeTests.FlaggedWork.cs (9 [Fact]s) and
+        // RelayDriverResumeTests.FlaggedWork2.cs (3 [Fact]s) to the
+        // RelayDriverResumeTests oversized family.
+        const int baseline = 176;
 
         string[] prefixes =
         [

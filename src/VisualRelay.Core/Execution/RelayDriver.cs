@@ -59,16 +59,16 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, config, ledger, seals, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
             var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
+            (firstStageToRun, var flaggedOutcome) = await RestoreFlaggedWorkIfNeededAsync(rootPath, taskId, taskDirectory, firstStageToRun, ledger, statusEntries, cancellationToken);
+            if (flaggedOutcome is not null) return flaggedOutcome;
             IReadOnlyList<string> commitMessages = [];
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             var runStartData = new Dictionary<string, string> { ["base_url"] = ModelBackend.BaseUrl, ["version"] = VersionHelper.ReadInformationalVersion() };
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
             await WarnTestFileCmdAsync(config, runId, rootPath, taskId, cancellationToken);
-
             IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // pre-run untracked snapshot
-            var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // HEAD at run-start, for squashing agent self-commits
-
+            var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
             var stage10Handled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
             var implementationFrontLoaded = false;

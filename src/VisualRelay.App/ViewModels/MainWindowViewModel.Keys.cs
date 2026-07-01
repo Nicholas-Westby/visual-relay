@@ -72,6 +72,7 @@ public partial class MainWindowViewModel
     /// </summary>
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyPropertyChangedFor(nameof(HfGateMessage))]
     [NotifyPropertyChangedFor(nameof(ShowHfGate))]

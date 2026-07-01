@@ -79,6 +79,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyPropertyChangedFor(nameof(PauseButtonText))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
@@ -91,6 +92,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenNewTaskDialogCommand))]
@@ -102,13 +104,13 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(FollowRunningTaskCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]
     [NotifyPropertyChangedFor(nameof(IsViewingDifferentTaskDuringRun))]
     [NotifyPropertyChangedFor(nameof(ViewingRunContextText))]
     private TaskRowViewModel? _selectedTask;
-
     [ObservableProperty]
     private bool _needsInitialization;
 
@@ -121,10 +123,8 @@ public partial class MainWindowViewModel : ViewModelBase
     private string? _configDiagnostic;
 
     public bool HasConfigDiagnostic => ConfigDiagnostic is not null;
-
     // Set when a Run was blocked by a missing config so guided init can resume it.
     private string? _pendingRunTaskId;
-
     [ObservableProperty]
     private string _statusText = "Idle";
 
@@ -137,6 +137,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
     [NotifyPropertyChangedFor(nameof(TaskListTitle))]
     [NotifyPropertyChangedFor(nameof(TaskListToggleText))]
@@ -144,12 +145,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string _selectedTaskMetricLabel = "No run history";
-
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelectedTaskError))]
     [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]
     private string? _selectedTaskError;
-
     public bool HasSelectedTaskError => !string.IsNullOrEmpty(SelectedTaskError);
 
     // ── Authoring ────────────────────────────────────────────────────────
@@ -193,6 +192,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResumeSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]

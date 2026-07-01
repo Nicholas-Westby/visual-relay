@@ -17,6 +17,10 @@ internal static partial class TaskCompletionArchive
         if (task is null)
             return null;
 
+        // Best-effort cleanup of any flagged-work snapshot.
+        var taskDirectory = Path.Combine(rootPath, ".relay", taskId);
+        try { Execution.FlaggedWorkStore.Delete(taskDirectory); } catch { /* best-effort */ }
+
         if (!File.Exists(task.MarkdownPath))
         {
             // Source gone — check whether destination already exists.
