@@ -1,0 +1,519 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T18:14:36.903909+00:00",
+  "task": "# Relay stage 2: Research\nTask: resilient-auto-include-missing-files\nWorking directory: /tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files\n\n## Task input\n# Make git auto-include resilient to missing files (TOCTOU race)\n\n## Problem\n\nStage\u202f11 (Commit) fails because the auto-include pass in `GitCommitter.CommitAsync`\nblindly passes every path returned by `CaptureUntrackedSnapshotAsync` straight to\n`git add --`.  The snapshot (`git ls-files --others --exclude-standard`) and the\n`git add` call are not atomic: a file can disappear between the two, producing\n\n    git add auto-include failed (git exit\u202f128):\n    fatal: pathspec '\"llm-tasks/restarted-task-shows-two-active-stages/\n    Screenshot 2026-07-01 at 9.59.05\u202fAM.png\"' did not match any files\n\nThe path contains a U+202F NARROW NO-BREAK SPACE between the time and \"AM\" \u2014\nthat character is legitimate in macOS filenames and is emitted by the app's built-in\n`ControlScreenshot` feature.  The current code has no `File.Exists` gate, so every\nfile that passes the filter goes straight into a single `git add -- <path> \u2026`\ninvocation.  If any path is missing the whole commit fails.\n\nAdditionally, the `IsUnderTasksDir` helper uses `Path.GetFullPath` + `Path.Combine`\nwhich on macOS can produce NFC-normalised paths while the filesystem delivers\nNFD.  For U+202F there is no decomposition so this is not the active trigger,\nbut the check is fragile for any composed character that *does* differ.\n\n## Root cause\n\n1. **TOCTOU race** \u2014 `GitCommitter.cs` lines\u202f130\u2011147 build `newAuthored` from\n   `git ls-files --others` output, then unconditionally `git add --` the entire\n   list.  There is no existence check between the snapshot and the add.\n\n2. **Normalisation-sensitive directory guard** \u2014 `IsUnderTasksDir` (duplicated in\n   `GitCommitter.Untracked.cs` and `WorktreeResetter.cs`) resolves relative\n   paths through `Path.GetFullPath`, which may normalise NFC while macOS\n   filesystem paths are NFD.  This can cause `StartsWith` to miss files that\n   begin with the tasks-dir prefix.\n\n## Fix\n\n### 1.  Resilience in the auto-include loop (`GitCommitter.cs`  \u2190 primary)\n\nBefore adding each candidate path to `newAuthored`, verify the file or directory\nexists on disk:\n\n```csharp\nvar full = Path.Combine(rootPath, path);\nif (!File.Exists(full) && !Directory.Exists(full))\n    continue;          // skip vanished file \u2014 don't fail the whole commit\n```\n\nApply the same guard **before** the single-batch `git add` so that stale entries\ncannot sneak in.  Open question: should we also try `git add --ignore-missing`\nonly after the existence check?  (Answer: no \u2014 `--ignore-missing` is a more\nrecent git option and would mask real problems.  Existence check alone is\nsufficient and deterministic.)\n\n### 2.  Deterministic tasks-dir exclusion (`GitCommitter.Untracked.cs`  \u2190 secondary)\n\nAdd a **relative-path prefix** check *before* the full-path resolution.  This\ntotally avoids any normalisation concerns because the relative paths come from\nthe same `git ls-files` invocation:\n\n```csharp\nif (!string.IsNullOrEmpty(tasksDir) &&\n    (relativePath == tasksDir ||\n     relativePath.StartsWith(tasksDir + \"/\", StringComparison.Ordinal) ||\n     relativePath.StartsWith(tasksDir + \"\\\\\", StringComparison.Ordinal)))\n    return true;\n```\n\nKeep the existing full-path resolution as a fallback, but the relative check\nserves as the fast, deterministic first line.  Apply the same change to both\n`GitCommitter.Untracked.cs` and `WorktreeResetter.cs`.\n\n### 3.  Tests\n\nAdd the following facts to `GitCommitterAutoIncludeTests.cs` (or a new partial\nfile `GitCommitterAutoIncludeTests.Resilience.cs`):\n\n| Test | What it proves |\n|------|---------------|\n| `CommitAsync_SkipsVanishedFile_BetweenSnapshotAndAdd` | Auto-include does not fail when a file listed by `ls-files` is deleted before `git add`.  The commit still succeeds with only the extant files. |\n| `CommitAsync_AutoIncludesFileWithUnicodeNarrowNoBreakSpace` | A newly authored file whose name contains U+202F is successfully auto-included (proves the path works end\u2011to\u2011end). |\n| `CommitAsync_ExcludesTasksDirFileWithUnicodeInPath` | A file dropped under `llm-tasks/` whose path contains U+202F is excluded from auto-include (the tasks-dir guard works regardless of Unicode). |\n| `CaptureUntrackedSnapshotAsync_FindsFileWithNarrowNoBreakSpace` | The snapshot helper itself correctly captures files with U+202F in the name (no filtering at the `ls-files` level). |\n\nAll tests must be **deterministic** \u2014 create and delete files with known names\ninside a disposable `TestRepository`, never depend on pre-existing repo state.\n\n## Constraints\n\n- Never weaken, skip, or delete any existing test.\n- The fix must work on macOS where the filesystem normalises to NFD and where\n  the screenshot files are written with a U+202F character.\n- The commit must still fail if a **real** error occurs (e.g. permission denied);\n  only missing-file errors must be silently skipped.\n- `FindUncommittedAuthoredFilesAsync` must continue to exclude tasks-dir files\n  (the existing test `CommitAsync_ExcludesTasksDirFileFromAutoInclude_WhenCreatedMidRun`\n  in `GitCommitterAutoIncludeTests.TasksDir.cs` must keep passing).\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Make the auto-include pass in GitCommitter.CommitAsync resilient to the TOCTOU race between git ls-files --others (snapshot) and git add -- (action), where a file deleted between the two calls causes the entire commit to fail. Also fix the IsUnderTasksDir helper that uses Path.GetFullPath + StartsWith, which can misfire on macOS due to NFC/NFD normalisation. Solution options range from a simple File.Exists gate (Option A), through per-file git add with granular error handling (Option B), to adding --ignore-missing as a safety net (Option C).\", \"options\": [\"Option A \u2014 Existence gate (File.Exists/Directory.Exists) before adding paths to newAuthored and before git add, plus a relative-path prefix guard in IsUnderTasksDir to avoid normalisation issues. Simple, deterministic, no new git features.\", \"Option B \u2014 Per-file git add with individual error handling: iterate each candidate, run git add -- per file, skip missing-file errors, rethrow others. Granular but O(n) process overhead.\", \"Option C \u2014 git add --ignore-missing batched, with existence gate as fallback. Defence-in-depth but over-engineered and depends on a newer git option.\"] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"findings\": string, \"constraints\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"findings\": \"The TOCTOU race is in `GitCommitter.cs` lines 127\u2013147: `CommitAsync` calls `CaptureUntrackedSnapshotAsync` (which runs `git ls-files --others --exclude-standard`), builds a `newAuthored` list by filtering against `preRunUntracked`, `IsInternalArtifact`, and `IsUnderTasksDir`, then passes the entire list to a single `git add --` (line 141). There is zero existence checking between snapshot and add \u2014 if any file vanished in between, `git add` exits 128 and the whole commit fails.  The `IsUnderTasksDir` helper appears in three files (`GitCommitter.Untracked.cs` line 51, `WorktreeResetter.cs` line 106, `WorktreeFilter.cs` line 240), all using `Path.GetFullPath(Path.Combine(rootPath, relativePath))` + `StartsWith` which on macOS can produce NFC-normalised strings from NFD filesystem paths, causing missed matches.  No existing code checks `File.Exists`/`Directory.Exists` in the auto-include path (though `ResolveManifestFilesToStageAsync` at line 236 already does so for manifest files).  15 existing tests span 4 partial-class files (`GitCommitterAutoIncludeTests.cs` 6 tests, `TasksDir.cs` 1, `Snapshot.cs` 6, `FirstInstance.cs` 2), all using `TestRepository.Create()` (temp dir with `git init`) and shared `InitGitRepo`/`StageAndCommitSeed` helpers.  The existing `CommitAsync_ExcludesTasksDirFileFromAutoInclude_WhenCreatedMidRun` test in `TasksDir.cs` exercises the tasks-dir guard and must keep passing.  `WorktreeResetter.cs` already has a `File.Exists` check before `File.Delete` (line 50) but not before listing.  The path in the error message contains U+202F NARROW NO-BREAK SPACE \u2014 a legitimate macOS filename character that must be handled.\",\n  \"constraints\": [\n    \"Never weaken, skip, or delete any existing test (15 existing tests across 4 partial files).\",\n    \"Fix must work on macOS where the filesystem normalises to NFD and screenshot files contain U+202F NARROW NO-BREAK SPACE.\",\n    \"Real errors (permission denied, etc.) must still fail the commit; only missing-file errors may be silently skipped.\",\n    \"FindUncommittedAuthoredFilesAsync must continue to exclude tasks-dir files (existing test CommitAsync_ExcludesTasksDirFileFromAutoInclude_WhenCreatedMidRun must keep passing).\",\n    \"All new tests must be deterministic \u2014 create/delete files with known names inside a disposable TestRepository, never depend on pre-existing repo state.\",\n    \"Relative-path prefix check in IsUnderTasksDir must be added before (not replacing) the existing full-path resolution fallback, in all three copies (GitCommitter.Untracked.cs, WorktreeResetter.cs, WorktreeFilter.cs).\",\n    \"Option A from ideation (existence gate + relative-path prefix) was selected \u2014 simple, deterministic, no new git features.\",\n    \"New tests required: CommitAsync_SkipsVanishedFile_BetweenSnapshotAndAdd, CommitAsync_AutoIncludesFileWithUnicodeNarrowNoBreakSpace, CommitAsync_ExcludesTasksDirFileWithUnicodeInPath, CaptureUntrackedSnapshotAsync_FindsFileWithNarrowNoBreakSpace.\",\n    \"The existing ResolveManifestFilesToStageAsync (GitCommitter.cs line 236) already uses File.Exists/Directory.Exists \u2014 the same pattern should be applied to the auto-include loop.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 15,
+    "tool_calls_total": 25,
+    "tool_calls_succeeded": 24,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "list_files": {
+        "succeeded": 2,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 15,
+    "total_llm_time_s": 50.152,
+    "prompt_cache": {
+      "cached_tokens": 340992,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.838,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 2,
+      "completed": 2,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.814,
+      "prompt_tokens_est": 5337,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 384,
+      "error": "error: Path '/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255' resolves to /private/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255, which is outside base directory /private/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files. You are not allowed to access that directory by any means."
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.509,
+      "prompt_tokens_est": 5534,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": true,
+      "duration_s": 0.159,
+      "result_length": 7470
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.848,
+      "prompt_tokens_est": 7798,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "."
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 5245
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.747,
+      "prompt_tokens_est": 9358,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GitCommitter",
+        "path": ".",
+        "include": "*.cs",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.124,
+      "result_length": 7931
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "IsUnderTasksDir",
+        "path": ".",
+        "include": "*.cs",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.106,
+      "result_length": 1043
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "WorktreeResetter",
+        "path": ".",
+        "include": "*.cs",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.11,
+      "result_length": 1909
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.669,
+      "prompt_tokens_est": 12248,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13248
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3948
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/WorktreeResetter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5379
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.863,
+      "prompt_tokens_est": 17698,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13793
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.TasksDir.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3654
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8699
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.734,
+      "prompt_tokens_est": 23961,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/WorktreeFilter.cs",
+        "offset": 120,
+        "limit": 130
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7302
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.FirstInstance.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5659
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.298,
+      "prompt_tokens_est": 27049,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "swival.toml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1768
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/resilient-auto-include-missing-files/pinned-swival.toml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1768
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.502,
+      "prompt_tokens_est": 28464,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/resilient-auto-include-missing-files/stage1-attempt1.input.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2023
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/resilient-auto-include-missing-files/stage1-attempt1.report.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9571
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.303,
+      "prompt_tokens_est": 32059,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class TestRepository",
+        "include": "*.cs",
+        "path": ".",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.129,
+      "result_length": 116
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class TestGit",
+        "include": "*.cs",
+        "path": ".",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.11,
+      "result_length": 90
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 1.923,
+      "prompt_tokens_est": 32211,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12082
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestGit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1445
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 7.605,
+      "prompt_tokens_est": 35521,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Record findings from codebase investigation",
+          "Document all constraints"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 181
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.975,
+      "prompt_tokens_est": 36240,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/WorktreeFilter.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2376
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 1.949,
+      "prompt_tokens_est": 37230,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Record findings from codebase investigation",
+          "Document all constraints"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 180
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 8.414,
+      "prompt_tokens_est": 37329,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

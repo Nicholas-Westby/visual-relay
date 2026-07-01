@@ -132,16 +132,35 @@ internal static partial class GitCommitter
             {
                 if (!preRunUntracked.Contains(path) && !IsInternalArtifact(path) && !IsUnderTasksDir(rootPath, path, tasksDir))
                 {
+                    // Gate 1: skip paths that vanished between the snapshot and
+                    // now (TOCTOU race — a file deleted between git ls-files and
+                    // git add would cause the whole commit to fail).
+                    var full = Path.Combine(rootPath, path);
+                    if (!File.Exists(full) && !Directory.Exists(full))
+                        continue;
                     newAuthored.Add(path);
                 }
             }
 
             if (newAuthored.Count > 0)
             {
-                var addNew = await GitAsync(gi, rootPath, ["add", "--", .. newAuthored], cancellationToken);
-                if (addNew.ExitCode != 0)
+                // Gate 2: re-check existence just before git add — the TOCTOU
+                // window is still open.  Build a list of only extant paths.
+                var extant = new List<string>(newAuthored.Count);
+                foreach (var path in newAuthored)
                 {
-                    return await FailAsync($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
+                    var full = Path.Combine(rootPath, path);
+                    if (File.Exists(full) || Directory.Exists(full))
+                        extant.Add(path);
+                }
+
+                if (extant.Count > 0)
+                {
+                    var addNew = await GitAsync(gi, rootPath, ["add", "--", .. extant], cancellationToken);
+                    if (addNew.ExitCode != 0)
+                    {
+                        return await FailAsync($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
+                    }
                 }
             }
         }

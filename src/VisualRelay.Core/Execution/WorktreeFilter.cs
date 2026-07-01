@@ -240,6 +240,14 @@ internal static partial class WorktreeFilter
     private static bool IsUnderTasksDir(string rootPath, string relativePath, string? tasksDir)
     {
         if (string.IsNullOrEmpty(tasksDir)) return false;
+        // Deterministic relative-path prefix check — avoids NFC/NFD normalisation
+        // mismatches on macOS where Path.GetFullPath may normalise while the
+        // filesystem delivers NFD paths.
+        if (relativePath == tasksDir
+            || relativePath.StartsWith(tasksDir + "/", StringComparison.Ordinal)
+            || relativePath.StartsWith(tasksDir + "\\", StringComparison.Ordinal))
+            return true;
+        // Fallback: resolve to full paths.
         var fullPath = Path.GetFullPath(Path.Combine(rootPath, relativePath));
         var dirFullPath = Path.GetFullPath(Path.Combine(rootPath, tasksDir));
         return fullPath.StartsWith(dirFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)

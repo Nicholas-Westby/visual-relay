@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T18:13:39.901380+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: resilient-auto-include-missing-files\nWorking directory: /tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files\n\n## Task input\n# Make git auto-include resilient to missing files (TOCTOU race)\n\n## Problem\n\nStage\u202f11 (Commit) fails because the auto-include pass in `GitCommitter.CommitAsync`\nblindly passes every path returned by `CaptureUntrackedSnapshotAsync` straight to\n`git add --`.  The snapshot (`git ls-files --others --exclude-standard`) and the\n`git add` call are not atomic: a file can disappear between the two, producing\n\n    git add auto-include failed (git exit\u202f128):\n    fatal: pathspec '\"llm-tasks/restarted-task-shows-two-active-stages/\n    Screenshot 2026-07-01 at 9.59.05\u202fAM.png\"' did not match any files\n\nThe path contains a U+202F NARROW NO-BREAK SPACE between the time and \"AM\" \u2014\nthat character is legitimate in macOS filenames and is emitted by the app's built-in\n`ControlScreenshot` feature.  The current code has no `File.Exists` gate, so every\nfile that passes the filter goes straight into a single `git add -- <path> \u2026`\ninvocation.  If any path is missing the whole commit fails.\n\nAdditionally, the `IsUnderTasksDir` helper uses `Path.GetFullPath` + `Path.Combine`\nwhich on macOS can produce NFC-normalised paths while the filesystem delivers\nNFD.  For U+202F there is no decomposition so this is not the active trigger,\nbut the check is fragile for any composed character that *does* differ.\n\n## Root cause\n\n1. **TOCTOU race** \u2014 `GitCommitter.cs` lines\u202f130\u2011147 build `newAuthored` from\n   `git ls-files --others` output, then unconditionally `git add --` the entire\n   list.  There is no existence check between the snapshot and the add.\n\n2. **Normalisation-sensitive directory guard** \u2014 `IsUnderTasksDir` (duplicated in\n   `GitCommitter.Untracked.cs` and `WorktreeResetter.cs`) resolves relative\n   paths through `Path.GetFullPath`, which may normalise NFC while macOS\n   filesystem paths are NFD.  This can cause `StartsWith` to miss files that\n   begin with the tasks-dir prefix.\n\n## Fix\n\n### 1.  Resilience in the auto-include loop (`GitCommitter.cs`  \u2190 primary)\n\nBefore adding each candidate path to `newAuthored`, verify the file or directory\nexists on disk:\n\n```csharp\nvar full = Path.Combine(rootPath, path);\nif (!File.Exists(full) && !Directory.Exists(full))\n    continue;          // skip vanished file \u2014 don't fail the whole commit\n```\n\nApply the same guard **before** the single-batch `git add` so that stale entries\ncannot sneak in.  Open question: should we also try `git add --ignore-missing`\nonly after the existence check?  (Answer: no \u2014 `--ignore-missing` is a more\nrecent git option and would mask real problems.  Existence check alone is\nsufficient and deterministic.)\n\n### 2.  Deterministic tasks-dir exclusion (`GitCommitter.Untracked.cs`  \u2190 secondary)\n\nAdd a **relative-path prefix** check *before* the full-path resolution.  This\ntotally avoids any normalisation concerns because the relative paths come from\nthe same `git ls-files` invocation:\n\n```csharp\nif (!string.IsNullOrEmpty(tasksDir) &&\n    (relativePath == tasksDir ||\n     relativePath.StartsWith(tasksDir + \"/\", StringComparison.Ordinal) ||\n     relativePath.StartsWith(tasksDir + \"\\\\\", StringComparison.Ordinal)))\n    return true;\n```\n\nKeep the existing full-path resolution as a fallback, but the relative check\nserves as the fast, deterministic first line.  Apply the same change to both\n`GitCommitter.Untracked.cs` and `WorktreeResetter.cs`.\n\n### 3.  Tests\n\nAdd the following facts to `GitCommitterAutoIncludeTests.cs` (or a new partial\nfile `GitCommitterAutoIncludeTests.Resilience.cs`):\n\n| Test | What it proves |\n|------|---------------|\n| `CommitAsync_SkipsVanishedFile_BetweenSnapshotAndAdd` | Auto-include does not fail when a file listed by `ls-files` is deleted before `git add`.  The commit still succeeds with only the extant files. |\n| `CommitAsync_AutoIncludesFileWithUnicodeNarrowNoBreakSpace` | A newly authored file whose name contains U+202F is successfully auto-included (proves the path works end\u2011to\u2011end). |\n| `CommitAsync_ExcludesTasksDirFileWithUnicodeInPath` | A file dropped under `llm-tasks/` whose path contains U+202F is excluded from auto-include (the tasks-dir guard works regardless of Unicode). |\n| `CaptureUntrackedSnapshotAsync_FindsFileWithNarrowNoBreakSpace` | The snapshot helper itself correctly captures files with U+202F in the name (no filtering at the `ls-files` level). |\n\nAll tests must be **deterministic** \u2014 create and delete files with known names\ninside a disposable `TestRepository`, never depend on pre-existing repo state.\n\n## Constraints\n\n- Never weaken, skip, or delete any existing test.\n- The fix must work on macOS where the filesystem normalises to NFD and where\n  the screenshot files are written with a U+202F character.\n- The commit must still fail if a **real** error occurs (e.g. permission denied);\n  only missing-file errors must be silently skipped.\n- `FindUncommittedAuthoredFilesAsync` must continue to exclude tasks-dir files\n  (the existing test `CommitAsync_ExcludesTasksDirFileFromAutoInclude_WhenCreatedMidRun`\n  in `GitCommitterAutoIncludeTests.TasksDir.cs` must keep passing).\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "This task is well-defined by the problem description. Since filesystem access is sandbox-restricted, I'll frame the task entirely from the detailed specification provided.\n\n---\n\n## Task framing\n\n**Goal:** Make the git auto-include pass in `GitCommitter.CommitAsync` resilient to the TOCTOU race between `git ls-files --others` (snapshot) and `git add --` (action), where a file can be deleted between the two calls, causing the entire commit to fail. A secondary concern is the fragile `IsUnderTasksDir` helper that uses `Path.GetFullPath` + `StartsWith`, which can misfire on macOS due to NFC/NFD normalisation differences.\n\n**Success criteria:**\n1. A file that vanishes between snapshot and `git add` is silently skipped \u2014 the commit succeeds with remaining files.\n2. Files with U+202F (NARROW NO-BREAK SPACE) in their names are handled correctly end-to-end.\n3. Tasks-dir exclusion (`llm-tasks/\u2026`) works deterministically regardless of Unicode normalisation.\n4. Real errors (e.g. permission denied) still fail the commit \u2014 only missing-file errors are swallowed.\n5. No existing tests are weakened, skipped, or deleted.\n\n---\n\n## Solution options\n\n### Option A \u2014 Existence gate + relative-path prefix guard (the primary proposal)\n\nAdd a `File.Exists` / `Directory.Exists` check before each candidate path enters the `newAuthored` list, and another existence gate just before the single-batch `git add`. Separately, add a relative-path prefix check (`relativePath.StartsWith(tasksDir + \"/\")`) before the full-path resolution in both `GitCommitter.Untracked.cs` and `WorktreeResetter.cs`, avoiding any NFC/NFD normalisation.\n\n**Pros:**\n- Simple, deterministic, no new git features required.\n- Existence check is the canonical way to guard against TOCTOU.\n- Relative-path prefix totally sidesteps normalisation issues for the common case.\n- Works on all platforms (macOS, Linux, Windows).\n\n**Cons:**\n- Two existence checks (list-building + add) add a small overhead per file.\n- The full-path fallback in `IsUnderTasksDir` still uses the fragile `Path.GetFullPath` path \u2014 edge cases with composed Unicode outside the tasks-dir check could still bite.\n\n---\n\n### Option B \u2014 Per-file `git add` with individual error handling\n\nInstead of a single `git add -- <all paths>`, iterate over each candidate path and run a separate `git add -- <path>` per file, checking the exit code. Skip paths that fail with \"did not match any files\"; rethrow for other errors (permission denied, etc.).\n\n**Pros:**\n- Granular error handling \u2014 a missing file never poisons the batch.\n- Naturally handles other per-file failures without losing the whole commit.\n- No existence check needed (the `git add` itself is the authoritative test).\n\n**Cons:**\n- Many individual `git add` calls \u2014 O(n) process invocations instead of O(1), significant perf hit when auto-including hundreds of files.\n- More complex error parsing (distinguishing \"missing\" from \"permission denied\" from \"bad path\").\n- Changes the current batch-add architecture substantially.\n\n---\n\n### Option C \u2014 `git add --ignore-missing` batched, with existence gate as fallback\n\nUse `git add --ignore-missing -- <paths>` which (in newer git versions) silently skips non-existent paths. Gate this behind a `File.Exists` check on each path anyway, so that the `--ignore-missing` flag is only a safety net. Keep the relative-path prefix guard for `IsUnderTasksDir`.\n\n**Pros:**\n- Still a single `git add` call \u2014 no performance hit.\n- `--ignore-missing` acts as a defence-in-depth safety net beyond the existence check.\n- Minimal change to the batching logic.\n\n**Cons:**\n- `--ignore-missing` is a more recent git option (not available on very old git versions).\n- Over-engineered: the existence check alone suffices; `--ignore-missing` adds a second mechanism that could mask genuinely missing files the developer should know about.\n- Two independent paths for the same fix is harder to test and reason about.\n\n---\n\n```json\n{ \"summary\": \"Make the auto-include pass in GitCommitter.CommitAsync resilient to the TOCTOU race between git ls-files --others (snapshot) and git add -- (action), where a file deleted between the two calls causes the entire commit to fail. Also fix the IsUnderTasksDir helper that uses Path.GetFullPath + StartsWith, which can misfire on macOS due to NFC/NFD normalisation. Solution options range from a simple File.Exists gate (Option A), through per-file git add with granular error handling (Option B), to adding --ignore-missing as a safety net (Option C).\", \"options\": [\"Option A \u2014 Existence gate (File.Exists/Directory.Exists) before adding paths to newAuthored and before git add, plus a relative-path prefix guard in IsUnderTasksDir to avoid normalisation issues. Simple, deterministic, no new git features.\", \"Option B \u2014 Per-file git add with individual error handling: iterate each candidate, run git add -- per file, skip missing-file errors, rethrow others. Granular but O(n) process overhead.\", \"Option C \u2014 git add --ignore-missing batched, with existence gate as fallback. Defence-in-depth but over-engineered and depends on a newer git option.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 5,
+    "tool_calls_total": 5,
+    "tool_calls_succeeded": 0,
+    "tool_calls_failed": 5,
+    "tool_calls_by_name": {
+      "list_files": {
+        "succeeded": 0,
+        "failed": 4
+      },
+      "read_file": {
+        "succeeded": 0,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 5,
+    "total_llm_time_s": 28.794,
+    "prompt_cache": {
+      "cached_tokens": 23808,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.002,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.898,
+      "prompt_tokens_est": 5069,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 308,
+      "error": "error: Path '/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files' resolves to /private/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 308,
+      "error": "error: Path '/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files' resolves to /private/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.684,
+      "prompt_tokens_est": 5601,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 202,
+      "error": "error: Path '.' resolves to /private/tmp/nix-shell.DMruMz/visual-relay/wt/76dad813448f/plan-20260701181255/resilient-auto-include-missing-files, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.496,
+      "prompt_tokens_est": 5849,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": ".swival"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 37,
+      "error": "error: path does not exist: \".swival\""
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 1.51,
+      "prompt_tokens_est": 5895,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 88,
+      "error": "error: Path '/' resolves to /, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 19.206,
+      "prompt_tokens_est": 5953,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
