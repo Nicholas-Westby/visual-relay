@@ -83,6 +83,20 @@ public sealed class NonoProfileStructureTests
     }
 
     [Fact]
+    public void VrGuardProfile_HasUnityEntries()
+    {
+        var profilePath = ResolveProfilePath();
+        using var doc = JsonDocument.Parse(File.ReadAllText(profilePath));
+
+        Assert.True(doc.RootElement.TryGetProperty("filesystem", out var fs));
+        Assert.True(fs.TryGetProperty("allow", out var allow));
+        var paths = CollectPaths(allow);
+        Assert.Contains(paths, p => p == "$HOME/Library/Unity");
+        Assert.Contains(paths, p => p == "$HOME/Library/Application Support/Unity");
+        Assert.Contains(paths, p => p == "$HOME/Library/Application Support/UnityHub");
+    }
+
+    [Fact]
     public void VrGuardProfile_GrantsCargoHome_NotJustRegistryAndGit()
     {
         // Cargo writes lock/state files (.package-cache, .package-cache-mutate,

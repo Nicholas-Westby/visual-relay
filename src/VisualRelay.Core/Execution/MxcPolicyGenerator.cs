@@ -63,6 +63,7 @@ public static class MxcPolicyGenerator
             Path.Combine(home, ".dotnet"),
             Path.Combine(home, ".cargo"),
             Path.Combine(home, ".config", "swival"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Unity"),
             Path.GetTempPath(),
         };
         return dirs.Where(d => !string.IsNullOrWhiteSpace(d) && Directory.Exists(d))

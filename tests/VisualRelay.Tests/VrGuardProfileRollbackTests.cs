@@ -32,7 +32,7 @@ public sealed class VrGuardProfileRollbackTests
         // The big writable caches the profile itself grants write to — none of
         // these should ever be snapshotted for rollback (regenerable, and they
         // exceed the budget). Component-name matches.
-        foreach (var required in new[] { ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo" })
+        foreach (var required in new[] { ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo", "Unity" })
         {
             Assert.Contains(required, patterns);
         }
