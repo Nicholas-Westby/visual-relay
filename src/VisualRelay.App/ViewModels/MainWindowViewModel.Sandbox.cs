@@ -23,6 +23,18 @@ public partial class MainWindowViewModel
     private bool _isSandboxInfoLoading;
 
     /// <summary>
+    /// Windows-only caveat text against the credential denials (the MXC sandbox
+    /// may not enforce them yet). Empty/null on macOS/Linux, so the caveat row is
+    /// hidden there. See <see cref="SandboxWindowsCaveatUrl"/> for the tracker.
+    /// </summary>
+    [ObservableProperty]
+    private string? _sandboxWindowsCaveat;
+
+    /// <summary>Tracking link opened from the caveat row; null when no caveat.</summary>
+    [ObservableProperty]
+    private string? _sandboxWindowsCaveatUrl;
+
+    /// <summary>
     /// Fires the async sandbox-path inspection without blocking the UI.
     /// Called from <see cref="LoadInitialAsync"/> as a fire-and-forget;
     /// the nono group calls are subprocesses and must not hold up opening
@@ -49,6 +61,8 @@ public partial class MainWindowViewModel
                 extraAllowPaths: extraAllowPaths);
 
             IsSandboxInfoAvailable = result.IsAvailable;
+            SandboxWindowsCaveat = result.WindowsCredentialCaveat;
+            SandboxWindowsCaveatUrl = result.WindowsCredentialCaveatUrl;
 
             SandboxReadablePaths.Clear();
             SandboxWritablePaths.Clear();
@@ -67,6 +81,8 @@ public partial class MainWindowViewModel
         catch
         {
             IsSandboxInfoAvailable = false;
+            SandboxWindowsCaveat = null;
+            SandboxWindowsCaveatUrl = null;
             SandboxReadablePaths.Clear();
             SandboxWritablePaths.Clear();
             SandboxBlockedPaths.Clear();

@@ -16,6 +16,17 @@ public sealed class SandboxInspectionResult
     public IReadOnlyList<SandboxPathEntry> ReadablePaths { get; init; } = [];
     public IReadOnlyList<SandboxPathEntry> WritablePaths { get; init; } = [];
     public IReadOnlyList<SandboxPathEntry> BlockedPaths { get; init; } = [];
+
+    /// <summary>
+    /// Windows-only caveat shown against the credential denials (the MXC sandbox
+    /// may not enforce <c>deniedPaths</c> yet). <c>null</c> on macOS/Linux, where
+    /// nono genuinely enforces the denials and no caveat should appear.
+    /// </summary>
+    public string? WindowsCredentialCaveat { get; init; }
+
+    /// <summary>Tracking link for the Windows caveat; <c>null</c> when no caveat.</summary>
+    public string? WindowsCredentialCaveatUrl { get; init; }
+
     public static readonly SandboxInspectionResult Unavailable = new();
 }
 /// <summary>
@@ -25,7 +36,7 @@ public sealed class SandboxInspectionResult
 /// runtime; adding a path to vr-guard.json or to an included group shows up
 /// here with no code change.
 /// </summary>
-public static class SandboxPathInspector
+public static partial class SandboxPathInspector
 {
     /// <summary>
     /// Resolves the effective sandbox policy for the current OS.
@@ -131,27 +142,7 @@ public static class SandboxPathInspector
         return raw;
     }
 
-    private static SandboxInspectionResult BuildWindowsResult(
-        string? workspaceRoot, IReadOnlyList<string>? extraAllowPaths)
-    {
-        var entries = new List<SandboxPathEntry>();
-        foreach (var dir in MxcPolicyGenerator.DefaultWindowsCacheDirs())
-            entries.Add(new SandboxPathEntry(dir, dir, SandboxAccess.ReadWrite, "MXC cache dir"));
-        AddPerRunWritables(entries, workspaceRoot, extraAllowPaths);
-        return new SandboxInspectionResult
-        {
-            IsAvailable = true,
-            ReadablePaths = [new SandboxPathEntry(
-                "<entire filesystem except blocked paths>",
-                "<entire filesystem except blocked paths>",
-                SandboxAccess.ReadOnly, "MXC default")],
-            WritablePaths = [.. entries],
-            BlockedPaths = [new SandboxPathEntry(
-                "<writes outside listed paths are blocked>",
-                "<writes outside listed paths are blocked>",
-                SandboxAccess.Blocked, "MXC default")],
-        };
-    }
+    // BuildWindowsResult lives in the SandboxPathInspector.Windows.cs partial.
 
     private static void AddPerRunWritables(
         List<SandboxPathEntry> all, string? workspaceRoot,
@@ -168,7 +159,7 @@ public static class SandboxPathInspector
         }
     }
 
-    private static SandboxInspectionResult BuildResult(List<SandboxPathEntry> all) =>
+    internal static SandboxInspectionResult BuildResult(List<SandboxPathEntry> all) =>
         new()
         {
             IsAvailable = true,

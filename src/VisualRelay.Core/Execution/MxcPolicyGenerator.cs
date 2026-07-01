@@ -35,11 +35,39 @@ public static class MxcPolicyGenerator
         var policy = new
         {
             version = PinnedMxcVersion,
-            filesystem = new { readwritePaths },
+            filesystem = new { readwritePaths, deniedPaths = WindowsCredentialDenyDirs() },
             network = new { defaultPolicy = "allow" },
         };
         return JsonSerializer.Serialize(policy, new JsonSerializerOptions { WriteIndented = true });
     }
+
+    /// <summary>
+    /// The credential/secret locations the policy marks as
+    /// <c>filesystem.deniedPaths</c> — the Windows analogue of nono's
+    /// <c>deny_credentials</c> group. Emitted as environment-variable
+    /// placeholders and NOT existence-filtered: denials of absent paths are
+    /// harmless and forward-compatible. Where MXC honors <c>deniedPaths</c> it
+    /// takes precedence over the broader readwrite grants (a denied subtree under
+    /// <c>%APPDATA%</c> is not re-opened by the coarse cache grant); where it does
+    /// not yet, the Settings-panel Windows caveat warns the denial may be
+    /// unenforced. Covers SSH/cloud/GPG/k8s/docker dotfiles and git/netrc secrets,
+    /// the DPAPI master keys, the Credential Manager store, and Chromium profiles.
+    /// </summary>
+    public static IReadOnlyList<string> WindowsCredentialDenyDirs() => new[]
+    {
+        @"%USERPROFILE%\.ssh",
+        @"%USERPROFILE%\.aws",
+        @"%USERPROFILE%\.azure",
+        @"%USERPROFILE%\.gnupg",
+        @"%USERPROFILE%\.kube",
+        @"%USERPROFILE%\.docker",
+        @"%USERPROFILE%\.git-credentials",
+        @"%USERPROFILE%\.netrc",
+        @"%APPDATA%\Microsoft\Protect",
+        @"%LOCALAPPDATA%\Microsoft\Credentials",
+        @"%LOCALAPPDATA%\Google\Chrome\User Data",
+        @"%LOCALAPPDATA%\Microsoft\Edge\User Data",
+    };
 
     /// <summary>
     /// The Windows toolchain cache directories granted read+write, mirroring
