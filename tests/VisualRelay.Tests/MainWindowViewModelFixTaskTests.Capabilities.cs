@@ -41,8 +41,8 @@ public sealed partial class MainWindowViewModelFixTaskTests
         Assert.NotNull(fake.LastInvocation);
 
         // Capabilities must be read-only — no file writes, no command execution.
-        Assert.NotEqual("all", fake.LastInvocation.Stage.Files);
-        Assert.NotEqual("all", fake.LastInvocation.Stage.Commands);
+        Assert.Equal("none", fake.LastInvocation.Stage.Files);
+        Assert.Equal("none", fake.LastInvocation.Stage.Commands);
 
         // The happy path still works: task was created.
         Assert.True(fake.WasCalled);
@@ -77,8 +77,8 @@ public sealed partial class MainWindowViewModelFixTaskTests
         Assert.NotNull(fake.LastInvocation);
 
         // Capabilities must be read-only.
-        Assert.NotEqual("all", fake.LastInvocation.Stage.Files);
-        Assert.NotEqual("all", fake.LastInvocation.Stage.Commands);
+        Assert.Equal("none", fake.LastInvocation.Stage.Files);
+        Assert.Equal("none", fake.LastInvocation.Stage.Commands);
 
         // Error path: no task file written.
         var tasksDir = Path.Combine(repo.Root, "llm-tasks");
