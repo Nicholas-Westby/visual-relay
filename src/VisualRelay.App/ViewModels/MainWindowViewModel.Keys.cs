@@ -19,9 +19,9 @@ public partial class MainWindowViewModel
     /// <summary>Canonical five-provider list in display order.</summary>
     public static readonly IReadOnlyList<ProviderKeyRow> AllProviderKeys =
     [
-        new("Hugging Face", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
-        new("DeepSeek", "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys"),
-        new("Moonshot", "MOONSHOT_API_KEY", "https://platform.moonshot.ai/console/api-keys"),
+        new("Hugging Face (Recommended)", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
+        new("DeepSeek (Recommended)", "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys"),
+        new("Moonshot (Recommended)", "MOONSHOT_API_KEY", "https://platform.moonshot.ai/console/api-keys"),
         new("Anthropic", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"),
         new("OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
     ];
