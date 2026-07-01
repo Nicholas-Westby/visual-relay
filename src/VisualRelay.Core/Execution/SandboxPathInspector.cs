@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 namespace VisualRelay.Core.Execution;
 /// <summary>Classifies a single path entry.</summary>
@@ -53,23 +52,28 @@ public static partial class SandboxPathInspector
     {
         if (OperatingSystem.IsWindows())
             return BuildWindowsResult(workspaceRoot, extraAllowPaths);
-        var all = new List<SandboxPathEntry>();
+
+        var resolvedBinary = nonoBinary ?? PathExecutables.Find("nono");
+        if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))
+            return SandboxInspectionResult.Unavailable;
+
+        // Resolve the whole extends chain (vr-guard → swival → default) so EVERY
+        // inherited group expands — incl. the deny_* credential/keychain groups —
+        // not just vr-guard's own two. Own directives still come from the embedded
+        // profile (a registered copy `show` reads can be stale); `show` supplies
+        // only the fully-resolved group list, expanded via the existing groups path.
         var profileJson = NonoProfileEnsurer.EmbeddedContent;
+        var showJson = await RunNonoProfileShowAsync(resolvedBinary, profileJson, cancellationToken);
+        if (showJson is null)
+            return SandboxInspectionResult.Unavailable;
+        var groupEntries = await ExpandInheritedGroupsAsync(
+            showJson, name => RunNonoGroupAsync(resolvedBinary, name, cancellationToken));
+        if (groupEntries is null)
+            return SandboxInspectionResult.Unavailable;
+
+        var all = new List<SandboxPathEntry>();
         all.AddRange(ParseOwnDirectives(profileJson));
-        var groupNames = ExtractGroupIncludes(profileJson);
-        if (groupNames.Count > 0)
-        {
-            var resolvedBinary = nonoBinary ?? PathExecutables.Find("nono");
-            if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))
-                return SandboxInspectionResult.Unavailable;
-            foreach (var name in groupNames)
-            {
-                var groupJson = await RunNonoGroupAsync(resolvedBinary, name, cancellationToken);
-                if (groupJson is null)
-                    return SandboxInspectionResult.Unavailable;
-                all.AddRange(ParseGroupJson(groupJson, name));
-            }
-        }
+        all.AddRange(groupEntries);
         AddPerRunWritables(all, workspaceRoot, extraAllowPaths);
         return BuildResult(all);
     }
@@ -116,14 +120,7 @@ public static partial class SandboxPathInspector
         }
         if (root.TryGetProperty("deny", out var deny) &&
             deny.TryGetProperty("access", out var access))
-        {
-            foreach (var entry in access.EnumerateArray())
-            {
-                if (entry.ValueKind == JsonValueKind.String)
-                    entries.Add(new SandboxPathEntry(NormalizeRawForDisplay(entry.GetString()!), entry.GetString()!,
-                        SandboxAccess.Blocked, groupName));
-            }
-        }
+            entries.AddRange(ParseGroupDenyAccess(access, groupName));
         return entries;
     }
 
@@ -219,72 +216,11 @@ public static partial class SandboxPathInspector
         }
     }
 
-    private static bool ShouldSkipByPlatform(JsonElement entry)
-    {
-        if (!entry.TryGetProperty("platform", out var pp)) return false;
-        var platform = pp.GetString();
-        if (string.Equals(platform, "cross-platform", StringComparison.OrdinalIgnoreCase))
-            return false;
-        if (string.Equals(platform, "macos", StringComparison.OrdinalIgnoreCase))
-            return !OperatingSystem.IsMacOS();
-        if (string.Equals(platform, "linux", StringComparison.OrdinalIgnoreCase))
-            return !OperatingSystem.IsLinux();
-        return true;
-    }
+    private static bool ShouldSkipByPlatform(JsonElement entry) =>
+        entry.TryGetProperty("platform", out var pp) && ShouldSkipPlatformToken(pp.GetString());
 
-    /// <summary>Extracts group names from vr-guard's groups.include array.</summary>
-    private static IReadOnlyList<string> ExtractGroupIncludes(string profileJson)
-    {
-        using var doc = JsonDocument.Parse(profileJson);
-        var root = doc.RootElement;
-        if (!root.TryGetProperty("groups", out var groups)) return [];
-        if (!groups.TryGetProperty("include", out var include)) return [];
-        return include.EnumerateArray()
-            .Where(e => e.ValueKind == JsonValueKind.String)
-            .Select(e => e.GetString()!)
-            .ToList();
-    }
-
-    /// <summary>Runs nono profile groups --json with a 10s timeout; returns stdout or null.</summary>
-    private static async Task<string?> RunNonoGroupAsync(
-        string nonoBinary, string groupName, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var psi = new ProcessStartInfo
-            {
-                FileName = nonoBinary,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
-            psi.ArgumentList.Add("profile");
-            psi.ArgumentList.Add("groups");
-            psi.ArgumentList.Add(groupName);
-            psi.ArgumentList.Add("--json");
-            using var process = Process.Start(psi);
-            if (process is null) return null;
-            var stderrTask = process.StandardError.ReadToEndAsync();
-            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
-                timeoutCts.Token, cancellationToken);
-            string stdout;
-            try
-            {
-                stdout = await process.StandardOutput.ReadToEndAsync(linkedCts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                if (cancellationToken.IsCancellationRequested) throw;
-                try { process.Kill(entireProcessTree: true); } catch { }
-                return null;
-            }
-            await stderrTask;
-            await process.WaitForExitAsync(CancellationToken.None);
-            return process.ExitCode == 0 ? stdout : null;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch { return null; }
-    }
+    /// <summary>Runs <c>nono profile groups &lt;name&gt; --json</c>; stdout or null.</summary>
+    private static Task<string?> RunNonoGroupAsync(
+        string nonoBinary, string groupName, CancellationToken cancellationToken) =>
+        RunNonoJsonAsync(nonoBinary, ["profile", "groups", groupName, "--json"], cancellationToken);
 }

@@ -59,8 +59,8 @@ public static partial class SandboxPathInspector
         {
             IsAvailable = true,
             ReadablePaths = [new SandboxPathEntry(
-                "<entire filesystem except blocked paths>",
-                "<entire filesystem except blocked paths>",
+                "<entire filesystem — reads are not restricted>",
+                "<entire filesystem — reads are not restricted>",
                 SandboxAccess.ReadOnly, "MXC default")],
             WritablePaths = [.. writables],
             BlockedPaths = [.. blocked],
