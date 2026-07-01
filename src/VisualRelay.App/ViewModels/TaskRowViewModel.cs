@@ -29,6 +29,24 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     private string _rewriteElapsedLabel = string.Empty;
 
     public RelayTaskItem Task { get; internal set; } = task;
+
+    /// <summary>
+    /// Replaces the underlying <see cref="RelayTaskItem"/> record and fires
+    /// property-changed notifications for every computed property that depends
+    /// on the record fields that may differ — used by the drain lifecycle to
+    /// live-update a row's <see cref="ReviewReason"/> / <see cref="NeedsReview"/>
+    /// / <see cref="StateLabel"/> while the drain is still running, without a
+    /// full <c>ReloadTaskListAsync</c>.
+    /// </summary>
+    internal void UpdateTask(RelayTaskItem updated)
+    {
+        Task = updated;
+        OnPropertyChanged(nameof(NeedsReview));
+        OnPropertyChanged(nameof(StateLabel));
+        OnPropertyChanged(nameof(ReviewReason));
+        OnPropertyChanged(nameof(MetricsLine));
+        NotifyVisualStateChanged();
+    }
     public string Id => Task.Id;
     public string MarkdownPath => Task.MarkdownPath;
     public string ReviewReason => Task.ReviewReason ?? string.Empty;

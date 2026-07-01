@@ -133,4 +133,108 @@ public sealed class TaskDetailErrorRefreshTests
         Assert.True(viewModel.HasSelectedTaskError);
         Assert.Equal("broken's error", viewModel.SelectedTaskError);
     }
+
+    [AvaloniaFact]
+    public async Task SelectingRunningTaskAfterAnotherTaskFlagged_DoesNotCarryStaleError()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("broken", "# Broken\n");
+        repo.WriteTask("runner", "# Runner\n");
+        await WriteFlaggedStatusAsync(repo.Root, "broken", 1, "broken's failure");
+        await WriteCommittedStatusAsync(repo.Root, "runner");
+
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        // Select the flagged task — error banner appears.
+        viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "broken");
+        await viewModel.LastSelectionLoad!;
+        Assert.True(viewModel.HasSelectedTaskError);
+        Assert.Equal("broken's failure", viewModel.SelectedTaskError);
+
+        // Mark "runner" as running (simulating a drain).
+        viewModel.RestoreRunningTaskState("runner", 5, "Implement");
+
+        // Select the RUNNING task — after the fix, error must be cleared.
+        // Currently this preserves "broken's failure" because _runningTaskId == "runner"
+        // triggers the guard in LoadRunHistoryAsync that skips the error update.
+        viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "runner");
+        await viewModel.LastSelectionLoad!;
+        Assert.False(viewModel.HasSelectedTaskError);
+        Assert.True(string.IsNullOrEmpty(viewModel.SelectedTaskError));
+    }
+
+    [AvaloniaFact]
+    public async Task PlanningPhaseFlag_RefreshesSelectedTaskError()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("broken", "# Broken\n");
+        await WriteFlaggedStatusAsync(repo.Root, "broken", 4, "old failure");
+
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "broken");
+        await viewModel.LastSelectionLoad!;
+        Assert.Equal("old failure", viewModel.SelectedTaskError);
+
+        var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
+        Assert.NotNull(lifecycle.OnPlanningCompleted);
+
+        // Write NEW flagged status — simulating the planning phase flagging this task.
+        await WriteFlaggedStatusAsync(repo.Root, "broken", 1, "planning-phase failure");
+
+        // The drain's planning phase completes with Flagged for the selected task.
+        // Currently OnPlanningCompleted does NOT refresh SelectedTaskError for
+        // planning-phase flags (only OnExecuteCompleted does). After the fix it must.
+        lifecycle.OnPlanningCompleted.Invoke("broken",
+            new RelayTaskOutcome("broken", RelayTaskOutcomeStatus.Flagged, null, null, "planning-phase failure"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(viewModel.HasSelectedTaskError);
+        Assert.Equal("planning-phase failure", viewModel.SelectedTaskError);
+    }
+
+    [AvaloniaFact]
+    public async Task PlanningPhaseFlag_UpdatesRowNeedsReview()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("flagged", "# Flagged\n");
+        repo.WriteTask("runner", "# Runner\n");
+        await WriteCommittedStatusAsync(repo.Root, "flagged");
+
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        var flaggedRow = viewModel.Tasks.Single(t => t.Id == "flagged");
+        var runnerRow = viewModel.Tasks.Single(t => t.Id == "runner");
+        Assert.False(flaggedRow.NeedsReview);
+        Assert.Equal("Pending", flaggedRow.StateLabel);
+
+        var lifecycle = viewModel.CreateDrainLifecycleCallbacks();
+        Assert.NotNull(lifecycle.OnPlanningStarted);
+        Assert.NotNull(lifecycle.OnPlanningCompleted);
+
+        // Start planning for both tasks.
+        lifecycle.OnPlanningStarted.Invoke("flagged");
+        lifecycle.OnPlanningStarted.Invoke("runner");
+        Dispatcher.UIThread.RunJobs();
+
+        // flagged task completes planning with Flagged status.
+        // Currently OnPlanningCompleted calls MarkIdle() which doesn't update
+        // the Task reference — NeedsReview stays false. After the fix it must
+        // update the row's RelayTaskItem with ReviewReason.
+        lifecycle.OnPlanningCompleted.Invoke("flagged",
+            new RelayTaskOutcome("flagged", RelayTaskOutcomeStatus.Flagged, null, null, "plan flagged"));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(flaggedRow.NeedsReview);
+        Assert.Equal("Needs review", flaggedRow.StateLabel);
+        // runnerRow must NOT inherit flagged's state — it is still running but
+        // its NeedsReview remains false.
+        Assert.False(runnerRow.NeedsReview);
+        Assert.Equal("Running", runnerRow.StateLabel);
+    }
 }

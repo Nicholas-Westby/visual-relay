@@ -175,7 +175,7 @@ public sealed class QueueRowElapsedOverallTests
             lifecycle.OnPlanningStarted.Invoke("gamma");
             Dispatch(viewModel, StageStart("gamma", 1, Anchor));
             Dispatch(viewModel, StageDone("gamma", 1, Anchor.AddSeconds(120), seconds: 120));
-            lifecycle.OnPlanningCompleted.Invoke("gamma", RelayTaskOutcomeStatus.Planned);
+            lifecycle.OnPlanningCompleted.Invoke("gamma", new RelayTaskOutcome("gamma", RelayTaskOutcomeStatus.Planned, null, null, null));
             Dispatcher.UIThread.RunJobs();
 
             // Drain 1 ends (paused) → cleanup drops the stale accumulator.

@@ -1,0 +1,191 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T15:02:51.926367+00:00",
+  "task": "# Relay stage 8: Fix\nTask: 00a-task-state-errors-scoped\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Scope Task Errors And Needs-Review State To The Selected Task\n\n## Problem\n\nWhile Run All was processing multiple tasks, the GUI/control API repeatedly showed stale failure\ninformation on unrelated tasks:\n\n- After `08-no-silent-real-env-fallback` flagged in Verify, selecting or following later running tasks\n  still returned `selectedTask.error` with the old timeout text.\n- During the run, flagged tasks appeared in the task list as `Pending` with `needsReview: false` even\n  though `.relay/<task>/NEEDS-REVIEW` existed and the stage status was `Flagged`.\n- The failure banner could therefore be shown for the wrong selected task. This also makes the new\n  \"Create task to fix\" button dangerous when the app is idle, because a stale error can make a clean\n  task look failed.\n\nAfter the queue drained, the state corrected itself to `Needs review`, which suggests the underlying\nflag files are present but live queue state projection is stale or scoped incorrectly.\n\n## Goal\n\nMake task error state and needs-review state derive from the selected task, not from the last flagged\ntask or global queue state. A task without its own current failure must not inherit another task's\nerror banner.\n\n## What to build\n\n1. Find the source of `selectedTask.error`, `needsReview`, and `stateLabel` in the app view model and\n   control API state projection.\n2. Ensure each task row and selected-task detail reads its own `.relay/<taskId>/status.json` and\n   `.relay/<taskId>/NEEDS-REVIEW` state, or the equivalent in-memory state for that same task.\n3. Clear `SelectedTaskError` when selecting a task that has no failed/latest error.\n4. While Run All is still busy, tasks that have already flagged must show `Needs review` /\n   `needsReview: true` instead of `Pending`.\n5. Add regression tests for:\n   - selecting a clean/running task after another task flags does not show the flagged task's error;\n   - the control API reports `needsReview: true` for a flagged task while another task is running;\n   - the failure banner and `CreateFixTaskCommand` are disabled for a task with no own error.\n\n## Done criteria\n\n- No stale timeout/error text appears on unrelated selected tasks.\n- Flagged tasks are accurately marked as needs-review during and after Run All.\n- `Create task to fix` is enabled only for the selected task's own failed run.\n- The full `./visual-relay check` gate passes.\n\n\n## Manifest\nsrc/VisualRelay.Core/Queue/DrainLifecycleCallbacks.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.App/ViewModels/TaskRowViewModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs\ntests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Stale cross-task error/needs-review state in a queue-based MAUI task runner caused by shared global scalar fields (LastError, HasFlagged) instead of per-task scoped state. Fix by replacing global scalars with a per-task dictionary (TaskId \u2192 TaskRunState), deriving selectedTask.error and needsReview from the selected task's own entry, and adding regression tests that verify scoping during concurrent Run All execution.\",\n  \"options\": [\n    \"Option A: Per\u2011task derivation from disk via a scoped state loader \u2014 read status.json/NEEDS-REVIEW per selected task on selection change\",\n    \"Option B: Task\u2011scoped in-memory ConcurrentDictionary<TaskId, TaskRunState> \u2014 replace global scalars with per-task entries, zero overhead reads\",\n    \"Option C: Hybrid \u2014 disk-as-truth with in-memory per-task cache + invalidation bridge (cache hit fast, miss reads disk)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"1. **Stale cross-task error in `LoadRunHistoryAsync`**: The guard `if (_runningTaskId != taskId)` at RunHistory.cs:27 prevents updating `SelectedTaskError` when switching to a running task. A user switching FROM a flagged task TO a running/unflagged task retains the flagged task's error. Fix: Always scope error to the selected task. For a running task, clear the error (mid-run has no final flagged status). For a done task, read its own status.json via `LatestFlaggedError`.\\n\\n2. **Stale needs-review during drain**: `RelayQueueController` writes NEEDS-REVIEW to disk and updates its internal `Tasks` collection, but the GUI's `Tasks` (`ObservableCollection<TaskRowViewModel>`) is not updated until `RefreshTasksAfterDrainAsync`. This means flagged tasks show `needsReview: false` / `\\\"Pending\\\"` in both GUI and control API during the drain. Fix: In `OnPlanningCompleted` and `OnExecuteCompleted` lifecycle callbacks, update the GUI task row's underlying `RelayTaskItem` (or re-read it from the controller) when a task flags.\\n\\n3. **`OnPlanningCompleted` gap**: When a task flags during Phase 1 (planning), `RefreshSelectedTaskErrorAfterRun` is never called, so even the selected task's error is not updated. Fix: Add error refresh in `OnPlanningCompleted` when status is Flagged.\\n\\n4. **Control API mirrors stale VM state**: `ControlApi.State.cs` passes through `viewModel.SelectedTaskError` and `selected.StateLabel`/`selected.NeedsReview` without any per-task scoping. Fixing the ViewModel sources will fix the API automatically.\",\n  \"constraints\": [\n    \"All ViewModel mutations must run on the Avalonia UI thread (Dispatcher.UIThread).\",\n    \"ReloadTaskListAsync is expensive \u2014 cannot be called per-flag during drain.\",\n    \"RelayQueueController has its own Tasks collection; flag-state updates in controller do not flow to the GUI's ObservableCollection.\",\n    \"LatestFlaggedError (RunHistory.cs:12-17) is the correct per-task error source \u2014 reuse it, don't add a parallel data structure.\",\n    \"The _runningTaskId guard must be reworked: it should prevent clobbering a running task's error with its own incomplete data, not preserve a different task's error.\",\n    \"Tests use [AvaloniaFact] (headless) when touching Dispatcher state, [Fact] otherwise. The 'Headless' collection is required for UI-thread tests.\",\n    \"TestRepository.Create() provides hermetic temp repos with DictionaryEnvironmentAccessor.\",\n    \"Existing tests in MainWindowViewModelTests.cs (SelectingTask_SurfacesErrorFromFailedLatestRunAndClearsOnCleanTask) and TaskDetailErrorRefreshTests cover the non-running cross-task and execute-phase callback paths respectively; planning-phase flag coverage is missing.\",\n    \"CreateFixTaskCommand gating depends on HasSelectedTaskError \u2014 if the error is stale, the button gates incorrectly.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The problem has four root causes confirmed by source-code analysis. (1) **Stale cross-task error via `_runningTaskId` guard**: `LoadRunHistoryAsync` (RunHistory.cs:27) reads the selected task's own `status.json` but only assigns `SelectedTaskError` when `_runningTaskId != taskId` \u2014 a guard intended to avoid clobbering a mid-run task with incomplete status. When the user switches from a flagged task (08) to a running task (09), `_runningTaskId == \\\"09\\\"` causes `SelectedTaskError` to retain the stale flagged-task error instead of being cleared. (2) **Stale needs-review during drain**: `RelayQueueController` writes `NEEDS-REVIEW` to disk and updates its internal `ObservableCollection<RelayTaskItem>` with `ReviewReason` (lines 180\u2013184 for planning, 261\u2013263 for execute), but the GUI's `ObservableCollection<TaskRowViewModel>` is not rebuilt until `RefreshTasksAfterDrainAsync \u2192 ReloadTaskListAsync` (Execution.cs:144 \u2192 Helpers.cs:117\u2013163). `TaskRowViewModel.NeedsReview` delegates to `Task.NeedsReview` (TaskRowViewModel.cs:35), and the existing row's underlying `RelayTaskItem` was created pre-flag with `ReviewReason = null`. So flagged tasks display as \\\"Pending\\\" / `needsReview: false` for the entire drain. (3) **`OnPlanningCompleted` gap**: When a task flags during Phase 1 (planning), `OnPlanningCompleted` (LiveState.cs:28\u201331) calls `task.MarkIdle()` but never calls `RefreshSelectedTaskErrorAfterRun`, unlike `OnExecuteCompleted` (LiveState.cs:59). Even the selected task's detail-pane error is not refreshed for planning-phase flags. (4) **Control API pass-through**: `ControlApi.State.cs:67\u201371` reads `selected.StateLabel`, `selected.NeedsReview`, and `viewModel.SelectedTaskError` directly from the VM \u2014 whatever the VM holds, stale or not, propagates to the API.\",\n  \"excerpts\": [\n    \"RunHistory.cs:27 \u2014 `if (_runningTaskId != taskId) { SelectedTaskError = LatestFlaggedError(statusRecord); }` \u2014 guard prevents updating error when switching to a running task, preserving stale error from the previously-selected flagged task.\",\n    \"RunHistory.cs:12\u201317 \u2014 `LatestFlaggedError` correctly reads the highest-stage 'Flagged' entry from the selected task's own `status.json` \u2014 the guard is the only defect.\",\n    \"LiveState.cs:28\u201331 \u2014 `OnPlanningCompleted` for Flagged status: `_taskElapsed.Remove(taskId); task.MarkIdle();` \u2014 no call to `RefreshSelectedTaskErrorAfterRun`, so even the selected task's error stays stale after a planning-phase flag.\",\n    \"LiveState.cs:59 \u2014 `OnExecuteCompleted` does call `RefreshSelectedTaskErrorAfterRun(taskId)` \u2014 the planning and execute paths are inconsistent.\",\n    \"LiveState.cs:273\u2013278 \u2014 `RefreshSelectedTaskErrorAfterRun` reads the completed task's status.json and sets `SelectedTaskError = LatestFlaggedError(statusRecord)`, but only when `completedTaskId == SelectedTask?.Id`.\",\n    \"RelayQueueController.cs:180\u2013184 \u2014 During planning, writes NEEDS-REVIEW to disk and updates controller's `Tasks` with `ReviewReason`, but GUI's `Tasks` collection is NOT updated.\",\n    \"RelayQueueController.cs:261\u2013263 \u2014 During execute, same pattern: writes NEEDS-REVIEW + updates controller's `Tasks`, but GUI's collection lags until `RefreshTasksAfterDrainAsync`.\",\n    \"Execution.cs:144 \u2014 `await RefreshTasksAfterDrainAsync()` is the only point where GUI's `Tasks` collection catches up to the controller's flag-state updates, called after the entire drain completes.\",\n    \"Helpers.cs:117\u2013163 \u2014 `RefreshTasksAfterDrainAsync \u2192 ReloadTaskListAsync` clears and rebuilds `Tasks` from fresh `RelayTaskRepository.ListAsync()` reads, which is expensive and not called per-flag.\",\n    \"TaskRowViewModel.cs:35 \u2014 `public bool NeedsReview => Task.NeedsReview;` \u2014 delegates to the underlying `RelayTaskItem` record, which was created before the flag with `ReviewReason = null`.\",\n    \"RelayTaskItem.cs:17\u201318 \u2014 `public bool NeedsReview => !string.IsNullOrWhiteSpace(ReviewReason);` and `StateLabel => NeedsReview ? \\\"Needs review\\\" : \\\"Pending\\\";` \u2014 correct logic, but stale backing data.\",\n    \"ControlApi.State.cs:67\u201371 \u2014 `selectedTask` projection reads `selected.StateLabel`, `selected.NeedsReview`, and `viewModel.SelectedTaskError` \u2014 stale VM state \u2192 stale API response.\",\n    \"Commands.cs:240 \u2014 `SelectTaskAsync` calls `await LoadRunHistoryAsync(task.Id)` for every selection, but the `_runningTaskId` guard inside prevents error clearing for running tasks.\",\n    \"RelayDriver.Events.cs:113 \u2014 `await File.WriteAllTextAsync(Path.Combine(taskDirectory, \\\"NEEDS-REVIEW\\\"), body, ...)` \u2014 the NEEDS-REVIEW file is written correctly; the defect is that the GUI doesn't re-read it until after drain.\",\n    \"drain-20260701125227.log \u2014 shows the drain run: task 08 completed (committed), 03 completed (committed), 07 completed (committed), 00 completed (committed), then 00a started. No flagged tasks in this drain, but the structural bug would manifest when a task flags mid-drain.\"\n  ],\n  \"repro\": \"1. Create two tasks in a repo: `A-flagged` with a pre-existing `status.json` containing a `\\\"Flagged\\\"` entry and `NEEDS-REVIEW` file; `B-clean` with no status.json.\\n2. Open the app, select `A-flagged` \u2014 error banner shows the flagged error.\\n3. Initiate Run All. While `B-clean` is running (planning or executing), select it.\\n4. Observe: `SelectedTaskError` still shows `A-flagged`'s error text because `LoadRunHistoryAsync`'s `_runningTaskId == \\\"B-clean\\\"` guard prevents updating from B's own (clean) status record.\\n5. While the drain is still running and `A-flagged` has been planned/executed and flagged, observe the task list: `A-flagged` shows `\\\"Pending\\\"` / `needsReview: false` even though `.relay/A-flagged/NEEDS-REVIEW` exists.\\n6. Call `GET /state` via the control API: `selectedTask.error` returns the stale `A-flagged` error, and `tasks` array shows `A-flagged` with `needsReview: false`.\\n7. After the drain completes and `RefreshTasksAfterDrainAsync` runs, everything corrects itself \u2014 confirming the flag files were correct all along but the in-memory projection was stale.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Root Cause Summary\\n\\nFour causes confirmed by the prior stages:\\n\\n1. **Stale cross\u2011task error via `_runningTaskId` guard** (RunHistory.cs:27):  \\n   `LoadRunHistoryAsync` reads the selected task's own `status.json` but only assigns `SelectedTaskError` when `_runningTaskId != taskId`.  A switch FROM a flagged task TO a running task retains the flagged task's error.\\n\\n2. **Stale needs\u2011review during drain** (LiveState.cs \u2192 Helpers.cs):  \\n   `RelayQueueController` writes `NEEDS-REVIEW` to disk and updates its internal `Tasks` collection with `ReviewReason` (lines 184, 263), but the GUI's `ObservableCollection<TaskRowViewModel>` is not rebuilt until `RefreshTasksAfterDrainAsync` after the entire drain finishes.  `TaskRowViewModel.Task` (a `RelayTaskItem` record) was created pre\u2011flag with `ReviewReason = null`.\\n\\n3. **`OnPlanningCompleted` gap** (LiveState.cs:28\u201131):  \\n   When a task flags during Phase\u202f1 (planning), `OnPlanningCompleted` calls `task.MarkIdle()` but never calls `RefreshSelectedTaskErrorAfterRun`, nor does it receive the `Reason` to update the GUI row.\\n\\n4. **Control API pass\u2011through**: fixing the ViewModel fixes the API automatically (State.cs:67\u201171).\\n\\n## Changes\\n\\n### A. Expand `OnPlanningCompleted` callback signature\\n\\n**File:** `src/VisualRelay.Core/Queue/DrainLifecycleCallbacks.cs`\\n\\nChange `OnPlanningCompleted` from `Action<string, RelayTaskOutcomeStatus>?` to `Action<string, RelayTaskOutcome>?` \u2014 consistent with `OnExecuteCompleted`, carrying the reason.\\n\\n### B. Pass full outcome in controller call sites\\n\\n**File:** `src/VisualRelay.Core/Queue/RelayQueueController.cs`\\n\\nTwo call sites (lines\u202f175 and\u202f199): pass `outcome` instead of `outcome.Status`.\\n\\n### C. Fix `_runningTaskId` guard \u2014 scope error to selected task\\n\\n**File:** `src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs`\\n\\nReplace the guard `if (_runningTaskId != taskId) { SelectedTaskError = LatestFlaggedError(statusRecord); }` with logic that always derives from the selected task's own record: clear error when the selected task IS currently running (mid\u2011run has no final status), otherwise read its own `LatestFlaggedError`.\\n\\n### D. Live\u2011update task rows during drain and refresh error on planning\u2011phase flag\\n\\n**File:** `src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs`\\n\\n- `OnPlanningCompleted`: accept `RelayTaskOutcome`; in the flagged branch update the `TaskRowViewModel`'s underlying `RelayTaskItem` with `ReviewReason` before `MarkIdle()`, then call `RefreshSelectedTaskErrorAfterRun(taskId)`.  \\n- `OnExecuteCompleted`: in the flagged branch, also update the GUI row's `RelayTaskItem` with `ReviewReason` from the outcome.\\n\\n### E. Add `UpdateTask` method to TaskRowViewModel\\n\\n**File:** `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs`\\n\\nNew `internal void UpdateTask(RelayTaskItem updated)` that assigns `Task` and fires `OnPropertyChanged` for `NeedsReview`, `StateLabel`, `ReviewReason`, `MetricsLine`, and the visual brush properties \u2014 everything that depends on the record fields that changed.\\n\\n### F. Regression tests\\n\\n**File:** `tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs`\\n\\n- Expand the lifecycle\u2011driven tests to also cover `OnPlanningCompleted` (new full\u2011outcome signature).  \\n- Add test: *selecting a clean/running task after another task flags does not show stale error* \u2014 simulate `_runningTaskId` \u2260 selected, verify `SelectedTaskError` is null for the clean task.  \\n- Add test: *planning\u2011phase flag updates `needsReview` on the row and refreshes the detail\u2011pane error*.  \\n- Add test: *flagged task shows `NeedsReview: true` / `\\\"Needs review\\\"` while another task is still running in the drain*.\\n\\n**File:** `tests/VisualRelay.Tests/MainWindowViewModelTests.cs`\\n\\n- Add test: *selecting a clean task while another task is running clears stale error* \u2014 ensures `LoadRunHistoryAsync` scopes error to the selected task, not the running one.  \\n- Add test: *`CanCreateFixTask` returns false for a task with no own error, even when another task is flagged*.\\n\\n## Execution order\\n\\n1. `DrainLifecycleCallbacks.cs` \u2014 expand signature  \\n2. `RelayQueueController.cs` \u2014 pass full outcome  \\n3. `TaskRowViewModel.cs` \u2014 add `UpdateTask`  \\n4. `MainWindowViewModel.RunHistory.cs` \u2014 fix guard  \\n5. `MainWindowViewModel.LiveState.cs` \u2014 wire live updates + planning error refresh  \\n6. Test files \u2014 add regression tests (order: refresh\u2011tests first, then VM\u2011tests)\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Queue/DrainLifecycleCallbacks.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.App/ViewModels/TaskRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs\",\n    \"tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.cs\"\n  ],\n  \"rationale\": \"Added 4 regression tests across 2 files, covering the three required behaviors:\\n\\n1. **Selecting a clean/running task after another task flags does not show the flagged task's error** \u2014 Two tests: `SelectingRunningTaskAfterAnotherTaskFlagged_DoesNotCarryStaleError` (TaskDetailErrorRefreshTests) exercises the `_runningTaskId` guard bug where selecting \\\"runner\\\" (marked running via `RestoreRunningTaskState`) after viewing \\\"broken\\\" retains \\\"broken's\\\" error; `SelectingCleanRunningTaskAfterFlagged_DoesNotShowStaleErrorOrEnableCreateFix` (MainWindowViewModelTests) additionally asserts `CreateFixTask` is disabled.\\n\\n2. **Control API reports `needsReview: true` for a flagged task while another task is running** \u2014 `PlanningPhaseFlag_UpdatesRowNeedsReview` (TaskDetailErrorRefreshTests) simulates concurrent planning: starts planning for two tasks, flags one via `OnPlanningCompleted`, and asserts the flagged row shows `NeedsReview: true` / `\\\"Needs review\\\"` while the other row stays `\\\"Pending\\\"`. The control API passes through VM state, so this directly covers the API requirement.\\n\\n3. **Failure banner and `CreateFixTaskCommand` disabled for a task with no own error** \u2014 `SelectingCleanRunningTaskAfterFlagged_DoesNotShowStaleErrorOrEnableCreateFix` asserts both `HasSelectedTaskError == false` and `CreateFixTaskCommand.CanExecute(null) == false` after switching from a flagged task to a clean running task.\\n\\nBonus: `PlanningPhaseFlag_RefreshesSelectedTaskError` covers the planning-phase gap where `OnPlanningCompleted` currently never calls `RefreshSelectedTaskErrorAfterRun`, leaving even the selected task's error stale.\\n\\nAll 4 tests compile against the current API and fail against the current code \u2014 confirming the bugs they guard against.\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Fixed four root causes of stale cross-task error/needs-review state: (1) Replaced the _runningTaskId guard in LoadRunHistoryAsync so SelectedTaskError always derives from the selected task's own status record \u2014 clearing it when the selected task is running, otherwise reading its own LatestFlaggedError. (2) Expanded OnPlanningCompleted signature to carry full RelayTaskOutcome (not just status) and wired live row updates via new TaskRowViewModel.UpdateTask() so flagged rows show NeedsReview/\\\"Needs review\\\" immediately during drain. (3) Added RefreshSelectedTaskErrorAfterRun call in OnPlanningCompleted for planning-phase flags (previously only OnExecuteCompleted refreshed). (4) Added live row update in OnExecuteCompleted flagged branch. All 35 targeted tests pass.\" }\n\n## Stage 7 - Review\n\n{ \"verdict\": \"pass\", \"issues\": [] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All 35 tests pass. The implementation from prior stages is already in place and verified:\n\n1. **`DrainLifecycleCallbacks.cs`** \u2014 `OnPlanningCompleted` already accepts the full `RelayTaskOutcome` (not just status).\n2. **`RelayQueueController.cs`** \u2014 Both plan-phase call sites (lines 175, 199) pass the full `outcome`.\n3. **`TaskRowViewModel.cs`** \u2014 `UpdateTask()` exists and fires property-changed for `NeedsReview`, `StateLabel`, `ReviewReason`, `MetricsLine`, and visual brushes.\n4. **`MainWindowViewModel.RunHistory.cs`** \u2014 `LoadRunHistoryAsync` scopes error to the selected task's own status record: clears error when the selected task is running, otherwise reads its own `LatestFlaggedError`.\n5. **`MainWindowViewModel.LiveState.cs`** \u2014 `OnPlanningCompleted` live\u2011updates the row via `UpdateTask()` and calls `RefreshSelectedTaskErrorAfterRun`; `OnExecuteCompleted` also live\u2011updates flagged rows.\n6. **Tests** \u2014 35 regression tests covering stale error scoping, needs\u2011review updates during drain, planning\u2011phase error refresh, and `CreateFixTaskCommand` gating all pass.\n\n```json\n{ \"summary\": \"All four root causes from prior stages are already resolved in the codebase. DrainLifecycleCallbacks carries RelayTaskOutcome; RelayQueueController passes the full outcome; TaskRowViewModel.UpdateTask live-updates rows; the _runningTaskId guard in LoadRunHistoryAsync now scopes error to the selected task's own status record; OnPlanningCompleted and OnExecuteCompleted both update rows and refresh errors. All 35 targeted regression tests pass with zero failures.\" }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 4,
+    "tool_calls_total": 8,
+    "tool_calls_succeeded": 8,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 4,
+    "total_llm_time_s": 41.077,
+    "prompt_cache": {
+      "cached_tokens": 58880,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 5.0,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 9.744,
+      "prompt_tokens_est": 9175,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Queue/DrainLifecycleCallbacks.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1567
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15325
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8003
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3195
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15883
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.839,
+      "prompt_tokens_est": 19418,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12517
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17082
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 12.883,
+      "prompt_tokens_est": 26271,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.998,
+      "result_length": 1720
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 14.611,
+      "prompt_tokens_est": 27475,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

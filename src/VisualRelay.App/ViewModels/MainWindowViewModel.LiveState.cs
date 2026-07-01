@@ -20,15 +20,22 @@ public partial class MainWindowViewModel
                 _taskElapsed[taskId] = new CumulativeElapsed();
                 Tasks.FirstOrDefault(t => t.Id == taskId)?.MarkPlanning();
             },
-            OnPlanningCompleted = (taskId, status) =>
+            OnPlanningCompleted = (taskId, outcome) =>
             {
                 var task = Tasks.FirstOrDefault(t => t.Id == taskId);
                 if (task is not null)
                 {
-                    if (status == RelayTaskOutcomeStatus.Flagged)
+                    if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                     {
+                        // Live-update the row's backing record so NeedsReview/StateLabel
+                        // reflect immediately while the drain is still running.
+                        task.UpdateTask(task.Task with { ReviewReason = outcome.Reason ?? "Needs review" });
                         _taskElapsed.Remove(taskId);
                         task.MarkIdle();
+                        // Also refresh the detail-pane error for the selected task when
+                        // it flagged during planning (previously this was only done in
+                        // OnExecuteCompleted, leaving planning-phase flags stale).
+                        RefreshSelectedTaskErrorAfterRun(taskId);
                     }
                     else
                         task.MarkPlanned();
@@ -61,52 +68,50 @@ public partial class MainWindowViewModel
                 // whose spec moved to completed/ must leave the active list (else it
                 // lingers as "Pending" and its stale MarkdownPath is re-read).
                 ReconcileArchivedTaskRow(taskId);
+
+                // Live-update the GUI row's backing record when the task flagged so
+                // NeedsReview / StateLabel reflect immediately while the drain is
+                // still running (the controller already wrote NEEDS-REVIEW to disk).
+                if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
+                {
+                    var row = Tasks.FirstOrDefault(t => t.Id == taskId);
+                    if (row is not null)
+                        row.UpdateTask(row.Task with { ReviewReason = outcome.Reason ?? "Needs review" });
+                }
             }
         };
     }
 
     /// <summary>
-    /// Reconciles a just-completed task's row with the on-disk archive. When the task
-    /// committed AND archiveOnDone moved its spec out of the active <c>llm-tasks/</c> tree
-    /// (to <c>completed/</c>), the in-memory row's <see cref="TaskRowViewModel.MarkdownPath"/>
-    /// is now stale: the row keeps showing "Pending" for the rest of the drain and a later
-    /// refresh / detail re-read throws "Could not find a part of the path …/&lt;task&gt;.md".
-    /// Detect the move by the spec no longer existing, then drop the row and re-point the
-    /// selection off it. A flagged task (or archiveOnDone off) keeps its spec → no-op.
-    /// Runs on the UI thread (its only caller mutates ObservableProperty state there).
+    /// When a committed task's spec was moved to <c>completed/</c>, the row's
+    /// <c>MarkdownPath</c> becomes stale, causing "Pending" to persist and detail
+    /// re-reads to fail. Detect the move and drop the row; flag/archiveOnDone-off
+    /// tasks keep their spec → no-op. Runs on the UI thread.
     /// </summary>
     private void ReconcileArchivedTaskRow(string taskId)
     {
         var row = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (row is null || File.Exists(row.MarkdownPath))
-            return; // not archived (flagged, or archiveOnDone off) — nothing to reconcile
-
+            return;
         if (string.Equals(SelectedTask?.Id, taskId, StringComparison.Ordinal))
             SelectedTask = Tasks.FirstOrDefault(t => !string.Equals(t.Id, taskId, StringComparison.Ordinal));
         Tasks.Remove(row);
-        // Queue membership changed — keep "Run All" in sync (CanDrain reads Tasks, a plain
-        // ObservableCollection the MVVM generator can't auto-wire CanExecuteChanged to).
         DrainQueueCommand.NotifyCanExecuteChanged();
     }
 
     internal void RestoreRunningTaskState(string taskId, int? stageNumber, string? stageName)
     {
-        // Clear all previous running tasks — restore replaces the entire set.
         var snapshot = new List<string>(_runningTaskIds);
         foreach (var id in snapshot)
         {
-            var t = Tasks.FirstOrDefault(task => task.Id == id);
-            if (t is not null)
+            if (Tasks.FirstOrDefault(task => task.Id == id) is { } t)
                 t.MarkIdle();
         }
-
         _runningTaskIds.Clear();
         _runningTaskIds.Add(taskId);
         _runningTaskId = taskId;
         _runningStageNumbers[taskId] = stageNumber;
         _runningStageNames[taskId] = stageName;
-        // Ensure the restored running task has an active-time accumulator so live
-        // stage events accrue (a freshly-restored run has no banked time yet).
         _taskElapsed.TryAdd(taskId, new CumulativeElapsed());
         ApplyRunningTaskToRows();
         NotifyRunningTaskContextChanged();
@@ -132,13 +137,9 @@ public partial class MainWindowViewModel
     }
 
     /// <summary>
-    /// On run start, drop the stale "LATEST RUN FAILED" banner when the task
-    /// being (re-)run is the one shown in the detail pane — the prior run's
-    /// error no longer describes the current run. Other tasks' displayed error
-    /// is untouched. Shared by both the single-run path (RunOneAsync) and the
-    /// queue drain (OnExecuteStarted) since both route run start through
-    /// <see cref="BeginRunningTask"/>. Runs on the UI thread (its only callers
-    /// already mutate ObservableProperty state from the UI thread).
+    /// On run start, clear the stale "LATEST RUN FAILED" banner for the
+    /// (re-)running task when it is the selected one. Shared by single-run
+    /// (RunOneAsync) and queue drain (OnExecuteStarted) paths. UI-thread safe.
     /// </summary>
     private void ClearSelectedTaskErrorForRunStart(string startingTaskId)
     {
@@ -256,19 +257,16 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Completion-refresh handle, captured so tests can deterministically
-    /// <c>await viewModel.LastRunCompletionRefresh</c> instead of polling. The
-    /// refresh itself is synchronous (a status-record read); the task is a
-    /// settled marker. Null until the first run completes for the selected task.
+    /// <c>await viewModel.LastRunCompletionRefresh</c> instead of polling.
+    /// Null until the first run completes for the selected task.
     /// </summary>
     internal Task? LastRunCompletionRefresh { get; private set; }
 
     /// <summary>
     /// On run completion, refresh the detail-pane error for the just-finished
-    /// task when it is the one on screen: a flag surfaces the new reason, a
-    /// commit leaves it cleared (no flagged entry in the freshly-written status
-    /// record). Re-reads only the status record — not the full run history — so
-    /// it never disturbs the live log/board view. Runs on the UI thread (its
-    /// callers already mutate ObservableProperty state from the UI thread).
+    /// task if it is on screen: a flag surfaces the new reason, a commit leaves
+    /// it cleared. Re-reads only the status record — never the full run history.
+    /// UI-thread safe.
     /// </summary>
     private void RefreshSelectedTaskErrorAfterRun(string completedTaskId)
     {

@@ -24,7 +24,18 @@ public partial class MainWindowViewModel
 
         // Status comes from the driver-written record, not from report-derived metrics.
         var statusRecord = RelayRunHistory.ReadStatusRecord(RootPath, taskId);
-        if (_runningTaskId != taskId)
+
+        // Always scope the error to the SELECTED task's own status record.
+        // If the selected task IS currently running, clear the error — a mid-run
+        // task has no final flagged status yet. Otherwise derive from its own
+        // LatestFlaggedError (null when no flagged entry exists). This prevents
+        // a previously-viewed flagged task's error from leaking onto a clean or
+        // running task selected afterwards.
+        if (_runningTaskId == taskId)
+        {
+            SelectedTaskError = null;
+        }
+        else
         {
             SelectedTaskError = LatestFlaggedError(statusRecord);
         }

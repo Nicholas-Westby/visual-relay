@@ -172,7 +172,7 @@ public sealed partial class RelayQueueController
 
                                 DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan",
                                     outcome.Status == RelayTaskOutcomeStatus.Flagged ? "flagged" : "failed", outcome.Reason);
-                                _lifecycle?.OnPlanningCompleted?.Invoke(taskId, outcome.Status);
+                                _lifecycle?.OnPlanningCompleted?.Invoke(taskId, outcome);
 
                                 if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                                 {
@@ -196,7 +196,7 @@ public sealed partial class RelayQueueController
                             {
                                 // Planned tasks stay in queue for Phase 2 execution.
                                 DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "done(stage4)");
-                                _lifecycle?.OnPlanningCompleted?.Invoke(taskId, outcome.Status);
+                                _lifecycle?.OnPlanningCompleted?.Invoke(taskId, outcome);
                             }
                         }
 
