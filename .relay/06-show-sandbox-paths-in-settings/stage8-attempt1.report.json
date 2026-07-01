@@ -1,0 +1,686 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T10:22:41.900139+00:00",
+  "task": "# Relay stage 8: Fix\nTask: 06-show-sandbox-paths-in-settings\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Show Sandbox Paths (Readable / Writable / Blocked) in Settings\n\nAdd a **read-only** panel to the Settings screen that shows the effective sandbox filesystem policy \u2014\nwhich paths are **readable**, **writable**, and **blocked** \u2014 for the current OS. It must include the\n**inherited** paths (from the base `swival`/`default` profile groups), and it must be **derived from\nthe actual resolved values at runtime**, not a hardcoded snapshot of whatever the base paths happen to\nbe today. **Display only for now** \u2014 no editing; a later task can make entries editable.\n\n## Current state\n\n**Settings UI.** `src/VisualRelay.App/Views/SettingsWindow.axaml` hosts a single\n`Controls/SettingsPanel.axaml` (`x:DataType=\"vm:MainWindowViewModel\"`), a `ScrollViewer` around a\n`StackPanel Spacing=\"6\"` of bordered sections. There is already a **\"Verbose sandbox diagnostics\"**\ntoggle in that panel (bound to `VerboseSandboxDiagnostics`), so a sandbox area already exists to grow.\nSelf-contained sections are factored into their own controls with a VM partial \u2014 see\n`Controls/ObsidianSettings.axaml` (+ `.axaml.cs`) paired with\n`src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs`; other settings state lives in\n`MainWindowViewModel.Settings.cs`. Section styling tokens in use: panel bg `#12151C`, border `#252A33`,\nheader `#F2F5FA`, body text `#9AA3B1`/`#E7ECF3`, accent `#5575F2`, status dots green `#5AD47D` / gray\n`#4A5568`.\n\n**Where the real policy lives.**\n\n- **macOS/Linux \u2014 nono.** The enforced profile is `vr-guard` (`packaging/nono/vr-guard.json`, embedded\n  as `VisualRelay.Core.vr-guard.json` and self-healed to the runtime copy by\n  `NonoProfileEnsurer.EnsureAsync`). vr-guard's **own** directives are `filesystem.allow` (read-write),\n  `filesystem.read` (includes `/` \u2014 reads are broad), and `filesystem.deny`. But **most of the effective\n  set is inherited** from `groups.include` (the `swival` \u2192 `default` groups), and those groups are\n  defined **inside the nono binary**, not in the repo \u2014 so their concrete paths can only be obtained by\n  asking nono.\n- **Windows \u2014 MXC.** `MxcPolicyGenerator.DefaultWindowsCacheDirs()` + the workspace form the read-write\n  set (`Generate()` \u2192 `filesystem.readwritePaths`); reads are broad by MXC default; writes elsewhere are\n  blocked. This is computed in-process \u2014 no external tool needed.\n\n**Two facts that shape the design (both verified against nono 0.61.1):**\n\n1. **`nono profile groups <name> --json` is the way to expand a group** to concrete paths. It returns\n   `allow.read` / `allow.readwrite` as `{ \"raw\": \"~/\u2026\", \"expanded\": \"/Users/\u2026\" }` entries, and for deny\n   groups a `deny.access` path list (plus non-path `deny.commands` / `deny.unlink` which must be\n   ignored). Each group carries a `platform` field (`macos` / `linux` / `cross-platform`) for filtering\n   to the current OS. `nono profile show <name> --json` does **not** expand groups (it only lists group\n   *names*), and the all-groups `nono profile groups --json` returns *counts*, not paths \u2014 so per-group\n   `--json` calls are required for concrete paths.\n2. **Do not trust `nono profile show <name>` / the registered profile copy for vr-guard's own\n   directives.** `nono \u2026 <name>` reads `~/.config/nono/profiles/vr-guard.json`, which is a **stale**\n   copy (verified: it currently lacks the `.nuget`/dotnet grants that the repo + the enforced runtime\n   copy both have). The viewer must read vr-guard's own `allow`/`read`/`deny` + `groups.include` from\n   the **enforced** profile \u2014 the embedded resource `VisualRelay.Core.vr-guard.json` (always present,\n   byte-identical to what runs) or the `NonoProfileEnsurer`-managed file \u2014 and use nono **only** to\n   expand the group *definitions* (which come from the binary and are not stale).\n\n## What to build\n\n### 1. Derivation service (Core) \u2014 do the resolving here, not in the VM\n\nAdd a service, e.g. `SandboxPathInspector` in `src/VisualRelay.Core/Execution/`, that returns a\nstructured list of entries `{ raw, expanded, access, source }` where `access \u2208 { ReadOnly, ReadWrite,\nBlocked }` and `source` is `\"vr-guard\"` or the originating group name (for provenance in the UI):\n\n- **macOS/Linux path:**\n  1. Read the enforced vr-guard profile (embedded `VisualRelay.Core.vr-guard.json`): take its own\n     `filesystem.allow` \u2192 ReadWrite, `filesystem.read` \u2192 ReadOnly, `filesystem.deny` \u2192 Blocked, and its\n     `groups.include` name list. Honor `{ \"path\", \"when\" }` predicates for the current OS.\n  2. For each included group, run `nono profile groups <name> --json` and merge: `allow.read` \u2192 ReadOnly,\n     `allow.readwrite` \u2192 ReadWrite, `deny.access` \u2192 Blocked. Skip entries whose `platform` doesn't apply\n     to the current OS. Ignore `deny.commands` / `deny.unlink` (not filesystem paths).\n  3. Also surface the **per-run** writable additions so the picture is honest: the active workspace root\n     (granted via `--allow-cwd` in `SwivalSubagentRunner.BuildNonoPrefix`) and any\n     `RelayConfig.SandboxExtraAllowPaths` for the selected project \u2014 label them \"current workspace\" /\n     \"per-project extras\" so they read as context-dependent, not profile-global.\n  4. Resolve the nono binary the same way the run path does (`ProcessLauncher.OnPath(\"nono\")` / the\n     `NonoBinary` constant in `ProcessRunners.cs`). If nono is absent or a call fails, return an\n     \"unavailable\" result \u2014 never throw into the UI (`NonoGate` treats missing nono as fatal for a run,\n     but the Settings screen must degrade gracefully).\n- **Windows path:** derive in-process from `MxcPolicyGenerator.DefaultWindowsCacheDirs()` + workspace as\n  ReadWrite, plus a single synthetic \"everything else\" ReadOnly note and a \"writes outside the list are\n  blocked\" note. No shell-out.\n- **Derived, never hardcoded.** Every path entry must come from the profile JSON + nono group expansion\n  (or the MXC generator). The only literals allowed are bucket labels and the explanatory copy. This is\n  the core requirement: adding a path to `vr-guard.json` (e.g. a newly-granted toolchain cache path) or to a group\n  must show up here with **no change to this code**.\n- Prefer showing the `raw` form (`~/Library/Caches`) in the UI with `expanded` available as a\n  tooltip/secondary \u2014 avoids baking the developer's home path into the display.\n\n### 2. ViewModel \u2014 a new partial\n\n`src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs` exposing the service output as three\nobservable collections (Readable / Writable / Blocked), an `IsSandboxInfoAvailable` (or status) flag,\nand an async load/refresh command. Populate **asynchronously** \u2014 the nono group calls are subprocesses\nand must not block opening Settings; show a lightweight loading state. Mirror the async/section pattern\nalready used by `MainWindowViewModel.ObsidianBridge.cs`.\n\n### 3. View \u2014 a self-contained section control\n\nCreate `src/VisualRelay.App/Views/Controls/SandboxPaths.axaml` (+ `.axaml.cs`), mirroring the\n`ObsidianSettings` control, and embed it in `Controls/SettingsPanel.axaml` right **after** the \"Verbose\nsandbox diagnostics\" border. Match the existing bordered-section styling. Show three labeled groups\n(Readable / Writable / Blocked); each row shows the path, its access, and its source; use the existing\nstatus-dot idiom (green for writable, neutral for read-only, red-ish for blocked) and keep it scrollable\nwhen long. Include one line explaining the model so the list isn't misread:\n\"Reads: the whole filesystem **except** the blocked paths. Writes: **only** the paths listed here (plus\nthe current workspace).\" Render the \"unavailable\" state cleanly when the service reports it.\n\n### 4. Display-only\n\nNo editing, no persisted setting, no new writable grant introduced by this task. (A future task can add\nediting / per-project `sandboxExtraAllowPaths` management.)\n\n## Constraints & done criteria\n\n- **Derived, not snapshotted (the headline requirement).** Add a test proving the classifier reflects\n  the *input*, not constants: feed the parser a sample vr-guard JSON (own `allow`/`read`/`deny` +\n  `groups.include`) and sample `nono profile groups --json` payloads (an allow group with\n  `read`/`readwrite`, a deny group with `deny.access` + a `deny.commands` that must be ignored, and a\n  wrong-`platform` entry that must be filtered) and assert the correct three-bucket classification,\n  source attribution, and OS filtering. A path added to the sample input must show up in the output.\n- **Handle the stale-copy pitfall:** the test suite should encode that own-directives come from the\n  embedded/enforced profile, not the registered `~/.config/nono/profiles` copy.\n- **Graceful degradation:** a test for the nono-absent / call-failure path returning the \"unavailable\"\n  state without throwing.\n- **Windows** derives from the existing `MxcPolicyGenerator` (no duplicate hardcoded list).\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines (factor the section into its own control and\n  the parsing into the service; `SettingsPanel.axaml` is already long).\n- No weakening of the sandbox; display-only. Full `Verify` gate green (`Failed: 0`, exit 0).\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.Core/Execution/SandboxPathInspector.cs` (new) \u2014 resolve + classify read/write/blocked\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs` (new partial) \u2014 three buckets + async load\n- `src/VisualRelay.App/Views/Controls/SandboxPaths.axaml` (+ `.axaml.cs`) (new) \u2014 the section control\n- `src/VisualRelay.App/Views/Controls/SettingsPanel.axaml` \u2014 embed the new section after the sandbox-diagnostics toggle\n- `tests/VisualRelay.Tests/` \u2014 classifier/OS-filter/degraded-state tests\n- (reference, no change) `packaging/nono/vr-guard.json`, `NonoProfileEnsurer`, `MxcPolicyGenerator`, `NonoGate`, `RelayConfig.SandboxExtraAllowPaths`, `ProcessRunners.cs` (`NonoBinary`)\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/SandboxPathInspector.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs\nsrc/VisualRelay.App/Views/Controls/SandboxPaths.axaml\nsrc/VisualRelay.App/Views/Controls/SandboxPaths.axaml.cs\nsrc/VisualRelay.App/Views/Controls/SettingsPanel.axaml\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.cs\ntests/VisualRelay.Tests/SandboxPathInspectorTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add a read-only sandbox paths panel to Settings showing readable/writable/blocked filesystem paths derived at runtime from the enforced vr-guard profile and nono group expansion. Three architectural options were evaluated: (A) synchronous core + Task.Run in VM \u2014 simplest but blocks thread-pool; (B) async-first core with Task-based methods \u2014 idiomatic I/O, composable, recommended; (C) observable pipeline with IAsyncEnumerable streaming \u2014 best UX but overengineered for the small dataset. Option B is recommended, matching the existing ObsidianBridge async section pattern.\",\n  \"options\": [\n    \"Option A \u2014 Synchronous SandboxPathInspector.Inspect() + Task.Run in VM. Simplest, blocks thread-pool during nono calls.\",\n    \"Option B \u2014 Async-first SandboxPathInspector.InspectAsync() \u2014 idiomatic async I/O, composable phases, matches ObsidianBridge pattern. RECOMMENDED.\",\n    \"Option C \u2014 IAsyncEnumerable<SandboxPathEntry> streaming \u2014 entries appear progressively, overengineered for ~20-50 entries.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is structured around a Core library (sandbox policy, process runners, profile ensurer), a Domain layer (RelayConfig), and an Avalonia App with partial-class ViewModel files and self-contained UserControl sections in Controls/. The sandbox on macOS/Linux uses nono with the vr-guard profile (embedded as `VisualRelay.Core.vr-guard.json`, self-healed via NonoProfileEnsurer.EnsureAsync). The profile has `filesystem.allow` (read-write), `filesystem.read` (read-only), `filesystem.deny` (blocked), and `groups.include` (which reference `go_runtime`/`rust_runtime` groups defined inside nono's binary). Group expansion requires `nono profile groups <name> --json` \u2014 a subprocess call. On Windows, MxcPolicyGenerator.DefaultWindowsCacheDirs() + workspace form the writable set, with broad reads by default. The SettingsPanel already embeds ObsidianSettings as a self-contained control (line 288) after the Verbose sandbox diagnostics border (lines 53-63), which is the exact insertion point. The VM pattern uses partial files per concern (ObsidianBridge.cs, Settings.cs, Keys.cs, etc.), and LoadInitialAsync in the main VM calls settings-load methods synchronously. The test suite uses DictionaryEnvironmentAccessor, TestRepository (temp dirs), and Avalonia headless tests. The HomePathToTildeConverter (~/...) already exists for UI display. BoolNotConverter is available for visibility toggles. PathExecutables.OnPath(\\\"nono\\\") checks availability. The stale-copy pitfall is documented: ~/.config/nono/profiles/vr-guard.json is stale, so the SandboxPathInspector must read from NonoProfileEnsurer.EmbeddedContent (the embedded resource).\",\n\n  \"constraints\": [\n    \"Derived at runtime, never hardcoded \u2014 every path must come from the embedded vr-guard JSON + nono group expansion (or MxcPolicyGenerator on Windows). Adding a path to vr-guard.json must show up without code changes.\",\n    \"Handle the stale-copy pitfall: own-directives come from NonoProfileEnsurer.EmbeddedContent (embedded resource), NOT from ~/.config/nono/profiles/ which launcher-installed only-if-absent.\",\n    \"Group expansion requires per-group `nono profile groups <name> --json` subprocess calls \u2014 must be async, must parse allow.read/allow.readwrite/deny.access entries, filter by platform field, and ignore deny.commands/deny.unlink.\",\n    \"Graceful degradation: if nono is absent (PathExecutables.OnPath returns false) or a subprocess call fails, return an 'unavailable' result \u2014 never throw into the UI.\",\n    \"Must surface per-run writable additions: workspace root (from --allow-cwd in BuildNonoPrefix) and RelayConfig.SandboxExtraAllowPaths \u2014 labeled as context-dependent.\",\n    \"Windows path derives from MxcPolicyGenerator.DefaultWindowsCacheDirs() + workspace \u2014 no shell-out, no duplicate hardcoded list.\",\n    \"Prefer showing raw form (~ expansion) in UI with expanded form available as tooltip \u2014 reuse existing HomePathToTildeConverter.\",\n    \"Three status dot colors: green (#5AD47D) for writable, neutral/gray (#4A5568) for readonly, red-ish for blocked.\",\n    \"Each new/edited *.cs/*.axaml file \u2264 300 lines \u2014 factor the section into its own control, parsing into the service.\",\n    \"Async load never blocks UI \u2014 nono calls are subprocesses; show lightweight loading state, matching ObsidianBridge pattern.\",\n    \"Display-only \u2014 no editing, no persisted setting, no new writable grant introduced by this task.\",\n    \"Tests must prove the classifier reflects input (not constants): feed sample vr-guard JSON and sample nono group payloads, assert three-bucket classification, source attribution, OS filtering, and degraded state.\",\n    \"No weakening of the sandbox \u2014 full Verify gate green (Failed: 0, exit 0).\",\n    \"SettingsPanel embeds the new SandboxPaths control after the 'Verbose sandbox diagnostics' border (currently at line 63), not before it.\",\n    \"The VM's LoadInitialAsync must be updated to trigger the async sandbox path load alongside other settings loads (but never block).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Diagnosis: Feature does not exist \u2014 all four artifacts need to be created from scratch\\n\\n### 1. No SandboxPathInspector service exists\\nSearch for `SandboxPathInspector` and `SandboxPath` across the entire src/ tree returns zero matches. The file `src/VisualRelay.Core/Execution/SandboxPathInspector.cs` must be created.\\n\\n### 2. No VM partial exists\\n`MainWindowViewModel.Sandbox.cs` does not exist. The existing partials are Bootstrap, Commands, Execution, FixTask, Keys, ObsidianBridge, Rewrite, RunOne, Settings, StageDetail, StageMetrics, Stages, TaskName, TierModelRow, TurnBudget \u2014 no Sandbox partial.\\n\\n### 3. No SandboxPaths control exists\\nThe `src/VisualRelay.App/Views/Controls/` directory contains `ObsidianSettings.axaml` (the reference pattern) but no `SandboxPaths.axaml`.\\n\\n### 4. SettingsPanel.axaml does not embed SandboxPaths\\nLine 288 embeds `<controls:ObsidianSettings/>` after the Live Tiers border. The sandbox-diagnostics toggle is at lines 53\u201363. The SandboxPaths control would be inserted after line 63 and before the Provider Keys header at line 65.\\n\\n### 5. nono binary is NOT available in this sandbox environment\\n`find /Users/admin -name nono -maxdepth 4` shows `~/.nono` is permission-blocked; `/usr/local/bin/nono` and `/opt/homebrew/bin/nono` do not exist. The settings screen must degrade gracefully to an \\\"unavailable\\\" state \u2014 which proves the degradation path is testable right here.\\n\\n### 6. All dependencies for the feature ARE present\\n- **NonoProfileEnsurer.EmbeddedContent** (line 36): returns the embedded `VisualRelay.Core.vr-guard.json` resource \u2014 the single source of truth to avoid the stale-copy pitfall.\\n- **vr-guard.json** (packaging/nono/vr-guard.json, 107 lines): defines `filesystem.allow` (48 entries, some with OS `when` predicates), `filesystem.read` (`[\\\"/\\\", \\\"$HOME/.gitconfig\\\"]`), `filesystem.deny` (5 user-dir entries), and `groups.include` (`[\\\"go_runtime\\\", \\\"rust_runtime\\\"]`). Has no `filesystem.write` entries.\\n- **PathExecutables.OnPath(\\\"nono\\\")** (line 22): the canonical nono-availability probe.\\n- **MxcPolicyGenerator.DefaultWindowsCacheDirs()** (line 53): returns existing-ondisk Windows cache dirs for the readwrite set.\\n- **BuildNonoPrefix** (ProcessRunners.cs lines 143\u2013175): shows `--allow-cwd` grants the workspace root and `-a <path>` for each `SandboxExtraAllowPaths` entry \u2014 these are the per-run additions the inspector must surface.\\n- **HomePathToTildeConverter.Instance**: exists for raw\u2192tilde display.\\n- **BoolNotConverter.Instance**: exists for visibility toggles.\\n- **ObsidianSettings pattern**: 38-line axaml + 11-line code-behind + MainWindowViewModel.ObsidianBridge.cs async partial \u2014 the exact pattern to mirror.\\n- **LoadInitialAsync** (MainWindowViewModel.cs line 230): calls `LoadObsidianBridgeSettings()` and `LoadDiagnosticsSettings()` synchronously; the sandbox-path load must be async (subprocess calls) and fire-and-forget to not block UI.\\n\\n### 7. The stale-copy pitfall is confirmed\\n`NonoProfileEnsurer.cs` lines 14\u201320 document the issue: the old launcher installed `~/.config/nono/profiles/vr-guard.json` only-if-absent, so machines provisioned before the profile grew toolchain-cache grants kept running under a stale copy. The fix: `EmbeddedContent` + overwrite-always. The task spec explicitly says the SandboxPathInspector must read from `EmbeddedContent`, not the registered copy.\\n\\n### 8. Group expansion requires subprocess calls\\nvr-guard's `groups.include` lists `[\\\"go_runtime\\\", \\\"rust_runtime\\\"]`. These groups are defined inside the nono binary (not in the repo). Expanding them requires `nono profile groups <name> --json` per group. Each call returns `allow.read`/`allow.readwrite` (with `raw`/`expanded` entries) and `deny.access` (path list). Per-group JSON calls are required because `nono profile groups --json` (no name) returns counts, not paths, and `nono profile show <name> --json` only lists group names.\\n\\n### 9. Test infrastructure is ready\\n- `DictionaryEnvironmentAccessor` (Tests/TestDoubles.cs): in-memory env for tests\\n- `TestRepository` (Tests/TestDoubles.cs): temp directory with isolated XDG_CONFIG_HOME\\n- `SettingsTestHelpers` (Tests/): shared headless-UI open-settings mechanics\\n- Existing test patterns: `NonoProfileStructureTests` validates the vr-guard JSON structure; `SandboxDiagnosticsToggleTests` validates BuildNonoPrefix; `SandboxExtraAllowPathsConfigTests` validates the extra-allow-paths config field.\",\n  \"excerpts\": [\n    \"SandboxPathInspector: no matches in src/ \u2014 service does not exist (grep: 'class.*SandboxPath' in src/)\",\n    \"MainWindowViewModel.Sandbox.cs: no file at src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs (list_files of ViewModels shows 23 partials, none Sandbox)\",\n    \"SandboxPaths.axaml: no file at src/VisualRelay.App/Views/Controls/SandboxPaths.axaml\",\n    \"SettingsPanel.axaml line 63: Verbose sandbox diagnostics border closes here; line 288: ObsidianSettings embedded \u2014 no SandboxPaths between them\",\n    \"NonoProfileEnsurer.EmbeddedContent (line 36): returns embedded 'VisualRelay.Core.vr-guard.json' \u2014 the source of truth, NOT ~/.config/nono/profiles/\",\n    \"vr-guard.json lines 7-58: filesystem.read=['/', '$HOME/.gitconfig'], filesystem.allow=[48 entries with OS when-predicates], filesystem.deny=[5 entries], groups.include=['go_runtime','rust_runtime']\",\n    \"nono availability: /usr/local/bin/nono and /opt/homebrew/bin/nono do not exist; ~/.nono is permission-blocked \u2014 settings MUST degrade gracefully\",\n    \"ProcessRunners.BuildNonoPrefix line 151: '--allow-cwd' grants workspace root; lines 153-155: '-a <path>' for each SandboxExtraAllowPaths entry\",\n    \"PathExecutables.OnPath('nono') (line 22): canonical probe for nono presence\",\n    \"MxcPolicyGenerator.DefaultWindowsCacheDirs() (line 53): returns existing-on-disk Windows cache dirs; Generate() produces readwritePaths from workspace+dirs\",\n    \"ObsidianSettings.axaml (38 lines) + ObsidianSettings.axaml.cs (11 lines): the reference pattern for self-contained section controls\",\n    \"BoolNotConverter (BoolNotConverter.cs, 27 lines): available for visibility toggles; HomePathToTildeConverter (HomePathToTildeConverter.cs, 49 lines): available for ~ display\"\n  ],\n  \"repro\": \"cd /Users/admin/Dev/temp-visual-relay && grep -r 'SandboxPathInspector\\\\|SandboxPaths' src/ tests/ --include='*.cs' --include='*.axaml'  # returns empty \u2014 nothing built yet\\n\\n# Confirm nono is unavailable for degradation testing:\\nls /usr/local/bin/nono /opt/homebrew/bin/nono 2>&1  # both missing\\n\\n# Confirm the embedded profile is the source of truth:\\ngrep 'EmbeddedContent' src/VisualRelay.Core/Execution/NonoProfileEnsurer.cs  # line 36: public static string EmbeddedContent\\n\\n# Confirm SettingsPanel insertion point:\\nsed -n '53,65p' src/VisualRelay.App/Views/Controls/SettingsPanel.axaml  # Verbose diagnostics border ends at line 63; Provider Keys header at 65\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete plan: Show Sandbox Paths in Settings\\n\\n### 1. New: `src/VisualRelay.Core/Execution/SandboxPathInspector.cs` (~280 lines)\\n\\nStatic service class with the following types and methods:\\n\\n**Types:**\\n- `enum SandboxAccess { ReadOnly, ReadWrite, Blocked }`\\n- `sealed record SandboxPathEntry(string Raw, string Expanded, SandboxAccess Access, string Source)` \u2014 a single path entry with provenance.\\n- `sealed class SandboxInspectionResult { bool IsAvailable; IReadOnlyList<SandboxPathEntry> ReadablePaths; IReadOnlyList<SandboxPathEntry> WritablePaths; IReadOnlyList<SandboxPathEntry> BlockedPaths; static SandboxInspectionResult Unavailable }`\\n\\n**Primary method:**\\n- `static async Task<SandboxInspectionResult> InspectAsync(string? workspaceRoot, IReadOnlyList<string>? extraAllowPaths, string? nonoBinary = null, CancellationToken cancellationToken = default)`\\n  - **macOS/Linux path:**\\n    1. Parse `NonoProfileEnsurer.EmbeddedContent` as `JsonDocument`. Extract `filesystem.allow` entries \u2192 ReadWrite (filter `{ \\\"path\\\", \\\"when\\\" }` objects by `OperatingSystem.IsMacOS()`/`IsLinux()`), `filesystem.read` entries \u2192 ReadOnly, `filesystem.deny` entries \u2192 Blocked. Source = `\\\"vr-guard\\\"`.\\n    2. Extract `groups.include` array. For each group name, check nono availability via `PathExecutables.OnPath(nonoBinary ?? \\\"nono\\\")`. If absent, return `Unavailable`.\\n    3. For each group: `Process.Start` \u2192 `nono profile groups <name> --json`, capture stdout, parse as `JsonDocument`. Extract `allow.read` entries \u2192 ReadOnly (filter by `platform` field: `\\\"macos\\\"`/`\\\"linux\\\"` vs current OS, keep `\\\"cross-platform\\\"` always), `allow.readwrite` \u2192 ReadWrite, `deny.access` \u2192 Blocked. Ignore `deny.commands`/`deny.unlink`. Source = group name. If any call fails, return `Unavailable`.\\n    4. Add per-run writable additions: `workspaceRoot` (if not null) as ReadWrite with source `\\\"current workspace\\\"`, and each `extraAllowPaths` entry as ReadWrite with source `\\\"per-project extras\\\"`.\\n    5. For every entry: `Expanded` = resolve `$HOME`/`~` prefix using `Environment.GetFolderPath(UserProfile)`; `Raw` = the original unexpanded path string from the JSON.\\n  - **Windows path:**\\n    1. Call `MxcPolicyGenerator.DefaultWindowsCacheDirs()` \u2192 each existing dir becomes a ReadWrite entry, source = `\\\"MXC cache dir\\\"`.\\n    2. Add `workspaceRoot` as ReadWrite, source = `\\\"current workspace\\\"`.\\n    3. Add `extraAllowPaths` entries as ReadWrite, source = `\\\"per-project extras\\\"`.\\n    4. Add a single synthetic ReadOnly entry: `{ Raw = \\\"<entire filesystem except blocked paths>\\\", Expanded = \\\"\u2026\\\", Access = ReadOnly, Source = \\\"MXC default\\\" }`.\\n    5. Add a single synthetic Blocked entry explaining writes outside listed paths are blocked.\\n  - **Graceful degradation:** if nono is absent or a subprocess fails, return `Unavailable` \u2014 never throw.\\n\\n**Internal helpers (testable via `[InternalsVisibleTo(\\\"VisualRelay.Tests\\\")]`):**\\n- `ParseOwnDirectives(string profileJson)` \u2192 `IReadOnlyList<SandboxPathEntry>` \u2014 extracts allow/read/deny from vr-guard JSON with OS-predicate filtering.\\n- `ParseGroupJson(string groupJson, string groupName)` \u2192 `IReadOnlyList<SandboxPathEntry>` \u2014 extracts allow.read/allow.readwrite/deny.access with platform filtering, ignores deny.commands/deny.unlink.\\n- `ExpandPath(string raw)` \u2192 `string` \u2014 resolves `$HOME`/`~` to the real home path.\\n\\n### 2. New: `src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs` (~80 lines)\\n\\nVM partial class adding:\\n- `[ObservableProperty] ObservableCollection<SandboxPathEntry> _sandboxReadablePaths = []`\\n- `[ObservableProperty] ObservableCollection<SandboxPathEntry> _sandboxWritablePaths = []`\\n- `[ObservableProperty] ObservableCollection<SandboxPathEntry> _sandboxBlockedPaths = []`\\n- `[ObservableProperty] bool _isSandboxInfoAvailable = true` \u2014 flips to false when `Unavailable`.\\n- `[ObservableProperty] bool _isSandboxInfoLoading` \u2014 true while the async load is in flight.\\n- `async Task LoadSandboxPathsAsync()`:\\n  1. Set `IsSandboxInfoLoading = true`.\\n  2. Call `SandboxPathInspector.InspectAsync(RootPath, config.SandboxExtraAllowPaths)` (need to resolve config \u2014 `RelayConfigLoader` can load from disk; or accept a `RelayConfig` parameter).\\n  3. On return: clear and repopulate the three collections; set `IsSandboxInfoAvailable = result.IsAvailable`.\\n  4. Catch-all: set `IsSandboxInfoAvailable = false`.\\n  5. Set `IsSandboxInfoLoading = false`.\\n\\n### 3. New: `src/VisualRelay.App/Views/Controls/SandboxPaths.axaml` (~90 lines)\\n\\nSelf-contained `UserControl`, `x:DataType=\\\"vm:MainWindowViewModel\\\"`, mirrors `ObsidianSettings` pattern but larger:\\n- **Loading state:** shown when `IsSandboxInfoLoading` is true \u2014 a `TextBlock` \\\"Loading sandbox paths\u2026\\\" in body text color.\\n- **Unavailable state:** shown when `!IsSandboxInfoAvailable && !IsSandboxInfoLoading` \u2014 \\\"Sandbox path information is unavailable (nono not found or failed to respond).\\\"\\n- **Available state:** `IsSandboxInfoAvailable && !IsSandboxInfoLoading`:\\n  - Explanation label: \\\"Reads: the whole filesystem except the blocked paths. Writes: only the paths listed here (plus the current workspace).\\\"\\n  - Three bordered `StackPanel` groups (Readable / Writable / Blocked), each with a header `TextBlock` and an `ItemsControl` bound to the corresponding collection.\\n  - Each item row: a `Grid` with status-dot `Ellipse` (green `#5AD47D` writable, gray `#4A5568` readonly, red `#E0556A` blocked), the raw path via `HomePathToTildeConverter.Instance`, and a source label in lighter text.\\n  - `ScrollViewer` wrapping the whole thing to avoid overflow.\\n\\n### 4. New: `src/VisualRelay.App/Views/Controls/SandboxPaths.axaml.cs` (~11 lines)\\n\\nMirror `ObsidianSettings.axaml.cs`: partial class with `InitializeComponent()` constructor.\\n\\n### 5. Edit: `src/VisualRelay.App/Views/Controls/SettingsPanel.axaml`\\n\\nInsert `<controls:SandboxPaths/>` after the Verbose sandbox diagnostics `</Border>` on line 63 and before the `<!-- Provider keys section -->` comment on line 65.\\n\\n### 6. Edit: `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs`\\n\\nIn `LoadInitialAsync()` (line 230), after `LoadDiagnosticsSettings();` and before the `if (Directory.Exists(RootPath))` block, add:\\n```csharp\\n_ = LoadSandboxPathsAsync();\\n```\\nThis fires the async nono subprocess calls without blocking the UI. The VM also needs a `RelayConfig` field or needs to load it \u2014 the simplest approach: call `RelayConfigLoader.LoadAsync(RootPath)` inside `LoadSandboxPathsAsync` (best-effort; null/empty if root doesn't exist).\\n\\n### 7. New: `tests/VisualRelay.Tests/SandboxPathInspectorTests.cs` (~260 lines)\\n\\nTests proving the classifier is derived, not hardcoded:\\n1. `ParseOwnDirectives_ClassifiesAllowReadDeny` \u2014 feed sample vr-guard JSON with allow/read/deny, assert three-bucket classification and correct Access enum per entry.\\n2. `ParseOwnDirectives_FiltersByOsWhenPredicate` \u2014 entries with `\\\"when\\\":\\\"linux\\\"` excluded on macOS, included on Linux.\\n3. `ParseGroupJson_ClassifiesAllowReadAllowReadwriteDenyAccess` \u2014 feed sample `nono profile groups --json` output, assert correct buckets and source=group name.\\n4. `ParseGroupJson_IgnoresDenyCommandsAndDenyUnlink` \u2014 `deny.commands` and `deny.unlink` entries do not appear in any bucket.\\n5. `[ENCRYPTED:fastly]l6qaEvth3r5wZwkLTLZEgd1P34GiX-I_` \u2014 wrong-platform entries excluded; cross-platform included.\\n6. `InspectAsync_ReturnsUnavailableWhenNonoAbsent` \u2014 inject a non-existent nono path, assert `IsAvailable == false`.\\n7. `InspectAsync_OwnDirectivesComeFromEmbeddedNotRegisteredCopy` \u2014 the service reads `NonoProfileEnsurer.EmbeddedContent`, not `~/.config/nono/profiles/`. Encode by verifying `ParseOwnDirectives` accepts the embedded content format and does not touch the filesystem.\\n8. `Windows_DerivesFromMxcPolicyGenerator` \u2014 on Windows, `DefaultWindowsCacheDirs()` results appear as ReadWrite entries; no shell-out.\\n9. `PathAddedToInput_AppearsInOutput` \u2014 the \\\"derived, not hardcoded\\\" headline test: add a unique path to the sample JSON, assert it appears in the classified output.\\n\\nAll tests use `System.Text.Json` (already available in net10.0). No nono binary needed \u2014 tests inject synthetic JSON payloads.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Execution/SandboxPathInspector.cs\",\n    \"+src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs\",\n    \"+src/VisualRelay.App/Views/Controls/SandboxPaths.axaml\",\n    \"+src/VisualRelay.App/Views/Controls/SandboxPaths.axaml.cs\",\n    \"src/VisualRelay.App/Views/Controls/SettingsPanel.axaml\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"+tests/VisualRelay.Tests/SandboxPathInspectorTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded untracked deleted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SandboxPathInspectorTests.cs\"\n  ],\n  \"rationale\": \"15 tests written across 8 test methods targeting the SandboxPathInspector's internal ParseOwnDirectives, ParseGroupJson, ExpandPath, and InspectAsync methods. A stub SandboxPathInspector.cs was created with correct type signatures (SandboxAccess enum, SandboxPathEntry record, SandboxInspectionResult class) but empty implementations. The targeted dotnet test command compiled successfully and produced the expected red result: 12 failures, 3 passes. The 3 passes are trivially correct (EmbeddedContent validation, ExpandPath no-op for non-home paths, InspectAsync returning Unavailable from the stub). All 12 failures are from the stub returning empty collections \u2014 ParseOwnDirectives and ParseGroupJson return `[]` instead of classified entries, ExpandPath returns raw input instead of resolving `$HOME`/`~`. These failures prove the tests are derived from input (not constants) and will turn green when the real SandboxPathInspector implementation is added.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented the sandbox paths display feature with 4 new files and 2 edits. Created SandboxPathInspector.cs (299 lines) as a Core service that derives effective sandbox policy at runtime: parses the embedded vr-guard JSON for own allow/read/deny directives with OS-predicate filtering, expands inherited groups via `nono profile groups <name> --json` subprocess calls on macOS/Linux, and delegates to MxcPolicyGenerator on Windows. Gracefully returns Unavailable when nono is absent. Added MainWindowViewModel.Sandbox.cs (79 lines) with three observable collections and async fire-and-forget load. Created SandboxPaths.axaml (+ code-behind) as a self-contained UserControl showing Readable/Writable/Blocked paths with colored status dots and source labels plus loading/unavailable states. Embedded the control in SettingsPanel.axaml after the verbose diagnostics toggle. All 15 targeted tests pass (Failed: 0, exit 0); all new/edited files \u2264 300 lines.\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"changes\", \"issues\": [\"tests/VisualRelay.Tests/SandboxPathInspectorTests.cs is 431 lines, violating the \u2264300-line done criterion. It is the only .cs file in the repo above 300 (all other test files are held at \u2264300, 8 at exactly 300), so it will fail the line-count gate. Split it \u2014 e.g. own-directives + ExpandPath tests in one partial, group-json + InspectAsync + embedded-content tests in another \u2014 so each file is \u2264300.\", \"Minor: SandboxPathEntry.Expanded is populated but never shown in the UI \u2014 SandboxPaths.axaml binds only Raw. The spec wanted the expanded form 'available as a tooltip/secondary'. Add a Tooltip (or secondary line) bound to Expanded.\", \"Minor: loading-state UX \u2014 while IsSandboxInfoLoading is true, the available panel (IsSandboxInfoAvailable defaults to true) still renders three empty bordered groups beside the 'Loading\u2026' text. Gate the available panel on !IsSandboxInfoLoading as well (or default IsSandboxInfoAvailable to false until the first result).\"] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"summary\": \"Resolved all three review issues: (1) Split the 431-line test file into two partial class files \u2014 SandboxPathInspectorTests.cs (298 lines, own-directives/EmbeddedContent/ExpandPath tests + helpers) and SandboxPathInspectorGroupJsonTests.cs (138 lines, group-JSON/InspectAsync/PathAddedToGroupJson tests), both \u2264300. (2) Added ToolTip.Tip=\\\"{Binding Expanded}\\\" to every path-row TextBlock in SandboxPaths.axaml so the expanded form is available as a tooltip. (3) Fixed loading-state UX by defaulting IsSandboxInfoAvailable to false and gating the post-load panel (unavailable + available states) on !IsSandboxInfoLoading via BoolNotConverter, so empty bordered groups never flash beside the 'Loading\u2026' text. All 15 targeted tests pass (Failed: 0, exit 0).\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 27,
+    "tool_calls_total": 31,
+    "tool_calls_succeeded": 31,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 27,
+    "total_llm_time_s": 208.012,
+    "prompt_cache": {
+      "cached_tokens": 1080448,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 12.342,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 4,
+      "completed": 4,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.881,
+      "prompt_tokens_est": 12702,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 19032
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SandboxPaths.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6319
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SandboxPaths.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 244
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.537,
+      "prompt_tokens_est": 19106,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2874
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/SandboxPathInspector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14306
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SettingsPanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18419
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 220,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2086
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 66.094,
+      "prompt_tokens_est": 27885,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Split SandboxPathInspectorTests.cs (431 lines) into two partial class files \u2264300 lines each",
+          "Add ToolTip with Expanded to path rows in SandboxPaths.axaml",
+          "Fix loading-state UX: gate available panel on !IsSandboxInfoLoading, default IsSandboxInfoAvailable to false",
+          "Run dotnet-test-files.sh to verify"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 470
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 5.563,
+      "prompt_tokens_est": 32801,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "old_string": "public sealed class SandboxPathInspectorTests",
+        "new_string": "public sealed partial class SandboxPathInspectorTests"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 79
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 17.686,
+      "prompt_tokens_est": 33021,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "old_string": "    // \u2500\u2500 Group JSON parsing (nono profile groups --json output) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void ParseGroupJson_ClassifiesAllowReadAllowReadwriteDenyAccess()\n    {\n        var groupJson = SampleAllowGroupJson();\n        const string groupName = \"test_runtime\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        // allow.read \u2192 ReadOnly\n        var readable = entries.Where(e => e.Access == SandboxAccess.ReadOnly).ToList();\n        Assert.NotEmpty(readable);\n        Assert.Contains(readable, e => e.Raw == \"/usr/local/bin\" && e.Source == groupName);\n\n        // allow.readwrite \u2192 ReadWrite\n        var writable = entries.Where(e => e.Access == SandboxAccess.ReadWrite).ToList();\n        Assert.NotEmpty(writable);\n        Assert.Contains(writable, e => e.Raw == \"/tmp/runtime-cache\" && e.Source == groupName);\n\n        // deny.access \u2192 Blocked\n        var blocked = entries.Where(e => e.Access == SandboxAccess.Blocked).ToList();\n        Assert.NotEmpty(blocked);\n        Assert.Contains(blocked, e => e.Raw == \"/etc/secret\" && e.Source == groupName);\n    }\n\n    [Fact]\n    public void ParseGroupJson_IgnoresDenyCommandsAndDenyUnlink()\n    {\n        var groupJson = SampleDenyGroupJson();\n        const string groupName = \"deny_test\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        // deny.commands entries (e.g. \"curl\", \"wget\") must NOT appear in any bucket.\n        Assert.DoesNotContain(entries, e => e.Raw == \"curl\");\n        Assert.DoesNotContain(entries, e => e.Raw == \"wget\");\n\n        // deny.unlink entries must NOT appear in any bucket.\n        Assert.DoesNotContain(entries, e => e.Raw == \"/var/run/important.pid\");\n\n        // deny.access entries (filesystem paths) MUST still appear as Blocked.\n        Assert.Contains(entries, e => e.Raw == \"/etc/secret\" && e.Access == SandboxAccess.Blocked);\n        Assert.Contains(entries, e => e.Raw == \"/root/.ssh\" && e.Access == SandboxAccess.Blocked);\n    }\n\n    [Fact]\n    public void [ENCRYPTED:fastly]l6qaEvth3r5wZwkLTLZEgd1P34GiX-I_()\n    {\n        var json = SampleCrossPlatformGroupJson();\n        const string groupName = \"cross_plat\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(json, groupName);\n\n        // \"cross-platform\" entries are always included.\n        Assert.Contains(entries, e => e.Raw == \"/usr/share/common\"\n                                      && e.Access == SandboxAccess.ReadOnly);\n\n        // Platform-specific entries:\n        if (OperatingSystem.IsMacOS())\n        {\n            Assert.Contains(entries, e => e.Raw == \"/mac/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/linux/specific/path\");\n        }\n        else if (OperatingSystem.IsLinux())\n        {\n            Assert.Contains(entries, e => e.Raw == \"/linux/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/mac/specific/path\");\n        }\n        // On Windows, neither platform-specific entry should appear (only cross-platform).\n        if (OperatingSystem.IsWindows())\n        {\n            Assert.DoesNotContain(entries, e => e.Raw == \"/mac/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/linux/specific/path\");\n        }\n    }\n\n    [Fact]\n    public void ParseGroupJson_ExpandedFieldIsPreserved()\n    {\n        var groupJson = SampleAllowGroupJson();\n        const string groupName = \"test_runtime\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        var writable = entries.First(e => e.Raw == \"/tmp/runtime-cache\");\n        Assert.Equal(\"/private/tmp/runtime-cache\", writable.Expanded);\n    }\n\n    // \u2500\u2500 Unavailable / degraded state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task InspectAsync_ReturnsUnavailableWhenNonoAbsent()\n    {\n        // A path that definitely does not exist on the filesystem.\n        var fakeBinary = Path.Combine(Path.GetTempPath(), \"nono-does-not-exist-\" + Guid.NewGuid().ToString(\"N\"));\n\n        var result = await SandboxPathInspector.InspectAsync(\n            workspaceRoot: \"/tmp/ws\",\n            nonoBinary: fakeBinary);\n\n        Assert.False(result.IsAvailable);\n        Assert.Empty(result.ReadablePaths);\n        Assert.Empty(result.WritablePaths);\n        Assert.Empty(result.BlockedPaths);\n    }\n\n    // \u2500\u2500 Derived, not hardcoded \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void PathAddedToInput_AppearsInOutput()\n    {\n        // Start with a base json that lacks a unique marker path.\n        var baseJson = SampleVrGuardJson();\n        var baseEntries = SandboxPathInspector.ParseOwnDirectives(baseJson);\n        Assert.DoesNotContain(baseEntries, e => e.Raw == \"$HOME/.acme-toolchain/cache\");\n\n        // Now add that unique path to the allow array.\n        var patchedJson = PatchAllowArray(baseJson, \"$HOME/.acme-toolchain/cache\");\n        var patchedEntries = SandboxPathInspector.ParseOwnDirectives(patchedJson);\n\n        // The added path must appear as ReadWrite with source \"vr-guard\".\n        Assert.Contains(patchedEntries,\n            e => e.Raw == \"$HOME/.acme-toolchain/cache\"\n                 && e.Access == SandboxAccess.ReadWrite\n                 && e.Source == \"vr-guard\");\n    }\n\n    [Fact]\n    public void PathAddedToGroupJson_AppearsInOutput()\n    {\n        var json = SampleAllowGroupJson();\n\n        // The base JSON contains \"/usr/local/bin\" but not \"/opt/new-tool/bin\".\n        var baseEntries = SandboxPathInspector.ParseGroupJson(json, \"runtime\");\n        Assert.Contains(baseEntries, e => e.Raw == \"/usr/local/bin\");\n        Assert.DoesNotContain(baseEntries, e => e.Raw == \"/opt/new-tool/bin\");\n\n        // Patch in the new path as an allow.read entry.\n        var patched = PatchGroupAllowRead(json, \"/opt/new-tool/bin\", \"/opt/new-tool/bin\");\n        var patchedEntries = SandboxPathInspector.ParseGroupJson(patched, \"runtime\");\n\n        Assert.Contains(patchedEntries,\n            e => e.Raw == \"/opt/new-tool/bin\"\n                 && e.Access == SandboxAccess.ReadOnly\n                 && e.Source == \"runtime\");\n    }\n\n    // \u2500\u2500 EmbeddedContent usage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500",
+        "new_string": "    // \u2500\u2500 Derived, not hardcoded \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void PathAddedToInput_AppearsInOutput()\n    {\n        // Start with a base json that lacks a unique marker path.\n        var baseJson = SampleVrGuardJson();\n        var baseEntries = SandboxPathInspector.ParseOwnDirectives(baseJson);\n        Assert.DoesNotContain(baseEntries, e => e.Raw == \"$HOME/.acme-toolchain/cache\");\n\n        // Now add that unique path to the allow array.\n        var patchedJson = PatchAllowArray(baseJson, \"$HOME/.acme-toolchain/cache\");\n        var patchedEntries = SandboxPathInspector.ParseOwnDirectives(patchedJson);\n\n        // The added path must appear as ReadWrite with source \"vr-guard\".\n        Assert.Contains(patchedEntries,\n            e => e.Raw == \"$HOME/.acme-toolchain/cache\"\n                 && e.Access == SandboxAccess.ReadWrite\n                 && e.Source == \"vr-guard\");\n    }\n\n    // \u2500\u2500 EmbeddedContent usage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 79
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.241,
+      "prompt_tokens_est": 35012,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13229
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 8.687,
+      "prompt_tokens_est": 38384,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "old_string": "namespace VisualRelay.Tests;\n\n/// <summary>",
+        "new_string": "namespace VisualRelay.Tests;\n/// <summary>"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 79
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.354,
+      "prompt_tokens_est": 38904,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "new_string": "    // \u2500\u2500 Own-directives parsing (vr-guard JSON) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]",
+        "old_string": "    // \u2500\u2500 Own-directives parsing (vr-guard JSON) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 79
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.211,
+      "prompt_tokens_est": 39037,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "new_string": "    // \u2500\u2500 Derived, not hardcoded \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]",
+        "old_string": "    // \u2500\u2500 Derived, not hardcoded \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 79
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.087,
+      "prompt_tokens_est": 39233,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "new_string": "    // \u2500\u2500 EmbeddedContent usage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]",
+        "old_string": "    // \u2500\u2500 EmbeddedContent usage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 79
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.945,
+      "prompt_tokens_est": 39353,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "new_string": "    // \u2500\u2500 ExpandPath \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]",
+        "old_string": "    // \u2500\u2500 ExpandPath \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 79
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.844,
+      "prompt_tokens_est": 39469,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs",
+        "new_string": "    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    /// <summary>",
+        "old_string": "    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 79
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.738,
+      "prompt_tokens_est": 39654,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 217
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.379,
+      "prompt_tokens_est": 39787,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/SandboxPathInspectorTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 57
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 14.214,
+      "prompt_tokens_est": 39843,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.[ENCRYPTED:aws-secret-key]oPa7B63DD55d5PHjBA+a6pOoVJElIbNvwvGBOdYa.cs",
+        "content": "using VisualRelay.Core.Execution;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Group-JSON and integration tests for <see cref=\"SandboxPathInspector\"/>,\n/// declared as a partial of <see cref=\"SandboxPathInspectorTests\"/> so helpers\n/// defined there are shared.\n/// </summary>\npublic sealed partial class SandboxPathInspectorTests\n{\n    // \u2500\u2500 Group JSON parsing (nono profile groups --json output) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]\n    public void ParseGroupJson_ClassifiesAllowReadAllowReadwriteDenyAccess()\n    {\n        var groupJson = SampleAllowGroupJson();\n        const string groupName = \"test_runtime\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        // allow.read \u2192 ReadOnly\n        var readable = entries.Where(e => e.Access == SandboxAccess.ReadOnly).ToList();\n        Assert.NotEmpty(readable);\n        Assert.Contains(readable, e => e.Raw == \"/usr/local/bin\" && e.Source == groupName);\n\n        // allow.readwrite \u2192 ReadWrite\n        var writable = entries.Where(e => e.Access == SandboxAccess.ReadWrite).ToList();\n        Assert.NotEmpty(writable);\n        Assert.Contains(writable, e => e.Raw == \"/tmp/runtime-cache\" && e.Source == groupName);\n\n        // deny.access \u2192 Blocked\n        var blocked = entries.Where(e => e.Access == SandboxAccess.Blocked).ToList();\n        Assert.NotEmpty(blocked);\n        Assert.Contains(blocked, e => e.Raw == \"/etc/secret\" && e.Source == groupName);\n    }\n\n    [Fact]\n    public void ParseGroupJson_IgnoresDenyCommandsAndDenyUnlink()\n    {\n        var groupJson = SampleDenyGroupJson();\n        const string groupName = \"deny_test\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        // deny.commands entries (e.g. \"curl\", \"wget\") must NOT appear in any bucket.\n        Assert.DoesNotContain(entries, e => e.Raw == \"curl\");\n        Assert.DoesNotContain(entries, e => e.Raw == \"wget\");\n\n        // deny.unlink entries must NOT appear in any bucket.\n        Assert.DoesNotContain(entries, e => e.Raw == \"/var/run/important.pid\");\n\n        // deny.access entries (filesystem paths) MUST still appear as Blocked.\n        Assert.Contains(entries, e => e.Raw == \"/etc/secret\" && e.Access == SandboxAccess.Blocked);\n        Assert.Contains(entries, e => e.Raw == \"/root/.ssh\" && e.Access == SandboxAccess.Blocked);\n    }\n\n    [Fact]\n    public void [ENCRYPTED:fastly]l6qaEvth3r5wZwkLTLZEgd1P34GiX-I_()\n    {\n        var json = SampleCrossPlatformGroupJson();\n        const string groupName = \"cross_plat\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(json, groupName);\n\n        // \"cross-platform\" entries are always included.\n        Assert.Contains(entries, e => e.Raw == \"/usr/share/common\"\n                                      && e.Access == SandboxAccess.ReadOnly);\n\n        // Platform-specific entries:\n        if (OperatingSystem.IsMacOS())\n        {\n            Assert.Contains(entries, e => e.Raw == \"/mac/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/linux/specific/path\");\n        }\n        else if (OperatingSystem.IsLinux())\n        {\n            Assert.Contains(entries, e => e.Raw == \"/linux/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/mac/specific/path\");\n        }\n        // On Windows, neither platform-specific entry should appear (only cross-platform).\n        if (OperatingSystem.IsWindows())\n        {\n            Assert.DoesNotContain(entries, e => e.Raw == \"/mac/specific/path\");\n            Assert.DoesNotContain(entries, e => e.Raw == \"/linux/specific/path\");\n        }\n    }\n\n    [Fact]\n    public void ParseGroupJson_ExpandedFieldIsPreserved()\n    {\n        var groupJson = SampleAllowGroupJson();\n        const string groupName = \"test_runtime\";\n\n        var entries = SandboxPathInspector.ParseGroupJson(groupJson, groupName);\n\n        var writable = entries.First(e => e.Raw == \"/tmp/runtime-cache\");\n        Assert.Equal(\"/private/tmp/runtime-cache\", writable.Expanded);\n    }\n\n    // \u2500\u2500 Unavailable / degraded state \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]\n    public async Task InspectAsync_ReturnsUnavailableWhenNonoAbsent()\n    {\n        // A path that definitely does not exist on the filesystem.\n        var fakeBinary = Path.Combine(Path.GetTempPath(),\n            \"nono-does-not-exist-\" + Guid.NewGuid().ToString(\"N\"));\n\n        var result = await SandboxPathInspector.InspectAsync(\n            workspaceRoot: \"/tmp/ws\",\n            nonoBinary: fakeBinary);\n\n        Assert.False(result.IsAvailable);\n        Assert.Empty(result.ReadablePaths);\n        Assert.Empty(result.WritablePaths);\n        Assert.Empty(result.BlockedPaths);\n    }\n\n    // \u2500\u2500 Derived, not hardcoded (group variant) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    [Fact]\n    public void PathAddedToGroupJson_AppearsInOutput()\n    {\n        var json = SampleAllowGroupJson();\n\n        // The base JSON contains \"/usr/local/bin\" but not \"/opt/new-tool/bin\".\n        var baseEntries = SandboxPathInspector.ParseGroupJson(json, \"runtime\");\n        Assert.Contains(baseEntries, e => e.Raw == \"/usr/local/bin\");\n        Assert.DoesNotContain(baseEntries, e => e.Raw == \"/opt/new-tool/bin\");\n\n        // Patch in the new path as an allow.read entry.\n        var patched = PatchGroupAllowRead(json, \"/opt/new-tool/bin\", \"/opt/new-tool/bin\");\n        var patchedEntries = SandboxPathInspector.ParseGroupJson(patched, \"runtime\");\n\n        Assert.Contains(patchedEntries,\n            e => e.Raw == \"/opt/new-tool/bin\"\n                 && e.Access == SandboxAccess.ReadOnly\n                 && e.Source == \"runtime\");\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 101
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.387,
+      "prompt_tokens_est": 41458,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.[ENCRYPTED:aws-secret-key]oPa7B63DD55d5PHjBA+a6pOoVJElIbNvwvGBOdYa.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.079,
+      "result_length": 66
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.536,
+      "prompt_tokens_est": 41518,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Split SandboxPathInspectorTests.cs (431 lines) into two partial class files \u2264300 lines each"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 470
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 9.0,
+      "prompt_tokens_est": 41757,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SandboxPaths.axaml",
+        "old_string": "  <StackPanel Spacing=\"6\">\n\n    <!-- Loading state -->\n    <TextBlock Text=\"Loading sandbox paths\u2026\"\n               FontSize=\"12\" Foreground=\"#9AA3B1\"\n               IsVisible=\"{Binding IsSandboxInfoLoading}\"/>\n\n    <!-- Unavailable state -->\n    <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n            CornerRadius=\"4\" Padding=\"10\"\n            IsVisible=\"{Binding IsSandboxInfoAvailable, Converter={x:Static controls:BoolNotConverter.Instance}}\">\n      <TextBlock Text=\"Sandbox path information is unavailable (nono not found or failed to respond).\"\n                 FontSize=\"12\" Foreground=\"#9AA3B1\" TextWrapping=\"Wrap\"/>\n    </Border>\n\n    <!-- Available state (only when not loading and available) -->\n    <StackPanel Spacing=\"6\"\n                IsVisible=\"{Binding IsSandboxInfoAvailable}\">",
+        "new_string": "  <StackPanel Spacing=\"6\">\n\n    <!-- Loading state \u2014 shown only while the async nono calls are in flight -->\n    <TextBlock Text=\"Loading sandbox paths\u2026\"\n               FontSize=\"12\" Foreground=\"#9AA3B1\"\n               IsVisible=\"{Binding IsSandboxInfoLoading}\"/>\n\n    <!-- Post-load states \u2014 hidden while loading so empty buckets never flash -->\n    <StackPanel Spacing=\"6\"\n                IsVisible=\"{Binding IsSandboxInfoLoading, Converter={x:Static controls:BoolNotConverter.Instance}}\">\n\n      <!-- Unavailable state -->\n      <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n              CornerRadius=\"4\" Padding=\"10\"\n              IsVisible=\"{Binding IsSandboxInfoAvailable, Converter={x:Static controls:BoolNotConverter.Instance}}\">\n        <TextBlock Text=\"Sandbox path information is unavailable (nono not found or failed to respond).\"\n                   FontSize=\"12\" Foreground=\"#9AA3B1\" TextWrapping=\"Wrap\"/>\n      </Border>\n\n      <!-- Available state -->\n      <StackPanel Spacing=\"6\"\n                  IsVisible=\"{Binding IsSandboxInfoAvailable}\">"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 80
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 2.731,
+      "prompt_tokens_est": 42498,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SandboxPaths.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6603
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 22.093,
+      "prompt_tokens_est": 44100,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/SandboxPaths.axaml",
+        "content": "<UserControl xmlns=\"https://github.com/avaloniaui\"\n             xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n             xmlns:vm=\"using:VisualRelay.App.ViewModels\"\n             xmlns:controls=\"using:VisualRelay.App.Views.Controls\"\n             xmlns:core=\"using:VisualRelay.Core.Execution\"\n             x:Class=\"VisualRelay.App.Views.Controls.SandboxPaths\"\n             x:DataType=\"vm:MainWindowViewModel\"\n             x:Name=\"Root\">\n  <StackPanel Spacing=\"6\">\n\n    <!-- Loading state \u2014 shown only while the async nono calls are in flight -->\n    <TextBlock Text=\"Loading sandbox paths\u2026\"\n               FontSize=\"12\" Foreground=\"#9AA3B1\"\n               IsVisible=\"{Binding IsSandboxInfoLoading}\"/>\n\n    <!-- Post-load states \u2014 hidden while loading so empty buckets never flash -->\n    <StackPanel Spacing=\"6\"\n                IsVisible=\"{Binding IsSandboxInfoLoading, Converter={x:Static controls:BoolNotConverter.Instance}}\">\n\n      <!-- Unavailable state -->\n      <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n              CornerRadius=\"4\" Padding=\"10\"\n              IsVisible=\"{Binding IsSandboxInfoAvailable, Converter={x:Static controls:BoolNotConverter.Instance}}\">\n        <TextBlock Text=\"Sandbox path information is unavailable (nono not found or failed to respond).\"\n                   FontSize=\"12\" Foreground=\"#9AA3B1\" TextWrapping=\"Wrap\"/>\n      </Border>\n\n      <!-- Available state -->\n      <StackPanel Spacing=\"6\"\n                  IsVisible=\"{Binding IsSandboxInfoAvailable}\">\n\n        <!-- Explanation -->\n        <TextBlock Text=\"Reads: the whole filesystem except the blocked paths. Writes: only the paths listed here (plus the current workspace).\"\n                   FontSize=\"11\" Foreground=\"#9AA3B1\" TextWrapping=\"Wrap\"\n                   Margin=\"0,0,0,2\"/>\n\n        <!-- Writable paths -->\n        <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n                CornerRadius=\"4\" Padding=\"10\">\n          <StackPanel Spacing=\"4\">\n            <TextBlock Text=\"Writable\" FontSize=\"13\" FontWeight=\"Bold\"\n                       Foreground=\"#5AD47D\"/>\n            <ItemsControl ItemsSource=\"{Binding SandboxWritablePaths}\">\n              <ItemsControl.ItemsPanel>\n                <ItemsPanelTemplate>\n                  <StackPanel Spacing=\"2\"/>\n                </ItemsPanelTemplate>\n              </ItemsControl.ItemsPanel>\n              <ItemsControl.ItemTemplate>\n                <DataTemplate x:DataType=\"core:SandboxPathEntry\">\n                  <Grid ColumnDefinitions=\"12,Auto,*,Auto\" ColumnSpacing=\"6\">\n                    <Ellipse Width=\"8\" Height=\"8\" Fill=\"#5AD47D\"\n                             VerticalAlignment=\"Center\"/>\n                    <TextBlock Grid.Column=\"1\" Text=\"{Binding Raw}\"\n                               FontSize=\"12\" Foreground=\"#E7ECF3\"\n                               VerticalAlignment=\"Center\"\n                               ToolTip.Tip=\"{Binding Expanded}\"/>\n                    <TextBlock Grid.Column=\"3\" Text=\"{Binding Source}\"\n                               FontSize=\"11\" Foreground=\"#7F8794\"\n                               VerticalAlignment=\"Center\"/>\n                  </Grid>\n                </DataTemplate>\n              </ItemsControl.ItemTemplate>\n            </ItemsControl>\n          </StackPanel>\n        </Border>\n\n        <!-- Readable paths -->\n        <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n                CornerRadius=\"4\" Padding=\"10\">\n          <StackPanel Spacing=\"4\">\n            <TextBlock Text=\"Readable\" FontSize=\"13\" FontWeight=\"Bold\"\n                       Foreground=\"#F2F5FA\"/>\n            <ItemsControl ItemsSource=\"{Binding SandboxReadablePaths}\">\n              <ItemsControl.ItemsPanel>\n                <ItemsPanelTemplate>\n                  <StackPanel Spacing=\"2\"/>\n                </ItemsPanelTemplate>\n              </ItemsControl.ItemsPanel>\n              <ItemsControl.ItemTemplate>\n                <DataTemplate x:DataType=\"core:SandboxPathEntry\">\n                  <Grid ColumnDefinitions=\"12,Auto,*,Auto\" ColumnSpacing=\"6\">\n                    <Ellipse Width=\"8\" Height=\"8\" Fill=\"#4A5568\"\n                             VerticalAlignment=\"Center\"/>\n                    <TextBlock Grid.Column=\"1\" Text=\"{Binding Raw}\"\n                               FontSize=\"12\" Foreground=\"#E7ECF3\"\n                               VerticalAlignment=\"Center\"\n                               ToolTip.Tip=\"{Binding Expanded}\"/>\n                    <TextBlock Grid.Column=\"3\" Text=\"{Binding Source}\"\n                               FontSize=\"11\" Foreground=\"#7F8794\"\n                               VerticalAlignment=\"Center\"/>\n                  </Grid>\n                </DataTemplate>\n              </ItemsControl.ItemTemplate>\n            </ItemsControl>\n          </StackPanel>\n        </Border>\n\n        <!-- Blocked paths -->\n        <Border Background=\"#12151C\" BorderBrush=\"#252A33\" BorderThickness=\"1\"\n                CornerRadius=\"4\" Padding=\"10\">\n          <StackPanel Spacing=\"4\">\n            <TextBlock Text=\"Blocked\" FontSize=\"13\" FontWeight=\"Bold\"\n                       Foreground=\"#E0556A\"/>\n            <ItemsControl ItemsSource=\"{Binding SandboxBlockedPaths}\">\n              <ItemsControl.ItemsPanel>\n                <ItemsPanelTemplate>\n                  <StackPanel Spacing=\"2\"/>\n                </ItemsPanelTemplate>\n              </ItemsControl.ItemsPanel>\n              <ItemsControl.ItemTemplate>\n                <DataTemplate x:DataType=\"core:SandboxPathEntry\">\n                  <Grid ColumnDefinitions=\"12,Auto,*,Auto\" ColumnSpacing=\"6\">\n                    <Ellipse Width=\"8\" Height=\"8\" Fill=\"#E0556A\"\n                             VerticalAlignment=\"Center\"/>\n                    <TextBlock Grid.Column=\"1\" Text=\"{Binding Raw}\"\n                               FontSize=\"12\" Foreground=\"#E7ECF3\"\n                               VerticalAlignment=\"Center\"\n                               ToolTip.Tip=\"{Binding Expanded}\"/>\n                    <TextBlock Grid.Column=\"3\" Text=\"{Binding Source}\"\n                               FontSize=\"11\" Foreground=\"#7F8794\"\n                               VerticalAlignment=\"Center\"/>\n                  </Grid>\n                </DataTemplate>\n              </ItemsControl.ItemTemplate>\n            </ItemsControl>\n          </StackPanel>\n        </Border>\n\n      </StackPanel>\n    </StackPanel>\n  </StackPanel>\n</UserControl>\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 93
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.146,
+      "prompt_tokens_est": 46381,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs",
+        "old_string": "    private bool _isSandboxInfoAvailable = true;",
+        "new_string": "    private bool _isSandboxInfoAvailable;"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 88
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 2.628,
+      "prompt_tokens_est": 46525,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Add ToolTip with Expanded to path rows in SandboxPaths.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 469
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 2.946,
+      "prompt_tokens_est": 46695,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Fix loading-state UX: gate available panel on !IsSandboxInfoLoading, default IsSandboxInfoAvailable to false"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 468
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.63,
+      "prompt_tokens_est": 46876,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/SandboxPathInspectorTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.94,
+      "result_length": 1722
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 3.918,
+      "prompt_tokens_est": 47424,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/SandboxPathInspectorTests.cs tests/VisualRelay.[ENCRYPTED:aws-secret-key]oPa7B63DD55d5PHjBA+a6pOoVJElIbNvwvGBOdYa.cs src/VisualRelay.Core/Execution/SandboxPathInspector.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Sandbox.cs src/VisualRelay.App/Views/Controls/SandboxPaths.axaml src/VisualRelay.App/Views/Controls/SandboxPaths.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.108,
+      "result_length": 391
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 2.844,
+      "prompt_tokens_est": 47683,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Run dotnet-test-files.sh to verify"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 467
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 6.69,
+      "prompt_tokens_est": 47856,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
