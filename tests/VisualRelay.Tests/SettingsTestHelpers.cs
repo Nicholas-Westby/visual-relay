@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -44,10 +45,25 @@ internal static class SettingsTestHelpers
     /// in the main window's visual tree). Callers should <see cref="Window.Close()"/>
     /// it to avoid leaking an open dialog into the shared headless dispatcher.
     /// </summary>
+    /// <remarks>
+    /// The settings-button handler (<c>TopBar.OnSettingsClick</c>) is async void:
+    /// the <see cref="SettingsWindow"/> is created and shown after an await gap
+    /// (<c>RefreshKeyStatesAsync</c>). <see cref="Dispatcher.UIThread.RunJobs"/>
+    /// does not pump async continuations, so we spin the dispatcher with brief
+    /// sleeps until the owned window appears (or a short timeout elapses).
+    /// </remarks>
     public static SettingsWindow OpenSettings(MainWindow window)
     {
         ClickSettingsButton(window);
-        return window.OwnedWindows.OfType<SettingsWindow>().Single();
+        for (var i = 0; i < 10; i++)
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (window.OwnedWindows.OfType<SettingsWindow>().FirstOrDefault() is { } sw)
+                return sw;
+            Thread.Sleep(10);
+        }
+        throw new InvalidOperationException(
+            "SettingsWindow did not appear in OwnedWindows after clicking the cog.");
     }
 
     /// <summary>

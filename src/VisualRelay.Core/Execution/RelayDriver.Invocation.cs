@@ -22,6 +22,7 @@ public sealed partial class RelayDriver
         IReadOnlyList<string> manifest,
         string? lastTestOutput = null,
         string? testCommand = null,
+        string? fullTestCommand = null,
         string? pinnedSwivalProfileContent = null,
         string? verifyOutputPath = null)
     {
@@ -45,6 +46,7 @@ public sealed partial class RelayDriver
             LastTestOutput: lastTestOutput,
             TaskContext: input.Context,
             TestCommand: testCommand,
+            FullTestCommand: fullTestCommand,
             PinnedSwivalProfileContent: pinnedSwivalProfileContent,
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,

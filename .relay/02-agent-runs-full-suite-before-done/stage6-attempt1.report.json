@@ -1,0 +1,448 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T07:15:11.952728+00:00",
+  "task": "# Relay stage 6: Implement\nTask: 02-agent-runs-full-suite-before-done\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Coding Stages Run the Full Test Suite Before Declaring Done\n\n## Problem\n\nVR intentionally splits testing to keep agent iteration fast:\n\n- The **coding stages** \u2014 Implement (6) and Fix (8) \u2014 receive a **targeted** test command built from the\n  task manifest (`BuildTargetedTestCommand`, `src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs`,\n  which falls back to `config.TestCommand` when it can't narrow scope). See\n  `src/VisualRelay.Core/Execution/RelayDriver.cs`:\n  `var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;`.\n- The agent prompt then tells the agent to run **exactly that** command \u2014 see the `## Verify command`\n  block in `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs`\n  (`\"Run this exact command to reproduce and confirm the fix:\"` + `invocation.TestCommand`).\n- The **harness** later runs the **full** suite (`config.TestCommand`) as the authoritative `Verify` gate\n  (stage 9), and the Fix-verify stage (10) already receives the full command\n  (`RelayDriver.VerifyFix.cs` builds its invocation with `testCommand: config.TestCommand`).\n\n**Consequence.** Cross-cutting failures that a *targeted* run cannot surface \u2014 project-wide guards,\nlint/style gates, tests that enforce special standards, and test-ordering hazards \u2014 are invisible to the\nImplement/Fix agent. They first appear at the harness's `Verify` gate, which then churns the fix-verify\nloop. Combined with any genuinely flaky tests, this produces the \"different failure each round\"\nwhack-a-mole that can exhaust a task's attempt budget even when its own change is correct.\n\nThis is **project-agnostic**: any codebase whose full suite includes checks a narrowed subset misses\nhits it.\n\n## Goal\n\nHave the coding-stage agent **iterate quickly with the targeted command**, then **run the project's full\ntest suite once before declaring the change done**, so cross-cutting failures are caught and fixed inside\nthe stage instead of being deferred to the harness gate \u2014 where they cost a full (and possibly flaky)\nverify round.\n\nKeep it **fully general**: use the project's own `config.TestCommand`. Do **not** bake in any specific\ncheck, rule, or tool \u2014 VR runs on arbitrary codebases and must not assume a project's conventions.\n\n## Design\n\n1. **Convey both commands to the coding stages.** Extend the invocation\n   (`src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs` and the `StageInvocation` record) so\n   stages 6 and 8 receive **both** the targeted command (for fast iteration) **and** the full command\n   (`config.TestCommand`, for the final run). Today only a single `TestCommand` is passed and the coding\n   stages get the targeted one; add the full command alongside it (e.g. a `FullTestCommand`), populated at\n   the coding-stage wiring in `RelayDriver.cs` where `testCommandForCodingStage` is set.\n\n2. **Amend the `## Verify command` prompt block** (`ProcessRunners.Prompt.cs`) for the coding stages so it:\n   - gives the **targeted** command for fast iteration while working, and\n   - instructs the agent that **before declaring the change complete, it must run the full test suite\n     once** (the full command) to catch cross-cutting checks a targeted run misses \u2014 name the categories\n     explicitly (project-wide guards, lint/style gates, tests enforcing special standards, test-ordering\n     issues) \u2014 and if the full suite fails, fix and re-run it.\n   - Only include the full-suite instruction when the **full command differs from the targeted command**\n     (when `BuildTargetedTestCommand` fell back to `config.TestCommand` they are identical, so the extra\n     advice would be redundant).\n\n3. **Preserve the performance win.** Frame the full run as a **final, once-before-done** step, not a\n   per-iteration one, so the agent still mostly runs the fast targeted command and only \"churns\" on the\n   full suite near the end.\n\n4. **Scope.** Apply to the stages that currently receive the targeted command \u2014 Implement (6) and Fix (8).\n   Leave Fix-verify (10) as-is (it already runs the full command). Do not change the harness's own\n   authoritative `Verify`/Fix-verify gate behavior; this task only changes what the *coding agent* is\n   asked to run.\n\n## What this does and does not fix\n\n- **Does:** removes the class of harness-gate surprises caused by **deterministic** cross-cutting\n  failures (guards, lint/style, file-size limits, and often order-dependent crashes) \u2014 the agent now sees\n  and fixes them in-stage.\n- **Does not:** fully eliminate flaky-gate churn. A genuinely non-deterministic test can still pass in the\n  agent's full run and fail in the harness's authoritative re-run; making a specific flaky test\n  deterministic is a separate concern.\n\n## Constraints & done criteria\n\n- **General, not VR-specific.** No hard-coded checks/rules; the only command used is the project's\n  configured `config.TestCommand`.\n- Do not emit the full-suite recommendation when the full and targeted commands are identical.\n- The agent's turn budget/timeout must accommodate one full-suite run near the end. This is the same suite\n  the harness already runs, so it is within existing tolerances; note it but no new budget knob should be\n  required.\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines; no weakening/skipping/deleting tests.\n- Tests (use the existing prompt-building test seams):\n  - the Implement/Fix prompt includes the full-suite instruction when the full command **differs** from\n    the targeted command, and **omits** it when they are identical;\n  - stage 6/8 invocations carry both the targeted and full commands;\n  - Fix-verify (10) is unchanged.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs` (+ the `StageInvocation` record) \u2014 carry both commands\n- `src/VisualRelay.Core/Execution/RelayDriver.cs` \u2014 populate the full command for the coding stages\n- `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs` \u2014 the `## Verify command` prompt block\n- tests under `tests/VisualRelay.Tests/`\n\n\n## Manifest\nsrc/VisualRelay.Domain/StageInvocation.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\nsrc/VisualRelay.Core/Execution/RelayStages.cs\ntests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs\ntests/VisualRelay.Tests/TargetedTestCommandTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The coding stages (6=Implement, 8=Fix) currently receive only a targeted test command for fast iteration, making cross-cutting failures (guards, lint, style, ordering) invisible until the harness Verify gate. The fix conveys both commands to these stages: the targeted command for fast iteration and the project's full config.TestCommand for a final once-before-done run. The prompt is amended to instruct the agent to iterate with the targeted command, then run the full suite once and fix any failures before declaring done. The advice is omitted when the targeted and full commands are identical (the BuildTargetedTestCommand fallback case).\",\n  \"options\": [\n    \"Option A \u2014 Add `string? FullTestCommand` to `StageInvocation`, populate for stages 6/8 in RelayDriver.cs, and add a conditional prompt block in ProcessRunners.Prompt.cs that shows the full-suite advice only when `FullTestCommand != null && FullTestCommand != TestCommand`. Minimal diff surface; tests assert prompt content.\",\n    \"Option B \u2014 Introduce an encapsulated `TestCommands` record bundling `Targeted` and `Full` commands, replace the bare `string? TestCommand` in `StageInvocation`, and extract a `BuildVerifyPrompt` helper. Cleaner type safety but more call-site changes.\",\n    \"Option C \u2014 Encode both commands into the existing `TestCommand` string with a delimiter and parse it in the prompt builder. Avoids new fields but is fragile and a code smell; recommended against.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is a .NET C# solution. StageInvocation record (StageInvocation.cs line 18) has a single `string? TestCommand` field. RelayDriver.cs line 130 sets `testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null` and passes it at line 134. BuildPrompt (ProcessRunners.Prompt.cs lines 54-57) emits '## Verify command' section with the targeted command. BuildTargetedTestCommand (Artifacts.cs lines 159-168) returns targeted cmd or falls back to config.TestCommand. Stage 10 (VerifyFix.cs line 80) already uses config.TestCommand directly. RelayStages.cs system prompts for Implement/Fix flatly forbid running the full suite, conflicting with the new design. Existing tests: BuildPromptVerifyCommandTests.cs (unit tests for prompt sections) and TargetedTestCommandTests.cs TargetedTestInvocationTests (integration tests asserting stages 6/8 receive targeted command). TaskRewriteRunner.cs constructs StageInvocation without TestCommand (unaffected if new field has default). Test doubles: CapturingSubagentRunner.Invocations captures all StageInvocation objects for assertion.\",\n  \"constraints\": [\n    \"Every new/edited *.cs file must stay \u2264 300 lines\",\n    \"No hard-coded checks or rules \u2014 only config.TestCommand for the full suite\",\n    \"Do not emit the full-suite recommendation when full and targeted commands are identical\",\n    \"Stage 10 (Fix-verify) must remain unchanged\",\n    \"Harness Verify/Fix-verify gate behavior must remain unchanged\",\n    \"No weakening/skipping/deleting tests\",\n    \"Implement and Fix system prompts in RelayStages.cs need updating to remove flat prohibition against running the full suite\",\n    \"TaskRewriteRunner.cs must remain unaffected \u2014 new FullTestCommand field on StageInvocation must have a default value\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{ \"evidence\": \"The coding stages (6=Implement, 8=Fix) receive only a targeted test command via `testCommandForCodingStage` in RelayDriver.cs:130, while the full `config.TestCommand` is never conveyed to them. The `StageInvocation` record has only a single `string? TestCommand` field (StageInvocation.cs:18). BuildPrompt in ProcessRunners.Prompt.cs:54-57 emits a `## Verify command` section with only the targeted command and the instruction 'Run this exact command'. The system prompts in RelayStages.cs:61-71 (Implement) and :80-90 (Fix) explicitly forbid running the full suite: 'Do NOT run the project's full check, lint, or format gate during implementation \u2014 the harness runs the full gate at the Verify stage.' By contrast, stage 10 (Fix-verify) already receives `config.TestCommand` directly (RelayDriver.VerifyFix.cs:80). BuildTargetedTestCommand (RelayDriver.Artifacts.cs:159-168) returns the targeted command when `testFileCmd` has a `{files}` token and authored test files exist in the manifest; otherwise it falls back to `config.TestCommand`, making targeted and full identical. This means cross-cutting failures \u2014 project-wide guards, lint/style gates, tests enforcing special standards, test-ordering hazards \u2014 are invisible to the coding-stage agent and only surface at the harness Verify gate (stage 9), causing churn in the fix-verify loop.\", \"excerpts\": [\"RelayDriver.cs:129-134\\n    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;\\n    var effectiveStage = implementationFrontLoaded && stage.Number == 6\\n        ? stage with { Tier = \\\"cheap\\\", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;\\n    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,\\n        testCommand: testCommandForCodingStage,\", \"StageInvocation.cs:16-18\\n    string? LastTestOutput = null,\\n    string? TaskContext = null,\\n    string? TestCommand = null,\", \"ProcessRunners.Prompt.cs:54-57\\n    if (!string.IsNullOrWhiteSpace(invocation.TestCommand))\\n    {\\n        parts.AddRange([\\\"\\\", \\\"## Verify command\\\", \\\"Run this exact command to reproduce and confirm the fix:\\\", invocation.TestCommand]);\\n    }\", \"RelayStages.cs:61-71 (Implement prompt)\\n    \\\"Implement\\\" =>\\n        \\\"Implement the change within the manifest files. \\\" +\\n        \\\"Verify your changes using ONLY the targeted test command shown in the \\\" +\\n        \\\"## Verify command section of the prompt. Do NOT run the project's full \\\" +\\n        \\\"check, lint, or format gate during \\\" +\\n        \\\"implementation \u2014 the harness runs the full gate at the Verify stage. \\\" +\", \"RelayStages.cs:80-90 (Fix prompt)\\n    \\\"Fix\\\" =>\\n        \\\"Resolve every blocker and warning from review. \\\" +\\n        \\\"Verify your changes using ONLY the targeted test command shown in the \\\" +\\n        \\\"## Verify command section of the prompt. Do NOT run the project's full \\\" +\\n        \\\"check, lint, or format gate during implementation \u2014 the harness runs the \\\" +\\n        \\\"full gate at the Verify stage. \\\" +\", \"RelayDriver.Artifacts.cs:159-168\\n    internal static string BuildTargetedTestCommand(RelayConfig config, IReadOnlyList<string> manifest)\\n    {\\n        if (!config.TestFileCommand.Contains(\\\"{files}\\\", StringComparison.Ordinal))\\n            return config.TestCommand;\\n        var testFiles = manifest.Where(IsTestFile).ToList();\\n        if (testFiles.Count == 0)\\n            return config.TestCommand;\\n        return config.TestFileCommand.Replace(\\\"{files}\\\", string.Join(' ', testFiles),\\n            StringComparison.Ordinal);\\n    }\", \"RelayDriver.VerifyFix.cs:79-81 (stage 10 gets full command)\\n    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, stage,\\n        input, ledger, manifest, lastTestOutput: failingTestOutput, testCommand: config.TestCommand,\\n        pinnedSwivalProfileContent: pinnedSwivalProfileContent, verifyOutputPath: failingVerifyOutputPath);\"], \"repro\": \"Configure a project with `testCmd: \\\"dotnet test\\\"` and `testFileCmd: \\\"bun test {files}\\\"`. Create a task whose manifest includes both implementation files and authored test files (e.g. `src/app.cs` and `tests/app.tests.cs`). Run the task. At stages 6 (Implement) and 8 (Fix), the agent sees only the targeted command `bun test tests/app.tests.cs` and is explicitly told not to run the full suite. The agent iterates until the targeted command passes. At stage 9, the harness runs `dotnet test` (the full suite) and discovers cross-cutting failures (guards, lint, style, ordering) that the targeted run never exercised \u2014 failures the agent never saw or addressed.\" }\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"Concrete implementation plan for `02-agent-runs-full-suite-before-done`:\\n\\n## 1. `src/VisualRelay.Domain/StageInvocation.cs`\\n- Add new optional property `string? FullTestCommand = null` immediately after the existing `string? TestCommand = null` line (after line 18). This carries the full `config.TestCommand` for the coding stages so the prompt builder can emit the once-before-done advice.\\n- The default `null` keeps `TaskRewriteRunner` (which constructs `StageInvocation` without this field) unaffected.\\n\\n## 2. `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs`\\n- Add a new parameter `string? fullTestCommand = null` to `BuildInvocation` (in the parameter list, after `string? testCommand = null` at line 24).\\n- Pass it to the `StageInvocation` constructor: add `FullTestCommand: fullTestCommand` after the `TestCommand: testCommand` line (line 47).\\n\\n## 3. `src/VisualRelay.Core/Execution/RelayDriver.cs`\\n- After line 130 (`var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;`), add:\\n  ```csharp\\n  var fullTestCommandForCodingStage = stage.Number is 6 or 8 ? config.TestCommand : null;\\n  ```\\n- At line 133-134 in the `BuildInvocation` call, add `fullTestCommand: fullTestCommandForCodingStage` alongside the existing `testCommand: testCommandForCodingStage`.\\n- No other changes \u2014 the plan-completeness retry in `RelayDriver.Snapshot.cs` calls `BuildInvocation` without the new parameter (defaults to null, correct).\\n\\n## 4. `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs`\\n- After the existing `## Verify command` block (lines 54-57), add a conditional block:\\n  ```csharp\\n  if (!string.IsNullOrWhiteSpace(invocation.FullTestCommand) &&\\n      !string.Equals(invocation.FullTestCommand, invocation.TestCommand, StringComparison.Ordinal))\\n  {\\n      parts.AddRange([\\\"\\\", \\\"## Before you declare done\\\",\\n          \\\"Once the targeted command above passes, run the project's FULL test suite ONCE \\\" +\\n          \\\"to catch cross-cutting checks the targeted run cannot surface:\\\",\\n          \\\"- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\\\",\\n          \\\"- Lint / style / format gates\\\",\\n          \\\"- Tests that enforce special standards or invariants\\\",\\n          \\\"- Test-ordering hazards that only appear in a full run\\\",\\n          \\\"\\\",\\n          \\\"Run this exact command for the full suite:\\\",\\n          invocation.FullTestCommand,\\n          \\\"\\\",\\n          \\\"If the full suite fails, fix the failures and re-run the full command until it exits 0. \\\" +\\n          \\\"Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks \\\" +\\n          \\\"to make it pass.\\\"]);\\n  }\\n  ```\\n\\n## 5. `src/VisualRelay.Core/Execution/RelayStages.cs`\\n\\n### Implement prompt (lines 61-71):\\nChange from:\\n```\\n\\\"Verify your changes using ONLY the targeted test command shown in the \\\" +\\n\\\"## Verify command section of the prompt. Do NOT run the project's full \\\" +\\n\\\"check, lint, or format gate during \\\" +\\n\\\"implementation \u2014 the harness runs the full gate at the Verify stage. \\\" +\\n```\\nto:\\n```\\n\\\"Verify your changes using the targeted test command shown in the \\\" +\\n\\\"## Verify command section of the prompt \u2014 iterate with it until it passes. \\\" +\\n```\\n\\n### Fix prompt (lines 80-90):\\nSame change as Implement \u2014 replace the \\\"ONLY the targeted...Do NOT run the full...\\\" block with the same concise iteration instruction.\\n\\n### ConfirmImplementationSystemPrompt (lines 110-116):\\nChange from:\\n```\\n\\\"Verify using ONLY the targeted test command shown in the ## Verify command section \u2014 do NOT \\\" +\\n\\\"run the project's full check, lint, format, build, or screenshot gate; the harness runs the \\\" +\\n\\\"full gate at the Verify stage.\\\"\\n```\\nto:\\n```\\n\\\"Verify using the targeted test command shown in the ## Verify command section.\\\"\\n```\\n\\n## 6. `tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs`\\n- Add a private helper `MakeInvocationWithFull` that accepts `string? fullTestCommand` and passes it through:\\n  ```csharp\\n  private static StageInvocation MakeInvocationWithFull(int stageNumber, string? testCommand, string? fullTestCommand) =>\\n      MakeInvocation(stageNumber, testCommand) with { FullTestCommand = fullTestCommand };\\n  ```\\n- Add test: `BuildPrompt_Stage6_FullDiffersFromTargeted_EmitsFullSuiteBlock` \u2014 stage 6 with `testCommand: \\\"bun test tests/x.tests.cs\\\"`, `fullTestCommand: \\\"dotnet test\\\"` \u2192 prompt contains \\\"Before you declare done\\\" and \\\"dotnet test\\\".\\n- Add test: `BuildPrompt_Stage6_FullEqualsTargeted_OmitsFullSuiteBlock` \u2014 stage 6 with both set to `\\\"dotnet test\\\"` \u2192 prompt does NOT contain \\\"Before you declare done\\\".\\n- Add test: `BuildPrompt_Stage6_FullIsNull_OmitsFullSuiteBlock` \u2014 stage 6 with `testCommand: \\\"bun test ...\\\"`, `fullTestCommand: null` \u2192 no full-suite block.\\n- Add test: `BuildPrompt_Stage8_FullDiffersFromTargeted_EmitsFullSuiteBlock` \u2014 same as for stage 6 but stage 8.\\n\\n## 7. `tests/VisualRelay.Tests/TargetedTestCommandTests.cs`\\n- In `RunTaskAsync_StagesImplementAndFix_ReceiveTargetedTestCommand` (line 149): after asserting `stage6.TestCommand` (line 182), add:\\n  ```csharp\\n  Assert.Equal(\\\"dotnet test\\\", stage6.FullTestCommand);\\n  ```\\n  And after `stage8.TestCommand` (line 186):\\n  ```csharp\\n  Assert.Equal(\\\"dotnet test\\\", stage8.FullTestCommand);\\n  ```\\n- In `RunTaskAsync_NoFilesToken_StagesReceiveFallbackTestCommand` (line 190): after asserting `stage6.TestCommand` (line 222), add:\\n  ```csharp\\n  Assert.Equal(\\\"dotnet test\\\", stage6.FullTestCommand);  // full == targeted (fallback)\\n  ```\\n  And same for stage8 at line 225.\\n- In `RunTaskAsync_FixVerifyLoop_Stage10ReceivesFullGateCommandInPrompt` (line 263): after asserting `stage10.TestCommand` (line 297), add:\\n  ```csharp\\n  Assert.Null(stage10.FullTestCommand);\\n  ```\\n\\nAll file sizes stay well under 300 lines after edits.\",\n  \"manifest\": [\n    \"src/VisualRelay.Domain/StageInvocation.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\",\n    \"src/VisualRelay.Core/Execution/RelayStages.cs\",\n    \"tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs\",\n    \"tests/VisualRelay.Tests/TargetedTestCommandTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 2.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs\",\n    \"tests/VisualRelay.Tests/TargetedTestCommandTests.cs\"\n  ],\n  \"rationale\": \"Added 4 new prompt unit tests (2 fail because BuildPrompt doesn't emit the full-suite block yet, 2 pass because they assert omission when commands are identical or null). Added FullTestCommand assertions to 3 existing integration tests (fail when run because RelayDriver doesn't populate the field yet). Added FullTestCommand field to StageInvocation and fullTestCommand parameter to BuildInvocation as data plumbing needed for test compilation.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs tests/VisualRelay.Tests/TargetedTestCommandTests.cs",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All files are within the 300-line limit. Everything compiles and all 18 tests pass (0 failed).\n\n```json\n{\n  \"summary\": \"Implemented `02-agent-runs-full-suite-before-done`. Changes:\\n\\n1. **StageInvocation.cs** \u2014 Added `string? FullTestCommand = null` after `TestCommand`.\\n2. **RelayDriver.Invocation.cs** \u2014 Added `string? fullTestCommand = null` parameter to `BuildInvocation`, passed it to `StageInvocation` as `FullTestCommand`.\\n3. **RelayDriver.cs** \u2014 Added `fullTestCommandForCodingStage = stage.Number is 6 or 8 ? config.TestCommand : null` and passed it to `BuildInvocation` alongside the targeted command.\\n4. **ProcessRunners.Prompt.cs** \u2014 Added `## Before you declare done` block after `## Verify command`: appears only when `FullTestCommand` is non-null AND differs from `TestCommand`. Lists cross-cutting failure categories and instructs the agent to run the full suite once and fix any failures before declaring done.\\n5. **RelayStages.cs** \u2014 Updated Implement and Fix system prompts: replaced \\\"ONLY the targeted...Do NOT run the full check, lint, or format gate\\\" with \\\"iterate with it until it passes\\\". Updated `ConfirmImplementationSystemPrompt` similarly.\\n\\nAll 18 targeted tests pass. All files \u2264 300 lines. Stage 10 (Fix-verify) unchanged.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 16,
+    "tool_calls_total": 15,
+    "tool_calls_succeeded": 15,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 16,
+    "total_llm_time_s": 76.912,
+    "prompt_cache": {
+      "cached_tokens": 398336,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 24.695,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.373,
+      "prompt_tokens_est": 9488,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Domain/StageInvocation.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/TargetedTestCommandTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 47075
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 7.482,
+      "prompt_tokens_est": 20231,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TargetedTestCommandTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14253
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 6.252,
+      "prompt_tokens_est": 24182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs",
+          "tests/VisualRelay.Tests/TargetedTestCommandTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.054,
+      "result_length": 3734
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 8.134,
+      "prompt_tokens_est": 25473,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageInvocation.cs",
+        "old_string": "    string? TestCommand = null,\n    string? PinnedSwivalProfileContent = null,",
+        "new_string": "    string? TestCommand = null,\n    string? FullTestCommand = null,\n    string? PinnedSwivalProfileContent = null,"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 68
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.093,
+      "prompt_tokens_est": 25749,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "old_string": "        string? testCommand = null,\n        string? pinnedSwivalProfileContent = null,",
+        "new_string": "        string? testCommand = null,\n        string? fullTestCommand = null,\n        string? pinnedSwivalProfileContent = null,"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 83
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.413,
+      "prompt_tokens_est": 25883,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "old_string": "            TestCommand: testCommand,\n            PinnedSwivalProfileContent: pinnedSwivalProfileContent,",
+        "new_string": "            TestCommand: testCommand,\n            FullTestCommand: fullTestCommand,\n            PinnedSwivalProfileContent: pinnedSwivalProfileContent,"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 83
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.369,
+      "prompt_tokens_est": 26014,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;\n                    var fullTestCommandForCodingStage = stage.Number is 6 or 8 ? config.TestCommand : null;",
+        "old_string": "                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 72
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.464,
+      "prompt_tokens_est": 26168,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,\n                        testCommand: testCommandForCodingStage,\n                        fullTestCommand: fullTestCommandForCodingStage,",
+        "old_string": "                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,\n                        testCommand: testCommandForCodingStage,"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 72
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 5.343,
+      "prompt_tokens_est": 26335,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs",
+        "new_string": "        if (!string.IsNullOrWhiteSpace(invocation.TestCommand))\n        {\n            parts.AddRange([\"\", \"## Verify command\", \"Run this exact command to reproduce and confirm the fix:\", invocation.TestCommand]);\n        }\n\n        if (!string.IsNullOrWhiteSpace(invocation.FullTestCommand) &&\n            !string.Equals(invocation.FullTestCommand, invocation.TestCommand, StringComparison.Ordinal))\n        {\n            parts.AddRange([\"\", \"## Before you declare done\",\n                \"Once the targeted command above passes, run the project's FULL test suite ONCE \" +\n                \"to catch cross-cutting checks the targeted run cannot surface:\",\n                \"- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\",\n                \"- Lint / style / format gates\",\n                \"- Tests that enforce special standards or invariants\",\n                \"- Test-ordering hazards that only appear in a full run\",\n                \"\",\n                \"Run this exact command for the full suite:\",\n                invocation.FullTestCommand,\n                \"\",\n                \"If the full suite fails, fix the failures and re-run the full command until it exits 0. \" +\n                \"Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks \" +\n                \"to make it pass.\"]);\n        }",
+        "old_string": "        if (!string.IsNullOrWhiteSpace(invocation.TestCommand))\n        {\n            parts.AddRange([\"\", \"## Verify command\", \"Run this exact command to reproduce and confirm the fix:\", invocation.TestCommand]);\n        }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 82
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.456,
+      "prompt_tokens_est": 26766,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+        "old_string": "        \"Implement\" =>\n            \"Implement the change within the manifest files. \" +\n            \"Verify your changes using ONLY the targeted test command shown in the \" +\n            \"## Verify command section of the prompt. Do NOT run the project's full \" +\n            \"check, lint, or format gate during \" +\n            \"implementation \u2014 the harness runs the full gate at the Verify stage. \" +",
+        "new_string": "        \"Implement\" =>\n            \"Implement the change within the manifest files. \" +\n            \"Verify your changes using the targeted test command shown in the \" +\n            \"## Verify command section of the prompt \u2014 iterate with it until it passes. \" +"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 72
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.685,
+      "prompt_tokens_est": 27056,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+        "new_string": "        \"Fix\" =>\n            \"Resolve every blocker and warning from review. \" +\n            \"Verify your changes using the targeted test command shown in the \" +\n            \"## Verify command section of the prompt \u2014 iterate with it until it passes. \" +",
+        "old_string": "        \"Fix\" =>\n            \"Resolve every blocker and warning from review. \" +\n            \"Verify your changes using ONLY the targeted test command shown in the \" +\n            \"## Verify command section of the prompt. Do NOT run the project's full \" +\n            \"check, lint, or format gate during implementation \u2014 the harness runs the \" +\n            \"full gate at the Verify stage. \" +"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 72
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 4.571,
+      "prompt_tokens_est": 27278,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+        "new_string": "    internal const string ConfirmImplementationSystemPrompt =\n        \"The implementation appears to already be in the working tree (an earlier stage wrote it). \" +\n        \"Do NOT re-narrate or re-implement. Read the existing diff against the manifest, confirm it \" +\n        \"matches the plan, and make ONLY small corrective amendments if something is missing or wrong. \" +\n        \"Verify using the targeted test command shown in the ## Verify command section.\";",
+        "old_string": "    internal const string ConfirmImplementationSystemPrompt =\n        \"The implementation appears to already be in the working tree (an earlier stage wrote it). \" +\n        \"Do NOT re-narrate or re-implement. Read the existing diff against the manifest, confirm it \" +\n        \"matches the plan, and make ONLY small corrective amendments if something is missing or wrong. \" +\n        \"Verify using ONLY the targeted test command shown in the ## Verify command section \u2014 do NOT \" +\n        \"run the project's full check, lint, format, build, or screenshot gate; the harness runs the \" +\n        \"full gate at the Verify stage.\";"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 72
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.052,
+      "prompt_tokens_est": 27597,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/BuildPromptVerifyCommandTests.cs",
+          "tests/VisualRelay.Tests/TargetedTestCommandTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 17.541,
+      "result_length": 1722
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 5.131,
+      "prompt_tokens_est": 28185,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Domain/StageInvocation.cs",
+            "offset": 16,
+            "limit": 5
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+            "offset": 22,
+            "limit": 8
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+            "offset": 129,
+            "limit": 10
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs",
+            "offset": 54,
+            "limit": 28
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+            "offset": 60,
+            "limit": 15
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 5208
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.712,
+      "prompt_tokens_est": 29682,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.Domain/StageInvocation.cs src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs src/VisualRelay.Core/Execution/RelayDriver.cs src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.067,
+      "result_length": 289
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 6.384,
+      "prompt_tokens_est": 29894,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

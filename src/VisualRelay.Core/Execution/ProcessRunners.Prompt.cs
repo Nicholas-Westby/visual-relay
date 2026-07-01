@@ -56,6 +56,25 @@ public sealed partial class SwivalSubagentRunner
             parts.AddRange(["", "## Verify command", "Run this exact command to reproduce and confirm the fix:", invocation.TestCommand]);
         }
 
+        if (!string.IsNullOrWhiteSpace(invocation.FullTestCommand) &&
+            !string.Equals(invocation.FullTestCommand, invocation.TestCommand, StringComparison.Ordinal))
+        {
+            parts.AddRange(["", "## Before you declare done",
+                "Once the targeted command above passes, run the project's FULL test suite ONCE " +
+                "to catch cross-cutting checks the targeted run cannot surface:",
+                "- Project-wide guards (size budgets, perf ceilings, assertion ratchets)",
+                "- Lint / style / format gates",
+                "- Tests that enforce special standards or invariants",
+                "- Test-ordering hazards that only appear in a full run",
+                "",
+                "Run this exact command for the full suite:",
+                invocation.FullTestCommand,
+                "",
+                "If the full suite fails, fix the failures and re-run the full command until it exits 0. " +
+                "Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks " +
+                "to make it pass."]);
+        }
+
         return string.Join('\n', parts);
     }
 

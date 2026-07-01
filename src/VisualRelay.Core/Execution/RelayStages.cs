@@ -60,10 +60,8 @@ public static class RelayStages
             SelfVerifyStopRule,
         "Implement" =>
             "Implement the change within the manifest files. " +
-            "Verify your changes using ONLY the targeted test command shown in the " +
-            "## Verify command section of the prompt. Do NOT run the project's full " +
-            "check, lint, or format gate during " +
-            "implementation — the harness runs the full gate at the Verify stage. " +
+            "Verify your changes using the targeted test command shown in the " +
+            "## Verify command section of the prompt — iterate with it until it passes. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +
             "says '0 failed': inspect the output tail for a non-test gate and resolve " +
             "it legitimately. Resolving means an edit, not repeated re-runs. " +
@@ -79,10 +77,8 @@ public static class RelayStages
             SelfVerifyStopRule,
         "Fix" =>
             "Resolve every blocker and warning from review. " +
-            "Verify your changes using ONLY the targeted test command shown in the " +
-            "## Verify command section of the prompt. Do NOT run the project's full " +
-            "check, lint, or format gate during implementation — the harness runs the " +
-            "full gate at the Verify stage. " +
+            "Verify your changes using the targeted test command shown in the " +
+            "## Verify command section of the prompt — iterate with it until it passes. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +
             "says '0 failed': inspect the output tail for a non-test gate and resolve " +
             "it legitimately. Resolving means an edit, not repeated re-runs. " +
@@ -111,7 +107,5 @@ public static class RelayStages
         "The implementation appears to already be in the working tree (an earlier stage wrote it). " +
         "Do NOT re-narrate or re-implement. Read the existing diff against the manifest, confirm it " +
         "matches the plan, and make ONLY small corrective amendments if something is missing or wrong. " +
-        "Verify using ONLY the targeted test command shown in the ## Verify command section — do NOT " +
-        "run the project's full check, lint, format, build, or screenshot gate; the harness runs the " +
-        "full gate at the Verify stage.";
+        "Verify using the targeted test command shown in the ## Verify command section.";
 }

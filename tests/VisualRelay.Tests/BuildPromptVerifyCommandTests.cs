@@ -9,6 +9,9 @@ namespace VisualRelay.Tests;
 public sealed class BuildPromptVerifyCommandTests
 {
     private static StageInvocation MakeInvocation(int stageNumber, string? testCommand) =>
+        MakeInvocationWithFull(stageNumber, testCommand, null);
+
+    private static StageInvocation MakeInvocationWithFull(int stageNumber, string? testCommand, string? fullTestCommand) =>
         new(
             Stage: RelayStages.All[stageNumber - 1],
             Tier: "balanced",
@@ -22,7 +25,8 @@ public sealed class BuildPromptVerifyCommandTests
             TraceDirectory: "/tmp/trace",
             ReportFile: "/tmp/report.json",
             MaxTurns: 200,
-            TestCommand: testCommand);
+            TestCommand: testCommand,
+            FullTestCommand: fullTestCommand);
 
     [Theory]
     [InlineData(6)]
@@ -58,5 +62,47 @@ public sealed class BuildPromptVerifyCommandTests
         var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
 
         Assert.DoesNotContain("## Verify command", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildPrompt_Stage6_FullDiffersFromTargeted_EmitsFullSuiteBlock()
+    {
+        var invocation = MakeInvocationWithFull(6, "bun test tests/x.tests.cs", "dotnet test");
+
+        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+
+        Assert.Contains("## Before you declare done", prompt, StringComparison.Ordinal);
+        Assert.Contains("dotnet test", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildPrompt_Stage6_FullEqualsTargeted_OmitsFullSuiteBlock()
+    {
+        var invocation = MakeInvocationWithFull(6, "dotnet test", "dotnet test");
+
+        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+
+        Assert.DoesNotContain("## Before you declare done", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildPrompt_Stage6_FullIsNull_OmitsFullSuiteBlock()
+    {
+        var invocation = MakeInvocationWithFull(6, "bun test tests/x.tests.cs", null);
+
+        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+
+        Assert.DoesNotContain("## Before you declare done", prompt, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BuildPrompt_Stage8_FullDiffersFromTargeted_EmitsFullSuiteBlock()
+    {
+        var invocation = MakeInvocationWithFull(8, "bun test tests/x.tests.cs", "dotnet test");
+
+        var prompt = SwivalSubagentRunner.BuildPrompt(invocation);
+
+        Assert.Contains("## Before you declare done", prompt, StringComparison.Ordinal);
+        Assert.Contains("dotnet test", prompt, StringComparison.Ordinal);
     }
 }

@@ -4,11 +4,9 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-/// <summary>
-/// Unit tests for <see cref="RelayDriver.BuildTargetedTestCommand"/>.
-/// Targeting selects authored test files (IsTestFile), toolchain-agnostic, so
-/// .NET test files (tests/FooTests.cs) narrow the gate, not the full suite.
-/// </summary>
+/// <summary>Unit tests for <see cref="RelayDriver.BuildTargetedTestCommand"/>.
+/// Targeting selects authored test files (IsTestFile), toolchain-agnostic.
+/// .NET test files (tests/FooTests.cs) narrow the gate, not the full suite.</summary>
 public sealed class TargetedTestCommandTests
 {
     private static RelayConfig MakeConfig(string testCmd, string testFileCmd) =>
@@ -107,7 +105,6 @@ public sealed class TargetedTestCommandTests
     }
 
     // ── TestFileCommandWarning (the {files}-less footgun) ────────────────
-
     [Fact]
     public void TestFileCommandWarning_NoFilesToken_Warns()
     {
@@ -139,10 +136,8 @@ public sealed class TargetedTestCommandTests
     }
 }
 
-/// <summary>
-/// Integration tests: verify stages 6, 8, and 10 receive the targeted test command
-/// in their <see cref="StageInvocation.TestCommand"/> field.
-/// </summary>
+/// <summary>Integration tests: verify stages 6, 8, and 10 receive the targeted
+/// test command in their <see cref="StageInvocation.TestCommand"/> field.</summary>
 public sealed class TargetedTestInvocationTests
 {
     [Fact]
@@ -180,10 +175,12 @@ public sealed class TargetedTestInvocationTests
         // Stage 6 (Implement) receives targeted command
         var stage6 = runner.Invocations.Single(i => i.Stage.Number == 6);
         Assert.Equal("bun test tests/app.tests.cs", stage6.TestCommand);
+        Assert.Equal("dotnet test", stage6.FullTestCommand);
 
         // Stage 8 (Fix) receives targeted command
         var stage8 = runner.Invocations.Single(i => i.Stage.Number == 8);
         Assert.Equal("bun test tests/app.tests.cs", stage8.TestCommand);
+        Assert.Equal("dotnet test", stage8.FullTestCommand);
     }
 
     [Fact]
@@ -220,9 +217,11 @@ public sealed class TargetedTestInvocationTests
         // Stages 6 and 8 receive config.TestCommand as fallback
         var stage6 = runner.Invocations.Single(i => i.Stage.Number == 6);
         Assert.Equal("dotnet test", stage6.TestCommand);
+        Assert.Equal("dotnet test", stage6.FullTestCommand);
 
         var stage8 = runner.Invocations.Single(i => i.Stage.Number == 8);
         Assert.Equal("dotnet test", stage8.TestCommand);
+        Assert.Equal("dotnet test", stage8.FullTestCommand);
     }
 
     [Fact]
@@ -295,5 +294,6 @@ public sealed class TargetedTestInvocationTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var stage10 = runner.Invocations.Single(i => i.Stage.Number == 10);
         Assert.Equal("dotnet test", stage10.TestCommand);  // full gate, not the targeted subset
+        Assert.Null(stage10.FullTestCommand);
     }
 }

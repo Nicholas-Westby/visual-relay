@@ -128,10 +128,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     // re-tempted the very double-run the read-only stage exists to avoid.
                     // Only the coding stages (6/8) get the TARGETED command to self-check.
                     var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
+                    var fullTestCommandForCodingStage = stage.Number is 6 or 8 ? config.TestCommand : null;
                     var effectiveStage = implementationFrontLoaded && stage.Number == 6
                         ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
                     var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
                         testCommand: testCommandForCodingStage,
+                        fullTestCommand: fullTestCommandForCodingStage,
                         lastTestOutput: stage9TestResult?.Output,
                         pinnedSwivalProfileContent: pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);

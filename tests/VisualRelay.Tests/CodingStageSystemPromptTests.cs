@@ -7,13 +7,13 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class CodingStageSystemPromptTests
 {
-    [Theory]
-    [InlineData("Implement")]
-    [InlineData("Fix")]
-    [InlineData("Fix-verify")]
-    public void CodingStageSystemPrompt_ContainsFullGateProhibition(string stageName)
+    [Fact]
+    public void CodingStageSystemPrompt_ContainsFullGateProhibition()
     {
-        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        // Only Fix-verify still carries the full-gate prohibition;
+        // Implement and Fix intentionally removed it so the agent
+        // runs the full suite once before declaring done.
+        var stage = RelayStages.All.Single(s => s.Name == "Fix-verify");
         Assert.Contains("do NOT run", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -106,10 +106,6 @@ public sealed class CodingStageSystemPromptTests
 
         // Must instruct the agent NOT to re-narrate or re-implement.
         Assert.Contains("do NOT re-narrate", prompt, StringComparison.OrdinalIgnoreCase);
-
-        // Must retain the full-gate prohibition (same invariant as the canonical
-        // Implement prompt).
-        Assert.Contains("do NOT run", prompt, StringComparison.OrdinalIgnoreCase);
 
         // Must reference the ## Verify command section so the agent knows where to
         // find the targeted test command.
