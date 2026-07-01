@@ -230,7 +230,7 @@ public partial class MainWindowViewModel
 
     // ── New task ──────────────────────────────────────────────────────────
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanOpenNewTaskDialog))]
     private void OpenNewTaskDialog()
     {
         if (IsNewTaskDialogOpen)
@@ -281,8 +281,11 @@ public partial class MainWindowViewModel
         await ReloadTaskListAsync(slug);
     }
 
+    private bool CanOpenNewTaskDialog() =>
+        Directory.Exists(RootPath);
+
     private bool CanCreateNewTask() =>
-        !string.IsNullOrWhiteSpace(NewTaskTitle);
+        !string.IsNullOrWhiteSpace(NewTaskTitle) && Directory.Exists(RootPath);
     /// <summary>
     /// True when the Markdown tab should show the read-only view — neither
     /// editing an existing task nor authoring a new one.

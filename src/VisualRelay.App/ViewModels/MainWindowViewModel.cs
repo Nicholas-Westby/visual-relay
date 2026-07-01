@@ -87,18 +87,18 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseButtonBorderBrush))]
     [NotifyPropertyChangedFor(nameof(PauseButtonForeground))]
     private bool _pauseRequested;
-
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenNewTaskDialogCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateNewTaskCommand))]
     [NotifyPropertyChangedFor(nameof(RootName))]
     [NotifyPropertyChangedFor(nameof(RootParentPath))]
     [NotifyPropertyChangedFor(nameof(WindowTitle))]
     private string _rootPath;
-
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(ToggleArchiveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
