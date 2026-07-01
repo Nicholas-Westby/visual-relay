@@ -1,15 +1,11 @@
 using System.Diagnostics;
 using System.Text.Json;
-
 namespace VisualRelay.Core.Execution;
-
 /// <summary>Classifies a single path entry.</summary>
 public enum SandboxAccess { ReadOnly, ReadWrite, Blocked }
-
 /// <summary>One resolved path entry with provenance for UI display.</summary>
 public sealed record SandboxPathEntry(
     string Raw, string Expanded, SandboxAccess Access, string Source);
-
 /// <summary>
 /// The complete inspection result. <see cref="Unavailable"/> is returned when
 /// nono is absent or a group-expansion call fails.
@@ -22,7 +18,6 @@ public sealed class SandboxInspectionResult
     public IReadOnlyList<SandboxPathEntry> BlockedPaths { get; init; } = [];
     public static readonly SandboxInspectionResult Unavailable = new();
 }
-
 /// <summary>
 /// Resolves the effective sandbox filesystem policy — readable, writable, and
 /// blocked paths — by reading the enforced vr-guard profile and expanding
@@ -47,19 +42,15 @@ public static class SandboxPathInspector
     {
         if (OperatingSystem.IsWindows())
             return BuildWindowsResult(workspaceRoot, extraAllowPaths);
-
-        // macOS / Linux: own directives + group expansion + per-run additions.
         var all = new List<SandboxPathEntry>();
         var profileJson = NonoProfileEnsurer.EmbeddedContent;
         all.AddRange(ParseOwnDirectives(profileJson));
-
         var groupNames = ExtractGroupIncludes(profileJson);
         if (groupNames.Count > 0)
         {
             var resolvedBinary = nonoBinary ?? PathExecutables.Find("nono");
             if (string.IsNullOrEmpty(resolvedBinary) || !File.Exists(resolvedBinary))
                 return SandboxInspectionResult.Unavailable;
-
             foreach (var name in groupNames)
             {
                 var groupJson = await RunNonoGroupAsync(resolvedBinary, name, cancellationToken);
@@ -68,7 +59,6 @@ public static class SandboxPathInspector
                 all.AddRange(ParseGroupJson(groupJson, name));
             }
         }
-
         AddPerRunWritables(all, workspaceRoot, extraAllowPaths);
         return BuildResult(all);
     }
@@ -85,7 +75,6 @@ public static class SandboxPathInspector
         var root = doc.RootElement;
         var entries = new List<SandboxPathEntry>();
         if (!root.TryGetProperty("filesystem", out var fs)) return entries;
-
         if (fs.TryGetProperty("allow", out var allow))
             entries.AddRange(ParsePathArray(allow, SandboxAccess.ReadWrite, "vr-guard"));
         if (fs.TryGetProperty("read", out var read))
@@ -107,7 +96,6 @@ public static class SandboxPathInspector
         using var doc = JsonDocument.Parse(groupJson);
         var root = doc.RootElement;
         var entries = new List<SandboxPathEntry>();
-
         if (root.TryGetProperty("allow", out var allow))
         {
             if (allow.TryGetProperty("read", out var read))
@@ -115,7 +103,6 @@ public static class SandboxPathInspector
             if (allow.TryGetProperty("readwrite", out var rw))
                 entries.AddRange(ParseGroupAllowEntries(rw, SandboxAccess.ReadWrite, groupName));
         }
-
         if (root.TryGetProperty("deny", out var deny) &&
             deny.TryGetProperty("access", out var access))
         {
@@ -144,8 +131,6 @@ public static class SandboxPathInspector
         return raw;
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────
-
     private static SandboxInspectionResult BuildWindowsResult(
         string? workspaceRoot, IReadOnlyList<string>? extraAllowPaths)
     {
@@ -153,7 +138,6 @@ public static class SandboxPathInspector
         foreach (var dir in MxcPolicyGenerator.DefaultWindowsCacheDirs())
             entries.Add(new SandboxPathEntry(dir, dir, SandboxAccess.ReadWrite, "MXC cache dir"));
         AddPerRunWritables(entries, workspaceRoot, extraAllowPaths);
-
         return new SandboxInspectionResult
         {
             IsAvailable = true,
@@ -254,7 +238,7 @@ public static class SandboxPathInspector
             return !OperatingSystem.IsMacOS();
         if (string.Equals(platform, "linux", StringComparison.OrdinalIgnoreCase))
             return !OperatingSystem.IsLinux();
-        return true; // unknown platform ⇒ skip
+        return true;
     }
 
     /// <summary>Extracts group names from vr-guard's groups.include array.</summary>
@@ -270,9 +254,7 @@ public static class SandboxPathInspector
             .ToList();
     }
 
-    /// <summary>
-    /// Runs <c>nono profile groups &lt;name&gt; --json</c>, returns stdout or null.
-    /// </summary>
+    /// <summary>Runs nono profile groups --json with a 10s timeout; returns stdout or null.</summary>
     private static async Task<string?> RunNonoGroupAsync(
         string nonoBinary, string groupName, CancellationToken cancellationToken)
     {
@@ -281,19 +263,37 @@ public static class SandboxPathInspector
             var psi = new ProcessStartInfo
             {
                 FileName = nonoBinary,
-                Arguments = $"profile groups {groupName} --json",
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
             };
+            psi.ArgumentList.Add("profile");
+            psi.ArgumentList.Add("groups");
+            psi.ArgumentList.Add(groupName);
+            psi.ArgumentList.Add("--json");
             using var process = Process.Start(psi);
             if (process is null) return null;
-            var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken);
+            var stderrTask = process.StandardError.ReadToEndAsync();
+            using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                timeoutCts.Token, cancellationToken);
+            string stdout;
+            try
+            {
+                stdout = await process.StandardOutput.ReadToEndAsync(linkedCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                if (cancellationToken.IsCancellationRequested) throw;
+                try { process.Kill(entireProcessTree: true); } catch { }
+                return null;
+            }
+            await stderrTask;
+            await process.WaitForExitAsync(CancellationToken.None);
             return process.ExitCode == 0 ? stdout : null;
         }
-        catch (Exception) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch { return null; }
     }
 }

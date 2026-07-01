@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
@@ -12,8 +13,8 @@ namespace VisualRelay.Tests;
 /// Behavioural tests for settings as a modal dialog. The cog used to open a
 /// flyout whose FlyoutPresenter added a second scrollbar over the panel's own
 /// and clipped the bottom ("Live Tiers") at its MaxHeight; it now opens a
-/// resizable <see cref="SettingsWindow"/> sized so the whole panel fits with no
-/// scrolling at the default size.
+/// resizable <see cref="SettingsWindow"/> with a reasonable default size and a
+/// single scroll region for long content.
 /// </summary>
 [Collection("Headless")]
 public sealed class SettingsModalUiTests
@@ -93,7 +94,7 @@ public sealed class SettingsModalUiTests
     }
 
     [AvaloniaFact]
-    public async Task SettingsModal_AtDefaultSize_FitsWithoutScrolling_AndLiveTiersIsVisible()
+    public async Task SettingsModal_AtReasonableDefaultSize_HasScrollRegion_AndLiveTiersReachable()
     {
         SettingsTestHelpers.EnsureNoUserEnv(_env);
         using var repo = TestRepository.Create();
@@ -111,19 +112,32 @@ public sealed class SettingsModalUiTests
         dialog.Arrange(new Rect(0, 0, dialog.Width, dialog.Height));
         Dispatcher.UIThread.RunJobs();
 
-        // The single scroll region must not actually need to scroll at the
-        // default size — the whole panel (including "Live Tiers") fits. This is
-        // the regression for the old flyout that clipped content at MaxHeight.
+        // The default window height must be reasonable — not the giant 2030px
+        // workaround that forced all content to fit without scrolling. A normal
+        // Settings dialog fits on a laptop screen (≤800 px).
+        Assert.True(dialog.Height <= 800,
+            $"Settings window default height {dialog.Height} should be reasonable (≤800), not a giant workaround");
+
+        // The single scroll region exists with Auto visibility so it shows a
+        // scrollbar only when content overflows. We no longer assert that all
+        // content fits without scrolling — long sandbox path lists may overflow
+        // and that is expected, responsive behaviour.
         var scroll = dialog.GetVisualDescendants().OfType<ScrollViewer>()
             .Single(s => s.Name == "SettingsScrollViewer");
-        Assert.True(
-            scroll.Extent.Height <= scroll.Viewport.Height + 0.5,
-            $"settings content overflows at default size: extent={scroll.Extent.Height} viewport={scroll.Viewport.Height}");
+        Assert.Equal(ScrollBarVisibility.Auto, scroll.VerticalScrollBarVisibility);
 
+        // "Live Tiers" must still be reachable in the layout (not clipped by a
+        // nested scroll region or flyout MaxHeight).
         var liveTiers = dialog.GetVisualDescendants().OfType<TextBlock>()
             .FirstOrDefault(t => t.Text == "Live Tiers");
         Assert.NotNull(liveTiers);
         Assert.True(liveTiers.Bounds.Height > 0, "Live Tiers should be laid out (not clipped)");
+
+        // The dialog must have exactly one layout scroll region — never the
+        // nested pair (flyout + panel) that clipped "Live Tiers" before.
+        var layoutScrolls = SettingsTestHelpers.LayoutScrollViewers(dialog);
+        Assert.Single(layoutScrolls);
+        Assert.Equal("SettingsScrollViewer", layoutScrolls[0].Name);
 
         dialog.Close();
         Dispatcher.UIThread.RunJobs();
