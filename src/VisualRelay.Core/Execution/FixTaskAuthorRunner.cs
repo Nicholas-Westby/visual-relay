@@ -66,8 +66,8 @@ public static class FixTaskAuthorRunner
             Name: "FixTaskAuthor",
             Tier: "balanced",
             Kind: "llm",
-            Files: "all",
-            Commands: "all",
+            Files: "none",
+            Commands: "none",
             SystemPrompt: SystemPrompt,
             OutputContract: """{ "markdown": string, "summary": string, "slug": string }""");
 

@@ -16,9 +16,11 @@ internal sealed class FixTaskFakeRunner : ISubagentRunner
     public string Slug { get; init; } = "fix-issue";
     public bool ThrowOnRun { get; init; }
     public bool WasCalled { get; private set; }
+    public StageInvocation? LastInvocation { get; private set; }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)
     {
+        LastInvocation = invocation;
         WasCalled = true;
 
         if (ThrowOnRun)
@@ -54,6 +56,8 @@ internal sealed class GatedFixTaskRunner : ISubagentRunner
     private readonly string _slug;
     private readonly Task _gate;
 
+    public StageInvocation? LastInvocation { get; private set; }
+
     public GatedFixTaskRunner(string markdown, string summary, string slug, Task gate)
     {
         _markdown = markdown;
@@ -64,6 +68,7 @@ internal sealed class GatedFixTaskRunner : ISubagentRunner
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)
     {
+        LastInvocation = invocation;
         await _gate.WaitAsync(ct);
 
         var payload = new Dictionary<string, string>

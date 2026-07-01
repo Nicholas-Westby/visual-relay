@@ -1,0 +1,258 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T16:59:36.833795+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 00c-fix-task-author-read-only\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Make Fix-Task Authoring Read-Only\n\n## Problem\n\n`FixTaskAuthorRunner` is described as a read-only prompt-and-parse step:\n\n> No worktree - this is a read-only prompt-and-parse step.\n\nBut its synthetic stage definition currently grants broad capability:\n\n- `Files: \"all\"`\n- `Commands: \"all\"`\n\nThat gives the task-authoring model more power than the feature needs. It only needs the failure\ncontext already assembled into the prompt and should return JSON markdown for a new task. It should\nnot be able to edit the repository or execute arbitrary commands.\n\n## Goal\n\nMake \"Create task to fix\" authoring genuinely read-only and low-capability while preserving the button\nbehavior and task-writing flow owned by the app.\n\n## What to build\n\n1. Reduce `FixTaskAuthorRunner` stage capabilities.\n   - Use no write access.\n   - Use no command execution unless a narrowly justified read-only command set is truly necessary.\n   - Prefer passing all needed failure context in the prompt, as it does today.\n2. Keep the app-owned write step unchanged.\n   - The app may still write the returned markdown through `RelayTaskWriter.CreateAsync` after it\n     validates and disambiguates the slug.\n   - The subagent itself must not write files.\n3. Add tests that inspect the captured `StageInvocation`.\n   - The fix-task author invocation must not use `Files: \"all\"` or `Commands: \"all\"`.\n   - The happy path still creates a new task from returned JSON.\n   - Invalid JSON/error paths still surface a clean status message and write nothing.\n4. Keep the behavior general. Do not add language- or toolchain-specific logic to the authoring path.\n\n## Done criteria\n\n- The fix-task authoring subagent cannot edit files or run arbitrary commands.\n- Existing create-fix-task tests still pass.\n- New capability-scope tests fail before the fix and pass after it.\n- The full `./visual-relay check` gate passes.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the task description, I have enough context to frame the task and propose solution options. The key insight is that `FixTaskAuthorRunner` declares itself as read-only but its stage capabilities (`Files: \"all\"`, `Commands: \"all\"`) contradict that claim.\n\n---\n\n## Frame\n\n**What needs to change:** The synthetic stage definition used by `FixTaskAuthorRunner` currently grants unrestricted filesystem and command access. We need to restrict it to zero file writes and zero command execution, since all failure context is already assembled into the prompt. The app-side write path (`RelayTaskWriter.CreateAsync`) already owns the actual file write after validation \u2014 that stays untouched.\n\n**What doesn't change:**\n- The button behavior for creating fix-tasks.\n- The app-owned write step (`RelayTaskWriter.CreateAsync`) that writes validated markdown.\n- The JSON markdown return format from the subagent.\n- The general-purpose nature of the authoring path (no language/toolchain-specific logic).\n\n**Testing strategy:** Capture the `StageInvocation` that `FixTaskAuthorRunner` produces and assert that `Files` and `Commands` are not set to `\"all\"`. Happy-path tests verify a new task is created from returned JSON; error-path tests verify clean status messages and no file writes.\n\n---\n\n## Solution Options\n\n### Option A \u2014 Minimal: Strip `Files` and `Commands` to empty in the synthetic stage definition\n\nRemove `Files: \"all\"` \u2192 `Files: []` and `Commands: \"all\"` \u2192 `Commands: []` in the synthetic stage. This is the narrowest change: zero new abstractions, zero refactoring. The failure context is already in the prompt, so no file access is needed.\n\n| Pros | Cons |\n|---|---|\n| One-line changes in one location | Might need a helper if the stage definition requires non-empty values |\n| Easy to verify the fix passes/fails | Doesn't make the intent structurally obvious to future readers |\n\n### Option B \u2014 Introduce a dedicated capability constant or helper method\n\nCreate a constant like `ReadOnlyStageCapabilities` (or a factory method) that explicitly returns empty `Files` and `Commands`. Use it in `FixTaskAuthorRunner`. Tests assert the constant is used rather than matching magic values.\n\n| Pros | Cons |\n|---|---|\n| Self-documenting intent | Slightly more code churn |\n| Reusable if other read-only stages appear later | Over-engineering if this is the only such stage |\n| Tests pin the behavior at the declaration site | |\n\n### Option C \u2014 Gate capability via a `StageKind` or mode flag\n\nAdd a `StageKind` property (e.g. `\"read-only-prompt\"`) to the synthetic stage. When the kind is `\"read-only-prompt\"`, the framework automatically assigns empty `Files`/`Commands` and rejects any override attempt. The capability stripping happens centrally rather than in each runner.\n\n| Pros | Cons |\n|---|---|\n| Enforces the invariant at the framework layer | Larger blast radius \u2014 touches stage infrastructure |\n| Impossible to forget to restrict capabilities | May require changes to stage schema/serialization |\n| Tests can be written at the framework level | Risk of breaking other stages that use synthetic definitions |\n\n---\n\n```json\n{\n  \"summary\": \"FixTaskAuthorRunner's synthetic stage claims to be read-only but grants Files: \\\"all\\\" and Commands: \\\"all\\\". The task is to strip those capabilities to empty so the subagent cannot write files or run commands, while keeping the app-side RelayTaskWriter.CreateAsync write path unchanged. All needed failure context is already in the prompt. Tests must inspect the captured StageInvocation to confirm Files and Commands are not \\\"all\\\", and existing create-fix-task tests must still pass.\",\n  \"options\": [\n    \"Option A \u2014 Minimal: Change Files: \\\"all\\\" \u2192 Files: [] and Commands: \\\"all\\\" \u2192 Commands: [] in FixTaskAuthorRunner's synthetic stage definition. Simplest change, one location, easy to verify.\",\n    \"Option B \u2014 Dedicated constant: Extract a ReadOnlyStageCapabilities constant or factory method returning empty Files/Commands. Self-documenting but slightly more code churn.\",\n    \"Option C \u2014 StageKind gating: Add a read-only-prompt StageKind that the framework auto-strips capabilities for. Enforces the invariant centrally but has larger blast radius.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 8,
+    "tool_calls_total": 10,
+    "tool_calls_succeeded": 7,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 6,
+        "failed": 1
+      },
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 0,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 8,
+    "total_llm_time_s": 36.034,
+    "prompt_cache": {
+      "cached_tokens": 43520,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.01,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.682,
+      "prompt_tokens_est": 4222,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 155,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay/' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.924,
+      "prompt_tokens_est": 4343,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.429,
+      "prompt_tokens_est": 4382,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8088
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.889,
+      "prompt_tokens_est": 6451,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 85
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 121,
+      "error": "error: Path '.' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.348,
+      "prompt_tokens_est": 6776,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/index.jsonl"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 529
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.467,
+      "prompt_tokens_est": 7204,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/.lock"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 19
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/507ebc32086043e6bf24ec7b8e85b800/"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 29
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/df8fd4b3258f4a81954e50df3f568495/"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 29
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 1.889,
+      "prompt_tokens_est": 7342,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FixTaskAuthorRunner",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 121,
+      "error": "error: Path '.' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 17.407,
+      "prompt_tokens_est": 7438,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
