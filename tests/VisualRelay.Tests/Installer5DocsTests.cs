@@ -61,6 +61,89 @@ public sealed class Installer5DocsTests
         Assert.Contains("nono", content, StringComparison.Ordinal);
     }
 
+    // ── README: Windows install section ──────────────────────────────────
+
+    [Fact]
+    public void Readme_HasWindowsInstallSection()
+    {
+        var content = ReadReadme();
+
+        // README must have a dedicated install section for Windows, peer to
+        // the macOS section.
+        Assert.Contains("# Install (Windows)", content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_LeadsWithSourceCheckout()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // The Windows path, like the macOS path, must start with a git clone.
+        Assert.Contains("git clone", winSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_DocumentsPowerShellLauncher()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // The section must describe the PowerShell-based launcher (the .cmd
+        // shim → .ps1 → dotnet run chain), not claim nix handles it.
+        Assert.Contains("visual-relay.ps1", winSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_DoesNotClaimGlobalInstall()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // The old stub falsely claimed dependencies are "installed globally";
+        // the launcher provisions per-user into %LOCALAPPDATA%.
+        Assert.DoesNotContain("installed globally", winSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_DocumentsMxcSandbox()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // The section must document the MXC sandbox and provisioning step
+        // (wxc-exec is the Microsoft-signed sandbox runtime).
+        Assert.True(
+            winSection.Contains("mxc", StringComparison.OrdinalIgnoreCase) ||
+            winSection.Contains("wxc-exec", StringComparison.OrdinalIgnoreCase) ||
+            winSection.Contains("provision-mxc", StringComparison.Ordinal),
+            "Windows install section must document the MXC sandbox.");
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_CrossReferencesTroubleshooting()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // The section must cross-reference TROUBLESHOOTING.md so users can
+        // find the detailed Windows guidance (execution policy, MXC, dotnet
+        // PATH, git hooks).
+        Assert.Contains("TROUBLESHOOTING.md", winSection, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Readme_WindowsInstallSection_DocumentsGitPrereq()
+    {
+        var content = ReadReadme();
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // Git is the one hard prerequisite on Windows; the launcher exits
+        // with "git was not found" if it's missing. The install section must
+        // tell users to install Git.
+        Assert.Contains("Git", winSection, StringComparison.Ordinal);
+    }
+
     // ── README: sample-reset / dev-only references removed ───────────────
 
     [Fact]

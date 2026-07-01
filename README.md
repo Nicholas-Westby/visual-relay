@@ -32,15 +32,39 @@ You can then run `./visual-relay` in that folder the next time you want to launc
 
 # Install (Windows)
 
-Clone the repo and run (nix doesn't run on Windows, so dependencies are installed globally):
+The recommended way to run Visual Relay on Windows is to **clone the repo and launch
+it with the `visual-relay` wrapper** (one command bootstraps everything else):
 
 ```powershell
+cd ~ # or wherever you keep your repos
 git clone https://github.com/Nicholas-Westby/visual-relay.git
 cd visual-relay
-.\visual-relay launch
+visual-relay launch
 ```
 
-You can then run `./visual-relay` in that folder the next time you want to launch it.
+`visual-relay` is a thin `.cmd` shim that invokes `visual-relay.ps1`, a PowerShell
+launcher that provisions its own toolchain per-user into `%LOCALAPPDATA%` (this avoids
+global installs). The launcher consent-prompts to install the .NET 10 SDK if needed and
+warns if [uv](https://docs.astral.sh/uv/) is missing. **Git** is the one hard
+prerequisite — install it via `winget install Git.Git` if needed.
+
+Before your first task, provision the [MXC](https://github.com/microsoft/mxc) sandbox:
+
+```powershell
+visual-relay provision-mxc
+```
+
+Three sandbox modes are available: **Mxc** (default when provisioned), **Builtin**
+(opt in with `$env:VR_WINDOWS_SANDBOX=builtin`), and **Blocked** (execution refused
+when no sandbox is available — no silent unsandboxed mode).
+
+State lives under `%APPDATA%\visual-relay\` (UI state, `.env`, sandbox policy) and
+`%LOCALAPPDATA%\visual-relay\` (LiteLLM venv, scratch, logs).
+
+You can then run `visual-relay` in that folder the next time you want to launch it.
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for detailed Windows guidance (execution
+policy, MXC setup, dotnet PATH, git hooks).
 
 <!-- END install section -->
 
