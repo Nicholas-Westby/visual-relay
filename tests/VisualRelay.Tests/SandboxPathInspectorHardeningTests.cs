@@ -76,6 +76,36 @@ public sealed partial class SandboxPathInspectorTests
         Assert.Contains(entries, e => e.Raw == "~/.ssh");
     }
 
+    [Fact]
+    public void ParseGroupJson_SkipsNullRawAllowEntry()
+    {
+        // Mirrors the deny guard: a group emitting {"raw":null} in an allow list
+        // must not surface as a blank Readable/Writable row.
+        var groupJson =
+            """{ "name":"g", "allow": { "read": [ {"raw":null,"expanded":null}, {"raw":"/usr/bin"} ] } }""";
+
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+
+        Assert.DoesNotContain(entries, e => string.IsNullOrEmpty(e.Raw));
+        Assert.Contains(entries, e => e is { Raw: "/usr/bin", Access: SandboxAccess.ReadOnly });
+    }
+
+    // ── Bare-string deny.access expands its tooltip (matches object form) ──
+    [Fact]
+    public void ParseGroupJson_BareStringDenyAccess_ExpandsTooltip()
+    {
+        // The bare-string form must expand ~ for the tooltip just like the object
+        // form, so both show a concrete path rather than the un-expanded raw token.
+        var groupJson = """{ "name":"g", "deny": { "access": [ "~/.ssh" ] } }""";
+
+        var entries = SandboxPathInspector.ParseGroupJson(groupJson, "g");
+
+        var ssh = Assert.Single(entries, e => e.Raw == "~/.ssh");
+        Assert.Equal(SandboxAccess.Blocked, ssh.Access);
+        Assert.NotEqual("~/.ssh", ssh.Expanded);   // no longer the raw token
+        Assert.EndsWith("/.ssh", ssh.Expanded);     // concrete home-expanded path
+    }
+
     // ── Platform-token filtering is consistent (group-level vs per-entry) ─
     [Fact]
     public void ParseGroupJson_NonCanonicalPlatformEntry_IsIncludedConsistently()

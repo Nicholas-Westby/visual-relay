@@ -17,6 +17,15 @@ public sealed class SandboxInspectionResult
     public IReadOnlyList<SandboxPathEntry> BlockedPaths { get; init; } = [];
 
     /// <summary>
+    /// One-line reads/writes summary shown above the path lists. Platform-specific
+    /// and carried by the result so the UI needs no OS check: the nono (macOS/Linux)
+    /// build says reads are the whole filesystem EXCEPT the blocked paths, while the
+    /// Windows build says reads are unrestricted (MXC does not read-block the
+    /// credential <c>deniedPaths</c>). <c>null</c> when unavailable.
+    /// </summary>
+    public string? ReadsSummary { get; init; }
+
+    /// <summary>
     /// Windows-only caveat shown against the credential denials (the MXC sandbox
     /// may not enforce <c>deniedPaths</c> yet). <c>null</c> on macOS/Linux, where
     /// nono genuinely enforces the denials and no caveat should appear.
@@ -156,10 +165,19 @@ public static partial class SandboxPathInspector
         }
     }
 
+    /// <summary>
+    /// The macOS/Linux (nono) reads/writes summary. Reads are the whole filesystem
+    /// EXCEPT the enforced deny/credential paths, which nono genuinely blocks.
+    /// </summary>
+    internal const string NonoReadsSummaryText =
+        "Reads: the whole filesystem except the blocked paths. " +
+        "Writes: only the paths listed here (plus the current workspace).";
+
     internal static SandboxInspectionResult BuildResult(List<SandboxPathEntry> all) =>
         new()
         {
             IsAvailable = true,
+            ReadsSummary = NonoReadsSummaryText,
             ReadablePaths = all.Where(e => e.Access == SandboxAccess.ReadOnly).ToList(),
             WritablePaths = all.Where(e => e.Access == SandboxAccess.ReadWrite).ToList(),
             BlockedPaths = all.Where(e => e.Access == SandboxAccess.Blocked).ToList(),
@@ -208,7 +226,8 @@ public static partial class SandboxPathInspector
         {
             if (entry.ValueKind != JsonValueKind.Object) continue;
             if (!entry.TryGetProperty("raw", out var rawProp)) continue;
-            var raw = rawProp.GetString()!;
+            var raw = rawProp.GetString();
+            if (string.IsNullOrEmpty(raw)) continue;
             var expanded = entry.TryGetProperty("expanded", out var ep)
                 ? (ep.GetString() ?? raw) : raw;
             if (ShouldSkipByPlatform(entry)) continue;

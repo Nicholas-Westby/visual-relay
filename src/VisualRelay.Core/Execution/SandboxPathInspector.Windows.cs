@@ -28,7 +28,16 @@ public static partial class SandboxPathInspector
     /// <summary>The Windows-only caveat shown against the credential denials.</summary>
     internal const string WindowsCredentialCaveatText =
         "⚠ Configured as denied, but the Windows sandbox (MXC) may not enforce " +
-        "denied paths yet — treat these as potentially readable.";
+        "denied paths yet — treat the credential paths above as potentially readable.";
+
+    /// <summary>
+    /// The Windows reads/writes summary. Reads are unrestricted — MXC does not
+    /// read-block the credential <c>deniedPaths</c> (see the caveat) — so this must
+    /// NOT repeat the nono "except the blocked paths" phrasing.
+    /// </summary>
+    internal const string WindowsReadsSummaryText =
+        "Reads: the whole filesystem (not restricted). " +
+        "Writes: only the paths listed here (plus the current workspace).";
 
     /// <summary>
     /// Builds the Windows inspection result: broad reads by MXC default, writes
@@ -58,6 +67,7 @@ public static partial class SandboxPathInspector
         return new SandboxInspectionResult
         {
             IsAvailable = true,
+            ReadsSummary = WindowsReadsSummaryText,
             ReadablePaths = [new SandboxPathEntry(
                 "<entire filesystem — reads are not restricted>",
                 "<entire filesystem — reads are not restricted>",

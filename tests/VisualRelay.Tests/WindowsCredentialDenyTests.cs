@@ -107,4 +107,32 @@ public sealed class WindowsCredentialDenyTests
         Assert.Null(nono.WindowsCredentialCaveat);
         Assert.Null(nono.WindowsCredentialCaveatUrl);
     }
+
+    // ── Platform-aware reads/writes summary ──────────────────────────────
+
+    [Fact]
+    public void BuildWindowsResult_ReadsSummarySaysReadsUnrestricted()
+    {
+        var result = SandboxPathInspector.BuildWindowsResult(@"C:\repo", null);
+
+        Assert.False(string.IsNullOrWhiteSpace(result.ReadsSummary));
+        // Windows reads are not restricted, so the summary must NOT repeat the nono
+        // "except the blocked paths" phrasing that would misdescribe MXC.
+        Assert.Contains("not restricted", result.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("except the blocked", result.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void NonoResult_ReadsSummaryKeepsBlockedPathsException()
+    {
+        var nono = SandboxPathInspector.BuildResult(
+            [new SandboxPathEntry("/", "/", SandboxAccess.ReadOnly, "vr-guard")]);
+
+        Assert.False(string.IsNullOrWhiteSpace(nono.ReadsSummary));
+        // macOS/Linux genuinely block the deny paths, so the summary keeps the
+        // "except the blocked paths" wording — distinct from the Windows text.
+        Assert.Contains("except the blocked paths", nono.ReadsSummary!, StringComparison.OrdinalIgnoreCase);
+        Assert.NotEqual(
+            SandboxPathInspector.BuildWindowsResult("/ws", null).ReadsSummary, nono.ReadsSummary);
+    }
 }

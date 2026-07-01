@@ -115,7 +115,7 @@ public static partial class SandboxPathInspector
             if (entry.ValueKind == JsonValueKind.String)
             {
                 var s = entry.GetString()!;
-                yield return new SandboxPathEntry(NormalizeRawForDisplay(s), s, SandboxAccess.Blocked, groupName);
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(s), ExpandPath(s), SandboxAccess.Blocked, groupName);
             }
             else if (entry.ValueKind == JsonValueKind.Object &&
                      entry.TryGetProperty("raw", out var rawProp))

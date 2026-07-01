@@ -23,6 +23,15 @@ public partial class MainWindowViewModel
     private bool _isSandboxInfoLoading;
 
     /// <summary>
+    /// Platform-aware one-line reads/writes summary shown above the path lists.
+    /// Carried by the inspection result, so Windows (unrestricted reads) and
+    /// macOS/Linux (reads minus the blocked paths) each get an honest sentence
+    /// with no OS check here. Null when the info is unavailable.
+    /// </summary>
+    [ObservableProperty]
+    private string? _sandboxReadsSummary;
+
+    /// <summary>
     /// Windows-only caveat text against the credential denials (the MXC sandbox
     /// may not enforce them yet). Empty/null on macOS/Linux, so the caveat row is
     /// hidden there. See <see cref="SandboxWindowsCaveatUrl"/> for the tracker.
@@ -61,6 +70,7 @@ public partial class MainWindowViewModel
                 extraAllowPaths: extraAllowPaths);
 
             IsSandboxInfoAvailable = result.IsAvailable;
+            SandboxReadsSummary = result.ReadsSummary;
             SandboxWindowsCaveat = result.WindowsCredentialCaveat;
             SandboxWindowsCaveatUrl = result.WindowsCredentialCaveatUrl;
 
@@ -81,6 +91,7 @@ public partial class MainWindowViewModel
         catch
         {
             IsSandboxInfoAvailable = false;
+            SandboxReadsSummary = null;
             SandboxWindowsCaveat = null;
             SandboxWindowsCaveatUrl = null;
             SandboxReadablePaths.Clear();
