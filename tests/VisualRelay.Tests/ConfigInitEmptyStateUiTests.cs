@@ -20,7 +20,7 @@ public sealed class ConfigInitEmptyStateUiTests
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 
@@ -105,8 +105,7 @@ public sealed class ConfigInitEmptyStateUiTests
         // the window + bindings exist before LoadInitialAsync or BrowseAsync
         // sets RootPath, so the bootstrap button’s CanExecute is evaluated when
         // Directory.Exists("") = false and never re-queried.
-        var viewModel = new MainWindowViewModel();
-        // viewModel.RootPath is empty at this point.
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
 
         // ── Show the real window (button binds while RootPath is empty) ──
         var window = new MainWindow

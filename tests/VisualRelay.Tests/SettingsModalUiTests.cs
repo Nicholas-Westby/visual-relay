@@ -18,7 +18,7 @@ namespace VisualRelay.Tests;
 [Collection("Headless")]
 public sealed class SettingsModalUiTests
 {
-    private readonly DictionaryEnvironmentAccessor _env = new();
+    private readonly DictionaryEnvironmentAccessor _env = new() { ["XDG_CONFIG_HOME"] = Path.GetTempPath() };
 
     [AvaloniaFact]
     public async Task SettingsButtonOpensModalWindow_WithVmDataContext_SingleScrollRegion_AndBoundControl()
@@ -29,7 +29,7 @@ public sealed class SettingsModalUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-modal-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -73,7 +73,7 @@ public sealed class SettingsModalUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-dedup-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -100,7 +100,7 @@ public sealed class SettingsModalUiTests
         SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts: true);
         using var r = SettingsTestHelpers.SeedUserEnv(_env, repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         await vm.OpenSettingsAsync();
 

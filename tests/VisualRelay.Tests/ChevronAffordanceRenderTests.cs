@@ -169,7 +169,7 @@ public sealed class ChevronAffordanceRenderTests
     /// are checked to within a half-pixel tolerance so a large uncentered path
     /// (like the old x-midpoint at 6.75 vs box centre 6.0) fails the test.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void SharedGeometry_IsOpticallycenteredInIconBox()
     {
         var bounds = ChevronIcon.SharedGeometry.Bounds;
@@ -189,7 +189,7 @@ public sealed class ChevronAffordanceRenderTests
     /// The default foreground must be explicitly set so the chevron renders
     /// deterministically even if no style matches.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void ChevronForeground_HasExplicitDefault_NotNull()
     {
         var icon = new ChevronIcon();
@@ -200,9 +200,11 @@ public sealed class ChevronAffordanceRenderTests
 
     private static MainWindow CreateWindow()
     {
+        var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() };
+        var vm = new MainWindowViewModel(env);
         var window = new MainWindow
         {
-            DataContext = new MainWindowViewModel(),
+            DataContext = vm,
             Width = 1440,
             Height = 900
         };

@@ -17,7 +17,7 @@ public sealed class MainWindowViewModelMarkDoneTests
         repo.WriteConfig("dotnet test", [], archiveOnDone: true);
         repo.WriteNestedTask("windows-support", "# Windows Support\n\nCross-platform fixes.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         var task = viewModel.Tasks.Single(t => t.Id == "windows-support");
@@ -46,7 +46,7 @@ public sealed class MainWindowViewModelMarkDoneTests
         Directory.CreateDirectory(completedDir);
         File.WriteAllText(Path.Combine(completedDir, "DONE-archived-task.md"), "# Archived\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         // Show the archive so the completed task is visible, then select it.
@@ -69,7 +69,7 @@ public sealed class MainWindowViewModelMarkDoneTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("active-task", "# Active\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "active-task");
@@ -93,7 +93,7 @@ public sealed class MainWindowViewModelMarkDoneTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("active-task", "# Active\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "active-task");
@@ -117,7 +117,7 @@ public sealed class MainWindowViewModelMarkDoneTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteNestedTask("running-task", "# Running\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "running-task");
@@ -135,14 +135,14 @@ public sealed class MainWindowViewModelMarkDoneTests
         Assert.False(viewModel.MarkSelectedTaskDoneCommand.CanExecute(null));
     }
 
-    [Fact]
+    [AvaloniaFact]
     public void CanMarkSelectedTaskDone_FalseWhenNoTaskSelected()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("active-task", "# Active\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
 
         // No selected task → command should be disabled.
         Assert.Null(viewModel.SelectedTask);

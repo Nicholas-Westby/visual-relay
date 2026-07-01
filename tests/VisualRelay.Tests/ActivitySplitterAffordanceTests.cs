@@ -228,7 +228,7 @@ public sealed class ActivitySplitterAffordanceTests
 
     private static (MainWindowViewModel vm, MainWindow window) CreateWindow()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
         Dispatcher.UIThread.RunJobs();

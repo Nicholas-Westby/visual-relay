@@ -56,7 +56,7 @@ public sealed class TaskDetailRemoveButtonLayoutTests
             .ToArray();
         repo.WriteNestedTask("clip-repro", "# Clip Repro\n\nTest task for clipping bug.", siblings);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "clip-repro");
@@ -146,7 +146,7 @@ public sealed class TaskDetailRemoveButtonLayoutTests
         };
         repo.WriteNestedTask("pad-check", "# Pad Check\n", siblings);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "pad-check");

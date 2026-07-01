@@ -49,7 +49,7 @@ public sealed class TaskDetailErrorRefreshTests
         repo.WriteTask("broken", "# Broken\n");
         await WriteFlaggedStatusAsync(repo.Root, "broken", 1, "verify failed after 5 fix-verify attempts");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Select the failed task — the stale error banner is showing.
@@ -85,7 +85,7 @@ public sealed class TaskDetailErrorRefreshTests
         repo.WriteTask("broken", "# Broken\n");
         await WriteFlaggedStatusAsync(repo.Root, "broken", 1, "old failure");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
         await viewModel.LastSelectionLoad!;
@@ -118,7 +118,7 @@ public sealed class TaskDetailErrorRefreshTests
         repo.WriteTask("other", "# Other\n");
         await WriteFlaggedStatusAsync(repo.Root, "broken", 1, "broken's error");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks.Single(task => task.Id == "broken");
         await viewModel.LastSelectionLoad!;

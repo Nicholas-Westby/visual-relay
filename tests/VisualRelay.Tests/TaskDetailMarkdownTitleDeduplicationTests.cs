@@ -37,7 +37,7 @@ public sealed class TaskDetailMarkdownTitleDeduplicationTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("feature-x", "# Implement Feature X\n\nThis is the body.\nMore content.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Select the task and wait for the async markdown/context load.

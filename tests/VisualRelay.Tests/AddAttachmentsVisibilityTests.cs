@@ -44,7 +44,7 @@ public sealed class AddAttachmentsVisibilityTests
 
         try
         {
-            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
             viewModel.UseFilePicker(new FakeFilePicker(new FilePickResult(1, [sourcePath])));
             await viewModel.LoadInitialAsync();
 
@@ -86,7 +86,7 @@ public sealed class AddAttachmentsVisibilityTests
             ("drop.txt", "drop"));
 
         // Skip the confirm prompt so removal proceeds headlessly.
-        var viewModel = new MainWindowViewModel
+        var viewModel = new MainWindowViewModel(repo.Env)
         {
             RootPath = repo.Root,
             ShowConfirmationAsync = (_, _, _) => Task.FromResult(true)
@@ -126,7 +126,7 @@ public sealed class AddAttachmentsVisibilityTests
         repo.WriteTask("alpha", "# Alpha\n");
 
         // ── Cancel (0 chosen) leaves StatusText untouched ──
-        var cancelVm = new MainWindowViewModel { RootPath = repo.Root };
+        var cancelVm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         cancelVm.UseFilePicker(new FakeFilePicker(new FilePickResult(0, [])));
         await cancelVm.LoadInitialAsync();
         cancelVm.SelectedTask = cancelVm.Tasks.Single(t => t.Id == "alpha");
@@ -138,7 +138,7 @@ public sealed class AddAttachmentsVisibilityTests
         Assert.Equal(statusBeforeCancel, cancelVm.StatusText);
 
         // ── Chosen-but-unusable (1 chosen, 0 resolved) sets a clear reason ──
-        var unusableVm = new MainWindowViewModel { RootPath = repo.Root };
+        var unusableVm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         unusableVm.UseFilePicker(new FakeFilePicker(new FilePickResult(1, [])));
         await unusableVm.LoadInitialAsync();
         unusableVm.SelectedTask = unusableVm.Tasks.Single(t => t.Id == "alpha");
@@ -166,7 +166,7 @@ public sealed class AddAttachmentsVisibilityTests
 
         try
         {
-            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
             viewModel.UseFilePicker(new FakeFilePicker(new FilePickResult(1, [sourcePath])));
             await viewModel.LoadInitialAsync();
 
@@ -203,7 +203,7 @@ public sealed class AddAttachmentsVisibilityTests
             "zeta", "# Zeta\n",
             ("drop.txt", "drop"));
 
-        var viewModel = new MainWindowViewModel
+        var viewModel = new MainWindowViewModel(repo.Env)
         {
             RootPath = repo.Root,
             ShowConfirmationAsync = (_, _, _) => Task.FromResult(true)
@@ -235,7 +235,7 @@ public sealed class AddAttachmentsVisibilityTests
         repo.WriteNestedTask("zeta", "# Zeta\n", ("drop.txt", "drop"));
 
         string? capturedConfirmLabel = null;
-        var viewModel = new MainWindowViewModel
+        var viewModel = new MainWindowViewModel(repo.Env)
         {
             RootPath = repo.Root,
             ShowConfirmationAsync = (_, _, confirmLabel) =>
@@ -273,7 +273,7 @@ public sealed class AddAttachmentsVisibilityTests
         try
         {
             // 2 chosen, 1 resolved path → 1 skipped.
-            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
             viewModel.UseFilePicker(new FakeFilePicker(new FilePickResult(2, [sourcePath])));
             await viewModel.LoadInitialAsync();
 

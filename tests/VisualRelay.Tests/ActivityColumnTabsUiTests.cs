@@ -18,7 +18,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void TabControl_HasFiveTabs_WithCorrectHeaders()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,
@@ -61,7 +61,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void StageTabs_AppearAfterCommandsTab()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,
@@ -98,7 +98,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void SwitchingTabs_UpdatesSelectedIndex()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,
@@ -140,7 +140,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void ColumnHeader_TitleIsActivity_KeepRevealAndScopeLabel()
     {
-        var vm = new MainWindowViewModel { LogScopeLabel = "ideate" };
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() }) { LogScopeLabel = "ideate" };
 
         var window = new MainWindow
         {
@@ -185,7 +185,7 @@ public sealed partial class ActivityColumnTabsUiTests
     public void Rail_HasSingleButtonAndActivityLabel()
     {
         // Force the rail visible by collapsing the column.
-        var vm = new MainWindowViewModel { IsActivityColumnCollapsed = true };
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() }) { IsActivityColumnCollapsed = true };
 
         var window = new MainWindow
         {

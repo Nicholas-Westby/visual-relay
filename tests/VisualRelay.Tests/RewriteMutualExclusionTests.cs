@@ -56,7 +56,7 @@ public sealed class RewriteMutualExclusionTests
 
     // ── FIX 5: CanRewriteSelected rules ─────────────────────────────────────
 
-    [Fact]
+    [AvaloniaFact]
     public async Task CanRewriteSelected_TrueForFreshPendingTask_AndIndependentOfIsBusy()
     {
         using var repo = TestRepository.Create();
@@ -77,7 +77,7 @@ public sealed class RewriteMutualExclusionTests
         vm.IsBusy = false;
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task CanRewriteSelected_FalseWhenAlreadyRun_OrArchived()
     {
         using var repo = TestRepository.Create();
@@ -101,7 +101,7 @@ public sealed class RewriteMutualExclusionTests
             "a task that has already run (CompletedStageCount != 0) is not rewritable");
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task CanRewriteSelected_FalseForFlatTask_WhereTaskDirectoryIsTheSharedRoot()
     {
         // A flat (non-nested) task's TaskDirectory is the SHARED llm-tasks/ root.

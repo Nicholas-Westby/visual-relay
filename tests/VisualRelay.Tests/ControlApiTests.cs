@@ -22,7 +22,7 @@ public sealed class ControlApiTests
 {
     private static ControlApi NewApi(out MainWindowViewModel viewModel)
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         viewModel = vm;
         return new ControlApi(vm, window);
@@ -229,7 +229,7 @@ public sealed class ControlApiTests
     [AvaloniaFact]
     public async Task CaptureScreenshot_RunsAndEncodesPng_WhenBytesProduced()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm, Width = 400, Height = 300 };
         await Dispatcher.UIThread.InvokeAsync(() =>
         {
@@ -257,7 +257,7 @@ public sealed class ControlApiTests
     [AvaloniaFact]
     public async Task CaptureScreenshot_WithPath_WritesFileAndReturnsResolvedPath()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm, Width = 400, Height = 300 };
         var api = new ControlApi(vm, window);
 

@@ -41,7 +41,7 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
 
         repo.WriteNestedTask("gap-check", "# Gap Check\n", ("file.txt", "content"));
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "gap-check");
@@ -103,7 +103,7 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
         var longName = "very-long-attachment-filename-that-would-overlap-with-reveal-button.txt";
         repo.WriteNestedTask("gap-visual", "# Gap Visual\n", (longName, "content"));
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "gap-visual");

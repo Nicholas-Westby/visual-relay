@@ -22,7 +22,7 @@ public sealed class ActivityColumnItemsPanelTests
     [AvaloniaFact]
     public void TraceListBox_UsesNonVirtualizingStackPanel()
     {
-        var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = viewModel,

@@ -73,7 +73,7 @@ public sealed class TaskDetailScrollBottomReachabilityTests
     private static async Task<TaskDetailPanel> LoadPanelAsync(
         TestRepository repo, string taskId, int tabIndex, int height = 600)
     {
-        var vm = new MainWindowViewModel { RootPath = repo.Root };
+        var vm = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         vm.SelectedTask = vm.Tasks.Single(t => t.Id == taskId);
         await vm.LastSelectionLoad!;

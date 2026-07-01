@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 [Collection("Headless")]
 public sealed partial class SettingsPanelUiTests
 {
-    private readonly DictionaryEnvironmentAccessor _env = new();
+    private readonly DictionaryEnvironmentAccessor _env = new() { ["XDG_CONFIG_HOME"] = Path.GetTempPath() };
 
     // Thin forwarders to SettingsTestHelpers keep these tests under the
     // source-size guard and remove duplication with the other UI test classes.
@@ -33,7 +33,7 @@ public sealed partial class SettingsPanelUiTests
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -56,7 +56,7 @@ public sealed partial class SettingsPanelUiTests
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -103,7 +103,7 @@ public sealed partial class SettingsPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -135,7 +135,7 @@ public sealed partial class SettingsPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -163,7 +163,7 @@ public sealed partial class SettingsPanelUiTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task OpenSettingsRefreshesKeyStatesOnOpen()
     {
         EnsureNoUserEnv();
@@ -171,7 +171,7 @@ public sealed partial class SettingsPanelUiTests
         WriteCommitConfig(repo, commitProofArtifacts: true);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-from-env-file\nDEEPSEEK_API_KEY=sk-deepseek-999\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
 
         // Before opening settings, key states should already be populated
@@ -200,7 +200,7 @@ public sealed partial class SettingsPanelUiTests
         WriteCommitConfig(repo, commitProofArtifacts: true);
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -225,7 +225,7 @@ public sealed partial class SettingsPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();

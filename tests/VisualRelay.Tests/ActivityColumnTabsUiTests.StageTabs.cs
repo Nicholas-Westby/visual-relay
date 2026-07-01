@@ -16,7 +16,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void NoStageSelected_StageTabsShowClickMessage()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         Assert.Equal(StageDetailState.NoStage, vm.StageDetail.SystemState);
         Assert.Equal(StageDetailState.NoStage, vm.StageDetail.InputState);
         Assert.Equal(StageDetailState.NoStage, vm.StageDetail.OutputState);
@@ -52,7 +52,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void SystemPromptReady_SystemTabShowsPromptText()
     {
-        var vm = new MainWindowViewModel
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() })
         {
             StageDetail =
             {
@@ -86,7 +86,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void NotStartedStage_InputTabShowsTransitionalMessage()
     {
-        var vm = new MainWindowViewModel
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() })
         {
             StageDetail =
             {
@@ -119,7 +119,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void NotCompleteStage_OutputTabShowsTransitionalMessage()
     {
-        var vm = new MainWindowViewModel
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() })
         {
             StageDetail =
             {
@@ -152,7 +152,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void DriverStage_AllThreeTabsShowDriverMessage()
     {
-        var vm = new MainWindowViewModel
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() })
         {
             StageDetail =
             {

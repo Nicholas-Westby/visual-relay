@@ -21,7 +21,7 @@ public sealed class AddAttachmentsTests
         repo.WriteTask("task-a", "# Task A\n");
         repo.WriteTask("task-b", "# Task B\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         // ── Before load: no task selected → command disabled ──
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null),
@@ -108,7 +108,7 @@ public sealed class AddAttachmentsTests
     /// Verifies that CanExecuteChanged fires when SelectedTask, ShowArchive,
     /// running-task state, and rewrite state change — not IsBusy.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public async Task ChangingSelectedTask_NotifiesCanExecuteChanged()
     {
         using var repo = TestRepository.Create();
@@ -116,7 +116,7 @@ public sealed class AddAttachmentsTests
         repo.WriteTask("one", "# One\n");
         repo.WriteTask("two", "# Two\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         var changedCount = 0;
         viewModel.AddAttachmentsCommand.CanExecuteChanged += (_, _) => changedCount++;
@@ -181,7 +181,7 @@ public sealed class AddAttachmentsTests
     /// No selection, archive mode, running-task state, or rewrite state each
     /// independently gate the command regardless of the other preconditions.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public async Task AddAttachments_GatedBySelection_Archive_AndRunningTaskId()
     {
         using var repo = TestRepository.Create();
@@ -189,7 +189,7 @@ public sealed class AddAttachmentsTests
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Clear the auto-selected task → disabled.
@@ -260,14 +260,14 @@ public sealed class AddAttachmentsTests
     /// This guards against regressions where the command body might throw
     /// when the picker is absent.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public async Task AddAttachmentsAsync_Headless_NoOps_WithoutCrash()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("task", "# Task\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         // Sanity: before load, no task is selected → disabled.
         Assert.False(viewModel.AddAttachmentsCommand.CanExecute(null));

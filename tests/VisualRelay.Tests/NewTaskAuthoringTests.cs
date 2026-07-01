@@ -22,7 +22,7 @@ public sealed partial class NewTaskAuthoringTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("existing", "# Existing\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         Assert.False(viewModel.NeedsInitialization);
 
@@ -74,10 +74,10 @@ public sealed partial class NewTaskAuthoringTests
     /// IsBusy no longer gates CreateNewTaskCommand, so changing it does NOT
     /// need to notify here.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void ChangingNewTaskTitle_NotifiesCanExecuteChanged()
     {
-        var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var changedCount = 0;
         viewModel.CreateNewTaskCommand.CanExecuteChanged += (_, _) => changedCount++;
 
@@ -101,14 +101,14 @@ public sealed partial class NewTaskAuthoringTests
     /// Empty/whitespace titles keep Create disabled; IsBusy no longer gates it —
     /// creation is allowed during an active run.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void NewTaskTitle_WhitespaceOrEmpty_KeepsCreateDisabled_CreateEnabledEvenWhenBusy()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         // ReSharper disable once UseObjectOrCollectionInitializer — NewTaskTitle is set
         // in separate statements to drive the SETTER repeatedly across several values.
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         viewModel.NewTaskTitle = string.Empty;
         Assert.False(viewModel.CreateNewTaskCommand.CanExecute(null));
@@ -138,7 +138,7 @@ public sealed partial class NewTaskAuthoringTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("existing", "# Existing\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.IsBusy = true;
@@ -167,14 +167,14 @@ public sealed partial class NewTaskAuthoringTests
     /// versa) must not show both editors at once — entering one mode exits
     /// the other.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public async Task OpenNewTaskDialog_ExitsEditMode_AndEditExitsNewTaskMode()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("existing", "# Existing\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Set up a selected task so EditSelectedTask can execute.
@@ -205,13 +205,13 @@ public sealed partial class NewTaskAuthoringTests
     /// Canceling new-task authoring clears the in-progress title, body, and
     /// error, closes the authoring view, and restores the read-only state.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void CancelNewTaskDialog_ClearsFieldsAndCloses()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         // Open the dialog and fill in fields.
         viewModel.OpenNewTaskDialogCommand.Execute(null);
@@ -243,13 +243,13 @@ public sealed partial class NewTaskAuthoringTests
     /// <see cref="MainWindowViewModel.IsNewTaskDialogOpen"/> = true but the
     /// TabControl stayed on a different tab, hiding the form.
     /// </summary>
-    [Fact]
+    [AvaloniaFact]
     public void OpenNewTaskDialog_ResetsSelectedTabIndexToMarkdown()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
 
         // ── Default tab should be Markdown (index 0) ──
         Assert.Equal(0, viewModel.SelectedTabIndex);

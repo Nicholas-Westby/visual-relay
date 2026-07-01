@@ -19,7 +19,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void SystemTab_HasNoDividerBorderOrClass()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,

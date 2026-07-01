@@ -15,6 +15,7 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
 {
     private HttpListener? _listener;
     private CancellationTokenSource? _cts;
+    private Task? _acceptLoop;
 
     /// <summary>The loopback prefix the listener binds (also its confirmation URL).</summary>
     private string Url => $"http://127.0.0.1:{options.Port}/";
@@ -39,7 +40,7 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
             listener.Start();
             _listener = listener;
             _cts = new CancellationTokenSource();
-            _ = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
+            _acceptLoop = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
             Console.Error.WriteLine($"vr-control: listening on http://127.0.0.1:{options.Port}");
         }
         catch (Exception ex)
@@ -70,6 +71,26 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
         {
             _listener = null;
             _cts = null;
+        }
+
+        // Await the accept loop to completion so the socket is fully torn down
+        // before Stop() returns. Bounded timeout preserves the "never hang"
+        // contract. Any exception from the accept loop is swallowed — best-effort
+        // teardown must never throw.
+        if (_acceptLoop is not null)
+        {
+            try
+            {
+                _acceptLoop.Wait(TimeSpan.FromSeconds(5));
+            }
+            catch
+            {
+                // Accept loop faulted or timed out — ignore.
+            }
+            finally
+            {
+                _acceptLoop = null;
+            }
         }
     }
 

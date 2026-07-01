@@ -16,7 +16,7 @@ public sealed partial class NewTaskAuthoringTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Open new-task authoring.

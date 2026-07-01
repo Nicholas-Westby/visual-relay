@@ -32,10 +32,9 @@ public sealed class HfGateHintLayoutTests
         var env = new DictionaryEnvironmentAccessor();
         using var _ = SettingsTestHelpers.SeedUserEnv(env, repo, "");
 
-        var viewModel = new MainWindowViewModel
+        var viewModel = new MainWindowViewModel(env)
         {
             RootPath = repo.Root,
-            EnvironmentAccessor = env
         };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.ShowHfGate,

@@ -14,7 +14,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("old-name", "# Old Name\n\nOriginal body text.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -72,7 +72,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("stable-slug", "# Stable Title\n\nOriginal body.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -114,7 +114,7 @@ public sealed partial class TaskDetailEditRenameTests
         // Title with extra whitespace/punctuation that slugifies to the same slug.
         repo.WriteTask("my-task", "# My Task!\n\nBody here.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -147,7 +147,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("some-task", "# Some Task\n\nBody.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -178,7 +178,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("some-task", "# Some Task\n\nBody.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -206,7 +206,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("my-task", "# My Title\n\nBody text.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;
@@ -237,7 +237,7 @@ public sealed partial class TaskDetailEditRenameTests
         repo.WriteNestedTask("project-x", "# Project X\n\nTodo.",
             ("design.md", "Architecture notes"), ("mockup.png", "binary"));
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         viewModel.SelectedTask = viewModel.Tasks[0];
         await viewModel.LastSelectionLoad!;

@@ -23,7 +23,7 @@ public sealed class QueueRowElapsedOverallTests
         var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask(taskId, $"# {taskId}\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         return (viewModel, repo);
     }
@@ -208,7 +208,7 @@ public sealed class QueueRowElapsedOverallTests
             repo.WriteConfig("dotnet test", []);
             repo.WriteTask("alpha", "# alpha\n");
             repo.WriteTask("beta", "# beta\n");
-            var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+            var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
             await viewModel.LoadInitialAsync();
 
             // alpha is the viewed task; beta runs in the background (NOT selected).

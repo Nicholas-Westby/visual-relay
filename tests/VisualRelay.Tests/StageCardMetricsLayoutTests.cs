@@ -33,7 +33,7 @@ public sealed class StageCardMetricsLayoutTests
     [AvaloniaFact]
     public void MetricsTextBlock_LongMetrics_NotTrimmedAndFullyVisible()
     {
-        var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var stage = viewModel.Stages.Single(s => s.Number == LongStageNumber);
 
         // Drive the card into a long-metrics completed state: a multi-minute
@@ -83,7 +83,7 @@ public sealed class StageCardMetricsLayoutTests
     [AvaloniaFact]
     public void StatusTextBlock_CompletedStage_ShowsDurationAndDoesNotTrim()
     {
-        var viewModel = new MainWindowViewModel();
+        var viewModel = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var stage = viewModel.Stages.Single(s => s.Number == LongStageNumber);
         stage.ApplyMetric(new StageRunMetric(
             StageNumber: LongStageNumber, StageName: "Fix-verify", Tier: "balanced",

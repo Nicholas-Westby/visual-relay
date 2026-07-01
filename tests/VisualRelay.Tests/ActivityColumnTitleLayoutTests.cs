@@ -35,7 +35,7 @@ public sealed class ActivityColumnTitleLayoutTests
     [AvaloniaFact]
     public void ActivityTitle_HasVerticalAlignmentCenter()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,

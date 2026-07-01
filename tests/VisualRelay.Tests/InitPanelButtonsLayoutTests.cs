@@ -18,7 +18,7 @@ public sealed class InitPanelButtonsLayoutTests
         using var repo = TestRepository.Create();
         repo.WriteTask("alpha", "# Alpha\n");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
         Assert.True(viewModel.NeedsInitialization);
 

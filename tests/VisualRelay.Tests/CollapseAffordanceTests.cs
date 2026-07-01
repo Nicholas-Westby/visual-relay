@@ -190,7 +190,7 @@ public sealed class CollapseAffordanceTests
 
     private static (MainWindowViewModel vm, MainWindow window) CreateWindow()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,

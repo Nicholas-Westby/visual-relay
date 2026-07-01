@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using System.Threading;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
@@ -73,7 +74,7 @@ public sealed class ControlServerEndToEndTests
     public async Task HealthEndpoint_RoundTripsOverLoopback()
     {
         var port = GetFreePort();
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
         var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
@@ -100,7 +101,7 @@ public sealed class ControlServerEndToEndTests
     public async Task Token_WhenConfigured_RejectsMissingHeaderWith401_AndAcceptsMatch()
     {
         var port = GetFreePort();
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
         var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: "letmein"));
@@ -129,7 +130,7 @@ public sealed class ControlServerEndToEndTests
     public async Task StateAndCommand_RoundTrip_GatesDisabledCommandWith409()
     {
         var port = GetFreePort();
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
         var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
@@ -181,7 +182,7 @@ public sealed class ControlServerEndToEndTests
     public async Task ControlServer_Dispose_ReleasesListener()
     {
         var port = GetFreePort();
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
 
@@ -193,13 +194,34 @@ public sealed class ControlServerEndToEndTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
         // Dispose must release the port so a fresh listener can bind the same prefix.
+        // Kernel socket teardown (e.g. TIME_WAIT) can vary — poll with a bounded
+        // retry instead of assuming the port is instantly bindable.
         server.Dispose();
-        using var probe = new HttpListener();
-        probe.Prefixes.Add($"http://127.0.0.1:{port}/");
-        probe.Start(); // throws (failing the test) if Dispose did not release the port
-        Assert.True(probe.IsListening,
-            "Dispose() must release the listener's port so a fresh HttpListener can bind the same prefix.");
-        probe.Stop();
+
+        const int retryMs = 50;
+        const int maxRetries = 40; // ~2 s total
+        for (var attempt = 0; attempt < maxRetries; attempt++)
+        {
+            try
+            {
+                using var probe = new HttpListener();
+                probe.Prefixes.Add($"http://127.0.0.1:{port}/");
+                probe.Start();
+                Assert.True(probe.IsListening,
+                    "Dispose() must release the listener's port so a fresh HttpListener can bind the same prefix.");
+                probe.Stop();
+                return;
+            }
+            catch (HttpListenerException)
+            {
+                if (attempt < maxRetries - 1)
+                    Thread.Sleep(retryMs);
+            }
+        }
+
+        Assert.Fail(
+            $"Dispose() did not release port {port} within {maxRetries * retryMs}ms. " +
+            "The accept-loop task may not have completed socket teardown.");
     }
 
     private static int GetFreePort()

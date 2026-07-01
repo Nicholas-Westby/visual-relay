@@ -13,7 +13,7 @@ namespace VisualRelay.Tests;
 [Collection("Headless")]
 public sealed class KeySetupPanelUiTests
 {
-    private readonly DictionaryEnvironmentAccessor _env = new();
+    private readonly DictionaryEnvironmentAccessor _env = new() { ["XDG_CONFIG_HOME"] = Path.GetTempPath() };
 
     // Thin forwarders to SettingsTestHelpers so this file stays under the source-size guard.
     private IDisposable SeedUserEnv(TestRepository repo, string content) =>
@@ -30,7 +30,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc123xyz\nDEEPSEEK_API_KEY=sk-deepseek-456\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -75,7 +75,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteTask("beta", "# Beta\n");
         using var r = SeedUserEnv(repo, "DEEPSEEK_API_KEY=sk-deepseek-456\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
 
         Assert.Equal(2, vm.Tasks.Count);
@@ -114,7 +114,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show();
@@ -158,7 +158,7 @@ public sealed class KeySetupPanelUiTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    [Fact]
+    [AvaloniaFact]
     public async Task LitTierIndicators_MatchPresentKeySet_HfOnly_Vs_HfPlusDeepSeek()
     {
         EnsureNoUserEnv();
@@ -166,7 +166,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         Assert.True(vm.IsHuggingFaceConfigured);
 
@@ -202,7 +202,7 @@ public sealed class KeySetupPanelUiTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-abc\n");
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
         window.Show(); Dispatcher.UIThread.RunJobs();
@@ -224,7 +224,7 @@ public sealed class KeySetupPanelUiTests
         }
         dialog.Close(); Dispatcher.UIThread.RunJobs();
     }
-    [Fact]
+    [AvaloniaFact]
     public async Task IsHuggingFaceConfigured_FlipsWithHfTokenPresence()
     {
         EnsureNoUserEnv();
@@ -232,7 +232,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         Assert.False(vm.IsHuggingFaceConfigured);
         Assert.Equal("Set a free Hugging Face token to run tasks — open Settings.", vm.HfGateMessage);
@@ -259,7 +259,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteConfig("dotnet test", []);
         using var r = SeedUserEnv(repo, "# comment\nDEEPSEEK_API_KEY=sk-existing\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         var ms = vm.KeyStates.First(s => s.Row.EnvVarName == "MOONSHOT_API_KEY");
         Assert.False(ms.IsSet);
@@ -287,7 +287,7 @@ public sealed class KeySetupPanelUiTests
         repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
         await vm.LoadInitialAsync();
         vm.SelectedTask = vm.Tasks[0];
         var before = vm.StatusText;

@@ -30,7 +30,7 @@ public sealed class StatusFooterFlyoutTests
     {
         var window = new MainWindow
         {
-            DataContext = new MainWindowViewModel(),
+            DataContext = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() }),
             Width = 1440,
             Height = 900
         };
@@ -58,7 +58,7 @@ public sealed class StatusFooterFlyoutTests
     {
         var window = new MainWindow
         {
-            DataContext = new MainWindowViewModel(),
+            DataContext = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() }),
             Width = 1440,
             Height = 900
         };
@@ -109,7 +109,7 @@ public sealed class StatusFooterFlyoutTests
     [AvaloniaFact]
     public void StatusExpandButton_Visibility_TracksStatusText()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,
@@ -159,7 +159,7 @@ public sealed class StatusFooterFlyoutTests
             "Line 3: even more information about progress and current state.\n" +
             "Line 4: final line of detail to ensure the flyout scrolls.";
 
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,

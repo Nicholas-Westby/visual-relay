@@ -37,7 +37,7 @@ public sealed class QueuePanelTitleLayoutTests
     [AvaloniaFact]
     public void QueueTitle_RendersAtFullWidth_NotClipped()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,
@@ -99,7 +99,7 @@ public sealed class QueuePanelTitleLayoutTests
     [AvaloniaFact]
     public void QueueHeader_ColumnStructure_TitleIsAuto_SpacerIsStar()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow
         {
             DataContext = vm,

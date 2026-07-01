@@ -41,7 +41,7 @@ public sealed class AttachmentImageDisplayTests
             Path.Combine(repo.Root, "llm-tasks", "img-task", "screenshot.png"),
             MinimalPngBytes);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "img-task");
@@ -95,7 +95,7 @@ public sealed class AttachmentImageDisplayTests
 
         repo.WriteNestedTask("txt-task", "# Text Task\n", ("notes.txt", "hello"));
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "txt-task");
@@ -150,7 +150,7 @@ public sealed class AttachmentImageDisplayTests
             Path.Combine(repo.Root, "llm-tasks", "img-task", "screenshot.png"),
             MinimalPngBytes);
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "img-task");

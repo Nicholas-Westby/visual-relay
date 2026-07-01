@@ -21,7 +21,7 @@ public sealed class TaskActionBarLayoutTests
         repo.WriteConfig("dotnet test", [], archiveOnDone: true);
         repo.WriteNestedTask("windows-support", "# Windows Support\n\nCross-platform fixes.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         viewModel.SelectedTask = viewModel.Tasks.Single(t => t.Id == "windows-support");
@@ -67,7 +67,7 @@ public sealed class TaskActionBarLayoutTests
             Path.Combine(completedDir, "DONE-archived-feature.md"),
             "# Archived Feature\n\nDone long ago.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         // Show the archive so the completed task is visible.
@@ -113,7 +113,7 @@ public sealed class TaskActionBarLayoutTests
             Path.Combine(completedDir, "DONE-old-item.md"),
             "# Old Item\n\nPreviously finished.");
 
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root, ShowConfirmationAsync = null };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root, ShowConfirmationAsync = null };
         await viewModel.LoadInitialAsync();
 
         // Toggle archive view on: the button should hide for any task

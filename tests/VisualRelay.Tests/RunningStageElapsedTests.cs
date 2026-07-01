@@ -76,7 +76,7 @@ public sealed class RunningStageElapsedTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         var stage = viewModel.Stages.First(s => s.Number == 6);
@@ -106,7 +106,7 @@ public sealed class RunningStageElapsedTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         // Simulate a stage_start event emitted 5 minutes ago.
@@ -151,7 +151,7 @@ public sealed class RunningStageElapsedTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         var now = DateTimeOffset.UtcNow;
@@ -182,7 +182,7 @@ public sealed class RunningStageElapsedTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
-        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
 
         var t = DateTimeOffset.UtcNow - TimeSpan.FromMinutes(20);

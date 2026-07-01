@@ -18,7 +18,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void RunLog_StillShowsEvents()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         vm.Events.Add(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "stage_start", "run-1", "/tmp",
             "task-1", 1, "cheap", 1));
@@ -54,7 +54,7 @@ public sealed partial class ActivityColumnTabsUiTests
     [AvaloniaFact]
     public void CommandsTab_StillShowsTraceEntries()
     {
-        var vm = new MainWindowViewModel();
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         vm.TraceEntries.Add(new TraceEntry(
             TraceEntryKind.ToolCall, "verify", "dotnet test", 1));
 

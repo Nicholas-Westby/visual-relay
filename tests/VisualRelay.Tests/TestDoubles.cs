@@ -27,9 +27,19 @@ internal sealed class TestRepository : IDisposable
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "visual-relay-tests", Guid.NewGuid().ToString("N"));
 
+    /// <summary>
+    /// An <see cref="IEnvironmentAccessor"/> pre-configured with
+    /// <c>XDG_CONFIG_HOME</c> pointing at <see cref="Root"/> so
+    /// <see cref="UiStateStore.Load(IEnvironmentAccessor?)"/> reads from an
+    /// isolated, empty directory — always falling back to
+    /// <see cref="UiState"/> defaults regardless of the developer machine.
+    /// </summary>
+    public DictionaryEnvironmentAccessor Env { get; } = new();
+
     private TestRepository()
     {
         Directory.CreateDirectory(Root);
+        Env["XDG_CONFIG_HOME"] = Root;
     }
 
     public static TestRepository Create() => new();

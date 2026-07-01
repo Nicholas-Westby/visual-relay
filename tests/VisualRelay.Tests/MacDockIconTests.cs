@@ -20,7 +20,7 @@ public sealed class MacDockIconTests
 
     // Off macOS the helper must be a complete no-op and report that it did
     // nothing (returns false).
-    [Fact]
+    [AvaloniaFact]
     public void MacDockIcon_TrySet_IsSafeNoOpOffMac()
     {
         if (OperatingSystem.IsMacOS())
@@ -36,7 +36,7 @@ public sealed class MacDockIconTests
 
     // On macOS the interop path is best-effort: it must never throw, regardless
     // of whether a Dock is attached. We do not assert it returns true.
-    [Fact]
+    [AvaloniaFact]
     public void MacDockIcon_TrySet_NeverThrowsOnMac()
     {
         if (!OperatingSystem.IsMacOS())
@@ -50,7 +50,7 @@ public sealed class MacDockIconTests
 
     // The brand PNG asset must exist so NSImage can read it (NSImage will not
     // take the .ico). It ships under Assets/ as an AvaloniaResource.
-    [Fact]
+    [AvaloniaFact]
     public void BrandPng_FileExists()
     {
         Assert.True(File.Exists(BrandPngPath),
