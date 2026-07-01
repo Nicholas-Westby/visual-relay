@@ -218,6 +218,54 @@ public sealed partial class MainWindowViewModelTests
         Assert.False(viewModel.CreateFixTaskCommand.CanExecute(null));
     }
 
+    [Fact]
+    public async Task SelectTaskWithPriorRun_LoadsStageStatusesFromDisk()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        var statusDir = Path.Combine(repo.Root, ".relay", "alpha");
+        Directory.CreateDirectory(statusDir);
+        var statusEntries = new[] { new StageStatusEntry(1, "Ideate", "Done"), new StageStatusEntry(2, "Research", "Flagged", Error: "something went wrong") };
+        await StageStatusRecord.WriteAsync(statusDir, statusEntries);
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        await viewModel.LastSelectionLoad!;
+        Assert.Equal("Done", viewModel.Stages[0].Status);
+        Assert.Equal("Flagged", viewModel.Stages[1].Status);
+        Assert.Equal("Waiting", viewModel.Stages[2].Status);
+    }
+
+    [Fact]
+    public async Task RestartClearsStageBoard_DoesNotLoadStaleStatusFromDisk()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha\n");
+        var statusDir = Path.Combine(repo.Root, ".relay", "alpha");
+        Directory.CreateDirectory(statusDir);
+        var statusEntries = new[] { new StageStatusEntry(1, "Ideate", "Done"), new StageStatusEntry(2, "Research", "Done") };
+        await StageStatusRecord.WriteAsync(statusDir, statusEntries);
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        await viewModel.LastSelectionLoad!;
+        Assert.Equal("Done", viewModel.Stages[0].Status);
+        Assert.Equal("Done", viewModel.Stages[1].Status);
+        Assert.Equal("Waiting", viewModel.Stages[2].Status);
+
+        viewModel.SelectedTask = null;
+        await viewModel.LastSelectionLoad!;
+        Assert.All(viewModel.Stages, stage => Assert.Equal("Waiting", stage.Status));
+
+        viewModel.SelectedTask = viewModel.Tasks[0];
+        await viewModel.LastSelectionLoad!;
+        Assert.Equal("Done", viewModel.Stages[0].Status);
+        Assert.Equal("Done", viewModel.Stages[1].Status);
+        Assert.Equal("Waiting", viewModel.Stages[2].Status);
+    }
+
     private static void WriteErroredReport(string root, string taskId, int stage, string errorMessage)
     {
         var taskDirectory = Path.Combine(root, ".relay", taskId);

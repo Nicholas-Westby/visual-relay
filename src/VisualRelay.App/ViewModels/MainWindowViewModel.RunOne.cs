@@ -11,7 +11,7 @@ public partial class MainWindowViewModel
 {
     private async Task RunOneAsync(TaskRowViewModel task, bool resume = false)
     {
-        ResetStages(task.Id);
+        if (resume) { ResetStages(task.Id); } else { ResetStages(); }
         ClearLogState();
         StatusText = $"Running {task.Id}";
         // BeginRunningTask clears the stale detail-pane error when this is the

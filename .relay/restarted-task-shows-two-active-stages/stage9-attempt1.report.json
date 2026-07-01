@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T19:24:38.990551+00:00",
+  "task": "# Relay stage 9: Verify\nTask: restarted-task-shows-two-active-stages\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Restarted Task Shows Two Active Stages\n\nI opted to restart a task rather than resume, and when it restarted, it showed multiple active (green) stages. Fix.\n\n## Manifest\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.cs\n\n## Task context\n### Screenshot 2026-07-01 at 9.59.05\u202fAM.png (210414 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"When restarting a task (resume=false), `ResetStages(task.Id)` reads the stale `status.json` from the previous run, resurrecting old \\\"Done\\\" stage statuses. These appear green alongside the new run's current \\\"Running\\\" stage, causing the visual bug of multiple active (green) stages. The fix: only read disk status when resuming; for a restart, just clear all stages to \\\"Waiting\\\".\",\n  \"options\": [\n    \"Option A \u2014 Conditional call in RunOneAsync: replace `ResetStages(task.Id)` with `if (resume) ResetStages(task.Id); else ResetStages();` (simplest, minimal change, keeps API stable)\",\n    \"Option B \u2014 Add `clearOnly` parameter to ResetStages, then call `ResetStages(task.Id, clearOnly: !resume)` from RunOneAsync (more explicit but adds unused parameter for other call sites)\",\n    \"Option C \u2014 Delete the old status.json on disk before calling ResetStages(task.Id) on restart (side-effect-y, writes to disk when not needed)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"When a user restarts a task (resume=false), `RunOneAsync` calls `ResetStages(task.Id)` which reads the stale `status.json` from the previous run's on-disk record. The method first clears all stages to \\\"Waiting\\\" (correct), then re-populates statuses from the old file \u2014 resurrecting \\\"Done\\\" (green) stages from the prior run. Meanwhile, the new run fires `stage_start` events via `ApplyStageEventToBoard` (MainWindowViewModel.Helpers.cs:92-97) which sets the current stage to \\\"Running\\\" (also green). The result is multiple green stages simultaneously. On a resume this behavior is intentional (user sees where they left off). On a restart the old status is irrelevant. The fix (Option A) is simplest: change line 14 of `MainWindowViewModel.RunOne.cs` from `ResetStages(task.Id);` to `if (resume) ResetStages(task.Id); else ResetStages();`. The no-argument `ResetStages()` clears the board without reading disk. After the run completes, `LoadRunHistoryAsync` (RunHistory.cs:19-73) reads the freshly-written status.json and correctly populates the stage board, so final state is always accurate regardless.\",\n  \"constraints\": [\n    \"`ResetStages()` (no argument) is also called from `SelectTaskAsync` at lines 218 and 225 of `MainWindowViewModel.Commands.cs` \u2014 these are pure-clear paths that must not read disk; they remain unaffected by the change.\",\n    \"`LoadRunHistoryAsync` (RunHistory.cs:43-58) re-reads the status record from disk after run completion and updates stage statuses/metrics. This ensures the board shows correct final state even after a restart clears everything to Waiting.\",\n    \"`ApplyStageEventToBoard` (Helpers.cs:79-115) handles live `stage_start` events during a run, setting the active stage to \\\"Running\\\". With the fix, the board starts all-\\\"Waiting\\\" so this works correctly \u2014 the very first `stage_start` (stage 1) turns it green, and no stale \\\"Done\\\" stages compete.\",\n    \"The `StageStatusRecord.Read` method (StageStatus.cs:53-70) returns an empty list when status.json is missing or unreadable, so the fix has no crash risk on tasks without prior runs.\",\n    \"`RunSelectedAsync` (Execution.cs:30) calls `RunOneAsync(task)` without resume=true (defaults to false). `ResumeSelectedAsync` (Execution.cs:51) calls `RunOneAsync(task, resume: true)`. The two paths are distinct and the fix must preserve this distinction.\",\n    \"The drain queue path (`DrainQueueAsync`, Execution.cs:57-146) does not call `ResetStages` directly \u2014 it uses `DrainLifecycleCallbacks` with `BeginRunningTask` \u2014 so it is unaffected.\",\n    \"No existing tests cover the restart-vs-resume stage board behavior. Any fix must be validated manually or with new tests.\",\n    \"The fix must not affect the `StageRowViewModel.MarkRunning` method (StageRowViewModel.cs:141-146) which sets Status to \\\"Running\\\" on `stage_start` \u2014 this is the correct live-update path that should continue working.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Root cause: `RunOneAsync` (MainWindowViewModel.RunOne.cs:14) calls `ResetStages(task.Id)` unconditionally \u2014 for both restart (`resume=false`) and resume (`resume=true`). `ResetStages` with a taskId argument (Stages.cs:20-39) reads the on-disk `status.json` file written by the previous run and repopulates stage statuses from it. On a restart, this resurrects prior-run \\\"Done\\\" entries (rendered green by `StageRowViewModel.AccentBrush` returning `SuccessBrush` for \\\"Done\\\" and `RunningBrush` for \\\"Running\\\" \u2014 both green `#5AD47D`). Meanwhile, the new run fires live `stage_start` events which `ApplyStageEventToBoard` (Helpers.cs:92-97) handles by calling `stage.MarkRunning()`, setting the current stage to \\\"Running\\\" (also green). The result: the UI shows the actively-running stage as green alongside the stale \\\"Done\\\" stages from the prior run's status.json \u2014 multiple active/green stages simultaneously. On resume this behavior is intentional (showing prior progress), but on restart the old status is irrelevant and should be discarded. After the run completes, `LoadRunHistoryAsync` (RunOne.cs:33) re-reads the freshly-written status.json and correctly populates all stages, so the final state is always accurate regardless. The fix: change line 14 of RunOne.cs from `ResetStages(task.Id);` to `if (resume) ResetStages(task.Id); else ResetStages();`. The no-argument `ResetStages()` clears all stages to \\\"Waiting\\\" without reading disk \u2014 exactly what a restart needs.\",\n  \"excerpts\": [\n    \"RunOne.cs:12-14: `private async Task RunOneAsync(TaskRowViewModel task, bool resume = false) { ResetStages(task.Id);` \u2014 called unconditionally for both restart and resume.\",\n    \"Stages.cs:11-39: `ResetStages(string? taskId = null)` \u2014 lines 13-18 clear all to \\\"Waiting\\\", but lines 20-39 read `status.json` and overwrite with stale statuses when taskId is non-null.\",\n    \"Execution.cs:30 vs 51: `RunSelectedAsync` calls `RunOneAsync(task)` (resume defaults to false), while `ResumeSelectedAsync` calls `RunOneAsync(task, resume: true)`. Both hit the same unconditional `ResetStages(task.Id)`.\",\n    \"status.json (current run): stage 1 and 2 are `\\\"status\\\": \\\"Done\\\"`, stage 3 is `\\\"status\\\": \\\"Running\\\"`. On a restart this file is stale but `ResetStages(task.Id)` reads it anyway.\",\n    \"StageRowViewModel.cs:69-75: `AccentBrush` returns `SuccessBrush` (#5AD47D) for \\\"Done\\\" and `RunningBrush` (#5AD47D) for \\\"Running\\\" \u2014 both visually green, indistinguishable.\",\n    \"Helpers.cs:92-97: `ApplyStageEventToBoard` on `stage_start` calls `stage.MarkRunning(relayEvent.Timestamp)` which sets Status to \\\"Running\\\" (green) \u2014 the second source of green.\",\n    \"RunOne.cs:33: `await LoadRunHistoryAsync(task.Id);` after driver completes \u2014 re-reads the fresh status.json and correctly repopulates all stages, confirming the final state will always be correct after the fix.\"\n  ],\n  \"repro\": \"1. Run any task through at least one stage (so status.json has \\\"Done\\\" entries). 2. Click \\\"Run Selected\\\" (not \\\"Resume\\\") to restart the same task. 3. Observe the stage board: previously-completed stages show green (\\\"Done\\\") AND the current stage shows green (\\\"Running\\\") \u2014 multiple active/green stages visible simultaneously.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Fix: Conditional ResetStages on restart vs resume\\n\\n**File: `src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs`**\\n- Line 14: Change `ResetStages(task.Id);` to `if (resume) { ResetStages(task.Id); } else { ResetStages(); }`\\n\\nOn restart (`resume=false`), `ResetStages()` clears all stages to \\\"Waiting\\\" without reading disk \u2014 no stale \\\"Done\\\" entries appear. On resume (`resume=true`), `ResetStages(task.Id)` reads `status.json` and rehydrates prior progress as intended. After the run completes (line 33), `LoadRunHistoryAsync` reads the freshly-written `status.json` and correctly populates all stages, so final state is always accurate regardless of the restart/resume path.\\n\\n**File: `tests/VisualRelay.Tests/MainWindowViewModelTests.cs`**\\n- Add `RestartClearsStageBoard_DoesNotLoadStaleStatusFromDisk`: Writes a `status.json` with \\\"Done\\\" entries for a task, loads the VM, selects the task, asserts stages show \\\"Done\\\" (confirms disk\u2192UI path works). Then sets `SelectedTask = null` (triggers `ResetStages()` in `SelectTaskAsync`) and asserts all stages are \\\"Waiting\\\". Then re-selects the task and asserts stages reload from disk as \\\"Done\\\". This validates the exact clear-then-rehydrate pattern the fix relies on.\\n- Add `SelectTaskWithPriorRun_LoadsStageStatusesFromDisk`: Writes status.json with \\\"Done\\\", loads VM, selects task, asserts stages reflect Done \u2014 validates the resume/rehydrate path works correctly.\",\n  \"manifest\": [\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.cs\"\n  ]\n}\n\n> **Already-resolved**: no implementation delta to strip; accepted green regression coverage.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.cs\"\n  ],\n  \"rationale\": \"Added two tests to MainWindowViewModelTests.cs that validate the infrastructure the restart fix depends on:\\n\\n1. **SelectTaskWithPriorRun_LoadsStageStatusesFromDisk** \u2014 Writes a status.json with Done and Flagged entries, loads the VM, and asserts that selecting the task correctly rehydrates stage statuses from disk. Validates the LoadRunHistoryAsync rehydration path.\\n\\n2. **RestartClearsStageBoard_DoesNotLoadStaleStatusFromDisk** \u2014 Writes a status.json with Done entries, selects the task (asserts Done), deselects (asserts all Waiting via ResetStages() no-args clear), then re-selects (asserts Done reloaded from disk). Validates the exact clear-then-rehydrate pattern the fix will use: on restart (resume=false), ResetStages() without args clears the board to Waiting instead of ResetStages(taskId) reading stale status.json.\\n\\nBoth tests pass now because the SelectTaskAsync path already uses the correct no-args ResetStages() pattern. The fix in RunOneAsync line 14 will extend this same pattern to the restart path.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Fixed the bug where restarting a task showed multiple active (green) stages. Root cause: `RunOneAsync` unconditionally called `ResetStages(task.Id)`, which reads the stale `status.json` from the prior run and resurrects old \\\"Done\\\" (green) stage statuses. The fix in `MainWindowViewModel.RunOne.cs` line 14 changes the call to conditional: `if (resume) ResetStages(task.Id); else ResetStages();` \u2014 on restart, `ResetStages()` clears all stages to \\\"Waiting\\\" without reading disk. On resume, the existing disk-rehydration path is preserved. The two new tests (`SelectTaskWithPriorRun_LoadsStageStatusesFromDisk` and `RestartClearsStageBoard_DoesNotLoadStaleStatusFromDisk`) validate the clear-then-rehydrate infrastructure the fix relies on. Both targeted tests (31/31) and the full suite (2542 passed, 0 failed) exit clean.\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"pass\", \"issues\": [] }\n\n## Stage 8 - Fix\n\n{\"summary\": \"Confirmed the fix is in place and all tests pass. The fix in `MainWindowViewModel.RunOne.cs` line 14 conditionally calls `ResetStages(task.Id)` only on resume (reads disk to rehydrate prior progress) vs `ResetStages()` on restart (clears all stages to \\\"Waiting\\\" without reading stale disk state). Targeted tests (31/31) and full suite (2520/0) both exit clean.\"}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"commitMessages\": string[] }\n\n## Verify output\nThe harness already ran the test suite; its captured output (tail) is below.\n\u2026nch_ExecsCliViaDotnetRun_WithArgsIntact [1 ms]\n[xUnit.net 00:01:58.94]     VisualRelay.Tests.WindowsLauncherTests.MissingDotnet_NonInteractive_PrintsHint_DoesNotInstall_NonZero [SKIP]\n  Skipped VisualRelay.Tests.WindowsLauncherTests.MissingDotnet_NonInteractive_PrintsHint_DoesNotInstall_NonZero [1 ms]\n[xUnit.net 00:02:03.87]     VisualRelay.Tests.PackagingToolTests.BuildAppBundle_EndToEnd_ProducesValidBundle [SKIP]\n  Skipped VisualRelay.Tests.PackagingToolTests.BuildAppBundle_EndToEnd_ProducesValidBundle [1 ms]\n[xUnit.net 00:02:15.58]     VisualRelay.Tests.WindowsSandboxTests.DefaultWindowsCacheDirs_ReturnsOnlyExistingDirs [SKIP]\n  Skipped VisualRelay.Tests.WindowsSandboxTests.DefaultWindowsCacheDirs_ReturnsOnlyExistingDirs [1 ms]\n[xUnit.net 00:02:15.65]     VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxGoModCache_AllowedReadWrite [SKIP]\n  Skipped VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxGoModCache_AllowedReadWrite [1 ms]\n[xUnit.net 00:02:16.46]     VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxSwiftPmCache_AllowedReadWrite [SKIP]\n[xUnit.net 00:02:16.61]     VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxGoBuildCache_AllowedReadWrite [SKIP]\n  Skipped VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxSwiftPmCache_AllowedReadWrite [1 ms]\n  Skipped VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxGoBuildCache_AllowedReadWrite [1 ms]\n[xUnit.net 00:02:16.97]     VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxPipCache_AllowedReadWrite [SKIP]\n[xUnit.net 00:02:16.97]     VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LocalShareUv_AllowedReadWrite [SKIP]\n  Skipped VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LinuxPipCache_AllowedReadWrite [1 ms]\n  Skipped VisualRelay.Tests.NonoWhyOracleTests.NonoWhy_LocalShareUv_AllowedReadWrite [1 ms]\nData collector 'Blame' message: All tests finished running, Sequence file will not be generated.\n\nPassed!  - Failed:     0, Passed:  2520, Skipped:    22, Total:  2542, Duration: 3 m 20 s - VisualRelay.Tests.dll (net10.0)",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The fix is confirmed in place at `MainWindowViewModel.RunOne.cs:14` \u2014 `ResetStages(task.Id)` is now called only on resume (preserving the disk-rehydration path), while `ResetStages()` (no arguments) is used on restart, clearing all stages to \"Waiting\" without reading the stale `status.json`. All 2520 tests pass (0 failed, 22 skipped).\n\n```json\n{\n  \"summary\": \"Fixed the bug where restarting a task (resume=false) showed multiple active green stages. Root cause: `RunOneAsync` unconditionally called `ResetStages(task.Id)`, which reads the prior run's `status.json` from disk and resurrected old \\\"Done\\\" entries as green. The fix in `MainWindowViewModel.RunOne.cs` line 14 makes the call conditional: `if (resume) ResetStages(task.Id); else ResetStages();`. On restart, `ResetStages()` clears all stages to \\\"Waiting\\\" without touching disk, so only the live `stage_start` event (via `ApplyStageEventToBoard`) sets the current stage green. On resume, the existing disk-rehydration path is preserved. After the run completes, `LoadRunHistoryAsync` reads the freshly-written `status.json` so final state is always accurate. All 2520 tests pass (0 failed, 22 skipped, total 2542).\",\n  \"commitMessages\": [\n    \"fix: conditionally skip reading stale status.json on task restart\",\n    \"fix: restarting a task no longer shows multiple active stages from prior run\",\n    \"fix: call ResetStages() without taskId on restart to avoid resurrecting old stage statuses\",\n    \"fix: task restart clears stale stage statuses from previous run\",\n    \"fix: prevent stale green stages on task restart\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 4,
+    "tool_calls_total": 3,
+    "tool_calls_succeeded": 3,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "grep": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 4,
+    "total_llm_time_s": 12.484,
+    "prompt_cache": {
+      "cached_tokens": 24320,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.001,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 1,
+      "completed": 1,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.198,
+      "prompt_tokens_est": 7375,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ResetStages",
+        "path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 463
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.607,
+      "prompt_tokens_est": 7656,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Final check: fix in place, tests pass, produce summary + commit messages"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 157
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.77,
+      "prompt_tokens_est": 7924,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Final check: fix in place, tests pass, produce summary + commit messages\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 157
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.909,
+      "prompt_tokens_est": 8019,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
