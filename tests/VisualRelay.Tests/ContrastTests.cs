@@ -120,6 +120,32 @@ public sealed class ContrastTests
         }
     }
 
+    // ---- (c) Off-panel cards: every inline text meets AA on its surface ---
+    //
+    // Cards painted on their own inline Background (the InitEmptyState hint card at
+    // #1B2129, the HF-gate box, the config-diagnostic box) render text on that
+    // surface, not the panel — so the on-panel scan above deliberately skips them.
+    // This resolves each such static surface and holds every literal on it to AA,
+    // so a dim hint (the #6B7480 regression on the #1B2129 card) cannot slip back.
+    [Fact]
+    public void QueuePanel_EveryInlineTextForegroundOnCard_MeetsAa()
+    {
+        var onCards = OffPanelCardTextForegrounds().ToList();
+
+        // The scan must reach real cards, specifically the #1B2129 empty-state card
+        // whose hint regressed — guarding against a refactor that empties the scope.
+        Assert.NotEmpty(onCards);
+        Assert.Contains(onCards, c => c.Surface == "#1B2129");
+
+        foreach (var (foreground, surface, element) in onCards)
+        {
+            var ratio = ContrastRatio(foreground, surface);
+            Assert.True(ratio >= AaNormal,
+                $"Inline Foreground=\"{foreground}\" on {element} renders on {surface} " +
+                $"at {ratio:F2}:1 — below the {AaNormal}:1 AA floor.");
+        }
+    }
+
     // ---- Static XAML scanning --------------------------------------------
 
     private const string HexPattern = "^#[0-9A-Fa-f]{6}$";
@@ -139,6 +165,26 @@ public sealed class ContrastTests
             {
                 yield return (foreground, DescribeElement(text));
             }
+        }
+    }
+
+    private static IEnumerable<(string Foreground, string Surface, string Element)> OffPanelCardTextForegrounds()
+    {
+        foreach (var text in TextElements(LoadQueuePanel()))
+        {
+            var foreground = (string?)text.Attribute("Foreground");
+            if (foreground is null || !Hex.IsMatch(foreground))
+            {
+                continue; // themed or bound foreground, not an inline literal
+            }
+
+            var surface = ResolveTextSurface(text);
+            if (surface is null || surface == PanelBackground)
+            {
+                continue; // bound/styled surface, or the panel (covered above)
+            }
+
+            yield return (foreground, surface, DescribeElement(text));
         }
     }
 
