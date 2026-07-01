@@ -22,8 +22,8 @@ public partial class MainWindowViewModel
         new("Hugging Face (Recommended)", "HF_TOKEN", "https://huggingface.co/settings/tokens"),
         new("DeepSeek (Recommended)", "DEEPSEEK_API_KEY", "https://platform.deepseek.com/api_keys"),
         new("Moonshot (Recommended)", "MOONSHOT_API_KEY", "https://platform.moonshot.ai/console/api-keys"),
-        new("Anthropic", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"),
-        new("OpenAI", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
+        new("Anthropic (Expensive)", "ANTHROPIC_API_KEY", "https://console.anthropic.com/settings/keys"),
+        new("OpenAI (Expensive)", "OPENAI_API_KEY", "https://platform.openai.com/api-keys"),
     ];
 
     /// <summary>Observable per-provider state, rebuilt by <see cref="RefreshKeyStatesAsync"/>.</summary>
