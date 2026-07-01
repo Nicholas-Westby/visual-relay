@@ -19,20 +19,20 @@ public sealed partial class SandboxPathInspectorTests
         // vr-guard's own allow entries → ReadWrite
         var writable = entries.Where(e => e.Access == SandboxAccess.ReadWrite).ToList();
         Assert.NotEmpty(writable);
-        Assert.Contains(writable, e => e.Raw == "$HOME/.nuget/packages" && e.Source == "vr-guard");
-        Assert.Contains(writable, e => e.Raw == "$HOME/.cargo" && e.Source == "vr-guard");
+        Assert.Contains(writable, e => e.Raw == "~/.nuget/packages" && e.Source == "vr-guard");
+        Assert.Contains(writable, e => e.Raw == "~/.cargo" && e.Source == "vr-guard");
 
         // vr-guard's own read entries → ReadOnly
         var readable = entries.Where(e => e.Access == SandboxAccess.ReadOnly).ToList();
         Assert.NotEmpty(readable);
         Assert.Contains(readable, e => e.Raw == "/" && e.Source == "vr-guard");
-        Assert.Contains(readable, e => e.Raw == "$HOME/.gitconfig" && e.Source == "vr-guard");
+        Assert.Contains(readable, e => e.Raw == "~/.gitconfig" && e.Source == "vr-guard");
 
         // vr-guard's own deny entries → Blocked
         var blocked = entries.Where(e => e.Access == SandboxAccess.Blocked).ToList();
         Assert.NotEmpty(blocked);
-        Assert.Contains(blocked, e => e.Raw == "$HOME/Documents" && e.Source == "vr-guard");
-        Assert.Contains(blocked, e => e.Raw == "$HOME/Desktop" && e.Source == "vr-guard");
+        Assert.Contains(blocked, e => e.Raw == "~/Documents" && e.Source == "vr-guard");
+        Assert.Contains(blocked, e => e.Raw == "~/Desktop" && e.Source == "vr-guard");
     }
 
     [Fact]
@@ -45,7 +45,7 @@ public sealed partial class SandboxPathInspectorTests
         // "when":"macos" entry should be included on macOS, excluded on Linux.
         if (OperatingSystem.IsMacOS())
         {
-            Assert.Contains(entries, e => e.Raw == "$HOME/Library/Caches/NuGet"
+            Assert.Contains(entries, e => e.Raw == "~/Library/Caches/NuGet"
                                           && e.Access == SandboxAccess.ReadWrite);
             Assert.DoesNotContain(entries, e => e.Raw == "$XDG_CACHE_HOME/NuGet");
         }
@@ -55,13 +55,13 @@ public sealed partial class SandboxPathInspectorTests
         {
             Assert.Contains(entries, e => e.Raw == "$XDG_CACHE_HOME/NuGet"
                                           && e.Access == SandboxAccess.ReadWrite);
-            Assert.DoesNotContain(entries, e => e.Raw == "$HOME/Library/Caches/NuGet");
+            Assert.DoesNotContain(entries, e => e.Raw == "~/Library/Caches/NuGet");
         }
 
         // Entries WITHOUT a "when" predicate are always included on any OS.
-        Assert.Contains(entries, e => e.Raw == "$HOME/.npm"
+        Assert.Contains(entries, e => e.Raw == "~/.npm"
                                       && e.Access == SandboxAccess.ReadWrite);
-        Assert.Contains(entries, e => e.Raw == "$HOME/.bun"
+        Assert.Contains(entries, e => e.Raw == "~/.bun"
                                       && e.Access == SandboxAccess.ReadWrite);
     }
 
@@ -83,7 +83,7 @@ public sealed partial class SandboxPathInspectorTests
         // Start with a base json that lacks a unique marker path.
         var baseJson = SampleVrGuardJson();
         var baseEntries = SandboxPathInspector.ParseOwnDirectives(baseJson);
-        Assert.DoesNotContain(baseEntries, e => e.Raw == "$HOME/.acme-toolchain/cache");
+        Assert.DoesNotContain(baseEntries, e => e.Raw == "~/.acme-toolchain/cache");
 
         // Now add that unique path to the allow array.
         var patchedJson = PatchAllowArray(baseJson, "$HOME/.acme-toolchain/cache");
@@ -91,7 +91,7 @@ public sealed partial class SandboxPathInspectorTests
 
         // The added path must appear as ReadWrite with source "vr-guard".
         Assert.Contains(patchedEntries,
-            e => e.Raw == "$HOME/.acme-toolchain/cache"
+            e => e.Raw == "~/.acme-toolchain/cache"
                  && e.Access == SandboxAccess.ReadWrite
                  && e.Source == "vr-guard");
     }
@@ -132,10 +132,10 @@ public sealed partial class SandboxPathInspectorTests
 
         // Verify specific known entries from the real vr-guard.json.
         Assert.Contains(entries, e => e.Raw == "/" && e.Access == SandboxAccess.ReadOnly);
-        Assert.Contains(entries, e => e.Raw == "$HOME/.gitconfig" && e.Access == SandboxAccess.ReadOnly);
-        Assert.Contains(entries, e => e.Raw == "$HOME/Documents" && e.Access == SandboxAccess.Blocked);
-        Assert.Contains(entries, e => e.Raw == "$HOME/.cargo" && e.Access == SandboxAccess.ReadWrite);
-        Assert.Contains(entries, e => e.Raw == "$HOME/.npm" && e.Access == SandboxAccess.ReadWrite);
+        Assert.Contains(entries, e => e.Raw == "~/.gitconfig" && e.Access == SandboxAccess.ReadOnly);
+        Assert.Contains(entries, e => e.Raw == "~/Documents" && e.Access == SandboxAccess.Blocked);
+        Assert.Contains(entries, e => e.Raw == "~/.cargo" && e.Access == SandboxAccess.ReadWrite);
+        Assert.Contains(entries, e => e.Raw == "~/.npm" && e.Access == SandboxAccess.ReadWrite);
     }
 
     // ── ExpandPath ───────────────────────────────────────────────────────

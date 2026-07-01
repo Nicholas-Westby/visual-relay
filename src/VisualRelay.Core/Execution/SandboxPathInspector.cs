@@ -120,7 +120,7 @@ public static partial class SandboxPathInspector
             foreach (var entry in access.EnumerateArray())
             {
                 if (entry.ValueKind == JsonValueKind.String)
-                    entries.Add(new SandboxPathEntry(entry.GetString()!, entry.GetString()!,
+                    entries.Add(new SandboxPathEntry(NormalizeRawForDisplay(entry.GetString()!), entry.GetString()!,
                         SandboxAccess.Blocked, groupName));
             }
         }
@@ -180,14 +180,14 @@ public static partial class SandboxPathInspector
             if (entry.ValueKind == JsonValueKind.String)
             {
                 var raw = entry.GetString()!;
-                yield return new SandboxPathEntry(raw, ExpandPath(raw), access, source);
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw), access, source);
             }
             else if (entry.ValueKind == JsonValueKind.Object)
             {
                 if (!entry.TryGetProperty("path", out var pathProp)) continue;
                 var raw = pathProp.GetString()!;
                 if (ShouldSkipByWhen(entry)) continue;
-                yield return new SandboxPathEntry(raw, ExpandPath(raw), access, source);
+                yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), ExpandPath(raw), access, source);
             }
         }
     }
@@ -215,7 +215,7 @@ public static partial class SandboxPathInspector
             var expanded = entry.TryGetProperty("expanded", out var ep)
                 ? (ep.GetString() ?? raw) : raw;
             if (ShouldSkipByPlatform(entry)) continue;
-            yield return new SandboxPathEntry(raw, expanded, access, source);
+            yield return new SandboxPathEntry(NormalizeRawForDisplay(raw), expanded, access, source);
         }
     }
 
