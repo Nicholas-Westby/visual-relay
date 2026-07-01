@@ -1,0 +1,599 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T06:27:43.329897+00:00",
+  "task": "# Relay stage 8: Fix\nTask: 08-no-silent-real-env-fallback\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Require an Explicit Environment Accessor \u2014 Kill the Silent Real-Env Fallback\n\nVisual Relay resolves its user-level config paths through one seam: `KeyEnvFile.GetEnv`. That\nseam **silently falls back to the real process environment** whenever the injected accessor does\nnot supply a value. The consequence: a test that builds an environment accessor without `HOME`\nor `XDG_CONFIG_HOME` does not fail \u2014 it quietly reads and, worse, **writes the developer's real\n`~/.config/visual-relay/.env`** (the file that holds provider API keys and Obsidian settings),\nplus the sibling `ui-state.json` and diagnostics keys that resolve through the same seam.\n\nThis task removes that fallback. After it: an environment source must be **explicitly provided**\nto every config-resolving call, enforced by the compiler; and if a required path variable is\nabsent, resolution **throws** rather than touching any real file. There is no code path left that\ncan silently resolve the real environment. Do all four parts in one change.\n\n## Background: the leak that motivated this\n\nThe developer's real `~/.config/visual-relay/.env` was found containing:\n\n```\nVR_OBSIDIAN_VAULT_ROOT=/Users/dev/obsidian-vault\nVR_OBSIDIAN_POLL_SECONDS=60\nVR_OBSIDIAN_ENABLED=false\n```\n\nThe string `/Users/dev/obsidian-vault` is a **hardcoded test fixture** \u2014 it is set in\n`RevealVaultRootCommandTests`:\n\n```csharp\nvar env = new DictionaryEnvironmentAccessor();\nvar viewModel = new MainWindowViewModel(environmentAccessor: env)\n{\n    ObsidianVaultRoot = \"/Users/dev/obsidian-vault\"\n};\n```\n\nSo a unit test wrote to the real config file. The mechanism, end to end:\n\n1. `DictionaryEnvironmentAccessor` (in `tests/VisualRelay.Tests/TestDoubles.cs`) is an in-memory\n   dictionary; `GetEnvironmentVariable` returns `null` for any key it was not given. The test\n   above never sets `HOME` or `XDG_CONFIG_HOME`, so the accessor returns `null` for both.\n2. Assigning `ObsidianVaultRoot` fires the view-model's change handler, which calls\n   `ObsidianBridgeSettings.Save(...)` \u2192 `KeyEnvFile.Upsert(...)`.\n3. `Upsert` resolves the target path via `KeyEnvFile.GetEnv(\"HOME\", accessor)`. Its body is:\n\n   ```csharp\n   public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>\n       accessor?.GetEnvironmentVariable(name)\n       ?? Environment.GetEnvironmentVariable(name);\n   ```\n\n   The accessor returns `null` for `HOME`, so `?? Environment.GetEnvironmentVariable(name)` kicks\n   in and returns the **developer's real `HOME`**. The write lands in the real\n   `~/.config/visual-relay/.env`.\n\nThis particular write goes through `Upsert`, which preserves other lines, so it \"only\" pollutes\nthe file with Obsidian keys rather than deleting provider keys. That is luck, not safety: the same\nseam is used to read keys (a test could read stale real keys and make a wrong assertion) and any\nfuture test shaped slightly differently could clobber real settings. The point of this task is to\n**remove the capability**, so no present or future test can reach the real environment by accident.\n\nFixing the one test is explicitly **not** enough: `new DictionaryEnvironmentAccessor()` with no\n`HOME` compiles cleanly and silently resolves real paths. The class of bug survives until the\nsilent fallback is gone.\n\nNote on the sandbox: when the suite runs inside VR's own `nono`/`vr-guard` sandbox, writes to\n`~/.config` are denied, so this leak is masked there. It manifests when the suite runs **outside**\nthe sandbox (a plain `dotnet test` / `./test.sh` on the host), which is the normal developer loop.\nDo not \"solve\" this by assuming the sandbox is always present \u2014 fix the seam.\n\n---\n\n## Part A \u2014 Remove the implicit real-env fallback and make the accessor required\n\n**Symptom.** `KeyEnvFile.GetEnv` silently substitutes the real process environment when the\naccessor lacks a key (the `?? Environment.GetEnvironmentVariable(name)` shown above). Every config\nresolver in `VisualRelay.Core.Configuration` reads through this seam, so all of them inherit the\nsilent fallback.\n\n**Fix \u2014 make the environment explicit and mandatory:**\n\n1. **Drop the fallback.** `GetEnv` must read **only** from the accessor:\n\n   ```csharp\n   public static string? GetEnv(string name, IEnvironmentAccessor accessor) =>\n       accessor.GetEnvironmentVariable(name);\n   ```\n\n   No `Environment.GetEnvironmentVariable` call remains in `KeyEnvFile`.\n\n2. **Make the accessor a required, non-nullable parameter** everywhere it is currently\n   `IEnvironmentAccessor? accessor = null`. Remove the `= null` defaults so omission is a\n   **compile error** \u2014 the compiler then enumerates every call site for you. This applies to the\n   public surface of:\n   - `KeyEnvFile` \u2014 `GetEnv`, `Read`, `Upsert`, `GetUnsetKeysPublic`, and the private `ResolvePath`.\n   - `XdgConfig.ResolveConfigDir(IEnvironmentAccessor accessor)` (the accessor overload).\n   - `ObsidianBridgeSettings.Load` / `Save`.\n   - `UiStateStore.Load` / `Save`.\n   - `DiagnosticsSettings.LoadVerboseDiagnostics` / `SaveVerboseDiagnostics`.\n\n3. **Delete the no-argument `ResolvePathForCurrentUser()` overload.** Today it is\n   `public static string ResolvePathForCurrentUser() => ResolvePathForCurrentUser(null);` \u2014 a\n   convenience that resolves the real environment. Remove it; callers must pass an accessor.\n\n4. **Throw instead of guessing a path \u2014 this already works once the fallback is gone.**\n   `XdgConfig.ResolveConfigDir(string?, string?, bool, string?)` already ends with:\n\n   ```csharp\n   throw new InvalidOperationException(\n       \"Cannot resolve config directory: neither XDG_CONFIG_HOME nor HOME is set.\");\n   ```\n\n   It never fires today only because `GetEnv` hands it the real `HOME`. After step 1, an accessor\n   that lacks both `XDG_CONFIG_HOME` and `HOME` reaches this throw \u2014 which is exactly the desired\n   loud failure. Do **not** add any new default path. Keep the existing Windows `%APPDATA%` branch\n   in `ResolveConfigDir` as-is: on Windows the launcher intentionally leaves `XDG`/`HOME` unset and\n   the OS supplies `ApplicationData`; that is a provided value, not a silent env fallback, and is\n   out of scope.\n\n**Preserve legitimate file-tier precedence.** `DiagnosticsSettings` and `ObsidianBridgeSettings`\nuse the pattern `GetEnv(key, accessor) ?? KeyEnvFile.Read(accessor).GetValueOrDefault(key)` \u2014 that\nis \"process env (via accessor) wins over the `.env` file,\" which is correct and must stay. Only the\n**real-process-env** fallback inside `GetEnv` is being removed, not the file tier.\n\n---\n\n## Part B \u2014 Provide the real environment explicitly in production\n\n**Symptom.** Production relies on the silent fallback: `App.axaml.cs` builds the main view model\nwith no accessor \u2014\n\n```csharp\nvar viewModel = new MainWindowViewModel();\n```\n\n\u2014 and the backend reads the real `.env` path via the no-arg overload in\n`BackendLifecycle` (`src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs`):\n\n```csharp\nvar userEnv = KeyEnvFile.ResolvePathForCurrentUser();\n```\n\nOnce Part A lands, both stop compiling. Production must now say, explicitly, \"use the real\nenvironment.\"\n\n**Fix:**\n\n1. **Move `ProcessEnvironmentAccessor` into Core.** It currently lives at\n   `src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs` in namespace\n   `VisualRelay.App.Services`:\n\n   ```csharp\n   public sealed class ProcessEnvironmentAccessor : IEnvironmentAccessor\n   {\n       public string? GetEnvironmentVariable(string name) =>\n           Environment.GetEnvironmentVariable(name);\n   }\n   ```\n\n   The backend lifecycle lives in `VisualRelay.Core`, which cannot reference `VisualRelay.App`, so\n   this type must move to `VisualRelay.Core` (place it in\n   `src/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs`, namespace\n   `VisualRelay.Core.Configuration`). Delete the `VisualRelay.App` copy and update all references\n   (the compiler will surface them).\n\n2. **Make the view model require an accessor.** Change the public constructor so\n   `IEnvironmentAccessor` is a required parameter (no `= null` default), and make the\n   `EnvironmentAccessor` member non-nullable and get-only (assigned once from the constructor;\n   drop the nullable `?` and the `init` setter). This removes every downstream\n   `EnvironmentAccessor?` null-forgiveness and guarantees the view model always has an explicit\n   source. Note this also breaks the object-initializer style used in some tests\n   (`new MainWindowViewModel { EnvironmentAccessor = env }`); move those to the constructor\n   argument (`new MainWindowViewModel(env)`) \u2014 the compiler will surface every site.\n\n3. **Wire the real accessor at the composition roots:**\n   - `App.axaml.cs` \u2192 `new MainWindowViewModel(new ProcessEnvironmentAccessor())`.\n   - The `BackendLifecycle` caller \u2192 pass `new ProcessEnvironmentAccessor()` (or thread one in\n     from the caller) into `ResolvePathForCurrentUser(...)`.\n   - Any other production construction the compiler surfaces.\n\nThis is the reframing of the principle: reading the real environment is now an **explicit,\nprovided** accessor at the edges of the app \u2014 never an implicit fallback buried in a shared helper.\n\n---\n\n## Part C \u2014 Make every test provide an isolated environment\n\n**Symptom.** After Part A, tests that pass a bare `new DictionaryEnvironmentAccessor()` (no `HOME`\n/ `XDG_CONFIG_HOME`) and then hit a config resolver will now **throw** \u2014 which is correct, but the\ntests must be updated to be hermetic rather than to re-enable a fallback. At minimum\n`RevealVaultRootCommandTests` leaks today; audit for every sibling the compiler and the new throw\nsurface (e.g. other view-model tests that construct an empty accessor).\n\n**Fix:**\n\n1. **Add one shared helper for an isolated accessor** so the fix is DRY and future tests fall into\n   the pit of success. In the test harness (e.g. alongside `DictionaryEnvironmentAccessor` in\n   `tests/VisualRelay.Tests/TestDoubles.cs`), add a factory that returns a\n   `DictionaryEnvironmentAccessor` pre-seeded with `HOME` (and/or `XDG_CONFIG_HOME`) pointing at a\n   unique directory under `Path.GetTempPath()`. Every test that needs \"an environment that resolves\n   to a throwaway config dir\" uses this instead of `new DictionaryEnvironmentAccessor()`.\n\n2. **Route the leaky/empty-accessor tests through it.** Replace bare\n   `new DictionaryEnvironmentAccessor()` at config-touching construction sites with the isolated\n   helper. Tests that deliberately exercise a specific key still start from the isolated accessor\n   and then set that key, so they never resolve a real path.\n\n3. **Do not weaken assertions or add `HOME` back as a real value.** The temp dir must be a\n   throwaway, not the developer's home. Keep each test's intent intact.\n\n4. **Prove hermeticity.** A test run (outside the sandbox) must leave the real\n   `~/.config/visual-relay/.env` byte-for-byte unchanged. If practical, add a focused test that\n   asserts a config write with an isolated accessor lands under the temp dir and that\n   `KeyEnvFile`/`XdgConfig` **throw** when handed an accessor with neither `HOME` nor\n   `XDG_CONFIG_HOME` \u2014 locking in the new contract.\n\n---\n\n## Part D \u2014 Guard against regressions\n\n**Symptom.** Nothing stops someone from reintroducing a `?? Environment.GetEnvironmentVariable(...)`\nfallback inside the config seam, which would silently restore the leak.\n\n**Fix.** Add a convention guard modeled on the existing\n`SplitGuardVerificationTests.NoTestFile_CallsEnvironmentSetEnvironmentVariable` rule (in\n`tests/VisualRelay.Tests/SplitGuardVerificationTests.*.cs`; the injection-seam partial\n`SplitGuardVerificationTests.InjectionSeams.cs` is the natural home):\n\n- Scan the source files under `src/VisualRelay.Core/Configuration/`.\n- Assert that **`Environment.GetEnvironmentVariable` / `Environment.GetEnvironmentVariables` appear\n  in no file except `ProcessEnvironmentAccessor.cs`** \u2014 the one sanctioned place that reads the\n  real environment.\n- The failure message must list each offending `file` so a regression is obvious.\n\nRationale to include in the test: the config seam must reach the process environment only through\nan injected `IEnvironmentAccessor`; the sole concrete real-env implementation is\n`ProcessEnvironmentAccessor`, so any other direct `Environment.GetEnvironmentVariable` call in\n`Configuration` is a silent-fallback regression. (This guard targets `GetEnvironmentVariable`\nspecifically; `XdgConfig`'s Windows `Environment.GetFolderPath(ApplicationData)` call is a\ndifferent API and is intentionally allowed.)\n\nThe guard must **fail on the pre-fix tree** (the current `KeyEnvFile.GetEnv` fallback trips it) and\n**pass after** the fix.\n\n---\n\n## Global constraints\n\n- **One change, gate green.** The full `Verify` gate must end `Failed: 0`, no crash, no\n  blame-hang, exit 0 \u2014 including the new guard and every call site the required-accessor change\n  surfaces.\n- **Never weaken the gate to pass it.** No deleting or `Skip`-ing tests, no loosened assertions, no\n  re-adding a real-env fallback \"just for tests.\" VR's own reflection guards forbid this.\n- **No new default path and no new silent fallback.** Absent a resolvable `XDG_CONFIG_HOME`/`HOME`\n  from the provided accessor, resolution throws (except the pre-existing, intentional Windows\n  `%APPDATA%` branch, which stays).\n- **Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines** (VR's file-size guard enforces this).\n- **Production must remain fully functional**: launching the app and starting the backend still\n  resolve the real `~/.config/visual-relay/.env` \u2014 now via an explicitly provided\n  `ProcessEnvironmentAccessor`, not a fallback.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.Core/Configuration/KeyEnvFile.cs` \u2014 remove the `?? Environment.GetEnvironmentVariable` fallback; required accessor; delete the no-arg `ResolvePathForCurrentUser()`.\n- `src/VisualRelay.Core/Configuration/XdgConfig.cs` \u2014 required accessor on the accessor overload (the throw path already exists).\n- `src/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs` \u2014 **new location** (moved from App).\n- `src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs` \u2014 **remove** (moved to Core).\n- `src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs` \u2014 required accessor on `Load`/`Save`.\n- `src/VisualRelay.Core/Configuration/UiStateStore.cs` \u2014 required accessor on `Load`/`Save`.\n- `src/VisualRelay.Core/Configuration/DiagnosticsSettings.cs` \u2014 required accessor.\n- `src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs` \u2014 pass `ProcessEnvironmentAccessor` to `ResolvePathForCurrentUser`.\n- `src/VisualRelay.App/App.axaml.cs` \u2014 `new MainWindowViewModel(new ProcessEnvironmentAccessor())`.\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` \u2014 required ctor accessor; non-nullable `EnvironmentAccessor`.\n- `tests/VisualRelay.Tests/TestDoubles.cs` \u2014 shared isolated-accessor factory.\n- `tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs` \u2014 use the isolated accessor.\n- additional test files surfaced by the required-accessor change and the new throw (audit empty-accessor / no-accessor view-model constructions).\n- `tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs` \u2014 new regression guard.\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/KeyEnvFile.cs\nsrc/VisualRelay.Core/Configuration/XdgConfig.cs\nsrc/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs\nsrc/VisualRelay.Core/Configuration/UiStateStore.cs\nsrc/VisualRelay.Core/Configuration/DiagnosticsSettings.cs\nsrc/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs\nsrc/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs\nsrc/VisualRelay.Core/Execution/BackendPaths.cs\nsrc/VisualRelay.Core/Execution/BackendStartOptions.cs\nsrc/VisualRelay.Core/Execution/NonoProfileEnsurer.cs\nsrc/VisualRelay.Core/Execution/RelayDriverDependencies.cs\nsrc/VisualRelay.Core/Execution/PlanPhaseRunner.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.Core/Execution/TaskRewriteRunner.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\nsrc/VisualRelay.Core/Execution/BackendConfigStep.cs\nsrc/VisualRelay.Core/Execution/MxcProvisioner.cs\nsrc/VisualRelay.App/App.axaml.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.cs\nsrc/VisualRelay.App/Services/ControlServerOptions.cs\ntests/VisualRelay.Tests/TestDoubles.cs\ntests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs\ntests/VisualRelay.Tests/RevealVaultRootCommandTests.cs\ntests/VisualRelay.Tests/RevealSettingsFileCommandTests.cs\ntests/VisualRelay.Tests/HfGateBannerVisibilityTests.cs\ntests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs\ntests/VisualRelay.Tests/MainWindowViewModelDiagnosticsTests.cs\ntests/VisualRelay.Tests/BackendStatusIndicatorTests.cs\ntests/VisualRelay.Tests/StartBackendAsyncTests.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.ExceptionSurfacing.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.Reorder.cs\ntests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs\ntests/VisualRelay.[ENCRYPTED:aws-secret-key]9ZmNL7om6hDaVsMaK/L/nNi9BDuuT7h9CzG3YcNY.cs\ntests/VisualRelay.Tests/MainWindowViewModelInitTests.cs\ntests/VisualRelay.Tests/LiveStateViewModelTests.cs\ntests/VisualRelay.Tests/DrainLifecycleStatusTests.cs\ntests/VisualRelay.Tests/AttachmentRowViewModelTests.cs\ntests/VisualRelay.Tests/ControlServerTests.cs\ntests/VisualRelay.Tests/RelayDriverProfileIsolationTests.cs\ntests/VisualRelay.Tests/UiStateStoreTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Remove the silent real-environment fallback from KeyEnvFile.GetEnv, make IEnvironmentAccessor a required parameter everywhere, explicitly wire ProcessEnvironmentAccessor in production, give tests an isolated temp-dir accessor, and add a regression guard \u2014 all in one gate-green change.\",\n  \"options\": [\n    \"Option A \u2014 Bottom-up (seam first, then production, then tests). Start with Part A: modify KeyEnvFile/XdgConfig/ResolvePathForCurrentUser to remove fallback and make accessor required. The compiler surfaces every call site. Fix each one by type: production sites (Part B) get ProcessEnvironmentAccessor, test sites (Part C) get the isolated-temp-dir helper. Add the regression guard (Part D) last. This minimizes manual auditing because the compiler drives the full list.\",\n    \"Option B \u2014 Top-down (production first, then seam). Start with Part B: move ProcessEnvironmentAccessor into Core and wire it at App.axaml.cs and BackendLifecycle.Start.cs. Then do Part A (remove the fallback and make accessor required), using the compiler to surface remaining call sites. Then do Part C (test isolation) and Part D (guard). The risk is that the compiler surfaces more sites than expected if the seam change is done second.\",\n    \"Option C \u2014 All-at-once via global search-and-compile. Simultaneously edit all files listed in the scope (KeyEnvFile.cs, XdgConfig.cs, ProcessEnvironmentAccessor.cs move, ObsidianBridgeSettings.cs, UiStateStore.cs, DiagnosticsSettings.cs, BackendLifecycle.Start.cs, App.axaml.cs, MainWindowViewModel.cs, TestDoubles.cs, test files, regression guard) in a single pass. Then run the gate and iterate on any compilation or test failures. Faster but riskier \u2014 requires knowing every site in advance.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{ \"findings\": \"The silent real-env fallback lives in KeyEnvFile.GetEnv (line 31-33 of KeyEnvFile.cs): `accessor?.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name)`. Every config method (Read, Upsert, ResolvePathForCurrentUser, GetUnsetKeys) and every consumer (ObsidianBridgeSettings, UiStateStore, DiagnosticsSettings, XdgConfig, BackendStartOptions, BackendPaths, NonoProfileEnsurer, MxcProvisioner, BackendConfigStep, MainWindowViewModel partials) inherits the leak via nullable `IEnvironmentAccessor? accessor = null` defaults. ProcessEnvironmentAccessor lives in VisualRelay.App.Services but is needed by VisualRelay.Core (BackendLifecycle, MxcProvisioner). Production call sites with no accessor: App.axaml.cs (new MainWindowViewModel()), BackendLifecycle.Start.cs (ResolvePathForCurrentUser), BackendConfigStep.cs (KeyEnvFile.Read(), direct Environment.GetEnvironmentVariable), MxcProvisioner.cs (XdgConfig.ResolveConfigDir()). Test call sites using object-initializer style: HfGateBannerVisibilityTests, SettingsPanelUiTests.TierModelOverrides, RevealVaultRootCommandTests (empty DictionaryEnvironmentAccessor, no HOME). TestRepository.Env already seeds XDG_CONFIG_HOME to temp dir. BackendLifecycle.Start.cs Default() helper reads env directly for child-process vars (legitimate). BackendConfigStep.Generate() reads real env directly for provider keys. The regression guard target is src/VisualRelay.Core/Configuration/ (must ban Environment.GetEnvironmentVariable except in ProcessEnvironmentAccessor.cs).\",\n  \"constraints\": [\n    \"One change, full gate green: Failed: 0, exit 0 \u2014 including the new regression guard and every surfaced call site\",\n    \"Never weaken the gate: no deleting/skipping tests, no loosened assertions, no re-added fallback\",\n    \"No new default path or silent fallback; absent XDG_CONFIG_HOME/HOME throws (except existing Windows %APPDATA% branch)\",\n    \"All new/edited .cs/.axaml files must be \u2264300 lines (VR file-size guard)\",\n    \"Production must remain functional: real ~/.config/visual-relay/.env resolves via explicit ProcessEnvironmentAccessor\",\n    \"ProcessEnvironmentAccessor must move from VisualRelay.App.Services to VisualRelay.Core.Configuration\",\n    \"MainWindowViewModel.EnvironmentAccessor becomes non-nullable get-only (no init setter), constructor requires IEnvironmentAccessor\",\n    \"Tests using object-initializer style (new VM { EnvironmentAccessor = ... }) must migrate to constructor argument\",\n    \"BackendConfigStep.Generate() reads real env directly \u2014 needs accessor plumbing for hermeticity\",\n    \"MxcProvisioner.EnsurePolicy() has no accessor parameter \u2014 needs one added\",\n    \"NonoProfileEnsurer.ResolveProfilePath/EnsureAsync take nullable accessor \u2014 must become required\",\n    \"BackendStartOptions.FromEnvironment and BackendPaths.Resolve take nullable accessor \u2014 must become required\",\n    \"Regression guard scans src/VisualRelay.Core/Configuration/ for Environment.GetEnvironmentVariable calls (banning all except ProcessEnvironmentAccessor.cs)\",\n    \"BackendLifecycle.Start.cs Default() helper and BuildBackendStartInfo direct env reads are legitimate child-process env, not config seam \u2014 excluded from guard scope\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The silent real-environment fallback is in KeyEnvFile.GetEnv (KeyEnvFile.cs line 31-33): `accessor?.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name)`. When a test injects a DictionaryEnvironmentAccessor that lacks HOME/XDG_CONFIG_HOME, the null return trips through `??` into the real process environment. Every config-resolving method inherits this because they all default `IEnvironmentAccessor? accessor = null` and delegate to GetEnv. The specific leak: RevealVaultRootCommandTests creates `new DictionaryEnvironmentAccessor()` (no HOME), sets `ObsidianVaultRoot = \\\"/Users/dev/obsidian-vault\\\"`, which fires the VM change handler \u2192 ObsidianBridgeSettings.Save \u2192 KeyEnvFile.Upsert \u2192 ResolvePath \u2192 GetEnv(\\\"HOME\\\", accessor). accessor returns null \u2192 falls through to Environment.GetEnvironmentVariable(\\\"HOME\\\") \u2192 the developer's real $HOME \u2192 writes to real ~/.config/visual-relay/.env. The test comment at ObsidianBridgeSettingsTests.cs:77-79 already documents the workaround ('a null is REMOVED from DictionaryEnvironmentAccessor and would fall back to the real process value (the hermeticity bug)'). An additional leak: BackendConfigStep.Generate() line 88 calls Environment.GetEnvironmentVariable(key) directly for provider API keys, bypassing the accessor seam entirely. BackendLifecycle.Start.cs line 211 also reads Environment.GetEnvironmentVariable directly. Production sites App.axaml.cs:34 (`new MainWindowViewModel()`) and BackendLifecycle.cs:41 (`BackendPaths.Resolve()`) rely on the silent fallback with no accessor. The MxcProvisioner.EnsurePolicy() line 45 calls XdgConfig.ResolveConfigDir() (no-arg) and ResolvePlan() line 67 calls Environment.GetEnvironmentVariable directly.\",\n  \"excerpts\": [\n    \"KeyEnvFile.cs:31-33 \u2014 `public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) => accessor?.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name);`\",\n    \"KeyEnvFile.cs:42 \u2014 `public static string ResolvePathForCurrentUser() => ResolvePathForCurrentUser(null);` (no-arg convenience, real env)\",\n    \"KeyEnvFile.cs:66 \u2014 `private static string ResolvePath(IEnvironmentAccessor? accessor = null) => ResolvePath(GetEnv(\\\"XDG_CONFIG_HOME\\\", accessor), GetEnv(\\\"HOME\\\", accessor));`\",\n    \"KeyEnvFile.cs:86 \u2014 `public static Dictionary<string, string> Read(IEnvironmentAccessor? accessor = null) => Read(ResolvePath(accessor));`\",\n    \"KeyEnvFile.cs:139 \u2014 `public static void Upsert(string key, string value, IEnvironmentAccessor? accessor = null) => Upsert(ResolvePath(accessor), key, value);`\",\n    \"RevealVaultRootCommandTests.cs:13-17 \u2014 `var env = new DictionaryEnvironmentAccessor(); var viewModel = new MainWindowViewModel(environmentAccessor: env) { ObsidianVaultRoot = \\\"/Users/dev/obsidian-vault\\\" };` \u2014 no HOME set, triggers fallback\",\n    \"ObsidianBridgeSettingsTests.cs:77-79 \u2014 `// Empty string (not null) keeps the injected accessor authoritative \u2014 a null is REMOVED from DictionaryEnvironmentAccessor and would fall back to the real process value (the hermeticity bug).`\",\n    \"BackendConfigStep.cs:85-89 \u2014 `foreach (var key in new[] { \\\"HF_TOKEN\\\", ... }) if (Environment.GetEnvironmentVariable(key) is not null) present.Add(key);` \u2014 direct real-env read, bypasses accessor\",\n    \"BackendLifecycle.Start.cs:210-211 \u2014 `private static string Default(string name, string fallback) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v : fallback;` \u2014 direct real-env read\",\n    \"App.axaml.cs:34 \u2014 `var viewModel = new MainWindowViewModel();` \u2014 no accessor, relies on silent fallback\",\n    \"BackendLifecycle.cs:41 \u2014 `_paths = paths ?? BackendPaths.Resolve();` \u2014 Resolve called with default null accessor \u2192 real env\",\n    \"MxcProvisioner.cs:45 \u2014 `var configDir = Configuration.XdgConfig.ResolveConfigDir();` \u2014 no-arg, real env\"\n  ],\n  \"repro\": \"1. Verify the fallback: inspecting KeyEnvFile.cs:31-33 shows `accessor?.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name)`. 2. Trace the leak: run `grep -n 'new DictionaryEnvironmentAccessor()' tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs` shows line 13 and 27 \u2014 bare accessors with no HOME. 3. Observe the real-env pollution: check `~/.config/visual-relay/.env` for `VR_OBSIDIAN_VAULT_ROOT=/Users/dev/obsidian-vault` (the test fixture value) \u2014 this confirms a test wrote to the real config. 4. The existing workaround comment at ObsidianBridgeSettingsTests.cs:77-79 acknowledges the bug: 'a null is REMOVED from DictionaryEnvironmentAccessor and would fall back to the real process value (the hermeticity bug)'. 5. Run outside the sandbox with `dotnet test --filter RevealVaultRootCommandTests` then check if `~/.config/visual-relay/.env` was modified.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete Implementation Plan\\n\\n### Part A \u2014 Remove the silent real-env fallback and make accessor required\\n\\n**1. KeyEnvFile.cs** \u2014 the core seam:\\n- Remove `?? Environment.GetEnvironmentVariable(name)` from `GetEnv` (line 33). Return only `accessor.GetEnvironmentVariable(name)`.\\n- Make `accessor` non-nullable and required: `public static string? GetEnv(string name, IEnvironmentAccessor accessor)`.\\n- Delete the no-arg `ResolvePathForCurrentUser()` overload (lines 42).\\n- Make `accessor` non-nullable on `ResolvePathForCurrentUser(IEnvironmentAccessor accessor)` (line 50).\\n- Make `accessor` non-nullable on private `ResolvePath(IEnvironmentAccessor accessor)` (line 66), remove `= null`.\\n- Make `accessor` non-nullable on `Read(IEnvironmentAccessor accessor)` (line 86), remove `= null`.\\n- Make `accessor` non-nullable on `Upsert(string, string, IEnvironmentAccessor accessor)` (line 139), remove `= null`.\\n- Make `accessor` non-nullable on `GetUnsetKeys(string, IEnvironmentAccessor accessor)` (line 220), remove `= null`.\\n- Make `accessor` non-nullable on `GetUnsetKeysPublic(string, IEnvironmentAccessor accessor)` (line 59).\\n- Update class-level XML doc to reflect the new contract: accessor is mandatory.\\n\\n**2. XdgConfig.cs** \u2014 required accessor on the accessor overload:\\n- Make `accessor` non-nullable on `ResolveConfigDir(IEnvironmentAccessor accessor)` (line 46), remove `= null`.\\n\\n**3. ObsidianBridgeSettings.cs** \u2014 required accessor:\\n- `Load(IEnvironmentAccessor accessor)` (line 36) \u2014 non-nullable, remove `= null`.\\n- `Load(IEnvironmentAccessor accessor, bool useIcloudDefault)` (line 46) \u2014 non-nullable.\\n- `Save(ObsidianBridgeConfig, IEnvironmentAccessor accessor)` (line ~101) \u2014 non-nullable, remove `= null`.\\n- `TryMigrateFromObsidianJson(IEnvironmentAccessor accessor)` \u2014 non-nullable.\\n\\n**4. UiStateStore.cs** \u2014 required accessor:\\n- `Load(IEnvironmentAccessor accessor)` (line 29) \u2014 non-nullable, remove `= null`.\\n- `Save(UiState, IEnvironmentAccessor accessor)` (line 52) \u2014 non-nullable, remove `= null`.\\n\\n**5. DiagnosticsSettings.cs** \u2014 required accessor:\\n- `LoadVerboseDiagnostics(IEnvironmentAccessor accessor)` (line 30) \u2014 non-nullable, remove `= null`.\\n- `SaveVerboseDiagnostics(bool, IEnvironmentAccessor accessor)` (line 42) \u2014 non-nullable, remove `= null`.\\n\\n### Part B \u2014 Explicit ProcessEnvironmentAccessor wiring in production\\n\\n**6. Move ProcessEnvironmentAccessor:** Create `src/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs` with namespace `VisualRelay.Core.Configuration`. Delete `src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs`.\\n\\n**7. Update all non-test references** to the old namespace:\\n- `App.axaml.cs` line 51: add `using VisualRelay.Core.Configuration;` (already imports that namespace).\\n- `ControlServerOptions.cs`: already imports `VisualRelay.Core.Configuration`, no change needed (type is now in that namespace).\\n\\n**8. MainWindowViewModel.cs** \u2014 required accessor, non-nullable property:\\n- Public constructor (line 49): `IEnvironmentAccessor environmentAccessor` (non-nullable, no default).\\n- Private constructor (line 54): `IEnvironmentAccessor environmentAccessor` (non-nullable, no default).\\n- Property (line 294): `public IEnvironmentAccessor EnvironmentAccessor { get; }` (get-only, non-nullable). Remove the `?` and `init`.\\n\\n**9. App.axaml.cs** \u2014 wire at composition root:\\n- Line ~34: `new MainWindowViewModel(new ProcessEnvironmentAccessor())`.\\n\\n**10. BackendLifecycle.cs** \u2014 use ProcessEnvironmentAccessor in constructor defaults:\\n- Line 41: `_paths = paths ?? BackendPaths.Resolve(new ProcessEnvironmentAccessor());`\\n- Line 42: `_options = options ?? BackendStartOptions.FromEnvironment(new ProcessEnvironmentAccessor());`\\n\\n**11. BackendLifecycle.Start.cs** \u2014 pass accessor to LoadProviderKeys:\\n- `LoadProviderKeys()` \u2192 pass `new ProcessEnvironmentAccessor()` to both `ResolvePathForCurrentUser` and `GetUnsetKeysPublic`.\\n\\n**12. BackendConfigStep.cs** \u2014 pass accessor to KeyEnvFile.Read():\\n- `Generate()` line 85: `KeyEnvFile.Read(new ProcessEnvironmentAccessor())`.\\n\\n**13. MxcProvisioner.cs** \u2014 pass accessor to XdgConfig:\\n- `EnsurePolicy()` line 45: `XdgConfig.ResolveConfigDir(new ProcessEnvironmentAccessor())`.\\n\\n### Part C \u2014 Make every test provide an isolated environment\\n\\n**14. TestDoubles.cs** \u2014 add `CreateIsolatedAccessor()` factory:\\n- Returns `DictionaryEnvironmentAccessor` with `[\\\"HOME\\\"] = <unique temp dir>` and `[\\\"XDG_CONFIG_HOME\\\"] = <same temp dir>`.\\n- Creates the temp directory.\\n\\n**15. Fix the leaky tests:**\\n- `RevealVaultRootCommandTests.cs`: Replace bare `new DictionaryEnvironmentAccessor()` with `TestDoubles.CreateIsolatedAccessor()` in both test methods. Remove `EnvironmentAccessor = env` init style \u2014 pass via constructor `new MainWindowViewModel(env) { ... }`.\\n- `RevealSettingsFileCommandTests.cs`: Replace `KeyEnvFile.ResolvePathForCurrentUser()` (no-arg, deleted) with `KeyEnvFile.ResolvePathForCurrentUser(new ProcessEnvironmentAccessor())`.\\n- `HfGateBannerVisibilityTests.cs`: Move `EnvironmentAccessor = _env` from object initializer to constructor: `new MainWindowViewModel(_env) { ... }`.\\n- `SettingsPanelUiTests.TierModelOverrides.cs`: Same \u2014 move `EnvironmentAccessor = _env` to constructor.\\n- `MainWindowViewModelTests.RunnableGate.cs`: Same \u2014 move `EnvironmentAccessor = env` to constructor.\\n- `MainWindowViewModelDiagnosticsTests.cs`: Same \u2014 move `EnvironmentAccessor = _env` to constructor.\\n\\n**16. Fix tests using `new MainWindowViewModel()` (no-arg) or `new MainWindowViewModel { RootPath = repo.Root }` (no accessor):**\\nEach must now pass an accessor as the first constructor arg. For tests with a `repo` (TestRepository), use `repo.Env`. For tests without a repo, use `new DictionaryEnvironmentAccessor { [\\\"HOME\\\"] = Path.GetTempPath() }` or the isolated factory. Affected files:\\n- `BackendStatusIndicatorTests.cs` \u2014 3 tests with `new MainWindowViewModel { IsBackendReachable = true }` \u2192 add isolated accessor.\\n- `StartBackendAsyncTests.cs` \u2014 1 test `new MainWindowViewModel()` \u2192 pass `new DictionaryEnvironmentAccessor { [\\\"HOME\\\"] = _home }`.\\n- `MainWindowViewModelTests.cs` \u2014 no-arg at lines 89,246; `{ RootPath = repo.Root }` at ~6 sites \u2192 pass `repo.Env` or isolated accessor.\\n- `MainWindowViewModelTests.Bootstrap.cs` \u2014 2 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `MainWindowViewModelTests.ExceptionSurfacing.cs` \u2014 1 site `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `MainWindowViewModelTests.Status.cs` \u2014 2 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `MainWindowViewModelTests.Reorder.cs` \u2014 1 no-arg, ~5 `{ RootPath = repo.Root }` \u2192 pass `repo.Env` or isolated accessor.\\n- `MainWindowViewModelSettingsTests.cs` \u2014 3 no-arg, 3 `{ RootPath = repo.Root }` \u2192 pass `repo.Env` or isolated accessor.\\n- `MainWindowViewModelTaskSwitchTests.cs` \u2014 5 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `MainWindowViewModelInitTests.cs` \u2014 4 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `LiveStateViewModelTests.cs` \u2014 6 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `DrainLifecycleStatusTests.cs` \u2014 2 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n- `AttachmentRowViewModelTests.cs` \u2014 5 sites `{ RootPath = repo.Root }` \u2192 pass `repo.Env`.\\n\\n**17. Other cascading required-accessor changes in src (non-Configuration):**\\nMake `IEnvironmentAccessor` non-nullable (no `?`, no `= null`) on these signatures, and fix callers:\\n- `BackendPaths.Resolve(IEnvironmentAccessor accessor)` \u2014 non-nullable, no default.\\n- `BackendStartOptions.FromEnvironment(IEnvironmentAccessor accessor)` \u2014 non-nullable, no default. `Seconds` helper: non-nullable.\\n- `NonoProfileEnsurer.ResolveProfilePath(IEnvironmentAccessor accessor)` \u2014 non-nullable, no default. `EnsureAsync` \u2014 same.\\n- `RelayDriverDependencies` record ctor param and `ForTests(...)` \u2014 non-nullable, no defaults.\\n- `PlanPhaseRunner.RunPlanPhaseAsync`, `PlanOneAsync`, `PlanOneTaskAsync` \u2014 non-nullable, no defaults.\\n- `RelayQueueController` ctor param \u2014 non-nullable, no default.\\n- `TaskRewriteRunner.RunAsync` param \u2014 non-nullable, no default.\\n\\n**18. Update test references to ProcessEnvironmentAccessor namespace:**\\n- `ControlServerTests.cs` line 172: add `using VisualRelay.Core.Configuration;` (already has `using VisualRelay.Core.Configuration;`).\\n- `RelayDriverProfileIsolationTests.cs` lines 24,45: same.\\n\\n**19. UiStateStoreTests.cs** \u2014 `Load_NoEnvironmentVariables_ReturnsDefaults` (line 66-83): the test sets empty-string HOME/XDG_CONFIG_HOME. After the change, `XdgConfig.ResolveConfigDir` throws, `UiStateStore.Load` catches it and returns defaults. The test still passes; no change needed but verify.\\n\\n### Part D \u2014 Regression guard\\n\\n**20. SplitGuardVerificationTests.InjectionSeams.cs** \u2014 add a new `[Fact]`:\\n- Scan `src/VisualRelay.Core/Configuration/` for `Environment.GetEnvironmentVariable` and `Environment.GetEnvironmentVariables`.\\n- Assert they appear in NO file except `ProcessEnvironmentAccessor.cs`.\\n- The failure message must list each offending file path.\\n- This guard FAILS on the pre-fix tree (KeyEnvFile.cs has the fallback) and PASSES after the fix.\\n\\n### Execution order\\n1. Part A: modify KeyEnvFile, XdgConfig, ObsidianBridgeSettings, UiStateStore, DiagnosticsSettings (remove fallback, required accessor).\\n2. Part D: add the regression guard (should fail initially).\\n3. Part B: move ProcessEnvironmentAccessor; fix BackendLifecycle, BackendConfigStep, MxcProvisioner, MainWindowViewModel, App.axaml.cs.\\n4. Fix all cascading src signatures (BackendPaths, BackendStartOptions, NonoProfileEnsurer, RelayDriverDependencies, PlanPhaseRunner, RelayQueueController, TaskRewriteRunner).\\n5. Part C: fix all test files (use isolated accessor, migrate from init to constructor, add repo.Env).\\n6. Compile; run full Verify gate; verify the regression guard passes.\\n7. Confirm zero `Failed`, no crashes, exit 0.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Configuration/KeyEnvFile.cs\",\n    \"src/VisualRelay.Core/Configuration/XdgConfig.cs\",\n    \"src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs\",\n    \"src/VisualRelay.Core/Configuration/UiStateStore.cs\",\n    \"src/VisualRelay.Core/Configuration/DiagnosticsSettings.cs\",\n    \"+src/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs\",\n    \"src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs\",\n    \"src/VisualRelay.Core/Execution/BackendPaths.cs\",\n    \"src/VisualRelay.Core/Execution/BackendStartOptions.cs\",\n    \"src/VisualRelay.Core/Execution/NonoProfileEnsurer.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriverDependencies.cs\",\n    \"src/VisualRelay.Core/Execution/PlanPhaseRunner.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.Core/Execution/TaskRewriteRunner.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\",\n    \"src/VisualRelay.Core/Execution/BackendConfigStep.cs\",\n    \"src/VisualRelay.Core/Execution/MxcProvisioner.cs\",\n    \"src/VisualRelay.App/App.axaml.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"src/VisualRelay.App/Services/ControlServerOptions.cs\",\n    \"tests/VisualRelay.Tests/TestDoubles.cs\",\n    \"tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs\",\n    \"tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs\",\n    \"tests/VisualRelay.Tests/RevealSettingsFileCommandTests.cs\",\n    \"tests/VisualRelay.Tests/HfGateBannerVisibilityTests.cs\",\n    \"tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelDiagnosticsTests.cs\",\n    \"tests/VisualRelay.Tests/BackendStatusIndicatorTests.cs\",\n    \"tests/VisualRelay.Tests/StartBackendAsyncTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.ExceptionSurfacing.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Reorder.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs\",\n    \"tests/VisualRelay.[ENCRYPTED:aws-secret-key]9ZmNL7om6hDaVsMaK/L/nNi9BDuuT7h9CzG3YcNY.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelInitTests.cs\",\n    \"tests/VisualRelay.Tests/LiveStateViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/DrainLifecycleStatusTests.cs\",\n    \"tests/VisualRelay.Tests/AttachmentRowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/ControlServerTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverProfileIsolationTests.cs\",\n    \"tests/VisualRelay.Tests/UiStateStoreTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 68, untracked deleted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs\"\n  ],\n  \"rationale\": \"The regression guard test ConfigurationDirectory_UsesAccessorSeam_NoDirectRealEnvFallback is the only new test. It scans src/VisualRelay.Core/Configuration/*.cs and asserts Environment.GetEnvironmentVariable(s) appears in no file except ProcessEnvironmentAccessor.cs. This guard fails on the pre-fix tree (KeyEnvFile.GetEnv had the fallback) and passes after removing the ?? Environment.GetEnvironmentVariable(name) fallback, moving ProcessEnvironmentAccessor into Core, and making IEnvironmentAccessor required everywhere. All existing tests were updated (not weakened) to pass the required accessor \u2014 no tests were deleted or skipped.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"## Completed: 08-no-silent-real-env-fallback\\n\\n### What was already done (by prior session)\\n- **Part A**: KeyEnvFile.GetEnv fallback removed; all config methods require non-nullable `IEnvironmentAccessor`; no-arg `ResolvePathForCurrentUser()` deleted; XdgConfig, ObsidianBridgeSettings, UiStateStore, DiagnosticsSettings all require accessor.\\n- **Part D**: Regression guard already present in SplitGuardVerificationTests.InjectionSeams.cs (scans Configuration/ for Environment.GetEnvironmentVariable bans).\\n- **Part B**: ProcessEnvironmentAccessor moved from VisualRelay.App.Services to VisualRelay.Core.Configuration; App.axaml.cs wires `new MainWindowViewModel(new ProcessEnvironmentAccessor())`; MainWindowViewModel requires accessor in ctor, property is non-nullable get-only; BackendLifecycle, BackendConfigStep, MxcProvisioner wired.\\n\\n### What I completed\\n- **Remaining src files** (6 files): Made `IEnvironmentAccessor` non-nullable required on NonoProfileEnsurer.ResolveProfilePath, TaskRewriteRunner.RunAsync, RelayQueueController ctor, PlanPhaseRunner (3 methods), GuiTaskRunner ctor, RelayDriverDependencies.ForTests (added backward-compatible 3-arg overload using TempXdg). Updated all call sites.\\n- **Production callers**: MainWindowViewModel.Execution.cs now passes EnvironmentAccessor to GuiTaskRunner and RelayQueueController; DrainQueue/Program.cs passes ProcessEnvironmentAccessor; MainWindowViewModel.Commands.cs import fixed.\\n- **Test files**: Fixed ~40 test files. Patterns: `new RelayQueueController(repo.Root, runner)` \u2192 added `, repo.Env`; `non-arg ResolveProfilePath()` \u2192 `ResolveProfilePath(new ProcessEnvironmentAccessor())`; `new MainWindowViewModel` \u2192 `new MainWindowViewModel(TestEnvironment.CreateIsolatedAccessor())`; `new MainWindowViewModel { RootPath = repo.Root }` \u2192 `new MainWindowViewModel(repo.Env) { RootPath = repo.Root }`; added `using VisualRelay.Core.Configuration;` to 5 test files; added HOME to SettingsPanelUiTests._env and RunnableGate env.\\n- **File-size guard**: Trimmed MainWindowViewModel.Commands.cs (removed blank line) and MainWindowViewModelTests.cs (removed blank line) from 301 to 300 lines.\\n- **Verify**: 121 tests, 0 failures \u2014 passes clean.\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"pass\", \"issues\": [] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/TestDoubles.cs tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs tests/VisualRelay.Tests/RevealSettingsFileCommandTests.cs tests/VisualRelay.Tests/HfGateBannerVisibilityTests.cs tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs tests/VisualRelay.Tests/MainWindowViewModelDiagnosticsTests.cs tests/VisualRelay.Tests/BackendStatusIndicatorTests.cs tests/VisualRelay.Tests/StartBackendAsyncTests.cs tests/VisualRelay.Tests/MainWindowViewModelTests.cs tests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs tests/VisualRelay.Tests/MainWindowViewModelTests.ExceptionSurfacing.cs tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs tests/VisualRelay.Tests/MainWindowViewModelTests.Reorder.cs tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs tests/VisualRelay.[ENCRYPTED:aws-secret-key]9ZmNL7om6hDaVsMaK/L/nNi9BDuuT7h9CzG3YcNY.cs tests/VisualRelay.Tests/MainWindowViewModelInitTests.cs tests/VisualRelay.Tests/LiveStateViewModelTests.cs tests/VisualRelay.Tests/DrainLifecycleStatusTests.cs tests/VisualRelay.Tests/AttachmentRowViewModelTests.cs tests/VisualRelay.Tests/ControlServerTests.cs tests/VisualRelay.Tests/RelayDriverProfileIsolationTests.cs tests/VisualRelay.Tests/UiStateStoreTests.cs",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The tests pass cleanly \u2014 121 passed, 0 failed, exit 0. All four parts are confirmed complete:\n\n- **Part A**: `KeyEnvFile.GetEnv` reads only from the accessor (no `?? Environment.GetEnvironmentVariable`), all config methods require non-nullable `IEnvironmentAccessor`, and the no-arg `ResolvePathForCurrentUser()` is deleted.\n- **Part B**: `ProcessEnvironmentAccessor` lives in Core, wired explicitly at `App.axaml.cs`, `BackendLifecycle.cs`, `BackendConfigStep.cs`, `MxcProvisioner.cs`, and `DrainQueue/Program.cs`. `MainWindowViewModel` requires the accessor in its constructor with a get-only non-nullable property.\n- **Part C**: `TestEnvironment.CreateIsolatedAccessor()` provides an isolated temp-dir accessor; `RevealVaultRootCommandTests` and all view-model tests use it or `repo.Env`. The `Load_NoEnvironmentVariables_ReturnsDefaults` test correctly exercises the throw-then-catch path on Unix.\n- **Part D**: `ConfigurationDirectory_UsesAccessorSeam_NoDirectRealEnvFallback` scans `src/VisualRelay.Core/Configuration/` and fails on any direct `Environment.GetEnvironmentVariable(s)` outside `ProcessEnvironmentAccessor.cs`.\n\n```json\n{\n  \"summary\": \"All 121 tests pass, 0 failures. All four parts are complete: (A) KeyEnvFile.GetEnv has no real-env fallback, all config methods require non-nullable IEnvironmentAccessor, no-arg ResolvePathForCurrentUser deleted. (B) ProcessEnvironmentAccessor moved to Core, wired explicitly at App.axaml.cs, BackendLifecycle, BackendConfigStep, MxcProvisioner, DrainQueue. MainWindowViewModel requires accessor in ctor with get-only non-nullable property. (C) TestEnvironment.CreateIsolatedAccessor() factory provides hermetic temp-dir accessor; all config-touching tests use it or repo.Env. (D) Regression guard ConfigurationDirectory_UsesAccessorSeam_NoDirectRealEnvFallback passes, confirming no direct Environment.GetEnvironmentVariable(s) calls in Configuration/ except ProcessEnvironmentAccessor.cs.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 15,
+    "tool_calls_total": 31,
+    "tool_calls_succeeded": 30,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 24,
+        "failed": 1
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 15,
+    "total_llm_time_s": 85.677,
+    "prompt_cache": {
+      "cached_tokens": 621440,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 13.097,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.765,
+      "prompt_tokens_est": 14894,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/KeyEnvFile.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9561
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/ProcessEnvironmentAccessor.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 468
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 123,
+      "error": "error: path does not exist: \"/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Services/ProcessEnvironmentAccessor.cs\""
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 5.634,
+      "prompt_tokens_est": 17565,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/TestDoubles.cs",
+          "tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs",
+          "tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs",
+          "tests/VisualRelay.Tests/RevealSettingsFileCommandTests.cs",
+          "tests/VisualRelay.Tests/HfGateBannerVisibilityTests.cs",
+          "tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelDiagnosticsTests.cs",
+          "tests/VisualRelay.Tests/BackendStatusIndicatorTests.cs",
+          "tests/VisualRelay.Tests/StartBackendAsyncTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.ExceptionSurfacing.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Reorder.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs",
+          "tests/VisualRelay.[ENCRYPTED:aws-secret-key]9ZmNL7om6hDaVsMaK/L/nNi9BDuuT7h9CzG3YcNY.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelInitTests.cs",
+          "tests/VisualRelay.Tests/LiveStateViewModelTests.cs",
+          "tests/VisualRelay.Tests/DrainLifecycleStatusTests.cs",
+          "tests/VisualRelay.Tests/AttachmentRowViewModelTests.cs",
+          "tests/VisualRelay.Tests/ControlServerTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverProfileIsolationTests.cs",
+          "tests/VisualRelay.Tests/UiStateStoreTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 6.893,
+      "result_length": 1720
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 5.597,
+      "prompt_tokens_est": 18509,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/XdgConfig.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2334
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9886
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/UiStateStore.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2997
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Configuration/DiagnosticsSettings.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2800
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.687,
+      "prompt_tokens_est": 23234,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/BackendPaths.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4901
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/BackendStartOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2471
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/NonoProfileEnsurer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5969
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5464
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.185,
+      "prompt_tokens_est": 28261,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/PlanPhaseRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8116
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15330
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/TaskRewriteRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10461
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7118
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 8.475,
+      "prompt_tokens_est": 37889,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12701
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/BackendConfigStep.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4764
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/MxcProvisioner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3828
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.87,
+      "prompt_tokens_est": 43247,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7608
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13760
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Services/ControlServerOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1587
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.067,
+      "prompt_tokens_est": 48630,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12001
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12927
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 9.18,
+      "prompt_tokens_est": 54445,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2481
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/UiStateStoreTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4754
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 5.991,
+      "prompt_tokens_est": 56835,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.015,
+      "result_length": 42
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.262,
+      "prompt_tokens_est": 57162,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "new RelayQueueController|new GuiTaskRunner",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 291
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.071,
+      "prompt_tokens_est": 57296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class GuiTaskRunner|GuiTaskRunner\\(",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App",
+        "context_lines": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 1521
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 5.231,
+      "prompt_tokens_est": 57753,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "new RelayQueueController",
+        "path": "/Users/admin/Dev/temp-visual-relay/tools",
+        "context_lines": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.04,
+      "result_length": 605
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 5.699,
+      "prompt_tokens_est": 58007,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/TestDoubles.cs",
+          "tests/VisualRelay.Tests/SplitGuardVerificationTests.InjectionSeams.cs",
+          "tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs",
+          "tests/VisualRelay.Tests/RevealSettingsFileCommandTests.cs",
+          "tests/VisualRelay.Tests/HfGateBannerVisibilityTests.cs",
+          "tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelDiagnosticsTests.cs",
+          "tests/VisualRelay.Tests/BackendStatusIndicatorTests.cs",
+          "tests/VisualRelay.Tests/StartBackendAsyncTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.ExceptionSurfacing.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelTests.Reorder.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs",
+          "tests/VisualRelay.[ENCRYPTED:aws-secret-key]9ZmNL7om6hDaVsMaK/L/nNi9BDuuT7h9CzG3YcNY.cs",
+          "tests/VisualRelay.Tests/MainWindowViewModelInitTests.cs",
+          "tests/VisualRelay.Tests/LiveStateViewModelTests.cs",
+          "tests/VisualRelay.Tests/DrainLifecycleStatusTests.cs",
+          "tests/VisualRelay.Tests/AttachmentRowViewModelTests.cs",
+          "tests/VisualRelay.Tests/ControlServerTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverProfileIsolationTests.cs",
+          "tests/VisualRelay.Tests/UiStateStoreTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 6.095,
+      "result_length": 1720
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 10.965,
+      "prompt_tokens_est": 58924,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
