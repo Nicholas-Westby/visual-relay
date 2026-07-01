@@ -1,0 +1,1814 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T09:16:14.300859+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 04-create-task-to-fix-button\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# \"Create Task to Fix\" Button\n\n## Problem / motivation\n\nWhen a run flags for reasons unrelated to the task's own change \u2014 flaky tests, latent ordering bugs, a\nguard tripped by pre-existing state \u2014 the user is left to hand-author a follow-up task to fix the\nunderlying issue. Give them a one-click path instead: a button that hands the **failed run's issues** to\nan LLM and ends with a **new llm-task** in the queue that is designed to fix those issues. This is a\ngeneral coping mechanism for anything that blocks VR from completing work (the flaky verify gate being\nthe motivating example).\n\nThe button **creates** the fix task; it does **not** auto-run it. The user reviews and runs it when ready.\n\n## Where the button goes\n\nIn the **\"LATEST RUN FAILED\"** banner in the task detail pane \u2014\n`src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml`, the block gated by\n`IsVisible=\"{Binding HasSelectedTaskError}\"` that renders the `\"LATEST RUN FAILED\"` label and\n`SelectableTextBlock Text=\"{Binding SelectedTaskError}\"`. Add the button inside/adjacent to that banner\nso it appears exactly when the selected task has a failed/flagged run (`HasSelectedTaskError == true`).\nSuggested label: **\"Create task to fix\"**.\n\n## Precedent to model on: \"Rewrite with AI\"\n\nVR already has an LLM-authors-task-markdown feature \u2014 reuse its shape rather than inventing new infra:\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs` \u2014 a `[RelayCommand]` with a\n  `CanExecute` predicate, a **test-seam factory** (`RewriteRunnerFactory : Func<RelayConfig, ISubagentRunner>`;\n  production builds a real `SwivalSubagentRunner`, tests inject a fake), busy/status handling, and a\n  confirm modal.\n- `TaskRewriteRunner.RunAsync(...)` \u2014 does the subagent call and returns a `RewriteOutcome(success, error)`.\n- The shared modal seam `ConfirmAsync(title, message, confirmLabel)`\n  (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Confirmation.cs`, returns `Task<bool>`) \u2014 a human\n  click opens the modal; headless/API runs auto-resolve, so it is test-friendly.\n- Task creation lives at `CreateNewTaskAsync` (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs`),\n  backed by `RelayTaskRepository`.\n\n## Behavior\n\nAdd a command `CreateFixTaskForSelectedAsync` (new partial, e.g.\n`src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs`), modeled on the Rewrite command.\n\n1. **Gather the failed-run context** from `.relay/<taskId>/` (add a small reader in Core, e.g.\n   `FailedRunContext`):\n   - the flag reason and which stage flagged \u2014 `NEEDS-REVIEW` and `status.json` (the `error` + `check`\n     of the flagged stage);\n   - the **authoritative gate failures** \u2014 the `stage*-attempt*.verify-output.txt` files, especially the\n     last attempt's `[FAIL]` lines / exceptions / summary. Prefer these over any agent self-reported\n     \"passed\" text (the authoritative gate is the source of truth);\n   - the per-stage `ledger.md` summaries (the agent's own diagnoses are useful signal).\n2. **Author the fix task via a subagent** (reuse `SwivalSubagentRunner` through a\n   `FixTaskRunnerFactory : Func<RelayConfig, ISubagentRunner>` test seam, exactly like `RewriteRunnerFactory`;\n   put the actual call in a new `FixTaskAuthorRunner.RunAsync` modeled on `TaskRewriteRunner`). Directive\n   to the model: *\"Here are the failures from a flagged VR run: <context>. Author a new llm-task\n   (markdown) that will make these failures stop recurring \u2014 make flaky / non-deterministic tests\n   deterministic, fix root causes, and address the enabler where possible. Never weaken, skip, or delete\n   tests. Output the task markdown: title, problem, root cause, fix, and constraints.\"* The runner returns\n   the authored markdown, a one-line summary of what it addresses, and a suggested slug.\n3. **Write the new task** by reusing the task-creation path (`CreateNewTaskAsync` / `RelayTaskRepository`):\n   create `llm-tasks/<slug>/<slug>.md` with the authored markdown. Ensure the slug is **unique** (append a\n   disambiguator if it collides with an existing task). Then reload the task list so it appears in the\n   queue. Do not add a numeric prefix \u2014 leave prioritization to the user (they can reorder).\n\n## UX \u2014 be explicit\n\n- **Idle:** the \"Create task to fix\" button sits in the red \"LATEST RUN FAILED\" banner, enabled only when\n  the selected task has a failed run and nothing else is running.\n- **Working:** on click, the button enters a busy state \u2014 label to something like \"Creating fix task\u2026\",\n  disabled to prevent double-submit, with a spinner/`StatusText` update (this is a multi-second subagent\n  call; reuse the busy pattern from Rewrite).\n- **Success:** show a **dismissable completion modal** via `ConfirmAsync` \u2014\n  `title: \"Fix task created\"`, `message:` the new task's name plus the one-line summary of the issues it\n  addresses, `confirmLabel: \"View task\"`. If the user clicks **View task** (`ConfirmAsync` returns\n  `true`), select the newly created task (set `SelectedTask` to it) so it opens in the detail pane /\n  markdown view. If they dismiss (`false`), just close \u2014 the task is already in the queue. The queue now\n  shows the new task.\n- **Error / no data:** if there is no failed-run data the button is not enabled. If the subagent errors or\n  returns nothing usable, write **nothing** and surface a clear message (an error `ConfirmAsync` or a\n  `StatusText`): *\"Couldn't create fix task: <reason>.\"* Re-enable the button so the user can retry. Never\n  crash.\n\n## Constraints & done criteria\n\n- **Wire the command's `CanExecute` correctly.** Add `[NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]`\n  to every observable property that gates it (e.g. `SelectedTask`, `IsBusy`, and whatever drives\n  `HasSelectedTaskError`). A missing `NotifyCanExecuteChangedFor` silently leaves a button disabled even\n  when its predicate would allow it \u2014 make sure every gating property notifies this command.\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines; no weakening/skipping/deleting tests.\n- The generated task must not auto-run; creation is the terminal action.\n- Tests (inject a fake `ISubagentRunner` via the factory seam, like the Rewrite tests):\n  - the button is enabled only when the selected task has a failed run;\n  - clicking authors markdown and writes a new task under `llm-tasks/<slug>/<slug>.md`, and the task\n    appears in the queue;\n  - slug collisions are disambiguated;\n  - the completion modal (`ConfirmAsync`) is invoked, and \"View task\" selects the new task;\n  - the error path (subagent failure) writes nothing and surfaces a message;\n  - headless runs auto-resolve `ConfirmAsync` so the flow completes without a real UI.\n- Manual verification: select the flagged `disable-new-buttons-when-project-isn-t-selected` task, click\n  \"Create task to fix\", confirm a new task is authored from its `.relay` failure logs, the completion\n  modal appears, and \"View task\" opens it.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` \u2014 the button in the failure banner\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs` (new) \u2014 command + flow + `CanExecute` wiring\n- a new Core runner `FixTaskAuthorRunner` + a `FailedRunContext` reader (model on `TaskRewriteRunner`)\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` \u2014 `[NotifyCanExecuteChangedFor]` on gating props\n- tests under `tests/VisualRelay.Tests/`\n\n\n## Manifest\nsrc/VisualRelay.Core/Tasks/FailedRunContext.cs\nsrc/VisualRelay.Core/Execution/FixTaskAuthorRunner.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs\nsrc/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.cs\ntests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add a 'Create task to fix' button to the 'LATEST RUN FAILED' banner by extending the existing Rewrite-with-AI pattern. The flow: gather failed-run context from `.relay/<taskId>/` \u2192 author fix-task markdown via a subagent \u2192 write as `llm-tasks/<slug>/<slug>.md` \u2192 show a completion modal. Three approaches differ in how closely they replicate the Rewrite architecture vs. introducing new abstractions.\",\n  \"options\": [\n    \"Option A \u2014 Faithful Replica: Mirror Rewrite exactly (new FixTaskAuthorRunner, FixTaskRunnerFactory, FailedRunContext reader, partial VM file, tests). Minimum review surprise, some duplication.\",\n    \"Option B \u2014 Consolidated Core Service: Extract business logic into a FixTaskService (reader + runner unified). Cleaner separation, two test files, diverges from Rewrite's architecture.\",\n    \"Option C \u2014 Gateway Property Pattern: Same as A but add a `CanCreateFixTask` computed property that aggregates all gating conditions, reducing `[NotifyCanExecuteChangedFor]` burden to a single property annotation.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase has a well-established pattern for LLM-authors-task-markdown via 'Rewrite with AI' (src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs), which uses a factory seam (RewriteRunnerFactory : Func<RelayConfig, ISubagentRunner>),[RelayCommand(CanExecute=...)] with a CanRewriteSelected predicate, TaskRewriteRunner.RunAsync in Core, ConfirmAsync for modals, and ReloadTaskListAsync for post-creation selection. The failure banner is in TaskDetailPanel.axaml lines 61-85, gated by HasSelectedTaskError (computed from SelectedTaskError in MainWindowViewModel.Properties.cs line 151). Failed-run context lives in .relay/<taskId>/ as NEEDS-REVIEW (flag reason + stage), status.json (per-stage StageStatusEntry array, flagged stage has Status:'Flagged'+Error), ledger.md (per-stage agent summaries), and stage{N}-attempt{M}.verify-output.txt (verify gate output). Task creation uses RelayTaskWriter.CreateAsync (slug validation+collision check) followed by ReloadTaskListAsync(slug) to select the new task. Tests use TestRepository, NewViewModel helper (sets ShowConfirmationAsync=null for headless auto-resolve), inject fake ISubagentRunner via factory, and use [AvaloniaFact]/[Collection('Headless')]. Confirmation seam (ConfirmAsync) auto-resolves true when ShowConfirmationAsync is null (headless) or ApiAutoConfirm.Value is true (control API). CanExecute wiring uses [NotifyCanExecuteChangedFor] on observable properties \u2014 currently missing for CreateFixTaskCommand. RunBusyAsync (Helpers.cs) sets IsBusy=true, runs action, catches exceptions into StatusText, sets IsBusy=false in finally. Rewrite does NOT use RunBusyAsync (rewrites run concurrently).\",\n  \"constraints\": [\n    \"Every new/edited .cs/.axaml file must be \u2264 300 lines; no weakening/skipping/deleting tests\",\n    \"Generated task must not auto-run; creation is the terminal action \u2014 no numeric prefix in slug\",\n    \"Slug must be unique: append disambiguator suffix (e.g., -2, -3) if slug collides with existing task\",\n    \"[NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))] must be added to _selectedTask, _isBusy, and _selectedTaskError (drives HasSelectedTaskError) in MainWindowViewModel.cs\",\n    \"Button enabled only when HasSelectedTaskError==true, !IsBusy, and not already creating a fix task\",\n    \"Busy state: button disabled with 'Creating fix task\u2026' label; StatusText updated; subagent runs off UI thread\",\n    \"Success modal via ConfirmAsync('Fix task created', message, 'View task'); 'View task' (returns true) \u2192 set SelectedTask to new task id via ReloadTaskListAsync(newSlug); dismiss \u2192 just close\",\n    \"Subagent failure: write nothing to disk; surface error via ConfirmAsync or StatusText; re-enable button \u2014 never crash\",\n    \"Tests must inject fake ISubagentRunner via FixTaskRunnerFactory seam (mirroring RewriteRunnerFactory pattern)\",\n    \"Tests must cover: button enablement, markdown authoring + task creation under llm-tasks/<slug>/<slug>.md, slug collision disambiguation, completion modal with 'View task' selection, error path writes nothing and surfaces message, headless ConfirmAsync auto-resolves\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The drain log (drain-20260701041656.log) records the full drain sequence: 01-stabilize-verify-gate committed successfully at 05:18:56; 08-no-silent-real-env-fallback flagged at 07:04:39 with 'swival timed out after 1800000ms absolute ceiling. Last signal: cpu, silence: 2953ms.'; 02-agent-runs-full-suite-before-done committed successfully at 08:06:52 after passing the verify gate (stage 9 had 5 flaky SettingsPanel/KeySetupPanel UI test failures, stage 10 fix-verify resolved them to 0 failures); 03-resume-restores-flagged-work flagged at 08:56:35 with the same swival timeout (silence: 773ms); 04-create-task-to-fix-button started at 08:56:35 and is currently in stage 3 (Diagnose).\\n\\nBoth flagged tasks failed for reasons unrelated to their own code changes \u2014 the swival subagent hit the 30-minute absolute ceiling timeout, producing zero bytes of output (both killed-output.txt files are empty). This is an infrastructure/latency issue, not a code defect. The 03-resume-restores-flagged-work task had completed stages 1-5 (Ideate, Research, Diagnose, Plan, Author-tests) successfully, flagging at stage 6 (Implement) before producing any code. The 08-no-silent-real-env-fallback task had completed stages 1-8, flagging at stage 9 (Verify). In both cases, the user is left with NEEDS-REVIEW markers and status.json Flagged entries but no mechanism to automatically create a follow-up fix task from the failed run's context.\\n\\nThe 02-agent-runs-full-suite-before-done task demonstrates the verify-gate flakiness pattern that motivates this feature: stage 9 (verify) produced 'check: red' with 5 genuine test failures (SettingsPanelContainsScrollViewerWithNoHorizontalScroll, LiveTiers_RendersOneRowPerTier_WithModelTextAndStatusDots, and 3 more \u2014 all 'Sequence contains no elements' in SettingsTestHelpers.OpenSettings at line 50, indicating a UI timing/ordering issue not caused by that task's change). Stage 10 (fix-verify) resolved these to zero failures via baseline exclusion or a fix cycle, and the task committed successfully. These pre-existing flaky tests are exactly the kind of issue the 'Create task to fix' button should capture.\\n\\nThe codebase already has a well-established LLM-authors-task pattern in the Rewrite-with-AI feature (MainWindowViewModel.Rewrite.cs, TaskRewriteRunner, RewriteRunnerFactory test seam). The failure banner in TaskDetailPanel.axaml (lines 61-85) renders 'LATEST RUN FAILED' via HasSelectedTaskError computed from SelectedTaskError. The confirmation seam (ConfirmAsync) auto-resolves in headless/tests. Task creation uses RelayTaskWriter.CreateAsync with slug validation and collision detection. These existing patterns are the direct architectural precedent for the fix-task button.\",\n  \"excerpts\": [\n    \"drain-20260701041656.log:4 \u2014 '08-no-silent-real-env-fallback flagged version=0.55+f6c... (swival timed out after 1800000ms absolute ceiling. Last signal: cpu, silence: 2953ms.)'\",\n    \"drain-20260701041656.log:10 \u2014 '03-resume-restores-flagged-work flagged version=0.55+f6c... (swival timed out after 1800000ms absolute ceiling. Last signal: cpu, silence: 773ms.)'\",\n    \"03-resume-restores-flagged-work/status.json:68-78 \u2014 stage 6 (Implement): Status:'Flagged', Error:'swival timed out after 1800000ms absolute ceiling...'\",\n    \"03-resume-restores-flagged-work/NEEDS-REVIEW \u2014 'swival timed out after 1800000ms absolute ceiling. Last signal: cpu, silence: 773ms.'\",\n    \"03-resume-restores-flagged-work/stage6-attempt1.killed-output.txt \u2014 'bytes: 0' (subagent killed before producing any output)\",\n    \"08-no-silent-real-env-fallback/status.json:107-117 \u2014 stage 9 (Verify): Status:'Flagged', Error:'swival timed out after 1800000ms absolute ceiling...'\",\n    \"08-no-silent-real-env-fallback/NEEDS-REVIEW \u2014 'swival timed out after 1800000ms absolute ceiling. Last signal: cpu, silence: 2953ms.'\",\n    \"08-no-silent-real-env-fallback/stage9-attempt1.killed-output.txt \u2014 'bytes: 0' (subagent killed before producing any output)\",\n    \"02-agent-runs-full-suite-before-done/stage9-attempt1.verify-output.txt:102 \u2014 '[FAIL] VisualRelay.Tests.KeySetupPanelUiTests.LiveTiers_RendersOneRowPerTier... Sequence contains no elements'\",\n    \"02-agent-runs-full-suite-before-done/stage9-attempt1.verify-output.txt:125 \u2014 'Failed! - Failed: 5, Passed: 2448, Skipped: 22, Total: 2475' (flaky UI test failures)\",\n    \"02-agent-runs-full-suite-before-done/stage10-attempt1.verify-output.txt:73 \u2014 'Passed! - Failed: 0, Passed: 2451, Skipped: 22, Total: 2473' (all flaky failures resolved)\",\n    \"TaskDetailPanel.axaml:61-85 \u2014 'LATEST RUN FAILED' banner gated by IsVisible='{Binding HasSelectedTaskError}'\",\n    \"MainWindowViewModel.Rewrite.cs:19-26 \u2014 RewriteRunnerFactory test seam and [RelayCommand(CanExecute=nameof(CanRewriteSelected))] pattern\",\n    \"MainWindowViewModel.Confirmation.cs:12 \u2014 'ShowConfirmationAsync { get; set; }' \u2014 headless auto-resolves when null\"\n  ],\n  \"repro\": \"1. Review the drain log at .relay/drain-20260701041656.log \u2014 observe two flagged tasks (08-no-silent-real-env-fallback, 03-resume-restores-flagged-work) both failing with swival timeout, not code defects.\\n2. Inspect .relay/03-resume-restores-flagged-work/status.json \u2014 stage 6 (Implement) is Flagged with 'swival timed out after 1800000ms'. The task completed stages 1-5 successfully before the timeout.\\n3. Inspect .relay/03-resume-restores-flagged-work/stage6-attempt1.killed-output.txt \u2014 0 bytes, confirming the subagent was killed before any output.\\n4. Inspect .relay/08-no-silent-real-env-fallback/status.json \u2014 stage 9 (Verify) is Flagged with the same timeout error. Same empty killed-output.txt.\\n5. Inspect .relay/02-agent-runs-full-suite-before-done/stage9-attempt1.verify-output.txt \u2014 5 FAIL entries, all UI tests failing with 'Sequence contains no elements' in SettingsTestHelpers.OpenSettings:line 50 \u2014 flaky tests unrelated to that task's change.\\n6. Observe: the user currently has no 'Create task to fix' button in the 'LATEST RUN FAILED' banner. They must hand-author a follow-up task to fix the swival timeout issue or the flaky SettingsPanel tests.\\n7. The existing Rewrite-with-AI pattern (MainWindowViewModel.Rewrite.cs, TaskRewriteRunner, RewriteRunnerFactory) provides the architectural template but only rewrites an existing task's spec \u2014 it does not create a new fix task from failed-run context.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation plan \u2014 Option A (Faithful Replica)\\n\\n### 1. `+src/VisualRelay.Core/Tasks/FailedRunContext.cs` (~80 lines)\\n\\nNew static reader class `FailedRunContextReader` with records `FailedRunContext` and `FailedVerifyOutput`.\\n\\n```csharp\\npublic sealed record FailedRunContext(\\n    string FlagReason, int FlaggedStage, string? FlaggedStageName,\\n    string? FlaggedStageError, IReadOnlyList<FailedVerifyOutput> VerifyOutputs,\\n    string? LedgerSummary);\\n\\npublic sealed record FailedVerifyOutput(int Stage, int Attempt, string Summary);\\n\\npublic static class FailedRunContextReader\\n{\\n    public static FailedRunContext Read(string taskDirectory);\\n}\\n```\\n\\n- `NEEDS-REVIEW` \u2192 parse flag reason line + `stage N` line (regex)\\n- `status.json` via `StageStatusRecord.Read(taskDirectory)` \u2192 find entry with `Status == \\\"Flagged\\\"`, extract `.Name`, `.Error`, `.Check`\\n- scan `stage*-attempt*.verify-output.txt` \u2192 for each file, tail ~200 lines, extract `[FAIL]` lines + final summary line (`Failed: N, Passed: M, \u2026`); prefer the **last** attempt if multiple exist\\n- `ledger.md` \u2192 read first ~2000 chars as summary\\n- Never throws \u2014 returns empty/null fields on missing files\\n\\n### 2. `+src/VisualRelay.Core/Execution/FixTaskAuthorRunner.cs` (~130 lines)\\n\\nStatic runner modeled on `TaskRewriteRunner` but no worktree \u2014 just a subagent call.\\n\\n```csharp\\npublic sealed record FixTaskAuthorOutcome(\\n    bool Success, string? Markdown, string? Summary, string? Slug, string? Error);\\n\\npublic static class FixTaskAuthorRunner\\n{\\n    public static async Task<FixTaskAuthorOutcome> RunAsync(\\n        string rootPath, string taskId, string taskDirectory,\\n        RelayConfig config, ISubagentRunner runner, CancellationToken ct);\\n}\\n```\\n\\n- Calls `FailedRunContextReader.Read(taskDirectory)` to gather context\\n- Builds a `StageInvocation` with:\\n  - Synthetic `RelayStageDefinition` (Number: 0, Name: \\\"FixTaskAuthor\\\", Tier: \\\"balanced\\\", Kind: \\\"llm\\\")\\n  - System prompt: \\\"You are a task-authoring assistant. Given failed-run context, output a new llm-task markdown that fixes the root causes. Never weaken, skip, or delete tests. Output JSON: { \\\\\\\"markdown\\\\\\\": \u2026, \\\\\\\"summary\\\\\\\": \u2026, \\\\\\\"slug\\\\\\\": \u2026 }\\\"\\n  - `TaskInput`: builds a prompt embedding `NEEDS-REVIEW` reason, flagged stage error, verify-output `[FAIL]` lines, ledger summary\\n  - `TargetRoot` = rootPath (no worktree \u2014 the runner doesn't write files)\\n  - `TraceDirectory` under `.relay/<taskId>/fix-task/`\\n- Calls `runner.RunAsync(invocation, ct)`\\n- Parses JSON from `result.Json`; falls back to extracting markdown from `result.RawText` wrapped in a code fence\\n- Returns `FixTaskAuthorOutcome`\\n\\n### 3. `+src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs` (~200 lines)\\n\\nNew partial class following the Rewrite pattern:\\n\\n```csharp\\npublic partial class MainWindowViewModel\\n{\\n    internal Func<RelayConfig, ISubagentRunner>? FixTaskRunnerFactory { get; set; }\\n\\n    private bool _isCreatingFixTask;\\n    public bool IsCreatingFixTask => _isCreatingFixTask;\\n    public string CreateFixTaskButtonLabel => _isCreatingFixTask ? \\\"Creating fix task\u2026\\\" : \\\"Create task to fix\\\";\\n\\n    [RelayCommand(CanExecute = nameof(CanCreateFixTask))]\\n    private async Task CreateFixTaskForSelectedAsync() { \u2026 }\\n\\n    private bool CanCreateFixTask() =>\\n        SelectedTask is not null && HasSelectedTaskError && !IsBusy && !_isCreatingFixTask;\\n}\\n```\\n\\n**Command flow** (`CreateFixTaskForSelectedAsync`):\\n1. Capture `taskId = SelectedTask.Id`, `taskDirectory = SelectedTask.Task.TaskDirectory`\\n2. Confirm modal: `ConfirmAsync(\\\"Create task to fix\\\", \\\"Author a new task from the failed run's issues?\\\", \\\"Create\\\")` \u2014 return if false\\n3. `_isCreatingFixTask = true`; raise `OnPropertyChanged(nameof(IsCreatingFixTask))` + `OnPropertyChanged(nameof(CreateFixTaskButtonLabel))` + `CreateFixTaskCommand.NotifyCanExecuteChanged()`\\n4. `StatusText = \\\"Creating fix task\u2026\\\"`\\n5. Load config: `RelayConfigLoader.LoadAsync(RootPath, ct)`\\n6. Build runner: `FixTaskRunnerFactory?.Invoke(config) ?? new SwivalSubagentRunner(config, \u2026)`\\n7. Run off UI thread: `Task.Run(async () => { var outcome = await FixTaskAuthorRunner.RunAsync(\u2026); \u2026 })` \u2014 marshal back via `Dispatcher.UIThread.InvokeAsync`\\n8. **On failure** (outcome.Success == false): `StatusText = $\\\"Couldn't create fix task: {outcome.Error}\\\"`; `_isCreatingFixTask = false`; raise property changed; return\\n9. **On success**: disambiguate slug \u2014 try `RelayTaskWriter.ValidateSlug(slug, RootPath)`; if collision, append `-2`, `-3`, etc. until unique\\n10. Write task: `await RelayTaskWriter.CreateAsync(RootPath, finalSlug, markdown)`\\n11. Reload queue: `await ReloadTaskListAsync(finalSlug)` \u2014 this also sets `SelectedTask` to the new task\\n12. Completion modal: `var viewTask = await ConfirmAsync(\\\"Fix task created\\\", $\\\"Created '{finalSlug}': {outcome.Summary}\\\", \\\"View task\\\")`\\n    - If `true`: already selected via `ReloadTaskListAsync` \u2014 no extra action needed\\n    - If `false`: nothing extra \u2014 task is already in the queue\\n13. `_isCreatingFixTask = false`; raise property changed; `StatusText = FormatQueueStatus()`\\n\\n### 4. `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` \u2014 edit the failure banner (lines 61-85)\\n\\nInside the `IsVisible=\\\"{Binding HasSelectedTaskError}\\\"` Border, change the inner Grid to 3 rows (`Auto,Auto,*`):\\n- Row 0: existing \\\"LATEST RUN FAILED\\\" TextBlock (unchanged)\\n- Row 1: new horizontal StackPanel with:\\n  - `buttons:CommonButton` content bound to `CreateFixTaskButtonLabel`, `Command=\\\"{Binding CreateFixTaskCommand}\\\"`\\n  - `ProgressBar IsIndeterminate=\\\"True\\\"` width 16 height 16, `IsVisible=\\\"{Binding IsCreatingFixTask}\\\"`\\n- Row 2: existing ScrollViewer with error text (unchanged, was Row 1)\\n\\nAdd the xmlns for buttons at the top: `xmlns:buttons=\\\"using:VisualRelay.App.Views.Controls.Buttons\\\"` (already present).\\n\\n### 5. `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` \u2014 annotate gate properties\\n\\nAdd `[NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]` to:\\n- `_selectedTask` (after line 107 `[NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]`)\\n- `_isBusy` (after line 197 `[NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]`)\\n- `_selectedTaskError` (after line 148 `[NotifyPropertyChangedFor(nameof(HasSelectedTaskError))]`)\\n\\n### 6. `+tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs` (~280 lines)\\n\\nTest class: `[Collection(\\\"Headless\\\")] public sealed class MainWindowViewModelFixTaskTests`.\\n\\nHelper: `NewViewModel(TestRepository repo)` sets `ShowConfirmationAsync = null` (headless), `FixTaskRunnerFactory = \u2026` (fake).\\n\\nHelper: `WriteFlaggedRelayData(repo, taskId, reason, stage, error, verifyOutput)` writes `NEEDS-REVIEW`, `status.json` with Flagged entry, optional `verify-output.txt`.\\n\\nTests:\\n1. **`CanCreateFixTask_False_WhenNoFailedRun`** \u2014 task without NEEDS-REVIEW \u2192 CanExecute false\\n2. **`CanCreateFixTask_True_WhenSelectedTaskHasFailedRun`** \u2014 add NEEDS-REVIEW + status.json Flagged \u2192 CanExecute true\\n3. **`CanCreateFixTask_False_WhenIsBusy`** \u2014 failed run present but IsBusy=true \u2192 CanExecute false\\n4. **`Click_AuthorsAndWritesNewTask`** \u2014 fake runner returns markdown; execute command; assert `llm-tasks/<slug>/<slug>.md` written with correct content; assert task appears in Tasks\\n5. **`Click_SlugCollision_Disambiguates`** \u2014 pre-create `llm-tasks/<slug>/` directory; execute; assert written under `<slug>-2`\\n6. **`Click_CompletionModal_ViewTask_SelectsNewTask`** \u2014 capture ConfirmAsync calls; assert title=\\\"Fix task created\\\", confirmLabel=\\\"View task\\\"; return true \u2192 assert SelectedTask.Id == new slug\\n7. **`Click_SubagentError_WritesNothing_SurfacesMessage`** \u2014 fake runner returns failure; assert no file written under llm-tasks; assert StatusText contains error\\n8. **`Click_Headless_AutoResolvesConfirmAsync`** \u2014 ShowConfirmationAsync=null; assert flow completes without exception\\n\\n## File-size validation\\n\\n| File | Est. lines |\\n|------|-----------|\\n| `FailedRunContext.cs` | ~80 |\\n| `FixTaskAuthorRunner.cs` | ~130 |\\n| `MainWindowViewModel.FixTask.cs` | ~200 |\\n| `TaskDetailPanel.axaml` edit | +15 lines (within existing 281) |\\n| `MainWindowViewModel.cs` edit | +3 attributes |\\n| `MainWindowViewModelFixTaskTests.cs` | ~280 |\\n\\nAll \u2264 300 \u2705\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Tasks/FailedRunContext.cs\",\n    \"+src/VisualRelay.Core/Execution/FixTaskAuthorRunner.cs\",\n    \"+src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"+tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.Execution.cs\",\n    \"tests/VisualRelay.Tests/FixTaskFakeRunners.cs\"\n  ],\n  \"rationale\": \"Three new test files totaling 494 lines (all \u2264 300 individually). The tests cover all behaviors specified in the plan: CanExecute gating (no failed run, has failed run, IsBusy blocks, in-flight blocks), happy-path authoring and disk write, slug collision disambiguation (-2 suffix), both completion-modal confirmations with correct labels, 'View task' selection vs dismiss, subagent error writes nothing + surfaces message + re-enables button, headless auto-resolve, and busy-state transitions during execution. Two fake ISubagentRunner implementations (FixTaskFakeRunner, GatedFixTaskRunner) mirror the existing RewriteFakeRunners pattern. The test file uses partial class splitting (matching existing MainWindowViewModelTests split pattern) to stay under the 300-line constraint. All 30 compilation errors are CS1061 for the planned API members (CanCreateFixTaskPublic, IsCreatingFixTask, FixTaskRunnerFactory, CreateFixTaskCommand, CreateFixTaskButtonLabel) \u2014 the expected 'fail before implementation' state.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 71,
+    "tool_calls_total": 95,
+    "tool_calls_succeeded": 95,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 37,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 22,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 11,
+        "failed": 0
+      }
+    },
+    "compactions": 2,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 71,
+    "total_llm_time_s": 570.186,
+    "prompt_cache": {
+      "cached_tokens": 3956096,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 42.223,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 6,
+      "completed": 6,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.938,
+      "prompt_tokens_est": 11061,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Survey existing Rewrite tests and patterns",
+          "Read ViewModel properties, confirmation, and task creation paths",
+          "Read TaskDetailPanel.axaml for the failure banner",
+          "Read existing test infrastructure (TestRepository, NewViewModel helpers)",
+          "Write MainWindowViewModelFixTaskTests.cs",
+          "Verify tests compile and fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 526
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.961,
+      "prompt_tokens_est": 11370,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 141
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.36,
+      "prompt_tokens_est": 11517,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.027,
+      "result_length": 5820
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1948
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 5564
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.978,
+      "prompt_tokens_est": 15232,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11797
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/TaskRewriteRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10469
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Confirmation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2691
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11136
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.766,
+      "prompt_tokens_est": 23977,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Survey existing Rewrite tests and patterns"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 526
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.271,
+      "prompt_tokens_est": 24208,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2346
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15640
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12082
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.938,
+      "prompt_tokens_est": 30819,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13782
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.546,
+      "prompt_tokens_est": 34146,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15045
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/RelayTaskWriter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13161
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 5.607,
+      "prompt_tokens_est": 40875,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11342
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/HeadlessTestApp.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1868
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "interface ISubagentRunner",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.039,
+      "result_length": 104
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.141,
+      "prompt_tokens_est": 44230,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/Interfaces.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 607
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class StageStatusRecord",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.035,
+      "result_length": 102
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class StageInvocation",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.025,
+      "result_length": 17
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.109,
+      "prompt_tokens_est": 44500,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "StageInvocation",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 105
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageStatus.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2467
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.853,
+      "prompt_tokens_est": 45268,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageInvocation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1916
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "record SubagentResult|class SubagentResult",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.047,
+      "result_length": 103
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/RelayTaskRepository.cs",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2566
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.412,
+      "prompt_tokens_est": 46525,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/SubagentResult.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 576
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayTaskItem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1371
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 4.171,
+      "prompt_tokens_est": 47102,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TaskRewriteRunnerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12759
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "LastSelectionLoad",
+        "path": "src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 371
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 5.356,
+      "prompt_tokens_est": 50389,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RewriteFakeRunner",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.057,
+      "result_length": 130
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "offset": 130,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3905
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 3.646,
+      "prompt_tokens_est": 51408,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RewriteFakeRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4731
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 4.494,
+      "prompt_tokens_est": 52595,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "offset": 195,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4422
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 16.656,
+      "prompt_tokens_est": 53812,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "dotnet test.*filter",
+        "path": "tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.053,
+      "result_length": 909
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TargetedTestCommandTests.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1430
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.41,
+      "prompt_tokens_est": 55257,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "dotnet test",
+        "path": ".relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.079,
+      "result_length": 50436
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/config.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1448
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 6.275,
+      "prompt_tokens_est": 71167,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RewriteMutualExclusionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12058
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 7.602,
+      "prompt_tokens_est": 74300,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "public static RelayConfig Defaults",
+        "path": "src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.023,
+      "result_length": 198
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/HeadlessCollectionDefinition.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 567
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 11.114,
+      "prompt_tokens_est": 74800,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "LoadRunHistoryAsync",
+        "path": "src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 491
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.234,
+      "prompt_tokens_est": 75290,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2635
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.965,
+      "prompt_tokens_est": 76018,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ReadStatusRecord",
+        "path": "src/VisualRelay.Core/Tasks"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 172
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 41.123,
+      "prompt_tokens_est": 76112,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read ViewModel properties, confirmation, and task creation paths"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 525
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.32,
+      "prompt_tokens_est": 78885,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read TaskDetailPanel.axaml for the failure banner"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 524
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 3.234,
+      "prompt_tokens_est": 79091,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TaskDetailErrorRefreshTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 7032
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 6.411,
+      "prompt_tokens_est": 80746,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read existing test infrastructure (TestRepository, NewViewModel helpers)"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 523
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 3.647,
+      "prompt_tokens_est": 81136,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "public static.*RelayStages",
+        "path": "src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 103
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 66.59,
+      "prompt_tokens_est": 81248,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "content": "using System.Text.Json;\nusing Avalonia.Threading;\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Configuration;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for the \"Create task to fix\" button \u2014 the command that hands a flagged\n/// run's failures to an LLM and creates a new llm-task in the queue.\n/// </summary>\n[Collection(\"Headless\")]\npublic sealed class MainWindowViewModelFixTaskTests\n{\n    private const string AuthoredMarkdown = \"# Fix flaky tests\\n\\nMake them deterministic.\\n\";\n    private const string AuthoredSummary = \"Fix flaky UI tests in SettingsPanel\";\n    private const string AuthoredSlug = \"fix-flaky-tests\";\n\n    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static MainWindowViewModel NewViewModel(TestRepository repo) =>\n        new(new DictionaryEnvironmentAccessor { [\"XDG_CONFIG_HOME\"] = Path.Combine(repo.Root, \".xdg\") })\n        {\n            RootPath = repo.Root,\n            ShowConfirmationAsync = null,\n        };\n\n    private static TaskRowViewModel Row(MainWindowViewModel vm, string id) =>\n        vm.Tasks.First(t => t.Id == id);\n\n    /// <summary>\n    /// Writes the minimum on-disk state that makes <c>HasSelectedTaskError</c>\n    /// true for <paramref name=\"taskId\"/>: a NEEDS-REVIEW flag file and a\n    /// status.json with a Flagged stage entry.\n    /// </summary>\n    private static async Task WriteFlaggedRelayDataAsync(\n        string root, string taskId, string reason = \"swival timed out\", int stage = 6)\n    {\n        var taskDirectory = Path.Combine(root, \".relay\", taskId);\n        Directory.CreateDirectory(taskDirectory);\n\n        // NEEDS-REVIEW flag file \u2014 read by the RelayTaskRepository to set NeedsReview.\n        await File.WriteAllTextAsync(\n            Path.Combine(taskDirectory, \"NEEDS-REVIEW\"),\n            $\"{reason}\\nstage {stage}\\n\");\n\n        // status.json with a Flagged stage \u2014 read by LoadRunHistoryAsync to set SelectedTaskError.\n        var entries = new[]\n        {\n            new StageStatusEntry(stage, $\"Stage {stage}\", \"Flagged\", Error: reason),\n        };\n        await StageStatusRecord.WriteAsync(taskDirectory, entries);\n    }\n\n    /// <summary>\n    /// Returns the nested task markdown path for a slug, as written by\n    /// <see cref=\"RelayTaskWriter.CreateAsync\"/>.\n    /// </summary>\n    private static string NestedMarkdownPath(string root, string slug) =>\n        Path.Combine(root, \"llm-tasks\", slug, $\"{slug}.md\");\n\n    // \u2500\u2500 CanExecute gating \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenNoFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"clean\", \"# Clean\\n\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"clean\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.False(vm.HasSelectedTaskError,\n            \"pre-condition: task without flagged data has no error\");\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled when the selected task has no failed run\");\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_True_WhenSelectedTaskHasFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.HasSelectedTaskError,\n            \"pre-condition: task with flagged status.json must show an error\");\n        Assert.True(vm.CanCreateFixTaskPublic,\n            \"button must be enabled when the selected task has a failed run and nothing blocks it\");\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenIsBusy()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.HasSelectedTaskError);\n\n        vm.IsBusy = true;\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled when the VM is busy (e.g. a drain is running)\");\n        vm.IsBusy = false;\n        Assert.True(vm.CanCreateFixTaskPublic,\n            \"button must re-enable when busy clears\");\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenAlreadyCreatingFixTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        // Simulate the in-flight creation state.\n        vm.IsCreatingFixTask = true;\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled while a fix task is already being created\");\n        vm.IsCreatingFixTask = false;\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    // \u2500\u2500 Happy path: authors markdown and writes a new task \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_AuthorsAndWritesNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        // Execute the command.\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // The fake runner must have been invoked.\n        Assert.True(fake.WasCalled, \"the subagent runner must be invoked\");\n\n        // The new task must be written to disk.\n        var expectedPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.True(File.Exists(expectedPath),\n            $\"fix task markdown must be written to {expectedPath}\");\n        Assert.Equal(AuthoredMarkdown, await File.ReadAllTextAsync(expectedPath));\n\n        // The new task must appear in the queue.\n        Assert.Contains(vm.Tasks, t => t.Id == AuthoredSlug);\n    }\n\n    // \u2500\u2500 Slug collision disambiguation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SlugCollision_Disambiguates()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        // Pre-create a task with the same slug the fake runner will suggest.\n        repo.WriteNestedTask(AuthoredSlug, \"# Existing\\n\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // The colliding slug must NOT be used.\n        var collidingPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.Equal(\"# Existing\\n\", await File.ReadAllTextAsync(collidingPath),\n            \"the pre-existing task must be untouched\");\n\n        // A disambiguated slug must have been written (e.g. fix-flaky-tests-2).\n        var disambiguatedPath = NestedMarkdownPath(repo.Root, $\"{AuthoredSlug}-2\");\n        Assert.True(File.Exists(disambiguatedPath),\n            $\"disambiguated slug must be written; expected {disambiguatedPath}\");\n\n        // The new task must appear in the queue under the disambiguated id.\n        Assert.Contains(vm.Tasks, t => t.Id == $\"{AuthoredSlug}-2\");\n    }\n\n    // \u2500\u2500 Completion modal: \"View task\" selects the new task \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_CompletionModal_InvokedWithCorrectLabels()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var confirmCalls = new List<(string Title, string Message, string ConfirmLabel)>();\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        // Capture both confirmation calls and auto-confirm both.\n        vm.ShowConfirmationAsync = (title, message, confirmLabel) =>\n        {\n            confirmCalls.Add((title, message, confirmLabel));\n            return Task.FromResult(true);\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // First confirmation: \"Create task to fix\" / \"Create\"\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Create task to fix\" && c.ConfirmLabel == \"Create\");\n\n        // Second confirmation: \"Fix task created\" / \"View task\"\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Fix task created\" && c.ConfirmLabel == \"View task\");\n\n        // The completion message must name the new task and the summary.\n        var completionCall = confirmCalls.First(c => c.Title == \"Fix task created\");\n        Assert.Contains(AuthoredSlug, completionCall.Message, StringComparison.Ordinal);\n        Assert.Contains(AuthoredSummary, completionCall.Message, StringComparison.Ordinal);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_ViewTask_SelectsNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        // Auto-confirm both; the \"View task\" returns true.\n        vm.ShowConfirmationAsync = (_, _, _) => Task.FromResult(true);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // After completion with \"View task\" (true), the new task must be selected.\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(AuthoredSlug, vm.SelectedTask.Id);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_DismissCompletionModal_KeepsLastSelection()\n    {\n        // When the user dismisses the completion modal (ConfirmAsync returns false),\n        // the new task must still be in the queue but the original task stays selected.\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        // First confirm (Create) \u2192 true. Second (View task) \u2192 false (dismiss).\n        var callCount = 0;\n        vm.ShowConfirmationAsync = (_, _, _) =>\n        {\n            callCount++;\n            return Task.FromResult(callCount == 1); // only the first returns true\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // The new task must exist in the queue.\n        Assert.Contains(vm.Tasks, t => t.Id == AuthoredSlug);\n\n        // The selection must still be the originally-selected (flagged) task.\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(\"flagged\", vm.SelectedTask.Id);\n    }\n\n    // \u2500\u2500 Error path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SubagentError_WritesNothingToDisk()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { ThrowOnRun = true };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // No task file must have been written under llm-tasks.\n        var tasksDir = Path.Combine(repo.Root, \"llm-tasks\");\n        var entries = Directory.Exists(tasksDir)\n            ? Directory.GetFileSystemEntries(tasksDir)\n            : [];\n        // The only entry should be the pre-existing \"flagged\" task.\n        Assert.Single(entries);\n        Assert.Contains(\"flagged\", Path.GetFileName(entries[0]), StringComparison.Ordinal);\n\n        // The error must be surfaced in StatusText.\n        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n\n        // The button must be re-enabled for retry.\n        Assert.False(vm.IsCreatingFixTask);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_SubagentError_SurfacesMessageAndReEnablesButton()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { ThrowOnRun = true };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n        Assert.False(vm.IsCreatingFixTask, \"button must leave the creating state on error\");\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n\n    // \u2500\u2500 Headless: ConfirmAsync auto-resolves \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_Headless_AutoResolvesConfirmAsync()\n    {\n        // With ShowConfirmationAsync == null (headless), ConfirmAsync returns\n        // true automatically, so the full flow completes without hanging.\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo); // ShowConfirmationAsync = null\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        // Must not throw or hang \u2014 headless auto-resolves both confirmations.\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(File.Exists(NestedMarkdownPath(repo.Root, AuthoredSlug)));\n        Assert.False(vm.IsCreatingFixTask);\n    }\n\n    // \u2500\u2500 Busy state during creation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SetsIsCreatingFixTask_DuringExecution()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        // Use a gate so the runner parks \u2014 we can observe the in-flight state.\n        var gate = new TaskCompletionSource();\n        var fake = new GatedFixTaskRunner(AuthoredMarkdown, AuthoredSummary, AuthoredSlug, gate.Task);\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        // Start the fix-task creation; it parks inside the runner.\n        vm.CreateFixTaskCommand.Execute(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(vm.IsCreatingFixTask, \"IsCreatingFixTask must be true while the runner is working\");\n        Assert.Equal(\"Creating fix task\u2026\", vm.CreateFixTaskButtonLabel);\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled while a fix task is being created\");\n\n        // Release the runner and let completion land.\n        gate.SetResult();\n        // Pump the dispatcher to let the UI-thread continuation run.\n        Dispatcher.UIThread.RunJobs();\n        // Pump a few more times for async continuations.\n        for (var i = 0; i < 10; i++)\n        {\n            Dispatcher.UIThread.RunJobs();\n            await Task.Delay(10);\n        }\n\n        Assert.False(vm.IsCreatingFixTask, \"IsCreatingFixTask must be false after completion\");\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n}\n\n// \u2500\u2500 Fake runners \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n/// <summary>\n/// A fake <see cref=\"ISubagentRunner\"/> for the fix-task-author path.\n/// Returns a JSON payload with markdown, summary, and slug so the\n/// <c>FixTaskAuthorRunner</c> can parse it.\n/// </summary>\ninternal sealed class FixTaskFakeRunner : ISubagentRunner\n{\n    public string Markdown { get; init; } = \"# Fix\\n\\nMake it work.\\n\";\n    public string Summary { get; init; } = \"Fix the issue\";\n    public string Slug { get; init; } = \"fix-issue\";\n    public bool ThrowOnRun { get; init; }\n    public bool WasCalled { get; private set; }\n\n    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)\n    {\n        WasCalled = true;\n\n        if (ThrowOnRun)\n            throw new InvalidOperationException(\"synthetic fix-task-author failure\");\n\n        ct.ThrowIfCancellationRequested();\n\n        var payload = new Dictionary<string, string>\n        {\n            [\"markdown\"] = Markdown,\n            [\"summary\"] = Summary,\n            [\"slug\"] = Slug,\n        };\n        var json = JsonSerializer.Serialize(payload);\n\n        return Task.FromResult(new SubagentResult(\n            RawText: $\"```json\\n{json}\\n```\",\n            Json: json,\n            IsValid: true,\n            Error: null));\n    }\n}\n\n/// <summary>\n/// Parks inside <see cref=\"RunAsync\"/> until an external gate completes, then\n/// returns the authored payload \u2014 letting a view-model test observe the\n/// in-flight <c>IsCreatingFixTask</c> state deterministically.\n/// </summary>\ninternal sealed class GatedFixTaskRunner : ISubagentRunner\n{\n    private readonly string _markdown;\n    private readonly string _summary;\n    private readonly string _slug;\n    private readonly Task _gate;\n\n    public GatedFixTaskRunner(string markdown, string summary, string slug, Task gate)\n    {\n        _markdown = markdown;\n        _summary = summary;\n        _slug = slug;\n        _gate = gate;\n    }\n\n    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)\n    {\n        await _gate.WaitAsync(ct);\n\n        var payload = new Dictionary<string, string>\n        {\n            [\"markdown\"] = _markdown,\n            [\"summary\"] = _summary,\n            [\"slug\"] = _slug,\n        };\n        var json = JsonSerializer.Serialize(payload);\n\n        return new SubagentResult(\n            RawText: $\"```json\\n{json}\\n```\",\n            Json: json,\n            IsValid: true,\n            Error: null);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 99
+    },
+    {
+      "turn": 31,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 87633,
+      "tokens_after": 26728
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 5.428,
+      "prompt_tokens_est": 26728,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~MainWindowViewModelFixTaskTests\" 2>&1 | tail -60",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 16.121,
+      "result_length": 2150
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 3.135,
+      "prompt_tokens_est": 27546,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_9e6aefbc900a.txt",
+        "offset": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 17848
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 26.188,
+      "prompt_tokens_est": 31810,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "offset": 180,
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 737
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "offset": 230,
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 726
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 16.266,
+      "prompt_tokens_est": 33767,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "xunit",
+        "path": "tests/VisualRelay.Tests",
+        "include": "*.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.023,
+      "result_length": 316
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 13.579,
+      "prompt_tokens_est": 34789,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Assert\\.(True|False|Equal|Null|NotNull|Contains)\\(.*,\"",
+        "path": "tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.045,
+      "result_length": 17
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 4.229,
+      "prompt_tokens_est": 35529,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Assert\\.Contains\\(.*,.*=>\"",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.051,
+      "result_length": 17
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Assert\\.Contains\\(.*Tasks",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.033,
+      "result_length": 3471
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 5.04,
+      "prompt_tokens_est": 36574,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 24508
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 6.904,
+      "prompt_tokens_est": 42814,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Assert\\.Contains.*StringComparison",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.05,
+      "result_length": 10624
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 4.411,
+      "prompt_tokens_est": 45289,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Assert\\.(True|False|Equal|Null|NotNull)\\(.*,\\s*\"",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 11077
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 16.59,
+      "prompt_tokens_est": 48264,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "old_string": "        Assert.False(vm.HasSelectedTaskError,\n            \"pre-condition: task without flagged data has no error\");\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled when the selected task has no failed run\");",
+        "new_string": "        Assert.False(vm.HasSelectedTaskError);\n        Assert.False(vm.CanCreateFixTaskPublic);"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 85
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 4.265,
+      "prompt_tokens_est": 49233,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "old_string": "        Assert.True(vm.HasSelectedTaskError,\n            \"pre-condition: task with flagged status.json must show an error\");\n        Assert.True(vm.CanCreateFixTaskPublic,\n            \"button must be enabled when the selected task has a failed run and nothing blocks it\");",
+        "new_string": "        Assert.True(vm.HasSelectedTaskError);\n        Assert.True(vm.CanCreateFixTaskPublic);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 4.658,
+      "prompt_tokens_est": 49386,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        vm.IsBusy = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsBusy = false;\n        Assert.True(vm.CanCreateFixTaskPublic);",
+        "old_string": "        vm.IsBusy = true;\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled when the VM is busy (e.g. a drain is running)\");\n        vm.IsBusy = false;\n        Assert.True(vm.CanCreateFixTaskPublic,\n            \"button must re-enable when busy clears\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 85
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 3.588,
+      "prompt_tokens_est": 49568,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        // Simulate the in-flight creation state.\n        vm.IsCreatingFixTask = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsCreatingFixTask = false;\n        Assert.True(vm.CanCreateFixTaskPublic);",
+        "old_string": "        // Simulate the in-flight creation state.\n        vm.IsCreatingFixTask = true;\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled while a fix task is already being created\");\n        vm.IsCreatingFixTask = false;\n        Assert.True(vm.CanCreateFixTaskPublic);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 2.939,
+      "prompt_tokens_est": 49802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        // The fake runner must have been invoked.\n        Assert.True(fake.WasCalled);",
+        "old_string": "        // The fake runner must have been invoked.\n        Assert.True(fake.WasCalled, \"the subagent runner must be invoked\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 5.095,
+      "prompt_tokens_est": 49920,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        // The colliding slug must NOT be used.\n        var collidingPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.Equal(\"# Existing\\n\", await File.ReadAllTextAsync(collidingPath));\n\n        // A disambiguated slug must have been written (e.g. fix-flaky-tests-2).\n        var disambiguatedPath = NestedMarkdownPath(repo.Root, $\"{AuthoredSlug}-2\");\n        Assert.True(File.Exists(disambiguatedPath));",
+        "old_string": "        // The colliding slug must NOT be used.\n        var collidingPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.Equal(\"# Existing\\n\", await File.ReadAllTextAsync(collidingPath),\n            \"the pre-existing task must be untouched\");\n\n        // A disambiguated slug must have been written (e.g. fix-flaky-tests-2).\n        var disambiguatedPath = NestedMarkdownPath(repo.Root, $\"{AuthoredSlug}-2\");\n        Assert.True(File.Exists(disambiguatedPath),\n            $\"disambiguated slug must be written; expected {disambiguatedPath}\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 4.889,
+      "prompt_tokens_est": 50254,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);",
+        "old_string": "        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n        Assert.False(vm.IsCreatingFixTask, \"button must leave the creating state on error\");\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 85
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 3.973,
+      "prompt_tokens_est": 50488,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        Assert.True(vm.IsCreatingFixTask);\n        Assert.Equal(\"Creating fix task\u2026\", vm.CreateFixTaskButtonLabel);\n        Assert.False(vm.CanCreateFixTaskPublic);",
+        "old_string": "        Assert.True(vm.IsCreatingFixTask, \"IsCreatingFixTask must be true while the runner is working\");\n        Assert.Equal(\"Creating fix task\u2026\", vm.CreateFixTaskButtonLabel);\n        Assert.False(vm.CanCreateFixTaskPublic,\n            \"button must be disabled while a fix task is being created\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 3.743,
+      "prompt_tokens_est": 50666,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n}",
+        "old_string": "        Assert.False(vm.IsCreatingFixTask, \"IsCreatingFixTask must be false after completion\");\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 85
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 4.591,
+      "prompt_tokens_est": 50812,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 176,
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 716
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 4.171,
+      "prompt_tokens_est": 51138,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "new_string": "        Assert.True(File.Exists(expectedPath));",
+        "old_string": "        Assert.True(File.Exists(expectedPath),\n            $\"fix task markdown must be written to {expectedPath}\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 3.768,
+      "prompt_tokens_est": 51288,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~MainWindowViewModelFixTaskTests\" 2>&1 | tail -30",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.36,
+      "result_length": 2170
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 2.66,
+      "prompt_tokens_est": 51904,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_5409edfcf057.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 14350
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 11.538,
+      "prompt_tokens_est": 55348,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayConfig",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.122,
+      "result_length": 360
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 3.287,
+      "prompt_tokens_est": 56030,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "record RelayConfig",
+        "path": "src"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 196
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 5.318,
+      "prompt_tokens_est": 56133,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Write MainWindowViewModelFixTaskTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 522
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 3.045,
+      "prompt_tokens_est": 56467,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 23426
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 16.964,
+      "prompt_tokens_est": 62359,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/FixTaskFakeRunners.cs",
+        "content": "using System.Text.Json;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// A fake <see cref=\"ISubagentRunner\"/> for the fix-task-author path.\n/// Returns a JSON payload with markdown, summary, and slug so the\n/// <c>FixTaskAuthorRunner</c> can parse it.\n/// </summary>\ninternal sealed class FixTaskFakeRunner : ISubagentRunner\n{\n    public string Markdown { get; init; } = \"# Fix\\n\\nMake it work.\\n\";\n    public string Summary { get; init; } = \"Fix the issue\";\n    public string Slug { get; init; } = \"fix-issue\";\n    public bool ThrowOnRun { get; init; }\n    public bool WasCalled { get; private set; }\n\n    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)\n    {\n        WasCalled = true;\n\n        if (ThrowOnRun)\n            throw new InvalidOperationException(\"synthetic fix-task-author failure\");\n\n        ct.ThrowIfCancellationRequested();\n\n        var payload = new Dictionary<string, string>\n        {\n            [\"markdown\"] = Markdown,\n            [\"summary\"] = Summary,\n            [\"slug\"] = Slug,\n        };\n        var json = JsonSerializer.Serialize(payload);\n\n        return Task.FromResult(new SubagentResult(\n            RawText: $\"```json\\n{json}\\n```\",\n            Json: json,\n            IsValid: true,\n            Error: null));\n    }\n}\n\n/// <summary>\n/// Parks inside <see cref=\"RunAsync\"/> until an external gate completes, then\n/// returns the authored payload \u2014 letting a view-model test observe the\n/// in-flight <c>IsCreatingFixTask</c> state deterministically.\n/// </summary>\ninternal sealed class GatedFixTaskRunner : ISubagentRunner\n{\n    private readonly string _markdown;\n    private readonly string _summary;\n    private readonly string _slug;\n    private readonly Task _gate;\n\n    public GatedFixTaskRunner(string markdown, string summary, string slug, Task gate)\n    {\n        _markdown = markdown;\n        _summary = summary;\n        _slug = slug;\n        _gate = gate;\n    }\n\n    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)\n    {\n        await _gate.WaitAsync(ct);\n\n        var payload = new Dictionary<string, string>\n        {\n            [\"markdown\"] = _markdown,\n            [\"summary\"] = _summary,\n            [\"slug\"] = _slug,\n        };\n        var json = JsonSerializer.Serialize(payload);\n\n        return new SubagentResult(\n            RawText: $\"```json\\n{json}\\n```\",\n            Json: json,\n            IsValid: true,\n            Error: null);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 85
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 34.6,
+      "prompt_tokens_est": 63741,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "content": "using Avalonia.Threading;\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for the \"Create task to fix\" button \u2014 the command that hands a flagged\n/// run's failures to an LLM and creates a new llm-task in the queue.\n/// </summary>\n[Collection(\"Headless\")]\npublic sealed class MainWindowViewModelFixTaskTests\n{\n    private const string AuthoredMarkdown = \"# Fix flaky tests\\n\\nMake them deterministic.\\n\";\n    private const string AuthoredSummary = \"Fix flaky UI tests in SettingsPanel\";\n    private const string AuthoredSlug = \"fix-flaky-tests\";\n\n    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static MainWindowViewModel NewViewModel(TestRepository repo) =>\n        new(new DictionaryEnvironmentAccessor { [\"XDG_CONFIG_HOME\"] = Path.Combine(repo.Root, \".xdg\") })\n        {\n            RootPath = repo.Root,\n            ShowConfirmationAsync = null,\n        };\n\n    private static TaskRowViewModel Row(MainWindowViewModel vm, string id) =>\n        vm.Tasks.First(t => t.Id == id);\n\n    /// <summary>\n    /// Writes the minimum on-disk state that makes <c>HasSelectedTaskError</c>\n    /// true for <paramref name=\"taskId\"/>: a NEEDS-REVIEW flag file and a\n    /// status.json with a Flagged stage entry.\n    /// </summary>\n    private static async Task WriteFlaggedRelayDataAsync(\n        string root, string taskId, string reason = \"swival timed out\", int stage = 6)\n    {\n        var taskDirectory = Path.Combine(root, \".relay\", taskId);\n        Directory.CreateDirectory(taskDirectory);\n\n        await File.WriteAllTextAsync(\n            Path.Combine(taskDirectory, \"NEEDS-REVIEW\"),\n            $\"{reason}\\nstage {stage}\\n\");\n\n        var entries = new[]\n        {\n            new StageStatusEntry(stage, $\"Stage {stage}\", \"Flagged\", Error: reason),\n        };\n        await StageStatusRecord.WriteAsync(taskDirectory, entries);\n    }\n\n    private static string NestedMarkdownPath(string root, string slug) =>\n        Path.Combine(root, \"llm-tasks\", slug, $\"{slug}.md\");\n\n    // \u2500\u2500 CanExecute gating \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenNoFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"clean\", \"# Clean\\n\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"clean\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.False(vm.HasSelectedTaskError);\n        Assert.False(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_True_WhenSelectedTaskHasFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.HasSelectedTaskError);\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenIsBusy()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        vm.IsBusy = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsBusy = false;\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenAlreadyCreatingFixTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        vm.IsCreatingFixTask = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsCreatingFixTask = false;\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    // \u2500\u2500 Happy path: authors markdown and writes a new task \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_AuthorsAndWritesNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(fake.WasCalled);\n\n        var expectedPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.True(File.Exists(expectedPath));\n        Assert.Equal(AuthoredMarkdown, await File.ReadAllTextAsync(expectedPath));\n        Assert.Contains(vm.Tasks, t => t.Id == AuthoredSlug);\n    }\n\n    // \u2500\u2500 Slug collision disambiguation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SlugCollision_Disambiguates()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n        repo.WriteNestedTask(AuthoredSlug, \"# Existing\\n\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // Pre-existing task must be untouched.\n        Assert.Equal(\"# Existing\\n\",\n            await File.ReadAllTextAsync(NestedMarkdownPath(repo.Root, AuthoredSlug)));\n\n        // Disambiguated slug must be written and appear in the queue.\n        Assert.True(File.Exists(NestedMarkdownPath(repo.Root, $\"{AuthoredSlug}-2\")));\n        Assert.Contains(vm.Tasks, t => t.Id == $\"{AuthoredSlug}-2\");\n    }\n\n    // \u2500\u2500 Completion modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_CompletionModal_InvokedWithCorrectLabels()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var confirmCalls = new List<(string Title, string Message, string ConfirmLabel)>();\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        vm.ShowConfirmationAsync = (title, message, confirmLabel) =>\n        {\n            confirmCalls.Add((title, message, confirmLabel));\n            return Task.FromResult(true);\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Create task to fix\" && c.ConfirmLabel == \"Create\");\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Fix task created\" && c.ConfirmLabel == \"View task\");\n\n        var completionCall = confirmCalls.First(c => c.Title == \"Fix task created\");\n        Assert.Contains(AuthoredSlug, completionCall.Message, StringComparison.Ordinal);\n        Assert.Contains(AuthoredSummary, completionCall.Message, StringComparison.Ordinal);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_ViewTask_SelectsNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        vm.ShowConfirmationAsync = (_, _, _) => Task.FromResult(true);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(AuthoredSlug, vm.SelectedTask.Id);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_DismissCompletionModal_KeepsOldSelection()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        // First confirm returns true, second returns false (dismiss).\n        var callCount = 0;\n        vm.ShowConfirmationAsync = (_, _, _) =>\n        {\n            callCount++;\n            return Task.FromResult(callCount == 1);\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.Contains(vm.Tasks, t => t.Id == AuthoredSlug);\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(\"flagged\", vm.SelectedTask.Id);\n    }\n\n    // \u2500\u2500 Error path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SubagentError_WritesNothingAndSurfacesMessage()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { ThrowOnRun = true };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // No new task files written \u2014 only the pre-existing \"flagged\" task.\n        var tasksDir = Path.Combine(repo.Root, \"llm-tasks\");\n        var entries = Directory.Exists(tasksDir)\n            ? Directory.GetFileSystemEntries(tasksDir)\n            : [];\n        Assert.Single(entries);\n        Assert.Contains(\"flagged\", Path.GetFileName(entries[0]), StringComparison.Ordinal);\n\n        // Error surfaced and button re-enabled.\n        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n\n    // \u2500\u2500 Headless: ConfirmAsync auto-resolves \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_Headless_AutoResolvesConfirmAsync()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo); // ShowConfirmationAsync = null\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(File.Exists(NestedMarkdownPath(repo.Root, AuthoredSlug)));\n        Assert.False(vm.IsCreatingFixTask);\n    }\n\n    // \u2500\u2500 Busy state during creation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SetsIsCreatingFixTask_DuringExecution()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var gate = new TaskCompletionSource();\n        var fake = new GatedFixTaskRunner(AuthoredMarkdown, AuthoredSummary, AuthoredSlug, gate.Task);\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        // Start creation; runner parks on the gate.\n        vm.CreateFixTaskCommand.Execute(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(vm.IsCreatingFixTask);\n        Assert.Equal(\"Creating fix task\u2026\", vm.CreateFixTaskButtonLabel);\n        Assert.False(vm.CanCreateFixTaskPublic);\n\n        // Release and pump.\n        gate.SetResult();\n        Dispatcher.UIThread.RunJobs();\n        for (var i = 0; i < 10; i++)\n        {\n            Dispatcher.UIThread.RunJobs();\n            await Task.Delay(10);\n        }\n\n        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 99
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 3.423,
+      "prompt_tokens_est": 67815,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs tests/VisualRelay.Tests/FixTaskFakeRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.093,
+      "result_length": 129
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 8.485,
+      "prompt_tokens_est": 67944,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class MainWindowViewModel",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.137,
+      "result_length": 14327
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 20.627,
+      "prompt_tokens_est": 72136,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs",
+        "content": "using Avalonia.Threading;\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for the \"Create task to fix\" button \u2014 CanExecute gating and the\n/// happy path (author markdown + write new task + slug disambiguation).\n/// </summary>\n[Collection(\"Headless\")]\npublic sealed partial class MainWindowViewModelFixTaskTests\n{\n    private const string AuthoredMarkdown = \"# Fix flaky tests\\n\\nMake them deterministic.\\n\";\n    private const string AuthoredSummary = \"Fix flaky UI tests in SettingsPanel\";\n    private const string AuthoredSlug = \"fix-flaky-tests\";\n\n    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static MainWindowViewModel NewViewModel(TestRepository repo) =>\n        new(new DictionaryEnvironmentAccessor { [\"XDG_CONFIG_HOME\"] = Path.Combine(repo.Root, \".xdg\") })\n        {\n            RootPath = repo.Root,\n            ShowConfirmationAsync = null,\n        };\n\n    private static TaskRowViewModel Row(MainWindowViewModel vm, string id) =>\n        vm.Tasks.First(t => t.Id == id);\n\n    /// <summary>\n    /// Writes the minimum on-disk state that makes <c>HasSelectedTaskError</c>\n    /// true for <paramref name=\"taskId\"/>: a NEEDS-REVIEW flag file and a\n    /// status.json with a Flagged stage entry.\n    /// </summary>\n    private static async Task WriteFlaggedRelayDataAsync(\n        string root, string taskId, string reason = \"swival timed out\", int stage = 6)\n    {\n        var taskDirectory = Path.Combine(root, \".relay\", taskId);\n        Directory.CreateDirectory(taskDirectory);\n\n        await File.WriteAllTextAsync(\n            Path.Combine(taskDirectory, \"NEEDS-REVIEW\"),\n            $\"{reason}\\nstage {stage}\\n\");\n\n        var entries = new[]\n        {\n            new StageStatusEntry(stage, $\"Stage {stage}\", \"Flagged\", Error: reason),\n        };\n        await StageStatusRecord.WriteAsync(taskDirectory, entries);\n    }\n\n    private static string NestedMarkdownPath(string root, string slug) =>\n        Path.Combine(root, \"llm-tasks\", slug, $\"{slug}.md\");\n\n    // \u2500\u2500 CanExecute gating \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenNoFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"clean\", \"# Clean\\n\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"clean\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.False(vm.HasSelectedTaskError);\n        Assert.False(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_True_WhenSelectedTaskHasFailedRun()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.HasSelectedTaskError);\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenIsBusy()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        vm.IsBusy = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsBusy = false;\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    [AvaloniaFact]\n    public async Task CanCreateFixTask_False_WhenAlreadyCreatingFixTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var vm = NewViewModel(repo);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        vm.IsCreatingFixTask = true;\n        Assert.False(vm.CanCreateFixTaskPublic);\n        vm.IsCreatingFixTask = false;\n        Assert.True(vm.CanCreateFixTaskPublic);\n    }\n\n    // \u2500\u2500 Happy path: authors markdown and writes a new task \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_AuthorsAndWritesNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        Assert.True(vm.CanCreateFixTaskPublic);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(fake.WasCalled);\n\n        var expectedPath = NestedMarkdownPath(repo.Root, AuthoredSlug);\n        Assert.True(File.Exists(expectedPath));\n        Assert.Equal(AuthoredMarkdown, await File.ReadAllTextAsync(expectedPath));\n        Assert.Contains(vm.Tasks, t => t.Id == AuthoredSlug);\n    }\n\n    // \u2500\u2500 Slug collision disambiguation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SlugCollision_Disambiguates()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n        repo.WriteNestedTask(AuthoredSlug, \"# Existing\\n\");\n\n        var fake = new FixTaskFakeRunner\n        {\n            Markdown = AuthoredMarkdown,\n            Summary = AuthoredSummary,\n            Slug = AuthoredSlug,\n        };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // Pre-existing task must be untouched.\n        Assert.Equal(\"# Existing\\n\",\n            await File.ReadAllTextAsync(NestedMarkdownPath(repo.Root, AuthoredSlug)));\n\n        // Disambiguated slug must be written and appear in the queue.\n        Assert.True(File.Exists(NestedMarkdownPath(repo.Root, $\"{AuthoredSlug}-2\")));\n        Assert.Contains(vm.Tasks, t => t.Id == $\"{AuthoredSlug}-2\");\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 98
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 18.427,
+      "prompt_tokens_est": 74356,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.Execution.cs",
+        "content": "using Avalonia.Threading;\nusing VisualRelay.App.ViewModels;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Execution-flow tests for the \"Create task to fix\" command: completion\n/// modal, error path, headless auto-resolve, and busy-state transitions.\n/// </summary>\n[Collection(\"Headless\")]\npublic sealed partial class MainWindowViewModelFixTaskTests\n{\n    private const string Markdown = \"# Fix flaky tests\\n\\nMake them deterministic.\\n\";\n    private const string Summary = \"Fix flaky UI tests in SettingsPanel\";\n    private const string Slug = \"fix-flaky-tests\";\n\n    // \u2500\u2500 Completion modal \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_CompletionModal_InvokedWithCorrectLabels()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { Markdown = Markdown, Summary = Summary, Slug = Slug };\n\n        var confirmCalls = new List<(string Title, string Message, string ConfirmLabel)>();\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        vm.ShowConfirmationAsync = (title, message, confirmLabel) =>\n        {\n            confirmCalls.Add((title, message, confirmLabel));\n            return Task.FromResult(true);\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Create task to fix\" && c.ConfirmLabel == \"Create\");\n        Assert.Contains(confirmCalls, c =>\n            c.Title == \"Fix task created\" && c.ConfirmLabel == \"View task\");\n\n        var completionCall = confirmCalls.First(c => c.Title == \"Fix task created\");\n        Assert.Contains(Slug, completionCall.Message, StringComparison.Ordinal);\n        Assert.Contains(Summary, completionCall.Message, StringComparison.Ordinal);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_ViewTask_SelectsNewTask()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { Markdown = Markdown, Summary = Summary, Slug = Slug };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        vm.ShowConfirmationAsync = (_, _, _) => Task.FromResult(true);\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(Slug, vm.SelectedTask.Id);\n    }\n\n    [AvaloniaFact]\n    public async Task Click_DismissCompletionModal_KeepsOldSelection()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { Markdown = Markdown, Summary = Summary, Slug = Slug };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        // First confirm returns true, second returns false (dismiss).\n        var callCount = 0;\n        vm.ShowConfirmationAsync = (_, _, _) =>\n        {\n            callCount++;\n            return Task.FromResult(callCount == 1);\n        };\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.Contains(vm.Tasks, t => t.Id == Slug);\n        Assert.NotNull(vm.SelectedTask);\n        Assert.Equal(\"flagged\", vm.SelectedTask.Id);\n    }\n\n    // \u2500\u2500 Error path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SubagentError_WritesNothingAndSurfacesMessage()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { ThrowOnRun = true };\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        // No new task files \u2014 only the pre-existing \"flagged\" task.\n        var tasksDir = Path.Combine(repo.Root, \"llm-tasks\");\n        var entries = Directory.Exists(tasksDir)\n            ? Directory.GetFileSystemEntries(tasksDir)\n            : [];\n        Assert.Single(entries);\n        Assert.Contains(\"flagged\", Path.GetFileName(entries[0]), StringComparison.Ordinal);\n\n        // Error surfaced and button re-enabled.\n        Assert.Contains(\"Couldn't create fix task\", vm.StatusText, StringComparison.OrdinalIgnoreCase);\n        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n\n    // \u2500\u2500 Headless: ConfirmAsync auto-resolves \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_Headless_AutoResolvesConfirmAsync()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var fake = new FixTaskFakeRunner { Markdown = Markdown, Summary = Summary, Slug = Slug };\n\n        var vm = NewViewModel(repo); // ShowConfirmationAsync = null\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        await vm.CreateFixTaskCommand.ExecuteAsync(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(File.Exists(NestedMarkdownPath(repo.Root, Slug)));\n        Assert.False(vm.IsCreatingFixTask);\n    }\n\n    // \u2500\u2500 Busy state during creation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [AvaloniaFact]\n    public async Task Click_SetsIsCreatingFixTask_DuringExecution()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"flagged\", \"# Flagged\\n\");\n        await WriteFlaggedRelayDataAsync(repo.Root, \"flagged\");\n\n        var gate = new TaskCompletionSource();\n        var fake = new GatedFixTaskRunner(Markdown, Summary, Slug, gate.Task);\n\n        var vm = NewViewModel(repo);\n        vm.FixTaskRunnerFactory = _ => fake;\n        await vm.LoadInitialAsync();\n        vm.SelectedTask = Row(vm, \"flagged\");\n        await (vm.LastSelectionLoad ?? Task.CompletedTask);\n\n        // Start creation; runner parks on the gate.\n        vm.CreateFixTaskCommand.Execute(null);\n        Dispatcher.UIThread.RunJobs();\n\n        Assert.True(vm.IsCreatingFixTask);\n        Assert.Equal(\"Creating fix task\u2026\", vm.CreateFixTaskButtonLabel);\n        Assert.False(vm.CanCreateFixTaskPublic);\n\n        // Release and pump.\n        gate.SetResult();\n        Dispatcher.UIThread.RunJobs();\n        for (var i = 0; i < 10; i++)\n        {\n            Dispatcher.UIThread.RunJobs();\n            await Task.Delay(10);\n        }\n\n        Assert.False(vm.IsCreatingFixTask);\n        Assert.Equal(\"Create task to fix\", vm.CreateFixTaskButtonLabel);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 108
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 3.515,
+      "prompt_tokens_est": 76502,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.Execution.cs tests/VisualRelay.Tests/FixTaskFakeRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.088,
+      "result_length": 204
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 4.704,
+      "prompt_tokens_est": 76625,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~MainWindowViewModelFixTaskTests\" 2>&1 | tail -20",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 3.395,
+      "result_length": 1430
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 3.749,
+      "prompt_tokens_est": 77236,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.Execution.cs",
+        "old_string": "[Collection(\"Headless\")]\npublic sealed partial class MainWindowViewModelFixTaskTests",
+        "new_string": "public sealed partial class MainWindowViewModelFixTaskTests"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 95
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 3.752,
+      "prompt_tokens_est": 77361,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~MainWindowViewModelFixTaskTests\" 2>&1 | tail -20",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 6.869,
+      "result_length": 9679
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 3.372,
+      "prompt_tokens_est": 79634,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_5409edfcf057.txt",
+        "tail_lines": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2417
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 4.749,
+      "prompt_tokens_est": 80295,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~MainWindowViewModelFixTaskTests\" 2>&1 | grep \"error CS\" | head -30",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.216,
+      "result_length": 2182
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 2.797,
+      "prompt_tokens_est": 80984,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_d06e070f2206.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 14513
+    },
+    {
+      "turn": 70,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 84402,
+      "tokens_after": 51443
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 11.364,
+      "prompt_tokens_est": 51443,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 70,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Verify tests compile and fail"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 521
+    },
+    {
+      "turn": 71,
+      "type": "llm_call",
+      "duration_s": 7.23,
+      "prompt_tokens_est": 51850,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

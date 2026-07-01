@@ -104,6 +104,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(RunSelectedCommand))]
     [NotifyCanExecuteChangedFor(nameof(FollowRunningTaskCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddAttachmentsCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]
     [NotifyPropertyChangedFor(nameof(IsViewingDifferentTaskDuringRun))]
     [NotifyPropertyChangedFor(nameof(ViewingRunContextText))]
     private TaskRowViewModel? _selectedTask;
@@ -146,6 +147,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasSelectedTaskError))]
+    [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]
     private string? _selectedTaskError;
 
     public bool HasSelectedTaskError => !string.IsNullOrEmpty(SelectedTaskError);
@@ -194,6 +196,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(DrainQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(CreateConfigCommand))]
     [NotifyCanExecuteChangedFor(nameof(BootstrapProjectCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 

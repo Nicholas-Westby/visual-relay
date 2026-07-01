@@ -1,0 +1,339 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T08:57:36.800281+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 04-create-task-to-fix-button\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# \"Create Task to Fix\" Button\n\n## Problem / motivation\n\nWhen a run flags for reasons unrelated to the task's own change \u2014 flaky tests, latent ordering bugs, a\nguard tripped by pre-existing state \u2014 the user is left to hand-author a follow-up task to fix the\nunderlying issue. Give them a one-click path instead: a button that hands the **failed run's issues** to\nan LLM and ends with a **new llm-task** in the queue that is designed to fix those issues. This is a\ngeneral coping mechanism for anything that blocks VR from completing work (the flaky verify gate being\nthe motivating example).\n\nThe button **creates** the fix task; it does **not** auto-run it. The user reviews and runs it when ready.\n\n## Where the button goes\n\nIn the **\"LATEST RUN FAILED\"** banner in the task detail pane \u2014\n`src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml`, the block gated by\n`IsVisible=\"{Binding HasSelectedTaskError}\"` that renders the `\"LATEST RUN FAILED\"` label and\n`SelectableTextBlock Text=\"{Binding SelectedTaskError}\"`. Add the button inside/adjacent to that banner\nso it appears exactly when the selected task has a failed/flagged run (`HasSelectedTaskError == true`).\nSuggested label: **\"Create task to fix\"**.\n\n## Precedent to model on: \"Rewrite with AI\"\n\nVR already has an LLM-authors-task-markdown feature \u2014 reuse its shape rather than inventing new infra:\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs` \u2014 a `[RelayCommand]` with a\n  `CanExecute` predicate, a **test-seam factory** (`RewriteRunnerFactory : Func<RelayConfig, ISubagentRunner>`;\n  production builds a real `SwivalSubagentRunner`, tests inject a fake), busy/status handling, and a\n  confirm modal.\n- `TaskRewriteRunner.RunAsync(...)` \u2014 does the subagent call and returns a `RewriteOutcome(success, error)`.\n- The shared modal seam `ConfirmAsync(title, message, confirmLabel)`\n  (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Confirmation.cs`, returns `Task<bool>`) \u2014 a human\n  click opens the modal; headless/API runs auto-resolve, so it is test-friendly.\n- Task creation lives at `CreateNewTaskAsync` (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs`),\n  backed by `RelayTaskRepository`.\n\n## Behavior\n\nAdd a command `CreateFixTaskForSelectedAsync` (new partial, e.g.\n`src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs`), modeled on the Rewrite command.\n\n1. **Gather the failed-run context** from `.relay/<taskId>/` (add a small reader in Core, e.g.\n   `FailedRunContext`):\n   - the flag reason and which stage flagged \u2014 `NEEDS-REVIEW` and `status.json` (the `error` + `check`\n     of the flagged stage);\n   - the **authoritative gate failures** \u2014 the `stage*-attempt*.verify-output.txt` files, especially the\n     last attempt's `[FAIL]` lines / exceptions / summary. Prefer these over any agent self-reported\n     \"passed\" text (the authoritative gate is the source of truth);\n   - the per-stage `ledger.md` summaries (the agent's own diagnoses are useful signal).\n2. **Author the fix task via a subagent** (reuse `SwivalSubagentRunner` through a\n   `FixTaskRunnerFactory : Func<RelayConfig, ISubagentRunner>` test seam, exactly like `RewriteRunnerFactory`;\n   put the actual call in a new `FixTaskAuthorRunner.RunAsync` modeled on `TaskRewriteRunner`). Directive\n   to the model: *\"Here are the failures from a flagged VR run: <context>. Author a new llm-task\n   (markdown) that will make these failures stop recurring \u2014 make flaky / non-deterministic tests\n   deterministic, fix root causes, and address the enabler where possible. Never weaken, skip, or delete\n   tests. Output the task markdown: title, problem, root cause, fix, and constraints.\"* The runner returns\n   the authored markdown, a one-line summary of what it addresses, and a suggested slug.\n3. **Write the new task** by reusing the task-creation path (`CreateNewTaskAsync` / `RelayTaskRepository`):\n   create `llm-tasks/<slug>/<slug>.md` with the authored markdown. Ensure the slug is **unique** (append a\n   disambiguator if it collides with an existing task). Then reload the task list so it appears in the\n   queue. Do not add a numeric prefix \u2014 leave prioritization to the user (they can reorder).\n\n## UX \u2014 be explicit\n\n- **Idle:** the \"Create task to fix\" button sits in the red \"LATEST RUN FAILED\" banner, enabled only when\n  the selected task has a failed run and nothing else is running.\n- **Working:** on click, the button enters a busy state \u2014 label to something like \"Creating fix task\u2026\",\n  disabled to prevent double-submit, with a spinner/`StatusText` update (this is a multi-second subagent\n  call; reuse the busy pattern from Rewrite).\n- **Success:** show a **dismissable completion modal** via `ConfirmAsync` \u2014\n  `title: \"Fix task created\"`, `message:` the new task's name plus the one-line summary of the issues it\n  addresses, `confirmLabel: \"View task\"`. If the user clicks **View task** (`ConfirmAsync` returns\n  `true`), select the newly created task (set `SelectedTask` to it) so it opens in the detail pane /\n  markdown view. If they dismiss (`false`), just close \u2014 the task is already in the queue. The queue now\n  shows the new task.\n- **Error / no data:** if there is no failed-run data the button is not enabled. If the subagent errors or\n  returns nothing usable, write **nothing** and surface a clear message (an error `ConfirmAsync` or a\n  `StatusText`): *\"Couldn't create fix task: <reason>.\"* Re-enable the button so the user can retry. Never\n  crash.\n\n## Constraints & done criteria\n\n- **Wire the command's `CanExecute` correctly.** Add `[NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]`\n  to every observable property that gates it (e.g. `SelectedTask`, `IsBusy`, and whatever drives\n  `HasSelectedTaskError`). A missing `NotifyCanExecuteChangedFor` silently leaves a button disabled even\n  when its predicate would allow it \u2014 make sure every gating property notifies this command.\n- Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines; no weakening/skipping/deleting tests.\n- The generated task must not auto-run; creation is the terminal action.\n- Tests (inject a fake `ISubagentRunner` via the factory seam, like the Rewrite tests):\n  - the button is enabled only when the selected task has a failed run;\n  - clicking authors markdown and writes a new task under `llm-tasks/<slug>/<slug>.md`, and the task\n    appears in the queue;\n  - slug collisions are disambiguated;\n  - the completion modal (`ConfirmAsync`) is invoked, and \"View task\" selects the new task;\n  - the error path (subagent failure) writes nothing and surfaces a message;\n  - headless runs auto-resolve `ConfirmAsync` so the flow completes without a real UI.\n- Manual verification: select the flagged `disable-new-buttons-when-project-isn-t-selected` task, click\n  \"Create task to fix\", confirm a new task is authored from its `.relay` failure logs, the completion\n  modal appears, and \"View task\" opens it.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` \u2014 the button in the failure banner\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs` (new) \u2014 command + flow + `CanExecute` wiring\n- a new Core runner `FixTaskAuthorRunner` + a `FailedRunContext` reader (model on `TaskRewriteRunner`)\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.cs` \u2014 `[NotifyCanExecuteChangedFor]` on gating props\n- tests under `tests/VisualRelay.Tests/`\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "**Option A \u2014 \"Faithful Replica\" (minimum surprise)**  \n\nMirror the Rewrite feature's architecture exactly, cloning every piece and adapting names.\n\n| Component | Location | Notes |\n|---|---|---|\n| Reader | `src/VisualRelay.Core/FailedRunContext.cs` (new) | Reads `.relay/<taskId>/status.json`, `stage*-attempt*.verify-output.txt` (last attempt `[FAIL]` lines), `ledger.md`. Returns a `FailedRunContext` record. |\n| Runner | `src/VisualRelay.App/ViewModels/FixTaskAuthorRunner.cs` (new) | `RunAsync(RelayConfig, FailedRunContext)` \u2192 `(markdown, summary, slug)`. Reuses `SwivalSubagentRunner`; returns a `FixTaskOutcome` record. |\n| Factory/seam | Inline in the same file as the runner, or next to it | `FixTaskRunnerFactory : Func<RelayConfig, ISubagentRunner>` |\n| ViewModel partial | `MainWindowViewModel.FixTask.cs` (new) | `CreateFixTaskForSelectedAsync` command, busy flag, `CanExecute` predicate checking `SelectedTask`, `IsBusy`, `HasSelectedTaskError`. |\n| UI button | `TaskDetailPanel.axaml` | Inside the `IsVisible=\"{Binding HasSelectedTaskError}\"` block, bound to `CreateFixTaskCommand`. |\n| CanExecute wiring | `MainWindowViewModel.cs` | Add `[NotifyCanExecuteChangedFor(nameof(CreateFixTaskCommand))]` on `SelectedTask`, `IsBusy`, `HasSelectedTaskError`. |\n| Tests | `tests/VisualRelay.Tests/.../FixTaskTests.cs` (new) | 6 scenarios (enabled/disabled, happy path, slug collision, error, headless). |\n\n**Trade-offs:** \u2705 Least cognitive overhead \u2014 reviewers already know the Rewrite pattern. \u2705 Each file stays well under 300 lines. \u274c Some duplication with Rewrite (both have a runner, a factory, a partial, a confirm-modal flow). \u274c The factory seam is repeated rather than generalised.\n\n---\n\n**Option B \u2014 \"Consolidated Core Service\"**\n\nExtract all fix-task business logic into a single *service class* (`FixTaskService`) so the ViewModel only handles UI orchestration. The service owns both reading failed-run context and authoring via subagent.\n\n| Component | Location | Notes |\n|---|---|---|\n| Service | `src/VisualRelay.Core/Services/FixTaskService.cs` (new) | Method `AuthorFixTaskAsync(taskId, RelayConfig, ISubagentRunner)` \u2192 `(markdown, summary, slug)`. Internally reads `.relay/` files, calls the subagent, returns outcome. Contains the `FixTaskOutcome` record. |\n| Factory | Same file as service, or a top-level delegate | Same seam pattern, but only one factory needed. |\n| ViewModel partial | `MainWindowViewModel.FixTask.cs` (new) | Injects `FixTaskService`, delegates to it. Command, busy, modal. |\n| UI button | `TaskDetailPanel.axaml` | Same as Option A. |\n| CanExecute wiring | `MainWindowViewModel.cs` | Same as Option A. |\n| Tests | `tests/VisualRelay.Tests/.../FixTaskServiceTests.cs` + `FixTaskViewModelTests.cs` | Service tests need no ViewModel; ViewModel tests inject fake service. |\n\n**Trade-offs:** \u2705 Cleaner separation \u2014 reader + runner are a single cohesive unit. \u2705 Service is testable without WPF/Avalonia baggage. \u2705 Reduces ViewModel partial file size significantly. \u274c Adds an abstraction layer that the precedent (Rewrite) doesn't have \u2014 introduces a minor conceptual delta from the existing pattern. \u274c Two test files instead of one.\n\n---\n\n**Option C \u2014 \"Gateway Property Pattern\" (reduce `[NotifyCanExecuteChangedFor]]` burden)**\n\nSame as Option A but introduces a *gateway computed property* `CanCreateFixTask` that aggregates all conditions, so only *one* `[NotifyCanExecuteChangedFor]` attribute is needed (on that property), and the button binds to it instead of the command's built-in `CanExecute`.\n\n| Component | Location | Notes |\n|---|---|---|\n| Reader | `src/VisualRelay.Core/FailedRunContext.cs` | Same as Option A. |\n| Runner | `src/VisualRelay.App/ViewModels/FixTaskAuthorRunner.cs` | Same as Option A. |\n| ViewModel partial | `MainWindowViewModel.FixTask.cs` | `CreateFixTaskForSelectedAsync` command + `CanCreateFixTask` property + `CreateFixTaskCommand.CanExecute()` calls `CanCreateFixTask`. |\n| Gateway property | Same partial | `CanCreateFixTask => SelectedTask is not null && HasSelectedTaskError && !IsBusy` |\n| CanExecute wiring | `MainWindowViewModel.cs` | Single `[NotifyCanExecuteChangedFor(nameof(CanCreateFixTask))]` on `SelectedTask`, `IsBusy`, `HasSelectedTaskError`. The command re-evaluates via `CanCreateFixTask`. |\n| UI button | `TaskDetailPanel.axaml` | Binds to `CreateFixTaskCommand` (or could bind `IsEnabled` to `CanCreateFixTask` independently). |\n| Tests | Same as Option A. | Additionally test that `CanCreateFixTask` reflects all three gates. |\n\n**Trade-offs:** \u2705 Single property to annotate instead of spraying `[NotifyCanExecuteChangedFor]` everywhere. \u2705 Makes the gating logic explicit and inspectable. \u2705 Avoids subtle bugs when a new gating condition is added later. \u274c Slightly diverges from Rewrite's `CanExecute`-only approach. \u274c Two sources of truth for enabled state (the property and the `CanExecute` callback) need to stay in sync.\n\n---\n\n```json\n{\n  \"summary\": \"Add a 'Create task to fix' button to the 'LATEST RUN FAILED' banner by extending the existing Rewrite-with-AI pattern. The flow: gather failed-run context from `.relay/<taskId>/` \u2192 author fix-task markdown via a subagent \u2192 write as `llm-tasks/<slug>/<slug>.md` \u2192 show a completion modal. Three approaches differ in how closely they replicate the Rewrite architecture vs. introducing new abstractions.\",\n  \"options\": [\n    \"Option A \u2014 Faithful Replica: Mirror Rewrite exactly (new FixTaskAuthorRunner, FixTaskRunnerFactory, FailedRunContext reader, partial VM file, tests). Minimum review surprise, some duplication.\",\n    \"Option B \u2014 Consolidated Core Service: Extract business logic into a FixTaskService (reader + runner unified). Cleaner separation, two test files, diverges from Rewrite's architecture.\",\n    \"Option C \u2014 Gateway Property Pattern: Same as A but add a `CanCreateFixTask` computed property that aggregates all gating conditions, reducing `[NotifyCanExecuteChangedFor]` burden to a single property annotation.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 12,
+    "tool_calls_total": 14,
+    "tool_calls_succeeded": 12,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 7,
+        "failed": 2
+      },
+      "run_command": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 12,
+    "total_llm_time_s": 53.221,
+    "prompt_cache": {
+      "cached_tokens": 78336,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.463,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.723,
+      "prompt_tokens_est": 5668,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.754,
+      "prompt_tokens_est": 5784,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 154,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.884,
+      "prompt_tokens_est": 5861,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 85
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.641,
+      "prompt_tokens_est": 5955,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/index.jsonl"
+      },
+      "succeeded": false,
+      "duration_s": 0.002,
+      "result_length": 84,
+      "error": "error: path does not exist: \"/Users/admin/Dev/temp-visual-relay/.swival/index.jsonl\""
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash/.lock"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 19
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 1.919,
+      "prompt_tokens_est": 6117,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 85
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.337,
+      "prompt_tokens_est": 6255,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash/507ebc32086043e6bf24ec7b8e85b800"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 29
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash/df8fd4b3258f4a81954e50df3f568495"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 29
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/trash/index.jsonl"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 529
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 6.748,
+      "prompt_tokens_est": 6600,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "/Users/admin/Dev/temp-visual-relay/.swival/trash/507ebc32086043e6bf24ec7b8e85b800/ProcessEnvironmentAccessor.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.215,
+      "result_length": 121
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.154,
+      "prompt_tokens_est": 7166,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/Users/admin/Dev/temp-visual-relay/.swival/trash/507ebc32086043e6bf24ec7b8e85b800/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 217
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.158,
+      "prompt_tokens_est": 7338,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "/Users/admin/Dev/temp-visual-relay/.swival/trash/507ebc32086043e6bf24ec7b8e85b800/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.082,
+      "result_length": 121
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.471,
+      "prompt_tokens_est": 7449,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "cat",
+          "/Users/admin/Dev/temp-visual-relay/.swival/trash/507ebc32086043e6bf24ec7b8e85b800/ProcessEnvironmentAccessor.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.079,
+      "result_length": 121
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 10.464,
+      "prompt_tokens_est": 7619,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "I need to provide 2-3 distinct, viable approaches. Each should have a clear trade-off so the plan stage can pick one. Let me be specific about file structure, what changes where, and the key design differences.",
+        "thought_number": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 15.967,
+      "prompt_tokens_est": 8569,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
