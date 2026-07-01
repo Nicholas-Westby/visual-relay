@@ -105,7 +105,7 @@ public partial class MainWindowViewModel
 
     /// <summary>Honest pay-as-you-go note displayed under the HF row.</summary>
     public string HfPricingNote =>
-        "Free to get a token; usage is pay-as-you-go beyond HF's ~$0.10/mo free credit (no markup).";
+        "Free to get a token; usage is pay-as-you-go beyond HF's free credit.";
 
     // ═══════════════════════════════════════════════════════════════════════
     // Commands
