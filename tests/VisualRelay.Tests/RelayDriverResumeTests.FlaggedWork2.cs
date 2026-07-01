@@ -27,8 +27,10 @@ public sealed partial class RelayDriverResumeTests
         var bundlePath = Path.Combine(taskDir, "flagged-work.bundle");
         Assert.True(File.Exists(bundlePath), "Bundle should exist after flag");
 
-        // Run 2: resume — should restore flagged work and complete.
-        var happyRunner = new ScriptedSubagentRunner();
+        // Run 2: resume — should restore flagged work and complete. The resumed
+        // run authors its declared impl file so it produces a real change.
+        var happyRunner = new FileWritingSubagentRunner(
+            new ScriptedSubagentRunner(), stage: 6, "src/app.cs", "implemented");
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
                 new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
@@ -98,8 +100,10 @@ public sealed partial class RelayDriverResumeTests
         if (File.Exists(bundlePath))
             File.Delete(bundlePath); // bundle may or may not exist; regardless, resume skips restore
 
-        // Resume from stage 3: restore is gated to 5-10 only.
-        var happyRunner = new ScriptedSubagentRunner();
+        // Resume from stage 3: restore is gated to 5-10 only. The re-run authors
+        // its declared impl file so it produces a real change.
+        var happyRunner = new FileWritingSubagentRunner(
+            new ScriptedSubagentRunner(), stage: 6, "src/app.cs", "implemented");
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"), new TestRunResult(0, "green")),

@@ -37,6 +37,13 @@ internal static class PlanCompletenessGate
             "complete JSON contract.";
     }
 
+    /// <summary>
+    /// True when the task markdown declares a <c>## Deliverables</c> or
+    /// <c>## Done when</c> checklist (one or more bullets). The completion gate
+    /// reuses this as one signal that a task was expected to produce code.
+    /// </summary>
+    internal static bool HasChecklist(string markdown) => ExtractChecklist(markdown).Count > 0;
+
     private static IReadOnlyList<string> ExtractChecklist(string markdown)
     {
         var items = new List<string>();

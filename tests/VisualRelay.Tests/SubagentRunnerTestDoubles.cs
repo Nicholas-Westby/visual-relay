@@ -113,6 +113,28 @@ internal sealed class ArrayRootSubagentRunner : ISubagentRunner
 }
 
 /// <summary>
+/// Decorates an inner runner so that at <paramref name="stage"/> it writes
+/// <paramref name="content"/> to <paramref name="relativePath"/> under the target
+/// root. Gives an otherwise file-less scripted runner a real working-tree change,
+/// so a code-expecting run actually produces code (as a real agent would) and
+/// clears the completion gate.
+/// </summary>
+internal sealed class FileWritingSubagentRunner(
+    ISubagentRunner inner, int stage, string relativePath, string content) : ISubagentRunner
+{
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == stage)
+        {
+            var full = Path.Combine(invocation.TargetRoot, relativePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllText(full, content);
+        }
+        return inner.RunAsync(invocation, cancellationToken);
+    }
+}
+
+/// <summary>
 /// Wraps an inner <see cref="ISubagentRunner"/> (defaults to <see cref="ScriptedSubagentRunner"/>)
 /// and returns an invalid result for stages at or after <c>flagAtStage</c>,
 /// simulating a flagged run that stops partway through the stage loop.

@@ -290,7 +290,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                 }
             }
-            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);
+            return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);
         }
         catch (Exception ex)
         {

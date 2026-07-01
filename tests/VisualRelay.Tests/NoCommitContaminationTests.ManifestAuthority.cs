@@ -29,12 +29,15 @@ public sealed partial class NoCommitContaminationTests
         TestGit.Run(repo.Root, "add", ".");
         TestGit.Run(repo.Root, "commit", "-m", "seed");
 
-        // Clean task: normal manifest
-        var cleanRunner = new ScriptedSubagentRunner();
-        cleanRunner.SeedHappyPath("src/clean.cs", "tests/clean.tests.cs");
+        // Clean task: normal manifest; authors its impl file so it produces code.
+        var cleanInner = new ScriptedSubagentRunner();
+        cleanInner.SeedHappyPath("src/clean.cs", "tests/clean.tests.cs");
+        var cleanRunner = new FileWritingSubagentRunner(cleanInner, 6, "src/clean.cs", "clean impl");
 
-        // Mixed task: manifest includes llm-tasks/ entry (should be dropped)
-        var mixedRunner = new BadManifestSubagentRunner();
+        // Mixed task: manifest includes llm-tasks/ entry (should be dropped);
+        // authors its impl file so it produces code.
+        var mixedRunner = new FileWritingSubagentRunner(
+            new BadManifestSubagentRunner(), 6, "src/real.cs", "real impl");
 
         var config = new RelayConfig(
             TasksDir: "llm-tasks",

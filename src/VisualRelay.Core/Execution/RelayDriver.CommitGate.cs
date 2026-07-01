@@ -124,6 +124,7 @@ public sealed partial class RelayDriver
         RelayTaskItem? task,
         IReadOnlyList<string> commitMessages,
         IReadOnlyList<string> manifest,
+        string taskMarkdown,
         string taskHash,
         string activeLockNonce,
         IReadOnlySet<string>? preRunUntracked,
@@ -138,6 +139,15 @@ public sealed partial class RelayDriver
         var commitSha = "simulated";
         if (_options.CreateGitCommit)
         {
+            // Refuse to retire/commit-as-done a code-expecting run that changed no
+            // source or tests (only proof + spec rename). Runs BEFORE retirement so
+            // the spec is not renamed and nothing is committed on a phantom.
+            var codelessFlag = await CheckCodeProducedAsync(
+                rootPath, runId, taskId, taskDirectory, config, manifest, taskMarkdown,
+                runBaseSha, statusEntries, cancellationToken);
+            if (codelessFlag is not null)
+                return codelessFlag;
+
             var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task);
 
             var proofFiles = new List<string>();
