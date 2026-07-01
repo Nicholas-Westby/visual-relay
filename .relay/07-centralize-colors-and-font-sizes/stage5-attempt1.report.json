@@ -1,0 +1,1035 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-01T10:51:54.780569+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 07-centralize-colors-and-font-sizes\nWorking directory: /Users/admin/Dev/temp-visual-relay/\n\n## Task input\n# Centralize Colors and Font Sizes, Then Make Them More Accessible\n\n## Problem / motivation\n\nColors and font sizes are hard-coded literally throughout the UI, so there is no way to audit \u2014 or\nimprove \u2014 the palette or the type scale without reading every view. Today the tree carries **~235 raw\nhex literals** across `src/**/*.axaml` and **~107 inline `FontSize=\"\u2026\"`** attributes spread over 15\nviews, plus a handful of programmatic sites in C#. A color like `#2A303A` recurs in several card borders\nwith no name telling you it is \"the same\" border; the font scale is an undocumented spread of\n`10, 11, 12, 13, 14, 16`, including sizes small enough to be a legibility problem.\n\nThis one task does three inseparable things:\n\n1. Centralize every color and font size into named **design tokens** (Avalonia resources) and make\n   **all** code reference those tokens.\n2. Add a guard test that **fails if any raw color or font-size literal reappears**.\n3. Once everything resolves to a token, **tidy the token values to be more accessible** \u2014 fix low\n   contrast and raise too-small text to meet WCAG. This is the real payoff: the centralization exists so\n   this cleanup is possible in one small, reviewable place.\n\nThere is **no ratchet and no baseline of grandfathered violations** \u2014 add the guard first, let it\nenumerate every offending file, migrate them all, then adjust the token values, and land it with every\ngate green.\n\n## The single source of truth\n\nAvalonia already separates `Application.Resources` (a `ResourceDictionary`) from `Application.Styles`\n(a `Styles` collection). Tokens are resources; put them there. `App.axaml`\n(`src/VisualRelay.App/App.axaml`) currently declares only `<Application.Styles>` (a `FluentTheme` plus\n`StyleInclude` of `VisualRelayTheme.axaml`) and has **no** `<Application.Resources>` yet \u2014 add it.\n\nCreate the tokens in **new** files (the \u2264300-line file-size guard forbids stuffing them into the already\nlarge `VisualRelayTheme.axaml`):\n\n- `src/VisualRelay.App/Theme/Colors.axaml` \u2014 a `ResourceDictionary` defining a **semantic** palette. For\n  each distinct color in use, define a `Color` and a matching `SolidColorBrush` (e.g. `SurfaceBrush`,\n  `SurfaceRaisedBrush`, `BorderSubtleBrush`, `TextPrimaryBrush`, `TextMutedBrush`, `AccentBrush`,\n  `AccentHoverBrush`, `WarningBrush`, `WarningTextBrush`, `DropIndicatorBrush`, \u2026). **Collapse exact\n  duplicates** \u2014 the several borders that are all `#2A303A` become one `BorderSubtleBrush`; that\n  de-duplication is the audit win.\n- `src/VisualRelay.App/Theme/Typography.axaml` \u2014 a `ResourceDictionary` of `x:Double` font-size tokens,\n  **one per distinct value currently in use** (`10, 11, 12, 13, 14, 16`), named by role (e.g.\n  `FontSizeCaption`, `FontSizeBody`, `FontSizeTitle` \u2014 you choose the mapping). Do **not** invent new\n  sizes at this step; every existing `FontSize` must map onto one of these (values are adjusted later,\n  under accessibility).\n\nMerge both into `App.axaml` via `<Application.Resources><ResourceDictionary.MergedDictionaries>` with a\n`<ResourceInclude Source=\"avares://VisualRelay.App/Theme/Colors.axaml\"/>` (and Typography). The app uses\na single fixed `RequestedThemeVariant=\"Dark\"` \u2014 keep it to **one** palette; do **not** add light/dark\n`ThemeDictionaries` the app does not use.\n\nThese two token files are the **only** place raw color/size literals may live. Everything else references\nthem.\n\n## Migrate every usage to tokens (value-preserving)\n\nReplace literals with resource references everywhere, carrying the **exact current values** so this step\nchanges nothing visually:\n\n- **Style setters** in `src/VisualRelay.App/Styles/VisualRelayTheme.axaml` \u2014 e.g. the `Selector=\"Button\"`\n  setter `<Setter Property=\"Background\" Value=\"#1A1E25\"/>` becomes\n  `Value=\"{DynamicResource SurfaceRaisedBrush}\"`; `Button.primary`'s `#5B7CFA`, the `Button.warning`\n  swatch, the `ListBoxItem.drop-above`/`drop-below` `#3191FF`, the `Border.queueCard` colors, etc.\n- **Inline attributes** in every view under `src/VisualRelay.App/Views/**` \u2014 `Foreground=\"\u2026\"`,\n  `Background=\"\u2026\"`, `BorderBrush=\"\u2026\"`, and `FontSize=\"\u2026\"` become `{DynamicResource \u2026}` (brushes) /\n  `{StaticResource \u2026}` (font sizes). Use `DynamicResource` for brushes, `StaticResource` for the\n  `x:Double` font sizes (which never change at runtime); the guard accepts either markup extension.\n- **The `#`-color inside `BoxShadow` and any `GradientStop`** \u2014 the color component must reference a\n  token; keep offsets/blur numeric.\n- **Programmatic sites in C#** (few, but they must not become an escape hatch):\n  - `src/VisualRelay.App/Views/Controls/ChevronIcon.cs` \u2014 the `Foreground` `StyledProperty` default\n    `new SolidColorBrush(Color.Parse(\"#6F7785\"))`, and the `Foreground ?? Brushes.Gray` fallback in its\n    render path.\n  - `src/VisualRelay.App/Views/Controls/FocusToggleIcon.cs` \u2014 the same `Foreground ?? Brushes.Gray`\n    fallback.\n  - `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs` \u2014 `RailBrush`/`RunningBrush`/`SelectedBrush`\n    and `Brushes.Transparent`.\n  - `src/VisualRelay.App/Views/Controls/Buttons/CommonButton.cs` \u2014 `FontSize = 14`.\n  - `src/VisualRelay.App/App.axaml.cs` \u2014 the confirmation-dialog factory's `FontSize = 13`.\n\n  Prefer moving control-default brushes/sizes **out of C# into theme `Style` setters** that use the\n  tokens (a `StyledProperty` default evaluates at type-init, before app resources exist, so it cannot\n  take a `DynamicResource`). For genuinely code-built UI, resolve the token from resources\n  (`Application.Current!.FindResource(\"\u2026\")`). Note: `ChevronIcon`'s foreground default is asserted\n  non-null by an existing test, `ChevronForeground_HasExplicitDefault_NotNull` in\n  `tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs`; if you relocate that default to a Style,\n  update that assertion to check the styled/token value rather than deleting or weakening it.\n\nOnly two literal color values are exempt from tokenizing (they are not palette colors): `Transparent`\nand `{x:Null}`. Everything else resolves to a token.\n\n## The guard: no raw literals may return\n\nAdd `tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs`, modeled structurally on the existing\n`ButtonsCentralizationTests` (`tests/VisualRelay.Tests/ButtonsCentralizationTests.cs`): discover the\nrepo via `RepoSetup.Root`, enumerate source files, collect every offender as\n`relativePath:line \u2192 text`, and assert the violation list is empty with a message that **lists every\noffender** so the failure is the worklist. Allow-list the two token files (`Theme/Colors.axaml`,\n`Theme/Typography.axaml`) as the sole place literals may appear.\n\nFollow the `FileSizeGuard` seam (`tools/VisualRelay.Guards`, unit-tested by `FileSizeGuardTests`): put\nthe classification in a **pure** function (e.g. `DesignTokenGuard.FindViolations(files)`) covered by\nin-memory unit tests, and a separate real-tree `[Fact]` that runs it over `src/VisualRelay.App` and\nasserts zero.\n\nRules the guard enforces:\n\n1. **No `#`-hex color literal** (`#RGB`/`#RRGGBB`/`#AARRGGBB`) anywhere in `.axaml` outside the two\n   token files. A hex literal has one unambiguous lexical form, so a scan is complete for this case and\n   catches inline attributes, `Setter` values, `BoxShadow`, and gradient stops alike.\n2. **`FontSize` must be a resource reference.** For a `FontSize=\"\u2026\"` attribute or a\n   `<Setter Property=\"FontSize\" Value=\"\u2026\"/>`, the value must be `{StaticResource \u2026}` or\n   `{DynamicResource \u2026}`; a numeric literal (`FontSize=\"12\"`) fails. Scope this rule to `FontSize` only \u2014\n   raw numbers on `Width`, `Padding`, `Opacity`, `CornerRadius`, `BorderThickness`, etc. are out of scope\n   (this task is colors and font sizes, nothing else).\n3. **Named-color keywords** (`Red`, `White`, `Gray`, \u2026) in the brush-bearing attributes (`Foreground`,\n   `Background`, `BorderBrush`, `Fill`, `Stroke`) must be a resource reference, except the two exempt\n   literals `Transparent` and `{x:Null}`.\n4. **C# scan** over `src/VisualRelay.App/**/*.cs` (model on `ButtonsCentralizationTests.FindNewButtonExpressions`):\n   flag `Color.Parse(\"#\u2026\")`, `Color.FromRgb`/`FromArgb`, `Colors.<Name>`, `Brushes.<Name>`,\n   `new SolidColorBrush(`, and `FontSize = <numeric-literal>`. Allow-list a single constants file if one\n   is introduced for type-init-safe defaults.\n\nRules 1 and 3 are the allow-list model we want (a styling value must resolve to a token); rule 1 uses a\nscan only because hex has a single form, so scanning is already exhaustive for it.\n\n**Add the guard first.** Its first run over the current tree enumerates every file to change \u2014 that list\n*is* the migration worklist. Then migrate until the guard is green. Because there is no baseline, the\nguard must be **red on the pre-migration tree and green after**.\n\n## Tidy the centralized values to be more accessible\n\nWith every color and size resolving to one token, fix the accessibility problems the scattered literals\nwere hiding. The migration above is value-preserving; the adjustments here are the **only** intended\nvisual changes, and each must be justified against a WCAG 2.2 AA target.\n\n- **Contrast.** Audit each foreground/background token pairing against WCAG 2.2 AA: **4.5:1** for normal\n  text, **3:1** for large text (\u2265 18px, or \u2265 14px bold) and for non-text UI (structural borders, the\n  drop/focus indicators, state-carrying icons). Where a pair fails, nudge the token's lightness to meet\n  the threshold while preserving its hue/identity. The likely offenders in the current palette are the\n  **muted text**, the **warning** swatch (`#F0CA66` on `#2B2416`), and the **accent/link** colors\n  (`#5B7CFA` / `#5575F2`) \u2014 verify all of them, not just these.\n- **Type size.** Raise the floor of the scale: no text token below **12px**. Remap the former `10` and\n  `11` up to at least `12` (the `11` is the most common size, so this is a deliberate, visible legibility\n  change \u2014 verify no layout or density breaks). Keep the scale coherent; do not add sizes beyond the\n  existing tokens.\n- **Lock it in.** Add `tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs`: a **pure** WCAG\n  relative-luminance / contrast-ratio function (unit-tested against known pairs \u2014 e.g. black-on-white =\n  21:1, identical colors = 1:1), plus a `[Fact]` that resolves the token colors (parse\n  `Theme/Colors.axaml`) and asserts every declared foreground/background pairing meets its AA threshold,\n  and that no font-size token in `Theme/Typography.axaml` is below 12. Encode the real pairings as an\n  explicit table in the test \u2014 the design's actual text-on-surface combinations \u2014 so any future token\n  edit that breaks contrast fails here. Same pure-function-plus-real-data shape as\n  `FileSizeGuard`/`FileSizeGuardTests`.\n\n## Precedent to model on\n\n- `tests/VisualRelay.Tests/ButtonsCentralizationTests.cs` \u2014 same problem family (a UI centralization\n  rule enforced by scanning `.axaml` + `.cs`, allow-listing the central home, emitting a numbered\n  offender list, asserting zero). Copy its shape.\n- `tools/VisualRelay.Guards/FileSizeGuard` + `tests/VisualRelay.Tests/FileSizeGuardTests.cs` \u2014 the\n  pure-`FindViolations` + real-tree-`Enumerate` split, exercised with in-memory/temp inputs.\n- `RepoSetup.Root` \u2014 the repo-root discovery helper both guards use.\n\n## Constraints & done criteria\n\n- **The centralization guard is red on the pre-migration tree and green after** (`Failed: 0`). No\n  baseline, no suppression list, no grandfathered offenders.\n- **The pure classifier is unit-tested** in-memory: a hex line fails; `{DynamicResource SurfaceBrush}`\n  passes; `Transparent` and `{x:Null}` pass; `FontSize=\"12\"` fails while `FontSize=\"{StaticResource\n  FontSizeBody}\"` passes; a raw number on a non-styling attribute (`Width=\"12\"`) is ignored.\n- **Centralization is value-preserving; the accessibility pass is the only intended visual change.**\n  After migrating, the app renders identically; then the deliberate accessibility adjustments (contrast\n  to AA, 12px type floor) are the only pixels that move, each justified by a WCAG target. Verify the\n  running app.\n- **Every distinct existing font size (`10, 11, 12, 13, 14, 16`) maps to exactly one token** and no\n  `FontSize` literal remains; after the accessibility pass **no font-size token is below 12px**.\n- **Every declared foreground/background pairing meets WCAG 2.2 AA** (4.5:1 text / 3:1 large-text & UI),\n  enforced by `DesignTokenAccessibilityTests`; its contrast function is unit-tested (black-on-white =\n  21:1).\n- **Never weaken, skip, or delete a test** to satisfy any gate (VR's own guards forbid `Skip`/deletion);\n  update the Chevron default-foreground assertion as described rather than removing it.\n- **Keep every new/edited `*.cs`/`*.axaml` file \u2264 300 lines** \u2014 hence tokens in separate `Theme/*.axaml`\n  files, and split a test file if it grows past the limit.\n- Do not tokenize or alter non-color/size literals (margins, padding, radii, thicknesses, durations) \u2014\n  out of scope.\n\n## Files likely in scope (the plan stage will finalize the manifest)\n\n- `src/VisualRelay.App/Theme/Colors.axaml` (new) \u2014 semantic color + brush tokens (accessibility-adjusted values)\n- `src/VisualRelay.App/Theme/Typography.axaml` (new) \u2014 font-size tokens (12px floor)\n- `src/VisualRelay.App/App.axaml` \u2014 add `<Application.Resources>` merging the token dictionaries\n- `src/VisualRelay.App/Styles/VisualRelayTheme.axaml` \u2014 setters reference tokens\n- `src/VisualRelay.App/Views/**/*.axaml` \u2014 inline color/`FontSize` literals \u2192 tokens (15 views carry\n  `FontSize`; most carry hex)\n- `src/VisualRelay.App/Views/Controls/ChevronIcon.cs`, `FocusToggleIcon.cs`,\n  `Buttons/CommonButton.cs`, `ViewModels/TaskRowViewModel.cs`, `App.axaml.cs` \u2014 programmatic sites\n- `tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs` (new) \u2014 raw-literal guard + pure-classifier unit tests\n- `tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs` (new) \u2014 WCAG contrast + min-size assertions\n- `tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs` \u2014 update the foreground-default assertion\n\n\n## Manifest\ntools/VisualRelay.Guards/DesignTokenGuard.cs\ntests/VisualRelay.Tests/DesignTokenCentralizationTests.cs\nsrc/VisualRelay.App/Theme/Colors.axaml\nsrc/VisualRelay.App/Theme/Typography.axaml\ntests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs\nsrc/VisualRelay.App/App.axaml\nsrc/VisualRelay.App/Styles/VisualRelayTheme.axaml\nsrc/VisualRelay.App/Views/MainWindow.axaml\nsrc/VisualRelay.App/Views/SettingsWindow.axaml\nsrc/VisualRelay.App/Views/Controls/QueuePanel.axaml\nsrc/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\nsrc/VisualRelay.App/Views/Controls/SettingsPanel.axaml\nsrc/VisualRelay.App/Views/Controls/TopBar.axaml\nsrc/VisualRelay.App/Views/Controls/SandboxPaths.axaml\nsrc/VisualRelay.App/Views/Controls/StageBoard.axaml\nsrc/VisualRelay.App/Views/Controls/StageSystemView.axaml\nsrc/VisualRelay.App/Views/Controls/StageOutputView.axaml\nsrc/VisualRelay.App/Views/Controls/StageInputView.axaml\nsrc/VisualRelay.App/Views/Controls/RunLogView.axaml\nsrc/VisualRelay.App/Views/Controls/CommandsView.axaml\nsrc/VisualRelay.App/Views/Controls/ActivityColumn.axaml\nsrc/VisualRelay.App/Views/Controls/TaskActionBar.axaml\nsrc/VisualRelay.App/Views/Controls/RewriteToolbar.axaml\nsrc/VisualRelay.App/Views/Controls/ObsidianSettings.axaml\nsrc/VisualRelay.App/Views/Controls/ChevronIcon.cs\nsrc/VisualRelay.App/Views/Controls/FocusToggleIcon.cs\nsrc/VisualRelay.App/Views/Controls/Buttons/CommonButton.cs\nsrc/VisualRelay.App/App.axaml.cs\nsrc/VisualRelay.App/ViewModels/TaskRowViewModel.cs\nsrc/VisualRelay.App/ViewModels/StageRowViewModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.cs\ntests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The task centralizes ~235 raw hex colors and ~107 inline FontSize values across an Avalonia UI app into named design tokens (Theme/Colors.axaml, Theme/Typography.axaml), adds a guard test that fails on raw literals outside those two files, and then adjusts the centralized values to meet WCAG 2.2 AA contrast and a 12px font-size floor \u2014 all as a single no-baseline, no-grandfathering commit. Three approaches differ in ordering (guard-first vs. inventory-first vs. tool-assisted transformation) and the up-front investment in automation.\",\n  \"options\": [\n    \"Option A (Strict sequential): Write the guard test first against pre-migration code \u2192 its failure output is the exact worklist \u2192 migrate every file on that list \u2192 guard goes green \u2192 then adjust accessibility values. Most conservative; matches spec order exactly; risk of guard-edge-cases delaying the worklist.\",\n    \"Option B (Inventory-first): Grep-inventory all literals first, create tokens and migrate from that manifest, then write the guard as a regression barrier. Inverts the spec's order but gives a complete picture before any code changes; guard catches nothing new because migration is already done.\",\n    \"Option C (Semi-automated rewrite): Extract a unique-value mapping, then script find-and-replace for each token across non-token AXAML files, handle C# and edge cases manually, write guard last. Reduces manual editing labor for 235+ replacements but risks over-matching and requires heavier up-front tooling.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is an Avalonia 12.0.5 Dark-theme-only desktop app (.NET 10). **App.axaml** currently declares only `<Application.Styles>` (FluentTheme + VisualRelayTheme.axaml) \u2014 there is **no** `<Application.Resources>` section. No `Theme/` directory exists; `src/VisualRelay.App/Theme/` must be created. **VisualRelayTheme.axaml** (193 lines) carries ~48 raw hex color literals in `<Setter Property=... Value=\\\"#...\\\"/>` across 22 style selectors (Button, ListBoxItem, Border, TextBlock variants). It also has 2 `FontSize` literals (Value=\\\"12\\\" on panelTitle, Value=\\\"10\\\" on railTitle) and 3 `BoxShadow` hex colors. Overall, **~249 hex literal matches** appear across all `.axaml` files under `src/VisualRelay.App/` and **~119 `FontSize=\\\"...\\\"`** attribute matches. The distinct palette covers roughly 60+ unique hex strings (many repeats). Distinct font sizes in use: **10, 11, 12, 13, 14, 16**. C# programmatic sites: **ChevronIcon.cs** (line 48 `new SolidColorBrush(Color.Parse(\\\"#6F7785\\\"))` default + line 87 `Brushes.Gray` fallback), **FocusToggleIcon.cs** (line 77 `Brushes.Gray` fallback), **CommonButton.cs** (line 165 `FontSize = 14`), **App.axaml.cs** (line 109 `Brush.Parse(\\\"#1A1E26\\\")`, line 121 `FontSize = 13`, line 122 `Brush.Parse(\\\"#DCE2EA\\\")`), **TaskRowViewModel.cs** (lines 9-20 `Brush.Parse(...)` calls + line 74 `Brushes.Transparent`), **StageRowViewModel.cs** (lines 10-21 `Brush.Parse(...)` calls), **MainWindowViewModel.cs** (lines 15-22 `Brush.Parse(...)` calls). Additionally, **8 `GradientStop` hex colors** live in MainWindow.axaml (GridSplitter seam/grip styles) and **6 `BoxShadows.Parse` calls** in ViewModels with embedded hex colors. The repo has existing guard/test patterns: **ButtonsCentralizationTests.cs** discovers files via `RepoSetup.Root`, scans `.axaml` and `.cs` with regex, emits a numbered violation list, asserts zero. **FileSizeGuard.cs** (in `tools/VisualRelay.Guards/`) provides a pure `FindViolations((path, lines), limit)` function + real-tree `Enumerate` split, unit-tested by **FileSizeGuardTests.cs**. **ChevronAffordanceRenderTests.cs** has `ChevronForeground_HasExplicitDefault_NotNull` (line 192-197) which asserts `new ChevronIcon().Foreground` is non-null \u2014 this default is set in ChevronIcon.cs as `Color.Parse(\\\"#6F7785\\\")` and will need updating when that default moves to a Style. The `VisualRelay.Guards.csproj` is already a test dependency. The `VisualRelay.App.csproj` uses `<AvaloniaResource Include=\\\"Assets\\\\**\\\" />`; theme `ResourceDictionary` files in the same project are auto-included as Avalonia resources by convention without explicit declarations. The repository also has `FileSizeGuard` enforcing a 300-line limit per file.\",\n  \"constraints\": [\n    \"App.axaml has no <Application.Resources> section yet \u2014 must add one merging Colors.axaml and Typography.axaml via ResourceDictionary.MergedDictionaries with ResourceInclude.\",\n    \"src/VisualRelay.App/Theme/ directory does not exist \u2014 must be created for Colors.axaml and Typography.axaml.\",\n    \"Every new/edited *.cs and *.axaml file must stay \u2264 300 lines (FileSizeGuard), which is why tokens must be in separate Theme/*.axaml files and tests may need splitting.\",\n    \"The app is Dark-theme only (RequestedThemeVariant=\\\"Dark\\\") \u2014 no light/dark ThemeDictionaries should be added.\",\n    \"Only two literal color values are exempt from tokenizing: Transparent and {x:Null}.\",\n    \"FontSize values must use StaticResource (since they are x:Double and never change at runtime). Brushes should use DynamicResource.\",\n    \"The ChevronIcon Foreground default is a StyledProperty with C# default \u2014 cannot take a DynamicResource there. Must either move to a Style setter (which can use DynamicResource) and update the test, or resolve from Application.Current.FindResource.\",\n    \"ChevronAffordanceRenderTests.ChevronForeground_HasExplicitDefault_NotNull must be updated (not deleted/skipped/weakened) when the default moves to a Style.\",\n    \"The guard test must be added first, before any migration \u2014 its failure output is the migration worklist. It will be red on the pre-migration tree and green after.\",\n    \"The guard scans: (1) no #-hex literals in .axaml outside the two token files; (2) FontSize must be a resource reference; (3) named-color keywords on brush attributes must be resource references except Transparent/{x:Null}; (4) C# scan for Color.Parse, SolidColorBrush, Brushes.*, FontSize=.\",\n    \"Migration must be value-preserving \u2014 exact current colors/sizes \u2014 so no visual change until the accessibility pass.\",\n    \"Accessibility pass: raise type floor to 12px (remap sizes 10 and 11), fix contrast to WCAG 2.2 AA (4.5:1 normal text, 3:1 large text \u226518px/\u226514px bold and non-text UI).\",\n    \"No font-size token may be below 12px after the accessibility pass.\",\n    \"Every declared foreground/background pairing must meet WCAG 2.2 AA, enforced by DesignTokenAccessibilityTests with an explicit table of pairings.\",\n    \"The WCAG contrast function in tests must be unit-tested (black-on-white = 21:1).\",\n    \"Do not alter non-color/size literals (margins, padding, radii, thicknesses, durations) \u2014 out of scope.\",\n    \"VisualRelayThemeTests.cs asserts Contains(\\\"Button.hyperlink\\\") \u2014 this selector must still find a match after migration.\",\n    \"Resource files (.axaml) in the same project are included as Avalonia resources automatically \u2014 no .csproj changes needed for the new token files.\",\n    \"x:Class is used in App.axaml, so partial class App : Application handles InitializeComponent \u2014 no code-behind changes to App.axaml.cs needed for the resource dictionaries.\",\n    \"The guard function must be pure (FindViolations) with in-memory unit tests, plus a real-tree [Fact] that scans src/VisualRelay.App and asserts zero violations.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Diagnostic: Pre-migration state for 07-centralize-colors-and-font-sizes\\n\\n### 1. No token infrastructure exists\\n- **App.axaml** (15 lines): Only `<Application.Styles>` \u2014 contains `<FluentTheme/>` and `<StyleInclude Source=\\\"avares://VisualRelay.App/Styles/VisualRelayTheme.axaml\\\"/>`. Has **no** `<Application.Resources>` section. `RequestedThemeVariant=\\\"Dark\\\"` is set on line 5.\\n- **No `Theme/` directory** exists at `src/VisualRelay.App/Theme/`. Must be created for `Colors.axaml` and `Typography.axaml`.\\n\\n### 2. VisualRelayTheme.axaml \u2014 primary theme file with raw literals\\n- **193 lines**, file at `src/VisualRelay.App/Styles/VisualRelayTheme.axaml`.\\n- Contains ~48 raw hex color literals across 22 style selectors (Button, Button.primary, Button.warning, Button.path, Button.hyperlink, ListBoxItem, ListBoxItem.drop-above/below, Border.queueCard, TextBlock.panelTitle, TextBlock.railTitle, Border.panel, Border.chip, Border.rail, Button.collapseToggle, Button.focusToggle, ChevronIcon, FocusToggleIcon).\\n- Contains 2 inline `FontSize` literals: line 97 `<Setter Property=\\\"FontSize\\\" Value=\\\"12\\\"/>` (TextBlock.panelTitle), line 129 `<Setter Property=\\\"FontSize\\\" Value=\\\"10\\\"/>` (TextBlock.railTitle).\\n- Contains hex colors inside `BoxShadow` values: line 78 `#00000000`, line 88 `#553F8CFF`, line 106 `#3A000000`, line 125 `#3A000000`.\\n- Uses literal colors like `#1A1E25`, `#2B313C`, `#DDE3EC`, `#5B7CFA`, `#6B8BFF`, `#FFFFFF`, `#2B2416`, `#9E7A2D`, `#F0CA66`, `#15181F`, `#2A303A`, `#5575F2`, `#3191FF`, `#171A20`, `#1A1F29`, `#3B4658`, `#16233D`, `#6F7785`, `#12151B`, `#252A33`, `#1A202A`, `#2A3340`, `#1E2533`, `#C7D4FF`, `#283246`, `#9AA3B1`.\\n\\n### 3. View files \u2014 pervasive raw hex and FontSize literals\\nAll 19 `.axaml` views under `src/VisualRelay.App/Views/` carry raw literals:\\n\\n- **QueuePanel.axaml** (283 lines): ~16 hex colors (`#C8CED8`, `#5A6270`, `#E7ECF3`, `#6F7785`, `#8E96A3`, `#222833`, `#F2C66D`, `#1B2129`, `#2C333E`, `#6B7480`, `#2A1B1E`, `#7A2A30`, `#F0B6BC`, `#D9A0A6`, `#1B2028`, `#252A33`, `#F0CA66`, `#8FE3A2`, `#3A4150`, `#5A6270`). ~14 inline `FontSize=\\\"...\\\"` attributes (11, 12, 11, 11, etc.).\\n\\n- **TaskDetailPanel.axaml** (293 lines): ~22 hex colors. ~13 `FontSize` literals (11, 12, 13). Includes error-panel colors `#2A1715`, `#F36F63`, `#F4B5AE`, `#17233D`, `#3191FF`, `#C7D4FF`.\\n\\n- **SettingsPanel.axaml** (295 lines): ~40 hex colors (contains 5 repeated provider-key rows each with green/grey dots `#5AD47D`/`#4A5568`, key labels `#E7ECF3`, muted `#7F8794`, hyperlink `#5575F2`). ~20 `FontSize` literals (11, 12, 13, 16).\\n\\n- **MainWindow.axaml** (199 lines): ~12 hex colors. Includes **8 GradientStop hex values** (lines 120-123 for idle seam: `#00252A33`, `#252A33`; lines 157-160 for hover seam: `#003191FF`, `#3191FF`) plus grip dots `#46535F` and `#5B9CFF`. 1 `FontSize=\\\"12\\\"` (banner).\\n\\n- **TopBar.axaml** (137 lines): ~12 hex colors. 8 `FontSize` literals, including `FontSize=\\\"10\\\"` on version text (line 39). Also has a `BoxShadow` with hex: `BoxShadow=\\\"0 10 24 0 #665575F2\\\"` (line 22).\\n\\n- **SandboxPaths.axaml** (133 lines): ~12 hex. ~12 `FontSize` literals across writable/readable/blocked path sections.\\n\\n- **StageBoard.axaml** (96 lines): ~6 hex. 5 `FontSize` literals (11).\\n\\n- **StageSystemView.axaml** (56 lines): ~4 hex. 3 `FontSize=\\\"13\\\"`.\\n\\n- **StageOutputView.axaml** (156 lines): ~6 hex. ~8 `FontSize` (11, 12, 13).\\n\\n- **StageInputView.axaml** (144 lines): ~6 hex. ~8 `FontSize` (11, 12, 13).\\n\\n- **RunLogView.axaml** (32 lines): ~3 hex (`#53B7F4`, `#7F8794`). 1 `FontSize=\\\"12\\\"`.\\n\\n- **CommandsView.axaml** (78 lines): ~7 hex. 3 `FontSize` (11, 12).\\n\\n- **ActivityColumn.axaml** (69 lines): ~3 hex. 2 `FontSize=\\\"11\\\"`.\\n\\n- **TaskActionBar.axaml** (43 lines): ~2 hex (`#8FE3A2`, `#8FA6FF`). 2 `FontSize=\\\"11\\\"`.\\n\\n- **RewriteToolbar.axaml** (40 lines): ~2 hex. 1 `FontSize=\\\"11\\\"`.\\n\\n- **ObsidianSettings.axaml** (38 lines): ~3 hex (`#E7ECF3`, `#9AA3B1`). 4 `FontSize` (11, 12).\\n\\n- **SettingsWindow.axaml** (32 lines): ~3 hex (`#1A1E26`, `#12151C`, `#252A33`).\\n\\n### 4. C# programmatic sites\\n- **ChevronIcon.cs** line 48: `new SolidColorBrush(Color.Parse(\\\"#6F7785\\\"))` (StyledProperty default). Line 87: `Brushes.Gray` fallback.\\n- **FocusToggleIcon.cs** line 77: `Brushes.Gray` fallback.\\n- **CommonButton.cs** line 165: `FontSize = 14` (glyph TextBlock).\\n- **App.axaml.cs** line 109: `Brush.Parse(\\\"#1A1E26\\\")`, line 121: `FontSize = 13`, line 122: `Brush.Parse(\\\"#DCE2EA\\\")`.\\n- **TaskRowViewModel.cs** lines 9-17: 9 `Brush.Parse(...)` calls (`#3191FF`, `#5AD47D`, `#F2C66D`, `#171A20`, `#16233D`, `#14231B`, `#2A303A`). Line 18-20: 3 `BoxShadows.Parse(...)` with hex. Line 74: `Brushes.Transparent`.\\n- **StageRowViewModel.cs** lines 10-18: 8 `Brush.Parse(...)` calls (`#7F8794`, `#5AD47D`, `#F36F63`, `#171A20`, `#14231B`, `#162B57`, `#2A303A`, `#3191FF`). Lines 19-21: 3 `BoxShadows.Parse(...)` with hex.\\n- **MainWindowViewModel.cs** lines 15-22: 8 `Brush.Parse(...)` calls (pause button colors, backend status colors).\\n\\n### 5. Distinct palette\\nFrom the grep output, ~70+ distinct hex values appear. Key semantic groups visible:\\n- Backgrounds: `#0C0E12` (window), `#12151B`/`#12151C` (panels), `#1A1E25`/`#1A1E26` (buttons/dialogs), `#171A20`/`#171A20` (cards), `#15181F` (path button)\\n- Border/separator: `#252A33` (very common), `#2A303A` (card borders), `#2B313C`, `#2A3040`, `#2A3340`\\n- Text primary: `#DDE3EC`/`#DCE2EA`, `#E7ECF3`, `#F2F5FA`, `#FFFFFF`\\n- Text muted: `#6F7785`, `#7F8794`, `#9AA3B1`, `#8E96A3`, `#5A6370`, `#6B7480`, `#C8CED8`\\n- Accent: `#5B7CFA`/`#5575F2` (blue), `#3191FF` (selection), `#5AD47D` (green/success), `#F36F63`/`#E0556A` (red/error), `#F0CA66`/`#F2C66D` (yellow/warning)\\n\\n### 6. Existing test infrastructure\\n- **ButtonsCentralizationTests.cs**: Model for the new guard. Uses `RepoSetup.Root`, enumerates `.axaml`/`.cs` files, applies regex scanning, emits numbered `relativePath:line \u2192 text` violation lists, asserts zero. Allow-lists a central home directory.\\n- **FileSizeGuard.cs**: Pure `FindViolations(files, limit)` + real-tree `Enumerate(repoRoot, roots, limit)`. Unit-tested by `FileSizeGuardTests.cs` with in-memory TempDir.\\n- **RepoSetup.cs**: Static `Root` property walks up from `AppContext.BaseDirectory` looking for `visual-relay` script file.\\n- **VisualRelayThemeTests.cs**: Asserts `Contains(@\\\"Selector=\\\"\\\"Button.hyperlink\\\"\\\"\\\", content)` \u2014 must still pass after migration.\\n- **ChevronAffordanceRenderTests.cs** lines 192-197: `ChevronForeground_HasExplicitDefault_NotNull` asserts `new ChevronIcon().Foreground` is non-null. The default `#6F7785` is set as a `StyledProperty` default at type-init time \u2014 cannot reference a `DynamicResource`. Must be relocated to a theme Style setter, and the test updated to check the tokenized value rather than deleted.\\n\\n### 7. FontSize distribution\\n- `10`: Appears in **TopBar.axaml** line 39 (`FontSize=\\\"10\\\"` on version TextBlock) and **VisualRelayTheme.axaml** line 129 (`TextBlock.railTitle` setter).\\n- `11`: Most common size. ~70+ occurrences across all views (QueuePanel, TaskDetailPanel, SettingsPanel, TopBar, StageBoard, SandboxPaths, ObsidianSettings, etc.).\\n- `12`: ~20 occurrences (panelTitle style, various TextBlock/SelectableTextBlock).\\n- `13`: ~20 occurrences (title TextBlocks, monospace content areas).\\n- `14`: Only in **TopBar.axaml** line 32 (app title) and **CommonButton.cs** line 165 (glyph).\\n- `16`: In **SettingsPanel.axaml** lines 21 and 70 (section headers).\\n\\n### 8. Accessibility concerns (pre-migration)\\n- `FontSize=\\\"10\\\"` and `FontSize=\\\"11\\\"` are below the 12px floor \u2014 must be raised.\\n- Contrast offenders likely: muted text `#6F7785` (rgb 111,119,133) on dark backgrounds, warning `#F0CA66` on `#2B2416`, accent `#5B7CFA`/`#5575F2` \u2014 need WCAG verification.\\n- The 12px floor will affect rail title (currently 10px) and the most common body size (currently 11px) \u2014 deliberate visible change.\",\n\n  \"excerpts\": [\n    \"App.axaml:1-15 \u2014 No <Application.Resources> section exists; only <Application.Styles> with FluentTheme + VisualRelayTheme StyleInclude. RequestedThemeVariant=\\\"Dark\\\".\",\n    \"VisualRelayTheme.axaml:1-193 \u2014 22 style selectors with ~48 raw hex colors, 2 FontSize literals (12 on panelTitle, 10 on railTitle), and BoxShadow hex values.\",\n    \"Theme/ directory does not exist at src/VisualRelay.App/Theme/ \u2014 must be created.\",\n    \"ChevronIcon.cs:46-48 \u2014 StyledProperty default: new SolidColorBrush(Color.Parse(\\\"#6F7785\\\")). Line 87: Foreground ?? Brushes.Gray fallback.\",\n    \"FocusToggleIcon.cs:77 \u2014 Foreground ?? Brushes.Gray fallback.\",\n    \"CommonButton.cs:165 \u2014 FontSize = 14 on glyph TextBlock.\",\n    \"App.axaml.cs:109,121-122 \u2014 Brush.Parse(\\\"#1A1E26\\\"), FontSize = 13, Brush.Parse(\\\"#DCE2EA\\\").\",\n    \"TaskRowViewModel.cs:9-20 \u2014 9 Brush.Parse calls + 3 BoxShadows.Parse with hex + Brushes.Transparent on line 74.\",\n    \"StageRowViewModel.cs:10-21 \u2014 8 Brush.Parse calls + 3 BoxShadows.Parse with hex.\",\n    \"MainWindowViewModel.cs:15-22 \u2014 8 Brush.Parse calls.\",\n    \"MainWindow.axaml:120-123,157-160 \u2014 8 GradientStop hex colors in GridSplitter seam styles.\",\n    \"TopBar.axaml:22 \u2014 BoxShadow with hex: BoxShadow=\\\"0 10 24 0 #665575F2\\\".\",\n    \"TopBar.axaml:39 \u2014 FontSize=\\\"10\\\" on version display (below 12px floor).\",\n    \"VisualRelayTheme.axaml:129 \u2014 FontSize=\\\"10\\\" on TextBlock.railTitle setter.\",\n    \"ChevronAffordanceRenderTests.cs:192-197 \u2014 ChevronForeground_HasExplicitDefault_NotNull asserts new ChevronIcon().Foreground != null.\",\n    \"ButtonsCentralizationTests.cs:1-300 \u2014 Pattern to follow: RepoSetup.Root, line scanning with regex, allow-listing central home, numbered violation list, Assert.True with descriptive message.\",\n    \"FileSizeGuard.cs:1-99 \u2014 Pure FindViolations + real-tree Enumerate pattern.\",\n    \"FileSizeGuardTests.cs:1-153 \u2014 In-memory unit testing of pure function, TempDir for real-tree tests.\",\n    \"VisualRelayThemeTests.cs:14-17 \u2014 Asserts Button.hyperlink selector exists in theme file (must survive migration).\",\n    \"Distinct FontSize values: 10, 11, 12, 13, 14, 16. 10 and 11 are below the 12px accessibility floor and must be raised.\",\n    \"~70+ distinct hex values. Key semantic groups include backgrounds, borders, primary text, muted text, and accent colors.\"\n  ],\n\n  \"repro\": \"## Reproduction / verification steps\\n\\n### Verify current state (pre-migration)\\n1. Confirm no Theme directory: `ls src/VisualRelay.App/Theme/` \u2192 `No such file or directory`\\n2. Confirm no Application.Resources in App.axaml: `grep -c 'Application.Resources' src/VisualRelay.App/App.axaml` \u2192 `0`\\n3. Count raw hex in theme: `grep -c '#[0-9A-Fa-f]\\\\{6,8\\\\}' src/VisualRelay.App/Styles/VisualRelayTheme.axaml` \u2192 ~48\\n4. Count raw hex across all views: `grep -r '#[0-9A-Fa-f]\\\\{6,8\\\\}' src/VisualRelay.App/Views/ --include='*.axaml' | wc -l` \u2192 ~200\\n5. Count FontSize literals: `grep -r 'FontSize=\\\"[0-9]' src/VisualRelay.App/Views/ --include='*.axaml' | wc -l` \u2192 ~107\\n6. Count Brush.Parse in C#: `grep -r 'Brush\\\\.Parse' src/VisualRelay.App/ --include='*.cs' | wc -l` \u2192 27\\n7. Run existing tests to confirm baseline green: `dotnet test tests/VisualRelay.Tests/`\\n\\n### What the migration must accomplish\\n1. Create `src/VisualRelay.App/Theme/Colors.axaml` with semantic Color+SolidColorBrush resources\\n2. Create `src/VisualRelay.App/Theme/Typography.axaml` with x:Double font-size resources\\n3. Add `<Application.Resources>` to App.axaml merging both via ResourceDictionary.MergedDictionaries\\n4. Replace all hex/FontSize literals in VisualRelayTheme.axaml with DynamicResource/StaticResource references\\n5. Replace all inline hex/FontSize in 19 view .axaml files with resource references\\n6. Resolve programmatic C# sites: move ChevronIcon default to Style setter, resolve tokens from Application.Current.FindResource for code-built UI\\n7. Add DesignTokenCentralizationTests.cs guard (pure classifier + real-tree scan)\\n8. Add DesignTokenAccessibilityTests.cs (WCAG contrast function + pairing assertions + 12px floor)\\n9. Tidy token values: raise 10 and 11 to 12, fix contrast ratios to WCAG 2.2 AA\\n10. Update ChevronForeground_HasExplicitDefault_NotNull test assertion\\n11. Run full test suite \u2192 all green, guard reports 0 violations\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation plan (13 steps)\\n\\n### Step 1 \u2014 Add the guard (red on pre-migration tree)\\nCreate `tools/VisualRelay.Guards/DesignTokenGuard.cs` with pure static methods:\\n- `FindHexViolations(files)`: scans `.axaml` lines for hex (`#[0-9A-Fa-f]{6,8}`) outside the two allow-listed token files (`Theme/Colors.axaml`, `Theme/Typography.axaml`). Returns `(path, line, text)` for each offender.\\n- `FindFontSizeLiteralViolations(files)`: scans `.axaml` for `FontSize=\\\"<number>\\\"` or `<Setter Property=\\\"FontSize\\\" Value=\\\"<number>\\\"` (value not a `{StaticResource \u2026}` or `{DynamicResource \u2026}`). Returns violations.\\n- `FindNamedColorViolations(files)`: scans brush-bearing attributes (`Foreground`, `Background`, `BorderBrush`, `Fill`, `Stroke`) for named-color keywords (`Red`, `White`, `Gray`, \u2026) that aren't `Transparent` or `{x:Null}` and aren't resource references. Returns violations.\\n- `FindCsViolations(files)`: scans `src/VisualRelay.App/**/*.cs` for `Color.Parse(\\\"`, `Color.FromRgb(`, `Color.FromArgb(`, `Colors.<Name>`, `Brushes.<Name>`, `new SolidColorBrush(`, `Brush.Parse(\\\"`, `BoxShadows.Parse(\\\"`, `FontSize = <number>`. Allow-lists no extra files (all C# resolves from `Application.Current!.FindResource` or moves to Style setters).\\n\\nCreate `tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs` modeled on `ButtonsCentralizationTests.cs`:\\n- **In-memory unit tests** (pure classifier): a hex line fails, `{DynamicResource SurfaceBrush}` passes, `Transparent` passes, `{x:Null}` passes, `FontSize=\\\"12\\\"` fails, `FontSize=\\\"{StaticResource FontSizeBody}\\\"` passes, `Width=\\\"12\\\"` passes, `Red` on Foreground fails, `Color.Parse(\\\"#ABC\\\")` in C# fails.\\n- **Real-tree `[Fact]`**: `DesignTokenGuard_NoRawLiterals_InAppSource()` \u2014 discovers repo via `RepoSetup.Root`, enumerates all `.axaml`/`.cs` under `src/VisualRelay.App`, runs the pure classifiers, asserts zero violations with a numbered worklist message. Allow-lists `Theme/Colors.axaml` and `Theme/Typography.axaml`.\\n\\nThis test will be **red** (~200+ violations) \u2014 its output is the migration worklist.\\n\\n### Step 2 \u2014 Create `Theme/Colors.axaml` (value-preserving)\\nCreate directory `src/VisualRelay.App/Theme/`. Create `Colors.axaml` as a `ResourceDictionary` defining a semantic `Color` + matching `SolidColorBrush` pair for every distinct hex value in the codebase. Collapse exact duplicates (`#2A303A` \u2192 `CardBorderBrush`). Group by role: Surfaces (WindowBgBrush #0C0E12, PanelBgBrush #12151B, SurfaceBrush #1A1E25, CardBgBrush #171A20, \u2026), Borders (BorderSubtleBrush #252A33, CardBorderBrush #2A303A, ButtonBorderBrush #2B313C, \u2026), Text (TextPrimaryBrush #DDE3EC, TextHeadingBrush #F2F5FA, TextSubtleBrush #6F7785, TextMutedBrush #9AA3B1, \u2026), Accent (AccentBrush #5B7CFA, SelectionBrush #3191FF, FocusToggleTextBrush #C7D4FF, \u2026), Semantic (SuccessBrush #5AD47D, ErrorBrush #F36F63, WarningBrush #F0CA66, \u2026). Also define `BoxShadows` resources: `PanelShadow`, `NoShadow`, `SelectedGlow22`, `SelectedGlow20`, `RunningGlow22`, `RunningGlow20`, `LogoGlow`. Keep \u2264300 lines with `<!-- -->` section comments.\\n\\n### Step 3 \u2014 Create `Theme/Typography.axaml` (value-preserving)\\n`ResourceDictionary` with `x:Double` tokens: `FontSizeCaption=10`, `FontSizeBody=11`, `FontSizeBodyLarge=12`, `FontSizeSubtitle=13`, `FontSizeTitle=14`, `FontSizeHeading=16`. One token per distinct size, named by role.\\n\\n### Step 4 \u2014 Wire `App.axaml`\\nAdd `<Application.Resources><ResourceDictionary><ResourceDictionary.MergedDictionaries>` with `<ResourceInclude Source=\\\"avares://VisualRelay.App/Theme/Colors.axaml\\\"/>` and Typography, placed before `<Application.Styles>`.\\n\\n### Step 5 \u2014 Migrate `VisualRelayTheme.axaml`\\nReplace every raw hex `Value=\\\"#\u2026\\\"` with `Value=\\\"{DynamicResource \u2026Brush}\\\"`. Add two new Style selectors: `controls|ChevronIcon` and `controls|FocusToggleIcon` with Foreground setters using tokens (relocated from C# defaults). Replace `FontSize` literals with `{StaticResource \u2026}`. Replace `BoxShadow` literals with `{DynamicResource \u2026}`.\\n\\n### Step 6 \u2014 Migrate 17 view `.axaml` files\\nFor each view file, replace `Foreground=\\\"#\u2026\\\"` / `Background=\\\"#\u2026\\\"` / `BorderBrush=\\\"#\u2026\\\"` / `Fill=\\\"#\u2026\\\"` with `{DynamicResource \u2026Brush}`, `FontSize=\\\"N\\\"` with `{StaticResource \u2026}`, `BoxShadow=\\\"\u2026\\\"` with `{DynamicResource \u2026}`. GradientStop `Color=\\\"#00252A33\\\"` and `Color=\\\"#003191FF\\\"` (alpha=0) \u2192 `Transparent`; others \u2192 `{StaticResource \u2026Color}`. TopBar.axaml line 22 BoxShadow \u2192 token.\\n\\n### Step 7 \u2014 Migrate C# sites\\n- **ChevronIcon.cs**: Remove `defaultValue: new SolidColorBrush(Color.Parse(\\\"#6F7785\\\"))` from `ForegroundProperty` registration. Change line 87 `Foreground ?? Brushes.Gray` \u2192 `Foreground ?? Application.Current!.FindResource(\\\"TextSubtleBrush\\\") as IBrush`.\\n- **FocusToggleIcon.cs**: Change line 77 `Foreground ?? Brushes.Gray` \u2192 `Foreground ?? Application.Current!.FindResource(\\\"TextSubtleBrush\\\") as IBrush`.\\n- **CommonButton.cs**: Line 165 `FontSize = 14` \u2192 `FontSize = (double)Application.Current!.FindResource(\\\"FontSizeTitle\\\")`.\\n- **App.axaml.cs**: Lines 109,121,122 \u2014 resolve from `Application.Current!.FindResource(\u2026)`.\\n- **TaskRowViewModel.cs**: Convert 9 `Brush.Parse(\u2026)` + 3 `BoxShadows.Parse(\u2026)` + `Brushes.Transparent` \u2192 lazy `Lazy<IBrush>`/`Lazy<BoxShadows>` with `FindResource`. `Brushes.Transparent` stays (exempt).\\n- **StageRowViewModel.cs**: Same pattern \u2014 8 `Brush.Parse` + 3 `BoxShadows.Parse` \u2192 `Lazy<T>` with `FindResource`.\\n- **MainWindowViewModel.cs**: 8 `Brush.Parse` \u2192 `Lazy<IBrush>` with `FindResource`.\\n\\n### Step 8 \u2014 Update `ChevronAffordanceRenderTests.cs`\\nUpdate `ChevronForeground_HasExplicitDefault_NotNull` (line 192-197): since the C# default moved to a theme Style setter, the test now verifies the resolved styled value matches the token color `#6F7785` (TextSubtleBrush). Use the headless session with app resources loaded.\\n\\n### Step 9 \u2014 Verify guard is green\\n`dotnet test --filter DesignTokenCentralizationTests` \u2192 0 violations. Full suite: `dotnet test` \u2192 all existing tests green. `VisualRelayThemeTests.Theme_ContainsHyperlinkButtonStyle` still finds `Button.hyperlink` selector.\\n\\n### Step 10 \u2014 Accessibility: contrast fix\\nAudit fg/bg token pairs in `Colors.axaml` against WCAG 2.2 AA (4.5:1 normal, 3:1 large/UI). Adjust token values where needed (e.g., lighten TextSubtleBrush from #6F7785 to meet 4.5:1 on PanelBgBrush). Only token values change; all consumers update automatically.\\n\\n### Step 11 \u2014 Accessibility: raise type floor\\nIn `Typography.axaml`, change `FontSizeCaption` 10\u219212, `FontSizeBody` 11\u219212. No font-size token remains below 12.\\n\\n### Step 12 \u2014 Create `DesignTokenAccessibilityTests.cs`\\nPure WCAG functions (`RelativeLuminance`, `ContrastRatio`) with unit tests (black-on-white=21:1). Real-tree `[Fact]` parses `Colors.axaml` and `Typography.axaml`, checks explicit fg/bg pairings against AA thresholds, and asserts no font-size token < 12.\\n\\n### Step 13 \u2014 Final verification\\n`dotnet test` \u2014 all gates green: centralization guard 0 violations, accessibility guard all pairs pass, FileSizeGuard no file >300 lines, all existing tests pass.\",\n  \"manifest\": [\n    \"+tools/VisualRelay.Guards/DesignTokenGuard.cs\",\n    \"+tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs\",\n    \"+src/VisualRelay.App/Theme/Colors.axaml\",\n    \"+src/VisualRelay.App/Theme/Typography.axaml\",\n    \"+tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs\",\n    \"src/VisualRelay.App/App.axaml\",\n    \"src/VisualRelay.App/Styles/VisualRelayTheme.axaml\",\n    \"src/VisualRelay.App/Views/MainWindow.axaml\",\n    \"src/VisualRelay.App/Views/SettingsWindow.axaml\",\n    \"src/VisualRelay.App/Views/Controls/QueuePanel.axaml\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n    \"src/VisualRelay.App/Views/Controls/SettingsPanel.axaml\",\n    \"src/VisualRelay.App/Views/Controls/TopBar.axaml\",\n    \"src/VisualRelay.App/Views/Controls/SandboxPaths.axaml\",\n    \"src/VisualRelay.App/Views/Controls/StageBoard.axaml\",\n    \"src/VisualRelay.App/Views/Controls/StageSystemView.axaml\",\n    \"src/VisualRelay.App/Views/Controls/StageOutputView.axaml\",\n    \"src/VisualRelay.App/Views/Controls/StageInputView.axaml\",\n    \"src/VisualRelay.App/Views/Controls/RunLogView.axaml\",\n    \"src/VisualRelay.App/Views/Controls/CommandsView.axaml\",\n    \"src/VisualRelay.App/Views/Controls/ActivityColumn.axaml\",\n    \"src/VisualRelay.App/Views/Controls/TaskActionBar.axaml\",\n    \"src/VisualRelay.App/Views/Controls/RewriteToolbar.axaml\",\n    \"src/VisualRelay.App/Views/Controls/ObsidianSettings.axaml\",\n    \"src/VisualRelay.App/Views/Controls/ChevronIcon.cs\",\n    \"src/VisualRelay.App/Views/Controls/FocusToggleIcon.cs\",\n    \"src/VisualRelay.App/Views/Controls/Buttons/CommonButton.cs\",\n    \"src/VisualRelay.App/App.axaml.cs\",\n    \"src/VisualRelay.App/ViewModels/TaskRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/StageRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.cs\",\n    \"tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The test results are exactly as expected for the author-tests stage:\n\n- **36 passed** \u2014 all pure unit tests pass (classifier logic is correct)\n- **2 failed** \u2014 both real-tree scans fail correctly:\n  1. `DesignTokenGuard_NoRawLiterals_InAppSource` enumerates 409+ violations (the migration worklist)\n  2. `DesignTokens_MeetAccessibilityThresholds` fails because token files don't exist yet\n\nThis is the correct \"red on pre-migration tree\" state. The guard first run produces the comprehensive worklist; the pure classifiers are proven correct by in-memory tests.\n\n```json\n{\n  \"testFiles\": [\n    \"tools/VisualRelay.Guards/DesignTokenGuard.cs\",\n    \"tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs\",\n    \"tests/VisualRelay.Tests/DesignTokenCentralizationGuardTests.cs\",\n    \"tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs\",\n    \"tests/VisualRelay.[ENCRYPTED:aws-secret-key]GSfl+N6x9K2NXBlnuLKi4pMiv1movLffibqWu8qB.cs\"\n  ],\n  \"rationale\": \"Created the DesignTokenGuard with pure classification functions (FindHexViolations, FindFontSizeLiteralViolations, FindNamedColorViolations, FindCsViolations) following the FileSizeGuard pattern. The guard enforces four rules: (1) no #-hex in .axaml outside the two token files, (2) FontSize must be a resource reference, (3) no named-color keywords on brush-bearing attributes, (4) no programmatic color/size literals in C#. DesignTokenCentralizationTests provides in-memory unit tests for each rule. DesignTokenCentralizationGuardTests runs the real-tree scan over src/VisualRelay.App \u2014 currently failing with 409+ violations, which is the migration worklist. DesignTokenAccessibilityTests provides pure WCAG 2.2 contrast math with unit tests (black-on-white = 21:1, identical = 1:1). DesignTokenAccessibilityGuardTests will parse token files and verify AA thresholds once tokens exist. All 5 files are under 300 lines. 36/38 tests pass; the 2 failures are the expected pre-migration guard failures.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 41,
+    "tool_calls_total": 52,
+    "tool_calls_succeeded": 51,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 26,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 6,
+        "failed": 1
+      }
+    },
+    "compactions": 1,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 41,
+    "total_llm_time_s": 492.418,
+    "prompt_cache": {
+      "cached_tokens": 2451456,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 34.046,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.18,
+      "prompt_tokens_est": 16560,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/ButtonsCentralizationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13367
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/FileSizeGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4269
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/FileSizeGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5743
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.686,
+      "prompt_tokens_est": 22888,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1627
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs",
+        "offset": 185,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 901
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/App.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 597
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.773,
+      "prompt_tokens_est": 23838,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Styles/VisualRelayTheme.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9537
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Views/Controls/ChevronIcon.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3906
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7533
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.383,
+      "prompt_tokens_est": 29157,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Views/Controls/FocusToggleIcon.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7085
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Views/Controls/Buttons/CommonButton.cs",
+        "offset": 155,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 757
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7121
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.789,
+      "prompt_tokens_est": 33115,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/StageRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10652
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 1,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1658
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Views/MainWindow.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9643
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 7.043,
+      "prompt_tokens_est": 38382,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/VisualRelay.Guards.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 549
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2362
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6632
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 114.083,
+      "prompt_tokens_est": 40958,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/DesignTokenGuard.cs",
+        "content": "using System.Text.RegularExpressions;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure classification functions that flag raw color / font-size literals\n/// outside the central design-token files (Theme/Colors.axaml,\n/// Theme/Typography.axaml).  Each function is stateless \u2014 feed it file\n/// contents and receive a list of violations.  The real-tree scan is a\n/// separate [Fact] in the test project.\n/// </summary>\npublic static class DesignTokenGuard\n{\n    /// <summary>Describes one raw-literal violation.</summary>\n    public sealed record Violation(string Path, int Line, string Text, string Rule);\n\n    /// <summary>\n    /// Suffixes of the two files where raw hex literals are allowed to live.\n    /// Compared case-insensitively against the end of each file path.\n    /// </summary>\n    public static readonly IReadOnlySet<string> DefaultTokenFileSuffixes =\n        new HashSet<string>(StringComparer.Ordinal)\n        {\n            \"Theme/Colors.axaml\",\n            \"Theme/Typography.axaml\",\n        };\n\n    /// <summary>Brush-bearing attribute names that rule 3 scans.</summary>\n    private static readonly HashSet<string> BrushAttributes =\n        new(StringComparer.OrdinalIgnoreCase)\n        {\n            \"Foreground\", \"Background\", \"BorderBrush\", \"Fill\", \"Stroke\",\n        };\n\n    // \u2500\u2500 Rule 1: no #-hex anywhere in .axaml outside the two token files \u2500\u2500\n\n    private static readonly Regex HexRegex =\n        new(@\"#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?\", RegexOptions.Compiled);\n\n    /// <summary>\n    /// Returns every line in <paramref name=\"axamlFiles\"/> that contains a\n    /// <c>#RGB</c>/<c>#RRGGBB</c>/<c>#AARRGGBB</c> literal, unless the file\n    /// path is in <paramref name=\"allowListedPaths\"/>.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindHexViolations(\n        IReadOnlyList<(string Path, string[] Lines)> axamlFiles,\n        IReadOnlySet<string>? allowListedPaths = null)\n    {\n        var allowed = allowListedPaths ?? DefaultTokenFileSuffixes;\n        var violations = new List<Violation>();\n\n        foreach (var (path, lines) in axamlFiles)\n        {\n            if (IsAllowListed(path, allowed))\n                continue;\n\n            for (var i = 0; i < lines.Length; i++)\n            {\n                if (HexRegex.IsMatch(lines[i]))\n                {\n                    violations.Add(new Violation(path, i + 1, lines[i].Trim(), \"hex-color\"));\n                }\n            }\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 Rule 2: FontSize must be a resource reference \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    // Matches FontSize=\"<value>\" where value does NOT start with { (i.e. is\n    // not a markup extension / resource reference).\n    private static readonly Regex FontSizeAttrRegex =\n        new(@\"FontSize\\s*=\\s*\"\"(?!\\{)\", RegexOptions.Compiled | RegexOptions.IgnoreCase);\n\n    // Matches <Setter Property=\"FontSize\" Value=\"<value>\"/> where value does\n    // NOT start with {.\n    private static readonly Regex FontSizeSetterRegex =\n        new(@\"Property\\s*=\\s*\"\"FontSize\"\"\\s+Value\\s*=\\s*\"\"(?!\\{)\", RegexOptions.Compiled | RegexOptions.IgnoreCase);\n\n    /// <summary>\n    /// Returns every line where a <c>FontSize</c> attribute or\n    /// <c>&lt;Setter Property=\"FontSize\"</c> carries a numeric literal\n    /// rather than a <c>{StaticResource \u2026}</c> or\n    /// <c>{DynamicResource \u2026}</c> reference.  Raw numbers on other\n    /// attributes (Width, Padding, \u2026) are intentionally ignored.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindFontSizeLiteralViolations(\n        IReadOnlyList<(string Path, string[] Lines)> axamlFiles)\n    {\n        var violations = new List<Violation>();\n\n        foreach (var (path, lines) in axamlFiles)\n        {\n            for (var i = 0; i < lines.Length; i++)\n            {\n                var line = lines[i];\n                if (FontSizeAttrRegex.IsMatch(line) || FontSizeSetterRegex.IsMatch(line))\n                {\n                    violations.Add(new Violation(path, i + 1, line.Trim(), \"font-size-literal\"));\n                }\n            }\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 Rule 3: no named-color keywords on brush attributes \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    // Matches a brush-bearing attribute whose value is a plain word (not a\n    // markup extension, not a hex literal).  We then check whether the word\n    // is \"Transparent\" (exempt) or something else (flag).\n    private static readonly Regex BrushAttrRegex =\n        new(@\"(Foreground|Background|BorderBrush|Fill|Stroke)\\s*=\\s*\"\"([^\"\"{]*)\"\"\",\n            RegexOptions.Compiled | RegexOptions.IgnoreCase);\n\n    /// <summary>\n    /// Returns every line where a brush-bearing attribute\n    /// (<c>Foreground</c>, <c>Background</c>, <c>BorderBrush</c>,\n    /// <c>Fill</c>, <c>Stroke</c>) carries a plain-word value that is\n    /// neither <c>Transparent</c> nor a resource reference.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindNamedColorViolations(\n        IReadOnlyList<(string Path, string[] Lines)> axamlFiles)\n    {\n        var violations = new List<Violation>();\n\n        foreach (var (path, lines) in axamlFiles)\n        {\n            for (var i = 0; i < lines.Length; i++)\n            {\n                var line = lines[i];\n                var matches = BrushAttrRegex.Matches(line);\n                foreach (Match m in matches)\n                {\n                    var value = m.Groups[2].Value.Trim();\n                    // Skip hex, resource refs, {x:Null}, Transparent, empty.\n                    if (value.Length == 0) continue;\n                    if (value.StartsWith(\"#\", StringComparison.Ordinal)) continue;\n                    if (string.Equals(value, \"Transparent\", StringComparison.OrdinalIgnoreCase)) continue;\n\n                    violations.Add(new Violation(path, i + 1, line.Trim(), \"named-color\"));\n                    break; // one violation per line is enough\n                }\n            }\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 Rule 4: scan C# for programmatic color / font-size sites \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static readonly Regex ColorParseRegex =\n        new(@\"Color\\.Parse\\(\"\"#\", RegexOptions.Compiled);\n\n    private static readonly Regex ColorFromRgbRegex =\n        new(@\"Color\\.FromRgb\\(\", RegexOptions.Compiled);\n\n    private static readonly Regex ColorFromArgbRegex =\n        new(@\"Color\\.FromArgb\\(\", RegexOptions.Compiled);\n\n    // Colors.White, Colors.Red, \u2026  but not Colors.Transparent.\n    private static readonly Regex ColorsDotRegex =\n        new(@\"\\bColors\\.(\\w+)\", RegexOptions.Compiled);\n\n    // Brushes.Gray, Brushes.White, \u2026 but not Brushes.Transparent.\n    private static readonly Regex BrushesDotRegex =\n        new(@\"\\bBrushes\\.(\\w+)\", RegexOptions.Compiled);\n\n    private static readonly Regex NewSolidColorBrushRegex =\n        new(@\"new\\s+SolidColorBrush\\(\", RegexOptions.Compiled);\n\n    private static readonly Regex BrushParseRegex =\n        new(@\"Brush\\.Parse\\(\"\"#\", RegexOptions.Compiled);\n\n    private static readonly Regex BoxShadowsParseRegex =\n        new(@\"BoxShadows\\.Parse\\(\", RegexOptions.Compiled);\n\n    private static readonly Regex FontSizeAssignRegex =\n        new(@\"FontSize\\s*=\\s*\\d+\", RegexOptions.Compiled);\n\n    /// <summary>\n    /// Returns every line in <paramref name=\"csFiles\"/> that contains a\n    /// programmatic color / font-size literal, unless the file path is in\n    /// <paramref name=\"allowListedPaths\"/>.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindCsViolations(\n        IReadOnlyList<(string Path, string[] Lines)> csFiles,\n        IReadOnlySet<string>? allowListedPaths = null)\n    {\n        var allowed = allowListedPaths ?? new HashSet<string>(StringComparer.Ordinal);\n        var violations = new List<Violation>();\n\n        foreach (var (path, lines) in csFiles)\n        {\n            if (IsAllowListed(path, allowed))\n                continue;\n\n            for (var i = 0; i < lines.Length; i++)\n            {\n                var line = lines[i];\n                var rule = ClassifyCsLine(line);\n                if (rule is not null)\n                {\n                    violations.Add(new Violation(path, i + 1, line.Trim(), rule));\n                }\n            }\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>\n    /// Classifies a single C# line.  Returns the rule name if it violates,\n    /// or null if it is clean.\n    /// </summary>\n    private static string? ClassifyCsLine(string line)\n    {\n        if (ColorParseRegex.IsMatch(line))\n            return \"cs-color-parse\";\n\n        if (ColorFromRgbRegex.IsMatch(line))\n            return \"cs-color-fromrgb\";\n\n        if (ColorFromArgbRegex.IsMatch(line))\n            return \"cs-color-fromargb\";\n\n        if (BrushParseRegex.IsMatch(line))\n            return \"cs-brush-parse\";\n\n        if (BoxShadowsParseRegex.IsMatch(line))\n            return \"cs-boxshadows-parse\";\n\n        if (NewSolidColorBrushRegex.IsMatch(line))\n            return \"cs-solidcolorbrush\";\n\n        if (FontSizeAssignRegex.IsMatch(line))\n            return \"cs-fontsize\";\n\n        // Colors.White etc. \u2014 exempt Colors.Transparent\n        var cm = ColorsDotRegex.Match(line);\n        if (cm.Success && !string.Equals(cm.Groups[1].Value, \"Transparent\", StringComparison.Ordinal))\n            return \"cs-colors-dot\";\n\n        // Brushes.Gray etc. \u2014 exempt Brushes.Transparent\n        var bm = BrushesDotRegex.Match(line);\n        if (bm.Success && !string.Equals(bm.Groups[1].Value, \"Transparent\", StringComparison.Ordinal))\n            return \"cs-brushes-dot\";\n\n        return null;\n    }\n\n    // \u2500\u2500 helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Returns true when <paramref name=\"path\"/> ends with any suffix in\n    /// <paramref name=\"allowListedPaths\"/> (case-insensitive ordinal).\n    /// </summary>\n    public static bool IsAllowListed(string path, IReadOnlySet<string> allowListedPaths)\n    {\n        foreach (var suffix in allowListedPaths)\n        {\n            if (path.EndsWith(suffix, StringComparison.Ordinal))\n                return true;\n        }\n\n        return false;\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 120
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 46.095,
+      "prompt_tokens_est": 47943,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Structural guard: every color and font-size literal must resolve to a\n/// design token defined in Theme/Colors.axaml or Theme/Typography.axaml.\n/// The guard covers four rule families: (1) no #-hex in .axaml outside the\n/// two token files, (2) FontSize must be a resource reference, (3) no\n/// named-color keywords on brush-bearing attributes, and (4) no programmatic\n/// color/size literals in C#.  There is no baseline; the first run on the\n/// pre-migration tree enumerates every offender.\n/// </summary>\npublic sealed class DesignTokenCentralizationTests\n{\n    private static string RepoRoot => RepoSetup.Root;\n    private static string AppSrcDir =>\n        Path.Combine(RepoRoot, \"src\", \"VisualRelay.App\");\n\n    private static readonly HashSet<string> TokenFileSuffixes =\n        new(StringComparer.Ordinal)\n        {\n            \"Theme/Colors.axaml\",\n            \"Theme/Typography.axaml\",\n        };\n\n    // \u2500\u2500 Helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static List<(string Path, string[] Lines)> ReadAxamlFiles(string root)\n    {\n        if (!Directory.Exists(root))\n            return [];\n        return Directory.GetFiles(root, \"*.axaml\", SearchOption.AllDirectories)\n            .OrderBy(f => f, StringComparer.Ordinal)\n            .Select(f => (Path.GetRelativePath(RepoRoot, f), File.ReadAllLines(f)))\n            .ToList();\n    }\n\n    private static List<(string Path, string[] Lines)> ReadCsFiles(string root)\n    {\n        if (!Directory.Exists(root))\n            return [];\n        return Directory.GetFiles(root, \"*.cs\", SearchOption.AllDirectories)\n            .OrderBy(f => f, StringComparer.Ordinal)\n            .Select(f => (Path.GetRelativePath(RepoRoot, f), File.ReadAllLines(f)))\n            .ToList();\n    }\n\n    private static string FormatViolations(IReadOnlyList<DesignTokenGuard.Violation> violations)\n    {\n        return string.Join(\"\\n\",\n            violations.Select((v, idx) =>\n                $\"  {idx + 1}. {v.Path}:{v.Line}  \u2192  [{v.Rule}] {v.Text}\"));\n    }\n\n    // \u2500\u2500 In-memory unit tests (pure classifier) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void HexLine_InAxaml_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"#1A1E25\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        Assert.Single(violations);\n        Assert.Equal(\"hex-color\", violations[0].Rule);\n        Assert.Contains(\"#1A1E25\", violations[0].Text, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void HexLine_InTokenFile_IsAllowed()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Theme/Colors.axaml\", new[] { @\"<Color x:Key=\"\"SurfaceColor\"\">#1A1E25</Color>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void DynamicResource_PassesHexCheck()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"{DynamicResource SurfaceBrush}\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void Transparent_Value_PassesHexCheck()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"Transparent\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        // Transparent has no #, so hex scan is empty\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void FontSizeNumericLiteral_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"12\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n\n        Assert.Single(violations);\n        Assert.Equal(\"font-size-literal\", violations[0].Rule);\n    }\n\n    [Fact]\n    public void FontSizeSetterNumericLiteral_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Styles/Theme.axaml\", new[] { @\"<Setter Property=\"\"FontSize\"\" Value=\"\"10\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n\n        Assert.Single(violations);\n        Assert.Equal(\"font-size-literal\", violations[0].Rule);\n    }\n\n    [Fact]\n    public void FontSizeStaticResource_Passes()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"{StaticResource FontSizeBody}\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void FontSizeDynamicResource_Passes()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"{DynamicResource FontSizeBody}\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void WidthNumericLiteral_IsIgnored()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Width=\"\"12\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void NamedColorOnForeground_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock Foreground=\"\"Red\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindNamedColorViolations(files);\n\n        Assert.Single(violations);\n        Assert.Equal(\"named-color\", violations[0].Rule);\n    }\n\n    [Fact]\n    public void TransparentOnForeground_Passes()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"Transparent\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindNamedColorViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void XNullOnBorderBrush_IsNotNamedColor()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border BorderBrush=\"\"{x:Null}\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindNamedColorViolations(files);\n\n        // {x:Null} starts with { \u2014 not matched by the brush-attr regex\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void HexOnBackground_IsNotFlaggedAsNamedColor()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"#1A1E25\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindNamedColorViolations(files);\n\n        // Hex starts with # \u2014 ruled out by the named-color classifier\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void CsColorParse_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        // Should match both Color.Parse and new SolidColorBrush\n        Assert.Contains(violations, v => v.Rule == \"cs-color-parse\");\n    }\n\n    [Fact]\n    public void CsSolidColorBrush_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"new SolidColorBrush(Colors.Red)\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Rule == \"cs-solidcolorbrush\");\n    }\n\n    [Fact]\n    public void CsBrushesGray_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"Foreground ?? Brushes.Gray\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Rule == \"cs-brushes-dot\");\n    }\n\n    [Fact]\n    public void CsBrushesTransparent_IsAllowed()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"Brushes.Transparent\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void CsColorsTransparent_IsAllowed()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"Colors.Transparent\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void CsBrushParse_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"Brush.Parse(\"\"#1A1E26\"\")\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Rule == \"cs-brush-parse\");\n    }\n\n    [Fact]\n    public void CsBoxShadowsParse_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"BoxShadows.Parse(\"\"0 0 0 0 #00000000\"\")\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Rule == \"cs-boxshadows-parse\");\n    }\n\n    [Fact]\n    public void CsFontSizeAssign_IsViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.cs\", new[] { @\"FontSize = 14\" }),\n        };\n\n        var violations = DesignTokenGuard.FindCsViolations(files);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Rule == \"cs-fontsize\");\n    }\n\n    [Fact]\n    public void CsAllowListedFile_Passes()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Constants.cs\", new[] { @\"public const string Surface = \"\"#1A1E25\"\";\" }),\n        };\n\n        var allowed = new HashSet<string>(StringComparer.Ordinal) { \"Constants.cs\" };\n        var violations = DesignTokenGuard.FindCsViolations(files, allowed);\n\n        Assert.Empty(violations);\n    }\n\n    [Fact]\n    public void [ENCRYPTED:fastly]-ddnyRDMc_HcR2UNfN186Pj0p_QexcKE()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"zzz/Last.axaml\",  new[] { @\"\", @\"<Border Background=\"\"#CCC\"\"/>\" }),\n            (\"aaa/First.axaml\", new[] { @\"<Border Background=\"\"#AAA\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        Assert.Equal(2, violations.Count);\n        Assert.Equal(\"aaa/First.axaml\", violations[0].Path);\n        Assert.Equal(\"zzz/Last.axaml\", violations[1].Path);\n        Assert.Equal(2, violations[1].Line);\n    }\n\n    [Fact]\n    public void MultipleHexOnSameLine_OneViolation()\n    {\n        var files = new (string Path, string[] Lines)[]\n        {\n            (\"src/Foo.axaml\", new[] { @\"<Border Background=\"\"#AAA\"\" BorderBrush=\"\"#BBB\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        // One line \u2192 one violation (the line is flagged once)\n        Assert.Single(violations);\n    }\n\n    // \u2500\u2500 Real-tree scan \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void DesignTokenGuard_NoRawLiterals_InAppSource()\n    {\n        var axamlFiles = ReadAxamlFiles(AppSrcDir);\n        Assert.True(axamlFiles.Count > 0,\n            $\"No .axaml files found under {AppSrcDir}.\");\n\n        var csFiles = ReadCsFiles(AppSrcDir);\n        Assert.True(csFiles.Count > 0,\n            $\"No .cs files found under {AppSrcDir}.\");\n\n        var hexViolations = DesignTokenGuard.FindHexViolations(axamlFiles);\n        var fontSizeViolations = DesignTokenGuard.FindFontSizeLiteralViolations(axamlFiles);\n        var namedColorViolations = DesignTokenGuard.FindNamedColorViolations(axamlFiles);\n        var csViolations = DesignTokenGuard.FindCsViolations(csFiles);\n\n        var allViolations = new List<DesignTokenGuard.Violation>();\n        allViolations.AddRange(hexViolations);\n        allViolations.AddRange(fontSizeViolations);\n        allViolations.AddRange(namedColorViolations);\n        allViolations.AddRange(csViolations);\n        allViolations.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n\n        Assert.True(allViolations.Count == 0,\n            $\"Found {allViolations.Count} raw color/font-size literal(s) in \"\n            + $\"src/VisualRelay.App.  Every color and FontSize must resolve to a \"\n            + $\"design token from Theme/Colors.axaml or Theme/Typography.axaml.\\n\\n\"\n            + $\"Violations:\\n{FormatViolations(allViolations)}\");\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 133
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 56.218,
+      "prompt_tokens_est": 52099,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Globalization;\nusing System.Text.RegularExpressions;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// WCAG 2.2 AA accessibility assertions for the centralised design tokens.\n/// Pure relative-luminance / contrast-ratio math (unit-tested against known\n/// pairs) plus a real-tree [Fact] that parses Theme/Colors.axaml and\n/// Theme/Typography.axaml and verifies every declared foreground/background\n/// pairing meets its AA threshold, and that no font-size token is below\n/// 12px.\n/// </summary>\npublic sealed class DesignTokenAccessibilityTests\n{\n    // \u2500\u2500 WCAG 2.2 relative luminance & contrast ratio (pure) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// sRGB to linearised component per WCAG 2.2 \u00a7 7.1.1.\n    /// </summary>\n    private static double Linearise(double channel8Bit)\n    {\n        var c = channel8Bit / 255.0;\n        return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);\n    }\n\n    /// <summary>\n    /// WCAG 2.2 relative luminance of an sRGB colour (0\u2013255 per channel).\n    /// </summary>\n    public static double RelativeLuminance(int r, int g, int b)\n    {\n        return 0.2126 * Linearise(r) + 0.7152 * Linearise(g) + 0.0722 * Linearise(b);\n    }\n\n    /// <summary>\n    /// WCAG 2.2 contrast ratio between two relative luminances.\n    /// Lighter / darker so the result is always \u2265 1.\n    /// </summary>\n    public static double ContrastRatio(double l1, double l2)\n    {\n        var lighter = Math.Max(l1, l2);\n        var darker = Math.Min(l1, l2);\n        return (lighter + 0.05) / (darker + 0.05);\n    }\n\n    /// <summary>\n    /// Convenience: contrast ratio between two sRGB colours (0\u2013255 per\n    /// channel).\n    /// </summary>\n    public static double ContrastRatio(int r1, int g1, int b1, int r2, int g2, int b2)\n    {\n        return ContrastRatio(RelativeLuminance(r1, g1, b1), RelativeLuminance(r2, g2, b2));\n    }\n\n    /// <summary>AA normal-text threshold (\u2265 4.5:1).</summary>\n    public const double AaNormalText = 4.5;\n\n    /// <summary>AA large-text / non-text-UI threshold (\u2265 3:1).</summary>\n    public const double AaLargeText = 3.0;\n\n    // \u2500\u2500 Unit tests for the contrast math \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void BlackOnWhite_ContrastRatio_Is21()\n    {\n        var ratio = ContrastRatio(0, 0, 0, 255, 255, 255);\n        Assert.Equal(21.0, ratio, 0.05); // within 0.05 tolerance\n    }\n\n    [Fact]\n    public void WhiteOnBlack_ContrastRatio_Is21()\n    {\n        var ratio = ContrastRatio(255, 255, 255, 0, 0, 0);\n        Assert.Equal(21.0, ratio, 0.05);\n    }\n\n    [Fact]\n    public void IdenticalColors_ContrastRatio_Is1()\n    {\n        var ratio = ContrastRatio(128, 128, 128, 128, 128, 128);\n        Assert.Equal(1.0, ratio, 0.01);\n    }\n\n    [Fact]\n    public void RedOnWhite_KnownContrast()\n    {\n        // Pure red (#FF0000) on white: luminance \u2248 0.2126, contrast \u2248 4.0\n        var ratio = ContrastRatio(255, 0, 0, 255, 255, 255);\n        Assert.True(ratio < 4.5, $\"Red-on-white contrast {ratio:F2} \u2014 expected below 4.5\");\n        Assert.True(ratio > 3.5, $\"Red-on-white contrast {ratio:F2} \u2014 expected above 3.5\");\n    }\n\n    [Fact]\n    public void WhiteOnBlue_KnownContrast()\n    {\n        // White on #5B7CFA (91,124,250)\n        var ratio = ContrastRatio(255, 255, 255, 91, 124, 250);\n        Assert.True(ratio > 3.0, $\"White-on-accent contrast {ratio:F2} \u2014 expected above 3:1\");\n    }\n\n    [Fact]\n    public void RelativeLuminance_Black_IsZero()\n    {\n        var lum = RelativeLuminance(0, 0, 0);\n        Assert.Equal(0.0, lum, 0.001);\n    }\n\n    [Fact]\n    public void RelativeLuminance_White_IsOne()\n    {\n        var lum = RelativeLuminance(255, 255, 255);\n        Assert.Equal(1.0, lum, 0.001);\n    }\n\n    // \u2500\u2500 Hex parsing helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static readonly Regex HexColorRegex =\n        new(@\"#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})(?:[0-9A-Fa-f]{2})?\",\n            RegexOptions.Compiled);\n\n    /// <summary>\n    /// Parses a hex string like <c>#1A1E25</c> or <c>#FF1A1E25</c> into\n    /// (r, g, b).  Returns null on failure.\n    /// </summary>\n    private static (int r, int g, int b)? ParseHex(string hex)\n    {\n        var m = HexColorRegex.Match(hex);\n        if (!m.Success) return null;\n        return (\n            int.Parse(m.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture),\n            int.Parse(m.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture),\n            int.Parse(m.Groups[3].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)\n        );\n    }\n\n    // Matches a SolidColorBrush resource: Color=\"#RRGGBB\"\n    private static readonly Regex BrushResourceRegex =\n        new(@\"Color\\s*=\\s*\"\"(#[0-9A-Fa-f]{6,8})\"\"\",\n            RegexOptions.Compiled);\n\n    // Matches a Color resource: <Color x:Key=\"...\">#RRGGBB</Color>\n    private static readonly Regex ColorResourceRegex =\n        new(@\"<Color\\s+x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"[^>]*>\\s*(#[0-9A-Fa-f]{6,8})\\s*</Color>\",\n            RegexOptions.Compiled);\n\n    // Matches a font-size token: <x:Double x:Key=\"...\">N</x:Double>\n    private static readonly Regex FontSizeResourceRegex =\n        new(@\"<x:Double\\s+x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"[^>]*>\\s*(\\d+(?:\\.\\d+)?)\\s*</x:Double>\",\n            RegexOptions.Compiled);\n\n    // \u2500\u2500 Real-tree accessibility assertions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Parses Theme/Colors.axaml and Theme/Typography.axaml, then verifies\n    /// every declared foreground/background pairing meets WCAG 2.2 AA, and\n    /// that no font-size token is below 12 px.\n    /// </summary>\n    [Fact]\n    public void DesignTokens_MeetAccessibilityThresholds()\n    {\n        var repoRoot = RepoSetup.Root;\n        var colorsPath = Path.Combine(repoRoot, \"src\", \"VisualRelay.App\", \"Theme\", \"Colors.axaml\");\n        var typographyPath = Path.Combine(repoRoot, \"src\", \"VisualRelay.App\", \"Theme\", \"Typography.axaml\");\n\n        Assert.True(File.Exists(colorsPath),\n            $\"Theme/Colors.axaml not found at {colorsPath}.  \"\n            + \"Create it with semantic Color + SolidColorBrush resources.\");\n        Assert.True(File.Exists(typographyPath),\n            $\"Theme/Typography.axaml not found at {typographyPath}.  \"\n            + \"Create it with x:Double font-size resources.\");\n\n        // Parse colors into a name \u2192 (r, g, b) map.\n        var colorsText = File.ReadAllText(colorsPath);\n        var palette = new Dictionary<string, (int r, int g, int b)>(StringComparer.Ordinal);\n\n        foreach (Match m in ColorResourceRegex.Matches(colorsText))\n        {\n            var name = m.Groups[1].Value;\n            var hex = m.Groups[2].Value;\n            var rgb = ParseHex(hex);\n            if (rgb.HasValue)\n                palette[name] = rgb.Value;\n        }\n\n        // Also parse SolidColorBrush definitions (Color=\"#...\").\n        foreach (Match m in BrushResourceRegex.Matches(colorsText))\n        {\n            var hex = m.Groups[1].Value;\n            var rgb = ParseHex(hex);\n            if (rgb.HasValue)\n            {\n                // We need the key \u2014 it's on the same element earlier.\n                // Extract the x:Key from the full element text.\n                var fullElement = GetEnclosingElement(colorsText, m.Index);\n                var keyMatch = Regex.Match(fullElement, @\"x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"\");\n                if (keyMatch.Success)\n                {\n                    var name = keyMatch.Groups[1].Value;\n                    if (!palette.ContainsKey(name))\n                        palette[name] = rgb.Value;\n                }\n            }\n        }\n\n        Assert.True(palette.Count > 0,\n            \"No color resources found in Theme/Colors.axaml.  \"\n            + \"Define semantic Color and/or SolidColorBrush resources.\");\n\n        // \u2500\u2500 Font-size floor: no token below 12 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n        var typographyText = File.ReadAllText(typographyPath);\n        var fontSizeTokens = new Dictionary<string, double>(StringComparer.Ordinal);\n        foreach (Match m in FontSizeResourceRegex.Matches(typographyText))\n        {\n            var name = m.Groups[1].Value;\n            var value = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);\n            fontSizeTokens[name] = value;\n        }\n\n        Assert.True(fontSizeTokens.Count > 0,\n            \"No font-size tokens found in Theme/Typography.axaml.  \"\n            + \"Define x:Double resources for each distinct font size.\");\n\n        var tooSmall = new List<string>();\n        foreach (var (name, value) in fontSizeTokens.OrderBy(kv => kv.Value))\n        {\n            if (value < 12.0)\n                tooSmall.Add($\"  {name} = {value}px (minimum is 12px)\");\n        }\n\n        Assert.True(tooSmall.Count == 0,\n            $\"Found {tooSmall.Count} font-size token(s) below the 12px floor:\\n\"\n            + string.Join(\"\\n\", tooSmall));\n\n        // \u2500\u2500 Contrast pairings \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // Encode the design's actual text-on-surface combinations so any\n        // future token edit that breaks contrast fails here.\n\n        var failures = new List<string>();\n\n        // Helper to check a pairing if both tokens exist.\n        void CheckPair(string fgName, string bgName, double threshold, string label)\n        {\n            if (!palette.TryGetValue(fgName, out var fg))\n            {\n                failures.Add($\"  Missing foreground token: {fgName}\");\n                return;\n            }\n\n            if (!palette.TryGetValue(bgName, out var bg))\n            {\n                failures.Add($\"  Missing background token: {bgName}\");\n                return;\n            }\n\n            var ratio = ContrastRatio(fg.r, fg.g, fg.b, bg.r, bg.g, bg.b);\n            if (ratio < threshold)\n            {\n                failures.Add(\n                    $\"  {label}: {fgName} on {bgName} = {ratio:F2}:1 \"\n                    + $\"(need \u2265 {threshold}:1)\");\n            }\n        }\n\n        // Text-on-surface pairings (4.5:1 for normal text).\n        // These are the primary text colors on the main surface backgrounds.\n        // The token names below must match what Colors.axaml defines.\n        CheckPair(\"TextPrimaryBrush\", \"PanelBgBrush\", AaNormalText,\n            \"Primary text on panel background\");\n        CheckPair(\"TextPrimaryBrush\", \"SurfaceBrush\", AaNormalText,\n            \"Primary text on surface\");\n        CheckPair(\"TextPrimaryBrush\", \"CardBgBrush\", AaNormalText,\n            \"Primary text on card\");\n        CheckPair(\"TextHeadingBrush\", \"PanelBgBrush\", AaNormalText,\n            \"Heading text on panel\");\n        CheckPair(\"TextSubtleBrush\", \"PanelBgBrush\", AaNormalText,\n            \"Subtle text on panel (e.g. chevron, collapse toggle)\");\n        CheckPair(\"TextMutedBrush\", \"PanelBgBrush\", AaNormalText,\n            \"Muted text on panel\");\n        CheckPair(\"TextPrimaryBrush\", \"WindowBgBrush\", AaNormalText,\n            \"Primary text on window background\");\n\n        // Large-text / UI pairings (3:1).\n        CheckPair(\"AccentBrush\", \"SurfaceBrush\", AaLargeText,\n            \"Accent on surface (button)\");\n        CheckPair(\"AccentBrush\", \"FocusToggleBgBrush\", AaLargeText,\n            \"Focus-toggle foreground on background\");\n        CheckPair(\"FocusToggleTextBrush\", \"FocusToggleBgBrush\", AaLargeText,\n            \"Focus-toggle text on background\");\n        CheckPair(\"WarningBrush\", \"WarningBgBrush\", AaLargeText,\n            \"Warning text on warning background\");\n        CheckPair(\"SelectionBrush\", \"SelectedBgBrush\", AaLargeText,\n            \"Selection indicator on selected background\");\n        CheckPair(\"ErrorBrush\", \"ErrorBgBrush\", AaLargeText,\n            \"Error text on error background\");\n\n        // Accent-on-dark pairings (>3:1 for non-text UI like borders).\n        CheckPair(\"SelectionBrush\", \"CardBgBrush\", AaLargeText,\n            \"Selection border on card\");\n\n        Assert.True(failures.Count == 0,\n            $\"Found {failures.Count} accessibility violation(s) in design tokens:\\n\"\n            + string.Join(\"\\n\", failures));\n    }\n\n    /// <summary>\n    /// Given an index within a text block, walks backward to the start of\n    /// the enclosing XML element and forward to its closing, returning the\n    /// full element string.\n    /// </summary>\n    private static string GetEnclosingElement(string text, int index)\n    {\n        // Walk back to find '<'\n        var start = text.LastIndexOf('<', index);\n        if (start < 0) return string.Empty;\n\n        // Walk forward to find the matching '>' or \"/>\"\n        var depth = 0;\n        var inString = false;\n        var inComment = false;\n        for (var i = start; i < text.Length; i++)\n        {\n            var c = text[i];\n\n            if (!inString && !inComment && c == '<' && i + 4 < text.Length\n                && text[i + 1] == '!' && text[i + 2] == '-' && text[i + 3] == '-')\n            {\n                inComment = true;\n                i += 3;\n                continue;\n            }\n\n            if (inComment && c == '-' && i + 2 < text.Length\n                && text[i + 1] == '-' && text[i + 2] == '>')\n            {\n                inComment = false;\n                i += 2;\n                continue;\n            }\n\n            if (inComment) continue;\n\n            if (c == '\"') inString = !inString;\n            if (inString) continue;\n\n            if (c == '<') depth++;\n            else if (c == '>')\n            {\n                depth--;\n                if (depth == 0)\n                    return text[start..(i + 1)];\n            }\n        }\n\n        return string.Empty;\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 132
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.446,
+      "prompt_tokens_est": 56365,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"wc\", \"-l\", \"/Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/DesignTokenGuard.cs\", \"/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs\", \"/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.081,
+      "result_length": 311
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.484,
+      "prompt_tokens_est": 56600,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/DesignTokenGuard.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.091,
+      "result_length": 295
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 5.827,
+      "prompt_tokens_est": 56781,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FileSizeGuard\\.(Enumerate|Find)",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.117,
+      "result_length": 1129
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 38.574,
+      "prompt_tokens_est": 57285,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// In-memory unit tests for <see cref=\"DesignTokenGuard\"/> pure\n/// classification functions.  Each rule family is exercised with\n/// synthetic inputs so the classifiers are proven correct independent\n/// of the real source tree.\n/// </summary>\npublic sealed class DesignTokenCentralizationTests\n{\n    // \u2500\u2500 Rule 1: hex literals in .axaml \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void HexLine_InAxaml_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"#1A1E25\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"hex-color\", v[0].Rule);\n        Assert.Contains(\"#1A1E25\", v[0].Text, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void HexLine_InTokenFile_IsAllowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Theme/Colors.axaml\", new[] { @\"<Color x:Key=\"\"S\"\">#1A1E25</Color>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void DynamicResource_PassesHexCheck()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"{DynamicResource SurfaceBrush}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void Transparent_PassesHexCheck()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"Transparent\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void HexInBoxShadow_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Setter Property=\"\"BoxShadow\"\" Value=\"\"0 0 22 0 #553F8CFF\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"hex-color\", v[0].Rule);\n    }\n\n    [Fact]\n    public void HexInGradientStop_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<GradientStop Offset=\"\"0\"\" Color=\"\"#00252A33\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"hex-color\", v[0].Rule);\n    }\n\n    [Fact]\n    public void [ENCRYPTED:fastly]-ddnyRDMc_HcR2UNfN186Pj0p_QexcKE()\n    {\n        var files = new (string, string[])[] {\n            (\"zzz/Last.axaml\",  new[] { \"\", @\"<Border Background=\"\"#CCC\"\"/>\" }),\n            (\"aaa/First.axaml\", new[] { @\"<Border Background=\"\"#AAA\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Equal(2, v.Count);\n        Assert.Equal(\"aaa/First.axaml\", v[0].Path);\n        Assert.Equal(\"zzz/Last.axaml\", v[1].Path);\n    }\n\n    // \u2500\u2500 Rule 2: FontSize literals \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void FontSizeNumericLiteral_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"12\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"font-size-literal\", v[0].Rule);\n    }\n\n    [Fact]\n    public void FontSizeSetterNumeric_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Styles/Foo.axaml\", new[] { @\"<Setter Property=\"\"FontSize\"\" Value=\"\"10\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindFontSizeLiteralViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"font-size-literal\", v[0].Rule);\n    }\n\n    [Fact]\n    public void FontSizeStaticResource_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"{StaticResource FontSizeBody}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindFontSizeLiteralViolations(files));\n    }\n\n    [Fact]\n    public void FontSizeDynamicResource_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock FontSize=\"\"{DynamicResource FontSizeBody}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindFontSizeLiteralViolations(files));\n    }\n\n    [Fact]\n    public void WidthNumeric_IsIgnored()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Width=\"\"12\"\" Padding=\"\"4\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindFontSizeLiteralViolations(files));\n    }\n\n    // \u2500\u2500 Rule 3: named-color keywords on brush attributes \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void NamedColorOnForeground_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock Foreground=\"\"Red\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindNamedColorViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"named-color\", v[0].Rule);\n    }\n\n    [Fact]\n    public void GrayOnFill_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Ellipse Fill=\"\"Gray\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindNamedColorViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"named-color\", v[0].Rule);\n    }\n\n    [Fact]\n    public void TransparentOnBackground_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"Transparent\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindNamedColorViolations(files));\n    }\n\n    [Fact]\n    public void XNullOnBorderBrush_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border BorderBrush=\"\"{x:Null}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindNamedColorViolations(files));\n    }\n\n    [Fact]\n    public void HexOnBackground_NotFlaggedAsNamedColor()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"#1A1E25\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindNamedColorViolations(files));\n    }\n\n    [Fact]\n    public void BindingOnForeground_NotFlagged()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<TextBlock Foreground=\"\"{Binding AccentBrush}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindNamedColorViolations(files));\n    }\n\n    // \u2500\u2500 Rule 4: C# programmatic sites \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void CsColorParse_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-color-parse\");\n    }\n\n    [Fact]\n    public void CsSolidColorBrush_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"new SolidColorBrush(Colors.Red)\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-solidcolorbrush\");\n    }\n\n    [Fact]\n    public void CsBrushesGray_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Foreground ?? Brushes.Gray\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-brushes-dot\");\n    }\n\n    [Fact]\n    public void CsBrushesTransparent_Allowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Brushes.Transparent\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }\n\n    [Fact]\n    public void CsColorsTransparent_Allowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Colors.Transparent\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }\n\n    [Fact]\n    public void CsBrushParse_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Brush.Parse(\"\"#1A1E26\"\")\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-brush-parse\");\n    }\n\n    [Fact]\n    public void CsBoxShadowsParse_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"BoxShadows.Parse(\"\"0 0 0 0 #00000000\"\")\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-boxshadows-parse\");\n    }\n\n    [Fact]\n    public void CsFontSizeAssign_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"FontSize = 14\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-fontsize\");\n    }\n\n    [Fact]\n    public void CsColorsDot_Red_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Colors.Red\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-colors-dot\");\n    }\n\n    [Fact]\n    public void CsAllowListedFile_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Constants.cs\", new[] { @\"public const string S = \"\"#1A1E25\"\";\" }),\n        };\n        var allowed = new HashSet<string>(StringComparer.Ordinal) { \"Constants.cs\" };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files, allowed));\n    }\n\n    [Fact]\n    public void CleanCsLine_ReturnsNoViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var x = 42;\", @\"// just a comment\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 133
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 11.074,
+      "prompt_tokens_est": 60911,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Real-tree scan: enumerates every <c>*.axaml</c> and <c>*.cs</c> file\n/// under <c>src/VisualRelay.App</c> and asserts zero raw color / font-size\n/// literals.  The two token files (Theme/Colors.axaml, Theme/Typography.axaml)\n/// are the sole allow-listed home for raw hex literals.\n///\n/// This test is intentionally separate from the in-memory classifier tests\n/// so both files stay under the 300-line FileSizeGuard limit.\n/// </summary>\npublic sealed class DesignTokenCentralizationGuardTests\n{\n    private static string RepoRoot => RepoSetup.Root;\n    private static string AppSrcDir =>\n        Path.Combine(RepoRoot, \"src\", \"VisualRelay.App\");\n\n    private static List<(string Path, string[] Lines)> ReadAxamlFiles(string root)\n    {\n        if (!Directory.Exists(root)) return [];\n        return Directory.GetFiles(root, \"*.axaml\", SearchOption.AllDirectories)\n            .OrderBy(f => f, StringComparer.Ordinal)\n            .Select(f => (Path.GetRelativePath(RepoRoot, f), File.ReadAllLines(f)))\n            .ToList();\n    }\n\n    private static List<(string Path, string[] Lines)> ReadCsFiles(string root)\n    {\n        if (!Directory.Exists(root)) return [];\n        return Directory.GetFiles(root, \"*.cs\", SearchOption.AllDirectories)\n            .OrderBy(f => f, StringComparer.Ordinal)\n            .Select(f => (Path.GetRelativePath(RepoRoot, f), File.ReadAllLines(f)))\n            .ToList();\n    }\n\n    private static string FormatViolations(IReadOnlyList<DesignTokenGuard.Violation> violations)\n    {\n        return string.Join(\"\\n\",\n            violations.Select((v, idx) =>\n                $\"  {idx + 1}. {v.Path}:{v.Line}  \u2192  [{v.Rule}] {v.Text}\"));\n    }\n\n    [Fact]\n    public void DesignTokenGuard_NoRawLiterals_InAppSource()\n    {\n        var axamlFiles = ReadAxamlFiles(AppSrcDir);\n        Assert.True(axamlFiles.Count > 0,\n            $\"No .axaml files found under {AppSrcDir}.\");\n\n        var csFiles = ReadCsFiles(AppSrcDir);\n        Assert.True(csFiles.Count > 0,\n            $\"No .cs files found under {AppSrcDir}.\");\n\n        var all = new List<DesignTokenGuard.Violation>();\n        all.AddRange(DesignTokenGuard.FindHexViolations(axamlFiles));\n        all.AddRange(DesignTokenGuard.FindFontSizeLiteralViolations(axamlFiles));\n        all.AddRange(DesignTokenGuard.FindNamedColorViolations(axamlFiles));\n        all.AddRange(DesignTokenGuard.FindCsViolations(csFiles));\n        all.Sort((a, b) =>\n        {\n            var pc = string.CompareOrdinal(a.Path, b.Path);\n            return pc != 0 ? pc : a.Line.CompareTo(b.Line);\n        });\n\n        Assert.True(all.Count == 0,\n            $\"Found {all.Count} raw color/font-size literal(s) in \"\n            + $\"src/VisualRelay.App.  Every color and FontSize must resolve to a \"\n            + $\"design token from Theme/Colors.axaml or Theme/Typography.axaml.\\n\\n\"\n            + $\"Violations:\\n{FormatViolations(all)}\");\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 137
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 17.335,
+      "prompt_tokens_est": 61846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "namespace VisualRelay.Tests;\n\n/// <summary>\n/// Pure WCAG 2.2 relative-luminance / contrast-ratio math, unit-tested\n/// against known colour pairs.  These functions are used by\n/// <see cref=\"DesignTokenAccessibilityGuardTests\"/> to verify the\n/// centralised design tokens meet AA thresholds.\n/// </summary>\npublic sealed class DesignTokenAccessibilityTests\n{\n    // \u2500\u2500 WCAG 2.2 relative luminance & contrast ratio (pure) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>sRGB to linearised component per WCAG 2.2 \u00a7 7.1.1.</summary>\n    private static double Linearise(double channel8Bit)\n    {\n        var c = channel8Bit / 255.0;\n        return c <= 0.04045 ? c / 12.92 : Math.Pow((c + 0.055) / 1.055, 2.4);\n    }\n\n    /// <summary>WCAG 2.2 relative luminance of an sRGB colour (0\u2013255 per channel).</summary>\n    public static double RelativeLuminance(int r, int g, int b)\n    {\n        return 0.2126 * Linearise(r) + 0.7152 * Linearise(g) + 0.0722 * Linearise(b);\n    }\n\n    /// <summary>\n    /// WCAG 2.2 contrast ratio between two relative luminances.\n    /// Lighter / darker so the result is always \u2265 1.\n    /// </summary>\n    public static double ContrastRatio(double l1, double l2)\n    {\n        var lighter = Math.Max(l1, l2);\n        var darker = Math.Min(l1, l2);\n        return (lighter + 0.05) / (darker + 0.05);\n    }\n\n    /// <summary>Contrast ratio between two sRGB colours (0\u2013255 per channel).</summary>\n    public static double ContrastRatio(int r1, int g1, int b1, int r2, int g2, int b2)\n    {\n        return ContrastRatio(RelativeLuminance(r1, g1, b1), RelativeLuminance(r2, g2, b2));\n    }\n\n    /// <summary>AA normal-text threshold (\u2265 4.5:1).</summary>\n    public const double AaNormalText = 4.5;\n\n    /// <summary>AA large-text / non-text-UI threshold (\u2265 3:1).</summary>\n    public const double AaLargeText = 3.0;\n\n    // \u2500\u2500 Unit tests for the contrast math \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void BlackOnWhite_ContrastRatio_Is21()\n    {\n        var ratio = ContrastRatio(0, 0, 0, 255, 255, 255);\n        Assert.Equal(21.0, ratio, 0.05);\n    }\n\n    [Fact]\n    public void WhiteOnBlack_ContrastRatio_Is21()\n    {\n        var ratio = ContrastRatio(255, 255, 255, 0, 0, 0);\n        Assert.Equal(21.0, ratio, 0.05);\n    }\n\n    [Fact]\n    public void IdenticalColors_ContrastRatio_Is1()\n    {\n        var ratio = ContrastRatio(128, 128, 128, 128, 128, 128);\n        Assert.Equal(1.0, ratio, 0.01);\n    }\n\n    [Fact]\n    public void RedOnWhite_Contrast_BelowNormalText()\n    {\n        // Pure red (#FF0000) on white: \u2248 4.0 \u2014 fails AA normal text.\n        var ratio = ContrastRatio(255, 0, 0, 255, 255, 255);\n        Assert.True(ratio < 4.5, $\"Red-on-white {ratio:F2} \u2014 expected below 4.5\");\n        Assert.True(ratio > 3.5, $\"Red-on-white {ratio:F2} \u2014 expected above 3.5\");\n    }\n\n    [Fact]\n    public void WhiteOnDarkBlue_Contrast_AboveLargeText()\n    {\n        // White on #5B7CFA (91,124,250)\n        var ratio = ContrastRatio(255, 255, 255, 91, 124, 250);\n        Assert.True(ratio > 3.0, $\"White-on-accent {ratio:F2} \u2014 expected above 3:1\");\n    }\n\n    [Fact]\n    public void RelativeLuminance_Black_IsZero()\n    {\n        Assert.Equal(0.0, RelativeLuminance(0, 0, 0), 0.001);\n    }\n\n    [Fact]\n    public void RelativeLuminance_White_IsOne()\n    {\n        Assert.Equal(1.0, RelativeLuminance(255, 255, 255), 0.001);\n    }\n\n    [Fact]\n    public void MutedTextOnDarkPanel_KnownLowContrast()\n    {\n        // #6F7785 (111,119,133) on #12151B (18,21,27) \u2014 the pre-migration chevron.\n        var ratio = ContrastRatio(111, 119, 133, 18, 21, 27);\n        Assert.True(ratio < 4.5,\n            $\"Muted-on-dark contrast {ratio:F2} \u2014 expected below 4.5 (needs fix in accessibility pass)\");\n    }\n\n    [Fact]\n    public void WarningOnWarningBg_KnownContrast()\n    {\n        // #F0CA66 (240,202,102) on #2B2416 (43,36,22)\n        var ratio = ContrastRatio(240, 202, 102, 43, 36, 22);\n        Assert.True(ratio > 1.0, \"Warning contrast should be measurable\");\n    }\n\n    [Fact]\n    public void ContrastRatio_IsSymmetric()\n    {\n        var a = ContrastRatio(100, 150, 200, 30, 40, 50);\n        var b = ContrastRatio(30, 40, 50, 100, 150, 200);\n        Assert.Equal(a, b, 0.0001);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 131
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 24.03,
+      "prompt_tokens_est": 63439,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Globalization;\nusing System.Text.RegularExpressions;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Real-tree scan: parses Theme/Colors.axaml and Theme/Typography.axaml,\n/// then verifies every declared foreground/background pairing meets WCAG\n/// 2.2 AA contrast thresholds, and that no font-size token is below 12 px.\n///\n/// Intentionally separate from <see cref=\"DesignTokenAccessibilityTests\"/>\n/// so both files stay under the 300-line FileSizeGuard limit.\n/// </summary>\npublic sealed class DesignTokenAccessibilityGuardTests\n{\n    // \u2500\u2500 Hex parsing helpers \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static readonly Regex HexColorRegex =\n        new(@\"#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})(?:[0-9A-Fa-f]{2})?\",\n            RegexOptions.Compiled);\n\n    private static (int r, int g, int b)? ParseHex(string hex)\n    {\n        var m = HexColorRegex.Match(hex);\n        if (!m.Success) return null;\n        return (\n            int.Parse(m.Groups[1].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture),\n            int.Parse(m.Groups[2].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture),\n            int.Parse(m.Groups[3].Value, NumberStyles.HexNumber, CultureInfo.InvariantCulture)\n        );\n    }\n\n    private static readonly Regex ColorResourceRegex =\n        new(@\"<Color\\s+x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"[^>]*>\\s*(#[0-9A-Fa-f]{6,8})\\s*</Color>\",\n            RegexOptions.Compiled);\n\n    private static readonly Regex BrushKeyRegex =\n        new(@\"x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"\", RegexOptions.Compiled);\n\n    private static readonly Regex BrushColorRegex =\n        new(@\"Color\\s*=\\s*\"\"(#[0-9A-Fa-f]{6,8})\"\"\", RegexOptions.Compiled);\n\n    private static readonly Regex FontSizeRegex =\n        new(@\"<x:Double\\s+x:Key\\s*=\\s*\"\"([^\"\"]+)\"\"[^>]*>\\s*(\\d+(?:\\.\\d+)?)\\s*</x:Double>\",\n            RegexOptions.Compiled);\n\n    // \u2500\u2500 Element-boundary helper \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Given an index within text, walks backward to the start of the\n    /// enclosing XML element and forward to its closing, returning the\n    /// full element string.\n    /// </summary>\n    private static string GetEnclosingElement(string text, int index)\n    {\n        var start = text.LastIndexOf('<', index);\n        if (start < 0) return string.Empty;\n\n        var depth = 0;\n        var inString = false;\n        var inComment = false;\n        for (var i = start; i < text.Length; i++)\n        {\n            var c = text[i];\n            if (!inString && !inComment && c == '<' && i + 4 < text.Length\n                && text[i + 1] == '!' && text[i + 2] == '-' && text[i + 3] == '-')\n            { inComment = true; i += 3; continue; }\n            if (inComment && c == '-' && i + 2 < text.Length\n                && text[i + 1] == '-' && text[i + 2] == '>')\n            { inComment = false; i += 2; continue; }\n            if (inComment) continue;\n            if (c == '\"') inString = !inString;\n            if (inString) continue;\n            if (c == '<') depth++;\n            else if (c == '>') { depth--; if (depth == 0) return text[start..(i + 1)]; }\n        }\n\n        return string.Empty;\n    }\n\n    // \u2500\u2500 The real-tree assertion \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void DesignTokens_MeetAccessibilityThresholds()\n    {\n        var repoRoot = RepoSetup.Root;\n        var colorsPath = Path.Combine(repoRoot, \"src\", \"VisualRelay.App\", \"Theme\", \"Colors.axaml\");\n        var typographyPath = Path.Combine(repoRoot, \"src\", \"VisualRelay.App\", \"Theme\", \"Typography.axaml\");\n\n        Assert.True(File.Exists(colorsPath),\n            $\"Theme/Colors.axaml not found at {colorsPath}.  \"\n            + \"Create it with semantic Color + SolidColorBrush resources.\");\n        Assert.True(File.Exists(typographyPath),\n            $\"Theme/Typography.axaml not found at {typographyPath}.  \"\n            + \"Create it with x:Double font-size resources.\");\n\n        // \u2500\u2500 Parse colour palette \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var colorsText = File.ReadAllText(colorsPath);\n        var palette = new Dictionary<string, (int r, int g, int b)>(StringComparer.Ordinal);\n\n        foreach (Match m in ColorResourceRegex.Matches(colorsText))\n        {\n            var name = m.Groups[1].Value;\n            var rgb = ParseHex(m.Groups[2].Value);\n            if (rgb.HasValue) palette[name] = rgb.Value;\n        }\n\n        // Parse SolidColorBrush resources too: find Color=\"#...\" and walk\n        // back to the enclosing element for its x:Key.\n        foreach (Match m in BrushColorRegex.Matches(colorsText))\n        {\n            var hex = m.Groups[1].Value;\n            var rgb = ParseHex(hex);\n            if (!rgb.HasValue) continue;\n            var element = GetEnclosingElement(colorsText, m.Index);\n            var km = BrushKeyRegex.Match(element);\n            if (!km.Success) continue;\n            var name = km.Groups[1].Value;\n            if (!palette.ContainsKey(name))\n                palette[name] = rgb.Value;\n        }\n\n        Assert.True(palette.Count > 0,\n            \"No color resources found in Theme/Colors.axaml.\");\n\n        // \u2500\u2500 Font-size floor: no token below 12 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var typographyText = File.ReadAllText(typographyPath);\n        var fontSizeTokens = new Dictionary<string, double>(StringComparer.Ordinal);\n        foreach (Match m in FontSizeRegex.Matches(typographyText))\n        {\n            var name = m.Groups[1].Value;\n            var value = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);\n            fontSizeTokens[name] = value;\n        }\n\n        Assert.True(fontSizeTokens.Count > 0,\n            \"No font-size tokens found in Theme/Typography.axaml.\");\n\n        var tooSmall = new List<string>();\n        foreach (var (name, value) in fontSizeTokens.OrderBy(kv => kv.Value))\n        {\n            if (value < 12.0)\n                tooSmall.Add($\"  {name} = {value}px (minimum is 12px)\");\n        }\n\n        Assert.True(tooSmall.Count == 0,\n            $\"Found {tooSmall.Count} font-size token(s) below the 12px floor:\\n\"\n            + string.Join(\"\\n\", tooSmall));\n\n        // \u2500\u2500 Contrast pairings \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var failures = new List<string>();\n\n        void CheckPair(string fgName, string bgName, double threshold, string label)\n        {\n            if (!palette.TryGetValue(fgName, out var fg))\n            { failures.Add($\"  Missing foreground token: {fgName}\"); return; }\n            if (!palette.TryGetValue(bgName, out var bg))\n            { failures.Add($\"  Missing background token: {bgName}\"); return; }\n            var ratio = DesignTokenAccessibilityTests.ContrastRatio(\n                fg.r, fg.g, fg.b, bg.r, bg.g, bg.b);\n            if (ratio < threshold)\n                failures.Add($\"  {label}: {fgName} on {bgName} = {ratio:F2}:1 (need \u2265 {threshold}:1)\");\n        }\n\n        var AA = DesignTokenAccessibilityTests.AaNormalText;\n        var AAui = DesignTokenAccessibilityTests.AaLargeText;\n\n        // Normal-text pairings (4.5:1)\n        CheckPair(\"TextPrimaryBrush\", \"PanelBgBrush\", AA, \"Primary text on panel\");\n        CheckPair(\"TextPrimaryBrush\", \"SurfaceBrush\", AA, \"Primary text on surface\");\n        CheckPair(\"TextPrimaryBrush\", \"CardBgBrush\", AA, \"Primary text on card\");\n        CheckPair(\"TextHeadingBrush\", \"PanelBgBrush\", AA, \"Heading text on panel\");\n        CheckPair(\"TextSubtleBrush\", \"PanelBgBrush\", AA, \"Subtle text on panel\");\n        CheckPair(\"TextMutedBrush\", \"PanelBgBrush\", AA, \"Muted text on panel\");\n        CheckPair(\"TextPrimaryBrush\", \"WindowBgBrush\", AA, \"Primary text on window\");\n\n        // Large-text / UI pairings (3:1)\n        CheckPair(\"AccentBrush\", \"SurfaceBrush\", AAui, \"Accent on surface\");\n        CheckPair(\"AccentBrush\", \"FocusToggleBgBrush\", AAui, \"Focus-toggle fg on bg\");\n        CheckPair(\"FocusToggleTextBrush\", \"FocusToggleBgBrush\", AAui, \"Focus-toggle text on bg\");\n        CheckPair(\"WarningBrush\", \"WarningBgBrush\", AAui, \"Warning on warning bg\");\n        CheckPair(\"SelectionBrush\", \"SelectedBgBrush\", AAui, \"Selection on selected bg\");\n        CheckPair(\"ErrorBrush\", \"ErrorBgBrush\", AAui, \"Error on error bg\");\n        CheckPair(\"SelectionBrush\", \"CardBgBrush\", AAui, \"Selection border on card\");\n\n        Assert.True(failures.Count == 0,\n            $\"Found {failures.Count} accessibility violation(s) in design tokens:\\n\"\n            + string.Join(\"\\n\", failures));\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.[ENCRYPTED:aws-secret-key]GSfl+N6x9K2NXBlnuLKi4pMiv1movLffibqWu8qB.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 136
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.809,
+      "prompt_tokens_est": 65889,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/DesignTokenGuard.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationGuardTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.[ENCRYPTED:aws-secret-key]GSfl+N6x9K2NXBlnuLKi4pMiv1movLffibqWu8qB.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 502
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 3.309,
+      "prompt_tokens_est": 66178,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "offset": 290
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 755
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.551,
+      "prompt_tokens_est": 66481,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "limit": 20,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 786
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 7.861,
+      "prompt_tokens_est": 66796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "old_string": "    [Fact]\n    public void HexLine_InTokenFile_IsAllowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Theme/Colors.axaml\", new[] { @\"<Color x:Key=\"\"S\"\">#1A1E25</Color>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void DynamicResource_PassesHexCheck()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"{DynamicResource SurfaceBrush}\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void Transparent_PassesHexCheck()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] { @\"<Border Background=\"\"Transparent\"\"/>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }",
+        "new_string": "    [Fact]\n    public void HexLine_InTokenFile_IsAllowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Theme/Colors.axaml\", new[] { @\"<Color x:Key=\"\"S\"\">#1A1E25</Color>\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }\n\n    [Fact]\n    public void ResourceRef_And_Transparent_PassHexCheck()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Views/Foo.axaml\", new[] {\n                @\"<Border Background=\"\"{DynamicResource SurfaceBrush}\"\"/>\",\n                @\"<Border Background=\"\"Transparent\"\"/>\",\n            }),\n        };\n        Assert.Empty(DesignTokenGuard.FindHexViolations(files));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 119
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 5.215,
+      "prompt_tokens_est": 67409,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "old_string": "    [Fact]\n    public void CsBrushesTransparent_Allowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Brushes.Transparent\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }\n\n    [Fact]\n    public void CsColorsTransparent_Allowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Colors.Transparent\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }",
+        "new_string": "    [Fact]\n    public void CsBrushesAndColorsTransparent_Allowed()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Brushes.Transparent\", @\"Colors.Transparent\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 119
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 6.174,
+      "prompt_tokens_est": 67734,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "new_string": "    [Fact]\n    public void CsColorParse_And_SolidColorBrush_AreViolations()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-color-parse\");\n        Assert.Contains(v, x => x.Rule == \"cs-solidcolorbrush\");\n    }",
+        "old_string": "    [Fact]\n    public void CsColorParse_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-color-parse\");\n    }\n\n    [Fact]\n    public void CsSolidColorBrush_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"new SolidColorBrush(Colors.Red)\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-solidcolorbrush\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 119
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 6.93,
+      "prompt_tokens_est": 68167,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "new_string": "    [Fact]\n    public void CsColorsDotRed_IsViolation_And_CleanLine_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Colors.Red\", @\"var x = 42;\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"cs-colors-dot\", v[0].Rule);\n    }\n\n    [Fact]\n    public void CsAllowListedFile_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Constants.cs\", new[] { @\"public const string S = \"\"#1A1E25\"\";\" }),\n        };\n        var allowed = new HashSet<string>(StringComparer.Ordinal) { \"Constants.cs\" };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files, allowed));\n    }\n}",
+        "old_string": "    [Fact]\n    public void CsColorsDot_Red_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"Colors.Red\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-colors-dot\");\n    }\n\n    [Fact]\n    public void CsAllowListedFile_Passes()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Constants.cs\", new[] { @\"public const string S = \"\"#1A1E25\"\";\" }),\n        };\n        var allowed = new HashSet<string>(StringComparer.Ordinal) { \"Constants.cs\" };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files, allowed));\n    }\n\n    [Fact]\n    public void CleanCsLine_ReturnsNoViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var x = 42;\", @\"// just a comment\" }),\n        };\n        Assert.Empty(DesignTokenGuard.FindCsViolations(files));\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 119
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 3.569,
+      "prompt_tokens_est": 68771,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Guards/DesignTokenGuard.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationGuardTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenAccessibilityTests.cs /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.[ENCRYPTED:aws-secret-key]GSfl+N6x9K2NXBlnuLKi4pMiv1movLffibqWu8qB.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.091,
+      "result_length": 502
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 6.419,
+      "prompt_tokens_est": 69051,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"build\", \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj\", \"--nologo\", \"-v\", \"q\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.973,
+      "result_length": 249
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 4.15,
+      "prompt_tokens_est": 69435,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"test\", \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj\", \"--nologo\", \"--filter\", \"FullyQualifiedName~DesignToken\", \"-v\", \"q\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.441,
+      "result_length": 1012
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 5.905,
+      "prompt_tokens_est": 69836,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"test\", \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj\", \"--nologo\", \"--filter\", \"FullyQualifiedName~DesignToken\", \"-v\", \"normal\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.9,
+      "result_length": 2357
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 2.603,
+      "prompt_tokens_est": 70793,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/cmd_output_822aec3f9a28.txt",
+        "offset": 300
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 50635
+    },
+    {
+      "turn": 29,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 88587,
+      "tokens_after": 66126
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 14.948,
+      "prompt_tokens_est": 66126,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 618,
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/cmd_output_822aec3f9a28.txt",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8686
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 3.554,
+      "prompt_tokens_est": 69794,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/cmd_output_822aec3f9a28.txt",
+        "offset": 1170
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 736
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 4.886,
+      "prompt_tokens_est": 70096,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "grep -n \"FAIL\" /Users/admin/Dev/temp-visual-relay/.swival/cmd_output_822aec3f9a28.txt | head -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.105,
+      "result_length": 694
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 4.585,
+      "prompt_tokens_est": 70459,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 270,
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival/cmd_output_822aec3f9a28.txt",
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2278
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 11.229,
+      "prompt_tokens_est": 71258,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "old_string": "    [Fact]\n    public void [ENCRYPTED:fastly]-ddnyRDMc_HcR2UNfN186Pj0p_QexcKE()\n    {\n        var files = new (string, string[])[] {\n            (\"zzz/Last.axaml\",  new[] { \"\", @\"<Border Background=\"\"#CCC\"\"/>\" }),\n            (\"aaa/First.axaml\", new[] { @\"<Border Background=\"\"#AAA\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Equal(2, v.Count);\n        Assert.Equal(\"aaa/First.axaml\", v[0].Path);\n        Assert.Equal(\"zzz/Last.axaml\", v[1].Path);\n    }",
+        "new_string": "    [Fact]\n    public void [ENCRYPTED:fastly]-ddnyRDMc_HcR2UNfN186Pj0p_QexcKE()\n    {\n        var files = new (string, string[])[] {\n            (\"zzz/Last.axaml\",  new[] { \"\", @\"<Border Background=\"\"#CCCCCC\"\"/>\" }),\n            (\"aaa/First.axaml\", new[] { @\"<Border Background=\"\"#AAAAAA\"\"/>\" }),\n        };\n        var v = DesignTokenGuard.FindHexViolations(files);\n        Assert.Equal(2, v.Count);\n        Assert.Equal(\"aaa/First.axaml\", v[0].Path);\n        Assert.Equal(\"zzz/Last.axaml\", v[1].Path);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 119
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 7.343,
+      "prompt_tokens_est": 71992,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "new_string": "    [Fact]\n    public void CsColorParse_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        // ClassifyCsLine returns the first matching rule per line.\n        Assert.Single(v);\n        Assert.Equal(\"cs-color-parse\", v[0].Rule);\n    }\n\n    [Fact]\n    public void CsSolidColorBrush_IsViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"new SolidColorBrush(Colors.Red)\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Single(v);\n        Assert.Equal(\"cs-solidcolorbrush\", v[0].Rule);\n    }",
+        "old_string": "    [Fact]\n    public void CsColorParse_And_SolidColorBrush_AreViolations()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.cs\", new[] { @\"var b = new SolidColorBrush(Color.Parse(\"\"#6F7785\"\"));\" }),\n        };\n        var v = DesignTokenGuard.FindCsViolations(files);\n        Assert.Contains(v, x => x.Rule == \"cs-color-parse\");\n        Assert.Contains(v, x => x.Rule == \"cs-solidcolorbrush\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 119
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 5.18,
+      "prompt_tokens_est": 72470,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "new_string": "    [Fact]\n    public void MultipleHexOnSameLine_OneViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.axaml\", new[] { @\"<Border Background=\"\"#AAAAAA\"\" BorderBrush=\"\"#BBBBBB\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        // One line \u2192 one violation (the line is flagged once)\n        Assert.Single(violations);\n    }",
+        "old_string": "    [Fact]\n    public void MultipleHexOnSameLine_OneViolation()\n    {\n        var files = new (string, string[])[] {\n            (\"src/Foo.axaml\", new[] { @\"<Border Background=\"\"#AAA\"\" BorderBrush=\"\"#BBB\"\"/>\" }),\n        };\n\n        var violations = DesignTokenGuard.FindHexViolations(files);\n\n        // One line \u2192 one violation (the line is flagged once)\n        Assert.Single(violations);\n    }"
+      },
+      "succeeded": false,
+      "duration_s": 0.007,
+      "result_length": 303,
+      "error": "error: edit_file: old_string not found. The file's whitespace, casing, or punctuation may differ from what you sent. No close match was found in the file; reread it with read_file to verify the exact text. (in /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs)"
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 3.032,
+      "prompt_tokens_est": 72863,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 80,
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 761
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 2.421,
+      "prompt_tokens_est": 73147,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "MultipleHexOnSameLine",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.234,
+      "result_length": 17
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 3.532,
+      "prompt_tokens_est": 73176,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs",
+        "limit": 90,
+        "offset": 53
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3567
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 3.34,
+      "prompt_tokens_est": 74258,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/DesignTokenCentralizationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 97
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 3.061,
+      "prompt_tokens_est": 74374,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"test\", \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj\", \"--nologo\", \"--filter\", \"FullyQualifiedName~DesignToken\", \"-v\", \"q\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.774,
+      "result_length": 764
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 12.795,
+      "prompt_tokens_est": 74685,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
