@@ -110,4 +110,91 @@ public sealed class VerifyAgentCommandTests
         // not fed only restore/build noise.
         Assert.DoesNotContain("HEAD_NOISE_BANNER", prompt, StringComparison.Ordinal);
     }
+
+    // ── Stage 9 command restrictions (observational-only) ───────────────
+
+    [Fact]
+    public void Commands_MustNotAllowShellOrTestExecution()
+    {
+        var stage9 = RelayStages.All[8]; // 0-indexed
+        Assert.Equal(9, stage9.Number);
+
+        // The commands value must not be "all" — that grants unrestricted shell access.
+        Assert.NotEqual("all", stage9.Commands);
+
+        // Split the comma-separated whitelist; no token must grant shell/test execution.
+        var tokens = stage9.Commands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.NotEmpty(tokens);
+
+        foreach (var forbidden in new[] { "all", "dotnet", "bash", "sh" })
+        {
+            Assert.DoesNotContain(forbidden, tokens);
+        }
+    }
+
+    [Fact]
+    public void Commands_MustContainReadOnlyTools()
+    {
+        var stage9 = RelayStages.All[8]; // 0-indexed
+        Assert.Equal(9, stage9.Number);
+
+        var tokens = stage9.Commands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Assert.NotEmpty(tokens);
+
+        // Stage 9 must include the same read-only subset proven safe for stages 2–4.
+        foreach (var required in new[] { "cat", "grep", "ls" })
+        {
+            Assert.Contains(required, tokens);
+        }
+    }
+
+    [Fact]
+    public void Stage9_Verify_PromptProhibitsTestSuiteExecution()
+    {
+        var stage9 = RelayStages.All[8]; // 0-indexed
+        Assert.Equal(9, stage9.Number);
+
+        // The system prompt must explicitly forbid the agent from running the test suite
+        // and from editing files. This is a regression guard — a future edit could weaken
+        // these prompts, and combined with commands="all" that would re-open the risk.
+        Assert.Contains("Do NOT execute the test suite", stage9.SystemPrompt, StringComparison.Ordinal);
+        Assert.Contains("Do not edit files", stage9.SystemPrompt, StringComparison.Ordinal);
+    }
+
+    // ── Red verify → Fix-verify routing ─────────────────────────────────
+
+    [Fact]
+    public async Task Stage9_Verify_RedMechanicalGate_DoesNotBlockFixVerify()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
+        repo.WriteTask("red-verify-routes-to-fix", "# Red verify routes to Fix-verify\n");
+        var runner = new CapturingSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        // Stage 5 author gate: red (fail-before-implementation)
+        // Stage 9 verify: red + retry (both fail)
+        // Fix-verify: green on first try (no retry needed)
+        var tests = new ScriptedTestRunner(
+            new TestRunResult(1, "red"),            // stage 5 first run
+            new TestRunResult(1, "red"),            // stage 5 retry
+            new TestRunResult(1, "verify failed"),  // stage 9 first run
+            new TestRunResult(1, "verify failed"),  // stage 9 retry
+            new TestRunResult(0, "All green!"));    // fix-verify first run (pass)
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "red-verify-routes-to-fix");
+
+        // The red verify gate must route to Fix-verify, not flag immediately.
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // Stage 10 (Fix-verify) was invoked.
+        var inv10 = runner.Invocations.Single(i => i.Stage.Number == 10);
+        Assert.NotNull(inv10);
+
+        // Stage 9 (Verify) was invoked but received no imperative test command.
+        var inv9 = runner.Invocations.Single(i => i.Stage.Number == 9);
+        Assert.Null(inv9.TestCommand);
+    }
 }
