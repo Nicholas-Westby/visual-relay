@@ -33,13 +33,6 @@ public static class FixTaskAuthorRunner
         - "slug": a kebab-case slug derived from the task title (lowercase letters, digits, and hyphens only).
         """;
 
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        AllowTrailingCommas = true,
-        ReadCommentHandling = JsonCommentHandling.Skip,
-    };
-
     /// <summary>
     /// Runs the subagent to author a fix task from the failed-run diagnostics
     /// in <paramref name="taskDirectory"/>.

@@ -6,11 +6,11 @@ public static partial class RelayConfigLoader
 {
     /// <summary>
     /// Parses the <c>tierModelOverrides</c> JSON object, validating each
-    /// entry's model name against <c>BackendConfigGenerator.SelectableModels</c>.
+    /// entry's model name against <c>BackendConfigGenerator.SelectableModelsByTier</c>.
     /// Invalid entries are silently dropped. Returns null when the element is
     /// missing, empty, or all entries are invalid.
     /// </summary>
-    internal static IReadOnlyDictionary<string, string>? TryParseTierModelOverrides(
+    private static IReadOnlyDictionary<string, string>? TryParseTierModelOverrides(
         JsonElement element)
     {
         if (element.ValueKind != JsonValueKind.Object)
@@ -25,7 +25,7 @@ public static partial class RelayConfigLoader
                 continue;
 
             // Validate against the tier's selectable models.
-            if (!BackendConfigGenerator.SelectableModels.TryGetValue(tier, out var selectable))
+            if (!BackendConfigGenerator.SelectableModelsByTier.TryGetValue(tier, out var selectable))
                 continue;
             if (!selectable.Contains(model, StringComparer.Ordinal))
                 continue;

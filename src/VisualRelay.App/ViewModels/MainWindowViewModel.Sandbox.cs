@@ -49,7 +49,7 @@ public partial class MainWindowViewModel
     /// the nono group calls are subprocesses and must not hold up opening
     /// the Settings panel.
     /// </summary>
-    internal async Task LoadSandboxPathsAsync()
+    private async Task LoadSandboxPathsAsync()
     {
         IsSandboxInfoLoading = true;
         try

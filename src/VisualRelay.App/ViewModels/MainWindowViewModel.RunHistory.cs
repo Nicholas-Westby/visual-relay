@@ -31,14 +31,9 @@ public partial class MainWindowViewModel
         // LatestFlaggedError (null when no flagged entry exists). This prevents
         // a previously-viewed flagged task's error from leaking onto a clean or
         // running task selected afterwards.
-        if (_runningTaskId == taskId)
-        {
-            SelectedTaskError = null;
-        }
-        else
-        {
-            SelectedTaskError = LatestFlaggedError(statusRecord);
-        }
+        SelectedTaskError = _runningTaskId == taskId
+            ? null
+            : LatestFlaggedError(statusRecord);
 
         foreach (var stage in Stages)
         {

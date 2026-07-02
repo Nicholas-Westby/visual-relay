@@ -1,5 +1,4 @@
 using Avalonia.Threading;
-using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
 

@@ -1,6 +1,4 @@
 using VisualRelay.Cli;
-using VisualRelay.Core.Execution;
-using VisualRelay.Core.Queue;
 
 namespace VisualRelay.Tests;
 

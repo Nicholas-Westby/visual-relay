@@ -98,11 +98,11 @@ public sealed class WindowsCredentialDenyTests
     {
         // The macOS/Linux (nono) builder output must never carry the Windows caveat:
         // nono enforces deny_credentials, so a "not enforced" note would misinform.
-        var nono = SandboxPathInspector.BuildResult(new List<SandboxPathEntry>
-        {
+        var nono = SandboxPathInspector.BuildResult(
+        [
             new("/", "/", SandboxAccess.ReadOnly, "vr-guard"),
             new("$HOME/.ssh", "/home/u/.ssh", SandboxAccess.Blocked, "deny_credentials"),
-        });
+        ]);
 
         Assert.Null(nono.WindowsCredentialCaveat);
         Assert.Null(nono.WindowsCredentialCaveatUrl);

@@ -1,6 +1,5 @@
 using Avalonia;
 using Avalonia.Controls;
-using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.App.Views.Controls.Buttons;
 
@@ -18,7 +17,7 @@ public enum IconButtonStyle
 
 /// <summary>
 /// An icon-only toggle button that auto-composes the correct vector icon
-/// (<see cref="Controls.ChevronIcon"/> or <see cref="Controls.FocusToggleIcon"/>)
+/// (<see cref="ChevronIcon"/> or <see cref="FocusToggleIcon"/>)
 /// and applies the matching Avalonia style class so the existing theme
 /// selectors (<c>Button.collapseToggle</c>, <c>Button.focusToggle</c>)
 /// match without any theme changes.

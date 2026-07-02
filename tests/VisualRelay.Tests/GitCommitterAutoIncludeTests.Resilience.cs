@@ -177,15 +177,9 @@ public sealed partial class GitCommitterAutoIncludeTests
 
     // ── stub IGitInvoker that injects a stale path into ls-files output ─
 
-    private sealed class StaleSnapshotGitInvoker : IGitInvoker
+    private sealed class StaleSnapshotGitInvoker(string stalePath) : IGitInvoker
     {
         private readonly GitInvoker _real = new();
-        private readonly string _stalePath;
-
-        public StaleSnapshotGitInvoker(string stalePath)
-        {
-            _stalePath = stalePath;
-        }
 
         public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath,
@@ -203,14 +197,14 @@ public sealed partial class GitCommitterAutoIncludeTests
             // vanished between the snapshot and git add.
             if (args is ["ls-files", "--others", "--exclude-standard"])
             {
-                var result = await _real.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);
+                var result = await _real.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
                 var injected = string.IsNullOrWhiteSpace(result.Output)
-                    ? _stalePath
-                    : result.Output.TrimEnd() + "\n" + _stalePath;
+                    ? stalePath
+                    : result.Output.TrimEnd() + "\n" + stalePath;
                 return (result.ExitCode, injected, result.TimedOut);
             }
 
-            return await _real.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);
+            return await _real.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
         }
     }
 }

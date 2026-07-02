@@ -138,11 +138,11 @@ public sealed partial class SandboxPathInspectorTests
 
         Assert.True(result.IsAvailable);
         // The Readable row must NOT imply macOS-style read-exceptions.
-        Assert.All(result.ReadablePaths, e =>
+        foreach (var e in result.ReadablePaths)
         {
             Assert.DoesNotContain("except", e.Raw, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("blocked", e.Raw, StringComparison.OrdinalIgnoreCase);
-        });
+        }
         // It must say reads are unrestricted.
         Assert.Contains(result.ReadablePaths,
             e => e.Raw.Contains("not restricted", StringComparison.OrdinalIgnoreCase));
@@ -165,7 +165,7 @@ public sealed partial class SandboxPathInspectorTests
 
         var entries = await SandboxPathInspector.ExpandInheritedGroupsAsync(
             showJson,
-            name => Task.FromResult<string?>(name == "acme_denies"
+            name => Task.FromResult(name == "acme_denies"
                 ? """{ "name":"acme_denies", "platform":"cross-platform", "deny": { "access": [ {"raw":"~/.acme-secret","expanded":"/home/x/.acme-secret"} ] } }"""
                 : null));
 
@@ -182,7 +182,7 @@ public sealed partial class SandboxPathInspectorTests
     /// payload. Unknown groups return null (as a real missing group would).
     /// </summary>
     private static Task<string?> GroupPayloadProvider(string name) =>
-        Task.FromResult<string?>(name switch
+        Task.FromResult(name switch
         {
             "deny_credentials" => SampleDenyCredentialsGroupJson(),
             "deny_keychains_macos" => SampleMacKeychainsGroupJson(),

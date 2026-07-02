@@ -27,7 +27,7 @@ public partial class MainWindowViewModel
 
         /// <summary>Invoked when <see cref="SelectedModel"/> changes.
         /// The VM wires this to persist the new override.</summary>
-        public Func<string, Task>? OnSelectedModelPersist { get; set; }
+        public Func<string, Task>? OnSelectedModelPersist { get; init; }
 
         partial void OnSelectedModelChanged(string value)
         {

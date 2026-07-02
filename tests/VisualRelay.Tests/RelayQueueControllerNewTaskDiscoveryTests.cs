@@ -171,7 +171,11 @@ public sealed class RelayQueueControllerNewTaskDiscoveryTests
         repo.WriteTask("gamma", "# Gamma\n");
         var added = false;
         RelayQueueController? capturedController = null;
-        // ReSharper disable once AccessToDisposedClosure — fires during DrainAsync; repo alive until method exit.
+        // capturedController is assigned right after this runner is built and the
+        // closure only runs later (during DrainAsync, repo still alive), so the
+        // modified/disposed-closure captures here are intentional and safe.
+        // ReSharper disable AccessToModifiedClosure
+        // ReSharper disable once AccessToDisposedClosure
         var injector = new InjectingTaskRunner(new CommitRejectingTaskRunner(), () =>
         {
             if (!added && capturedController is not null)
@@ -182,6 +186,7 @@ public sealed class RelayQueueControllerNewTaskDiscoveryTests
                     Path.GetDirectoryName(deltaPath)!, false, []));
             }
         });
+        // ReSharper restore AccessToModifiedClosure
         var controller = new RelayQueueController(repo.Root, injector);
         capturedController = controller;
 
@@ -205,7 +210,8 @@ public sealed class RelayQueueControllerNewTaskDiscoveryTests
         repo.WriteTask("gamma", "# Gamma\n");
         var runner = new RecordingTaskRunner();
         var controller = new RelayQueueController(repo.Root, runner);
-        // ReSharper disable once AccessToDisposedClosure — fires during DrainAsync; repo alive until method exit.
+        // Two repo.Root reads below; the closure fires during DrainAsync, repo alive.
+        // ReSharper disable AccessToDisposedClosure
         runner.AfterRun = () =>
         {
             if (runner.TasksRun.Count == 1)
@@ -220,6 +226,7 @@ public sealed class RelayQueueControllerNewTaskDiscoveryTests
                 controller.MoveUp("zeta");
             }
         };
+        // ReSharper restore AccessToDisposedClosure
 
         await controller.RefreshAsync();
         await controller.DrainAsync(mode: RunAllMode.Sequential);
@@ -251,7 +258,7 @@ public sealed class RelayQueueControllerNewTaskDiscoveryTests
         };
 
         await controller.RefreshAsync();
-        var results = await controller.DrainAsync(mode: RunAllMode.Sequential);
+        await controller.DrainAsync(mode: RunAllMode.Sequential);
 
         // Only alpha ran before pause; delta never started.
         Assert.Equal(["alpha"], runner.TasksRun);

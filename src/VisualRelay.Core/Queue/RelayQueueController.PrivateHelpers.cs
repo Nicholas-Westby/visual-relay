@@ -1,6 +1,5 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
-using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Queue;
@@ -101,16 +100,16 @@ public sealed partial class RelayQueueController
         var merged = new List<RelayTaskItem>(currentQueue.Count + newSorted.Count);
         var newIdx = 0;
 
-        for (var i = 0; i < currentQueue.Count; i++)
+        foreach (var current in currentQueue)
         {
-            var currentRank = rank.GetValueOrDefault(currentQueue[i].Id, int.MaxValue);
+            var currentRank = rank.GetValueOrDefault(current.Id, int.MaxValue);
             while (newIdx < newSorted.Count &&
                    rank.GetValueOrDefault(newSorted[newIdx].Id, int.MaxValue) < currentRank)
             {
                 merged.Add(newSorted[newIdx]);
                 newIdx++;
             }
-            merged.Add(currentQueue[i]);
+            merged.Add(current);
         }
         while (newIdx < newSorted.Count)
         {

@@ -57,7 +57,7 @@ public sealed partial class BackendConfigGeneratorTests
     [Fact]
     public void SelectableModels_PerTierShapeAndCapped()
     {
-        var sm = BackendConfigGenerator.SelectableModels;
+        var sm = BackendConfigGenerator.SelectableModelsByTier;
 
         // Every tier from Chains must be represented.
         foreach (var tier in BackendConfigGenerator.Chains.Keys)
@@ -104,7 +104,7 @@ public sealed partial class BackendConfigGeneratorTests
 
             if (row.Tier == "fallback")
                 Assert.False(row.IsEditable, "fallback tier must not be editable");
-            else if (row.Tier == "claude" && !row.KeyPresent)
+            else if (row is { Tier: "claude", KeyPresent: false })
                 Assert.False(row.IsEditable, "claude tier must not be editable when key is absent");
             else
                 Assert.True(row.IsEditable, $"tier '{row.Tier}' must be editable");
@@ -128,7 +128,7 @@ public sealed partial class BackendConfigGeneratorTests
 
     private static Dictionary<string, string> GeneratedAliases(
         ISet<string> keys,
-        IReadOnlyDictionary<string, string>? overrides = null)
+        IReadOnlyDictionary<string, string>? overrides)
     {
         var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath, overrides);
         return ParseAliases(yaml);
@@ -136,14 +136,9 @@ public sealed partial class BackendConfigGeneratorTests
 
     private static Dictionary<string, List<string>> GeneratedFallbacks(
         ISet<string> keys,
-        IReadOnlyDictionary<string, string>? overrides = null)
+        IReadOnlyDictionary<string, string>? overrides)
     {
         var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath, overrides);
         return ParseFallbacks(yaml);
     }
-
-    private static (string Yaml, string Summary) Generate(
-        ISet<string> keys,
-        IReadOnlyDictionary<string, string>? overrides = null) =>
-        BackendConfigGenerator.Generate(keys, TemplatePath, overrides);
 }

@@ -7,7 +7,7 @@ public static partial class BackendConfigGenerator
     /// <c>model_list</c> models from the five in-use providers. Defaults
     /// match today's auto-resolution.
     /// </summary>
-    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModels =
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> SelectableModelsByTier =
         new Dictionary<string, IReadOnlyList<string>>
         {
             ["frontier"] = new List<string>
@@ -41,7 +41,7 @@ public static partial class BackendConfigGenerator
 
     /// <summary>
     /// Model name → required env var for models that appear only in
-    /// <see cref="SelectableModels"/> and not in <see cref="Chains"/>
+    /// <see cref="SelectableModelsByTier"/> and not in <see cref="Chains"/>
     /// (e.g. <c>gpt-5</c>). Merged with <see cref="ModelToKey"/> at
     /// resolution time so overrides referencing these models can still
     /// resolve their provider key.
@@ -64,8 +64,8 @@ public static partial class BackendConfigGenerator
     {
         if (model == "fallback") return "HF_TOKEN";
         if (ModelToKey.TryGetValue(model, out var key)) return key;
-        if (ModelToRequiredKey.TryGetValue(model, out var extra)) return extra;
-        return "HF_TOKEN"; // defensive: unknown models default to HF floor
+        // defensive: unknown models default to HF floor
+        return ModelToRequiredKey.GetValueOrDefault(model, "HF_TOKEN");
     }
 
     /// <summary>Attempts to apply a tier-model override. Returns true when

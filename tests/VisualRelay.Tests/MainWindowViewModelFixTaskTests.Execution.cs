@@ -1,5 +1,4 @@
 using Avalonia.Threading;
-using VisualRelay.App.ViewModels;
 
 namespace VisualRelay.Tests;
 
@@ -42,9 +41,9 @@ public sealed partial class MainWindowViewModelFixTaskTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Contains(confirmCalls, c =>
-            c.Title == "Create task to fix" && c.ConfirmLabel == "Create");
+            c is { Title: "Create task to fix", ConfirmLabel: "Create" });
         Assert.Contains(confirmCalls, c =>
-            c.Title == "Fix task created" && c.ConfirmLabel == "View task");
+            c is { Title: "Fix task created", ConfirmLabel: "View task" });
 
         var completionCall = confirmCalls.First(c => c.Title == "Fix task created");
         Assert.Contains(Slug, completionCall.Message, StringComparison.Ordinal);

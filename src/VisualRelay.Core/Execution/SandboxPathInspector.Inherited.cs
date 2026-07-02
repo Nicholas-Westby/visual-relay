@@ -77,7 +77,7 @@ public static partial class SandboxPathInspector
     /// cross-platform or unmarked groups always contribute), then delegating per-entry
     /// classification to <see cref="ParseGroupJson"/>.
     /// </summary>
-    internal static IReadOnlyList<SandboxPathEntry> ExpandGroup(string groupJson, string groupName)
+    private static IReadOnlyList<SandboxPathEntry> ExpandGroup(string groupJson, string groupName)
         => ShouldSkipGroupByPlatform(groupJson) ? [] : ParseGroupJson(groupJson, groupName);
 
     /// <summary>
@@ -97,7 +97,7 @@ public static partial class SandboxPathInspector
     /// skip ONLY when the token names the OTHER OS ("macos" off macOS, "linux" off
     /// Linux). "cross-platform", absent/null, or any unrecognised value is included.
     /// </summary>
-    internal static bool ShouldSkipPlatformToken(string? platform) =>
+    private static bool ShouldSkipPlatformToken(string? platform) =>
         (string.Equals(platform, "macos", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsMacOS())
         || (string.Equals(platform, "linux", StringComparison.OrdinalIgnoreCase) && !OperatingSystem.IsLinux());
 
@@ -155,7 +155,7 @@ public static partial class SandboxPathInspector
         finally
         {
             if (tempPath is not null)
-                try { File.Delete(tempPath); } catch { }
+                try { File.Delete(tempPath); } catch { /* best-effort temp cleanup */ }
         }
     }
 
@@ -182,7 +182,7 @@ public static partial class SandboxPathInspector
                 psi.ArgumentList.Add(arg);
             using var process = Process.Start(psi);
             if (process is null) return null;
-            var stderrTask = process.StandardError.ReadToEndAsync();
+            var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
             using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 timeoutCts.Token, cancellationToken);
@@ -194,7 +194,7 @@ public static partial class SandboxPathInspector
             catch (OperationCanceledException)
             {
                 if (cancellationToken.IsCancellationRequested) throw;
-                try { process.Kill(entireProcessTree: true); } catch { }
+                try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
                 return null;
             }
             await stderrTask;

@@ -181,10 +181,7 @@ public sealed partial class RunAllModesTests
     {
         foreach (var stage in RelayStages.All)
         {
-            if (stage.Number == 11)
-                Assert.Equal("driver", stage.Kind);
-            else
-                Assert.Equal("llm", stage.Kind);
+            Assert.Equal(stage.Number == 11 ? "driver" : "llm", stage.Kind);
         }
     }
 

@@ -70,10 +70,6 @@ public partial class CommonButton : Button
         GlyphProperty.Changed.AddClassHandler<CommonButton>(OnGlyphChanged);
     }
 
-    public CommonButton()
-    {
-    }
-
     /// <summary>The visual variant of this button.</summary>
     public ButtonAppearance Appearance
     {

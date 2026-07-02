@@ -103,7 +103,7 @@ public sealed class TaskDetailScrollBottomReachabilityTests
         TaskDetailPanel panel)
     {
         var sv = panel.GetVisualDescendants().OfType<ScrollViewer>()
-            .First(s => s.IsVisible && s.Content is ItemsControl);
+            .First(s => s is { IsVisible: true, Content: ItemsControl });
         var ic = (ItemsControl)sv.Content!;
         return (sv, ic);
     }

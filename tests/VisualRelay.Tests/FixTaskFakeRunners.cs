@@ -49,33 +49,18 @@ internal sealed class FixTaskFakeRunner : ISubagentRunner
 /// returns the authored payload — letting a view-model test observe the
 /// in-flight <c>IsCreatingFixTask</c> state deterministically.
 /// </summary>
-internal sealed class GatedFixTaskRunner : ISubagentRunner
+internal sealed class GatedFixTaskRunner(string markdown, string summary, string slug, Task gate)
+    : ISubagentRunner
 {
-    private readonly string _markdown;
-    private readonly string _summary;
-    private readonly string _slug;
-    private readonly Task _gate;
-
-    public StageInvocation? LastInvocation { get; private set; }
-
-    public GatedFixTaskRunner(string markdown, string summary, string slug, Task gate)
-    {
-        _markdown = markdown;
-        _summary = summary;
-        _slug = slug;
-        _gate = gate;
-    }
-
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken ct)
     {
-        LastInvocation = invocation;
-        await _gate.WaitAsync(ct);
+        await gate.WaitAsync(ct);
 
         var payload = new Dictionary<string, string>
         {
-            ["markdown"] = _markdown,
-            ["summary"] = _summary,
-            ["slug"] = _slug,
+            ["markdown"] = markdown,
+            ["summary"] = summary,
+            ["slug"] = slug,
         };
         var json = JsonSerializer.Serialize(payload);
 

@@ -7,7 +7,7 @@ namespace VisualRelay.App.Views.Controls.Buttons;
 /// <c>"stageButton"</c> style class so the theme selectors
 /// (<c>Button.stageButton</c>) match without theme changes.
 /// Rich child content is provided via the existing
-/// <see cref="DataTemplate"/> in <c>StageBoard.axaml</c>.
+/// <c>DataTemplate</c> in <c>StageBoard.axaml</c>.
 /// </summary>
 public partial class StageCardButton : Button
 {

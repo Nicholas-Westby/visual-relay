@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using VisualRelay.App.ViewModels;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;

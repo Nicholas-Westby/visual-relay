@@ -169,7 +169,7 @@ public static partial class SandboxPathInspector
     /// The macOS/Linux (nono) reads/writes summary. Reads are the whole filesystem
     /// EXCEPT the enforced deny/credential paths, which nono genuinely blocks.
     /// </summary>
-    internal const string NonoReadsSummaryText =
+    private const string NonoReadsSummaryText =
         "Reads: the whole filesystem except the blocked paths. " +
         "Writes: only the paths listed here (plus the current workspace).";
 

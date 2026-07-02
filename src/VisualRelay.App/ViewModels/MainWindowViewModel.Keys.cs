@@ -95,7 +95,7 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// Structured per-tier rows for the Live Tiers UI, populated by
-    /// <see cref="RefreshLitTiers"/> from <see cref="BackendConfigGenerator.GetTierRows"/>.
+    /// <see cref="RefreshLitTiersAsync"/> from <see cref="BackendConfigGenerator.GetTierRows"/>.
     /// </summary>
     public ObservableCollection<TierModelRow> LitTierRows { get; } = [];
 
@@ -243,10 +243,10 @@ public partial class MainWindowViewModel
         }
     }
 
-    private async Task PersistTierOverrideAsync(string _)
+    private Task PersistTierOverrideAsync(string _)
     {
         if (_suppressLitTierPersist || !Directory.Exists(RootPath))
-            return;
+            return Task.CompletedTask;
 
         var overrides = new Dictionary<string, string>();
         foreach (var row in LitTierRows)
@@ -265,6 +265,7 @@ public partial class MainWindowViewModel
 
         if (overrides.Count > 0)
             RelayConfigWriter.UpsertTierModelOverrides(RootPath, overrides);
+        return Task.CompletedTask;
     }
 
     private static string? LocateTemplate()

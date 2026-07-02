@@ -19,14 +19,16 @@ public static partial class SandboxPathInspector
     /// a "may be readable" caveat. Flip to <c>true</c> — a one-line change — to
     /// drop the caveat once enforcement is guaranteed.
     /// </summary>
-    internal const bool WindowsDeniedPathsEnforced = false;
+    // static readonly (not const) so flipping it stays a one-line runtime change
+    // and the caveat ternary below is not a compile-time-dead branch.
+    internal static readonly bool WindowsDeniedPathsEnforced = false;
 
     /// <summary>Canonical tracking link for Windows <c>deniedPaths</c> enforcement (MXC PR #489).</summary>
-    internal const string WindowsDeniedPathsTrackingUrl =
+    private const string WindowsDeniedPathsTrackingUrl =
         "https://github.com/microsoft/mxc/pull/489";
 
     /// <summary>The Windows-only caveat shown against the credential denials.</summary>
-    internal const string WindowsCredentialCaveatText =
+    private const string WindowsCredentialCaveatText =
         "⚠ Configured as denied, but the Windows sandbox (MXC) may not enforce " +
         "denied paths yet — treat the credential paths above as potentially readable.";
 
@@ -35,7 +37,7 @@ public static partial class SandboxPathInspector
     /// read-block the credential <c>deniedPaths</c> (see the caveat) — so this must
     /// NOT repeat the nono "except the blocked paths" phrasing.
     /// </summary>
-    internal const string WindowsReadsSummaryText =
+    private const string WindowsReadsSummaryText =
         "Reads: the whole filesystem (not restricted). " +
         "Writes: only the paths listed here (plus the current workspace).";
 

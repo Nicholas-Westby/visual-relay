@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
@@ -48,7 +47,7 @@ internal static class SettingsTestHelpers
     /// <remarks>
     /// The settings-button handler (<c>TopBar.OnSettingsClick</c>) is async void:
     /// the <see cref="SettingsWindow"/> is created and shown after an await gap
-    /// (<c>RefreshKeyStatesAsync</c>). <see cref="Dispatcher.UIThread.RunJobs"/>
+    /// (<c>RefreshKeyStatesAsync</c>). <c>Dispatcher.UIThread.RunJobs</c>
     /// does not pump async continuations, so we spin the dispatcher with brief
     /// sleeps until the owned window appears (or a short timeout elapses).
     /// </remarks>

@@ -67,9 +67,9 @@ internal static partial class FlaggedWorkStore
                 // Unstage pre-existing untracked files (they were not authored by this task).
                 foreach (var path in preRunUntracked)
                 {
-                    var rmResult = await gitInvoker.RunAsync(
-                        rootPath, ["rm", "--cached", "-q", "--", path], ct, environment: env);
                     // Best-effort: ignore failures.
+                    _ = await gitInvoker.RunAsync(
+                        rootPath, ["rm", "--cached", "-q", "--", path], ct, environment: env);
                 }
 
                 // Write the snapshot tree.
@@ -104,7 +104,7 @@ internal static partial class FlaggedWorkStore
                 }
                 finally
                 {
-                    _ = await gitInvoker.RunAsync(rootPath, ["update-ref", "-d", snapshotRef], ct, killToken: default);
+                    _ = await gitInvoker.RunAsync(rootPath, ["update-ref", "-d", snapshotRef], ct, killToken: CancellationToken.None);
                 }
 
                 // Write sidecar.
@@ -148,21 +148,6 @@ internal static partial class FlaggedWorkStore
         var verifyResult = await gitInvoker.RunAsync(rootPath, ["bundle", "verify", bundlePath], ct);
         if (verifyResult.ExitCode != 0)
             return RestoreResult.Unrestorable;
-
-        // Read the sidecar for the base SHA.
-        var sidecarPath = Path.Combine(taskDirectory, SidecarFileName);
-        string? baseSha = null;
-        if (File.Exists(sidecarPath))
-        {
-            try
-            {
-                var sidecarJson = await File.ReadAllTextAsync(sidecarPath, ct);
-                var sidecar = JsonSerializer.Deserialize<FlaggedWorkSidecar>(
-                    sidecarJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
-                baseSha = sidecar?.BaseSha;
-            }
-            catch { /* best-effort */ }
-        }
 
         // Fetch the snapshot commit from the bundle. The bundle records the snapshot
         // under refs/relay-snapshot/<taskId>.
@@ -216,7 +201,7 @@ internal static partial class FlaggedWorkStore
         {
             // Clean up the fetch ref.
             _ = await gitInvoker.RunAsync(
-                rootPath, ["update-ref", "-d", fetchRef], ct, killToken: default);
+                rootPath, ["update-ref", "-d", fetchRef], ct, killToken: CancellationToken.None);
         }
     }
 
@@ -240,10 +225,15 @@ internal static partial class FlaggedWorkStore
         }
     }
 
+    // Serialized to flagged-work.json as the resume sidecar (tests assert the file is
+    // written). The fields are persisted via JSON reflection, which the analyzer cannot
+    // see, so they read as "never accessed" — hence the scoped suppression.
+    // ReSharper disable NotAccessedPositionalProperty.Global
     internal sealed record FlaggedWorkSidecar(
         string BaseSha,
         DateTimeOffset CreatedUtc,
         int FlaggedStage);
+    // ReSharper restore NotAccessedPositionalProperty.Global
 
     internal sealed record RestoreResult
     {

@@ -1,5 +1,4 @@
 using VisualRelay.App.ViewModels;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 

@@ -116,7 +116,7 @@ public static partial class BackendConfigGenerator
                     KeyPresent: false,
                     FallbackChainText: null)
                 {
-                    SelectableModels = SelectableModels.TryGetValue("claude", out var sm) ? sm : [],
+                    SelectableModels = SelectableModelsByTier.TryGetValue("claude", out var sm) ? sm : [],
                     IsEditable = false,
                 });
                 continue;
@@ -137,7 +137,7 @@ public static partial class BackendConfigGenerator
                 KeyPresent: presentKeys.Contains(requiredKey),
                 FallbackChainText: chainText)
             {
-                SelectableModels = SelectableModels.TryGetValue(tier, out var slm) ? slm : [],
+                SelectableModels = SelectableModelsByTier.TryGetValue(tier, out var slm) ? slm : [],
                 IsEditable = tier != FallbackTier,
             });
         }
@@ -152,6 +152,7 @@ public static partial class BackendConfigGenerator
     /// </summary>
     /// <param name="presentKeys">Set of environment variable names that are set.</param>
     /// <param name="templatePath">Path to the static <c>litellm-config.yaml</c> template.</param>
+    /// <param name="overrides">Optional per-tier model overrides applied when the chosen model's key is present.</param>
     /// <returns>
     /// A tuple of the generated YAML text and a one-line human-readable summary
     /// of tier→model resolutions and detected keys.
