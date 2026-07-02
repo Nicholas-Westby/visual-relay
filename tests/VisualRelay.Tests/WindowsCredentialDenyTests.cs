@@ -54,13 +54,13 @@ public sealed class WindowsCredentialDenyTests
     {
         // MXC's DACL-mutation fallback aborts on a policy path that does not exist, so
         // credential denials are existence-filtered before they reach the policy.
-        var existing = System.IO.Path.Combine(
-            System.IO.Path.GetTempPath(), "vr-mxc-exist-" + System.Guid.NewGuid().ToString("N"));
-        System.IO.Directory.CreateDirectory(existing);
+        var existing = Path.Combine(
+            Path.GetTempPath(), "vr-mxc-exist-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(existing);
         try
         {
-            var missing = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(), "vr-mxc-missing-" + System.Guid.NewGuid().ToString("N"));
+            var missing = Path.Combine(
+                Path.GetTempPath(), "vr-mxc-missing-" + Guid.NewGuid().ToString("N"));
             var filtered = MxcPolicyGenerator.ExistingPaths(new[] { existing, missing });
 
             Assert.Contains(existing, filtered);
@@ -68,7 +68,7 @@ public sealed class WindowsCredentialDenyTests
         }
         finally
         {
-            System.IO.Directory.Delete(existing, recursive: true);
+            Directory.Delete(existing, recursive: true);
         }
     }
 
