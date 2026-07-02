@@ -135,4 +135,26 @@ public sealed class ProxyLogFailureReasonTests
         Assert.Contains("model call", reason, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Rewrite this task spec in place", reason, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void BuildNonzeroExitReason_ProcessLaunchFailure_NamesLaunchFailureNotModelBackend()
+    {
+        // 0xC0000142 (STATUS_DLL_INIT_FAILED): the sandboxed process could not START, so it
+        // never called the model. The reason must name a launch failure and the builtin
+        // escape hatch — NOT blame the model backend, even with no swival output and a
+        // healthy proxy log (consulting which would only mislead).
+        const int dllInitFailed = unchecked((int)0xC0000142);
+        const string proxyLog =
+            "{\"message\": \"127.0.0.1:54606 - \\\"GET /health/readiness HTTP/1.1\\\" 200\"}";
+
+        var reason = SwivalSubagentRunner.BuildNonzeroExitReason(
+            exitCode: dllInitFailed, swivalOutput: string.Empty, promptText: SentPrompt,
+            proxyLogText: proxyLog, killedOutputPath: "/tmp/x/stage1-attempt1.killed-output.txt");
+
+        Assert.Contains("failed to START", reason, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("VR_WINDOWS_SANDBOX=builtin", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("model backend rejected", reason, StringComparison.OrdinalIgnoreCase);
+        // The breadcrumb to the preserved full output is retained.
+        Assert.Contains("stage1-attempt1.killed-output.txt", reason, StringComparison.Ordinal);
+    }
 }
