@@ -34,6 +34,45 @@ public sealed class WindowsCredentialDenyTests
     }
 
     [Fact]
+    public void Generate_WithExplicitDeniedDirs_EmitsExactlyThose()
+    {
+        // The 3-arg overload is a pure serializer: whatever denied set it is given is
+        // exactly what lands under filesystem.deniedPaths (the Windows launch path feeds
+        // it an existence-filtered set; see MxcProvisioner.EnsurePolicy).
+        var json = MxcPolicyGenerator.Generate(@"C:\repo", [], new[] { @"C:\x", @"C:\y" });
+
+        using var doc = JsonDocument.Parse(json);
+        var denied = doc.RootElement.GetProperty("filesystem")
+            .GetProperty("deniedPaths").EnumerateArray()
+            .Select(e => e.GetString()!).ToList();
+
+        Assert.Equal(new[] { @"C:\x", @"C:\y" }, denied);
+    }
+
+    [Fact]
+    public void ExistingPaths_KeepsExistingDropsMissing()
+    {
+        // MXC's DACL-mutation fallback aborts on a policy path that does not exist, so
+        // credential denials are existence-filtered before they reach the policy.
+        var existing = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), "vr-mxc-exist-" + System.Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(existing);
+        try
+        {
+            var missing = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "vr-mxc-missing-" + System.Guid.NewGuid().ToString("N"));
+            var filtered = MxcPolicyGenerator.ExistingPaths(new[] { existing, missing });
+
+            Assert.Contains(existing, filtered);
+            Assert.DoesNotContain(missing, filtered);
+        }
+        finally
+        {
+            System.IO.Directory.Delete(existing, recursive: true);
+        }
+    }
+
+    [Fact]
     public void WindowsCredentialDenyDirs_CoversCredentialFamilies()
     {
         var dirs = MxcPolicyGenerator.WindowsCredentialDenyDirs();

@@ -48,7 +48,8 @@ public static class MxcProvisioner
         var path = Path.Combine(dir, PolicyFileName);
         var json = MxcPolicyGenerator.Generate(
             workspaceRoot,
-            MxcPolicyGenerator.DefaultWindowsCacheDirs());
+            MxcPolicyGenerator.DefaultWindowsCacheDirs(),
+            MxcPolicyGenerator.ExistingPaths(MxcPolicyGenerator.WindowsCredentialDenyDirs()));
         if (!File.Exists(path) || !string.Equals(File.ReadAllText(path), json, StringComparison.Ordinal))
             File.WriteAllText(path, json);
 

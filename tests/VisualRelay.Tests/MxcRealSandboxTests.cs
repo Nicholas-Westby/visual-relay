@@ -52,8 +52,12 @@ public sealed class MxcRealSandboxTests
         catch (UnauthorizedAccessException) { Assert.Skip("drive root not writable on this host"); return; }
         try
         {
-            // VR's REAL generator with the real cache list — the production policy shape.
-            var json = MxcPolicyGenerator.Generate(workspace, MxcPolicyGenerator.DefaultWindowsCacheDirs());
+            // VR's REAL generator with the real cache + existence-filtered credential
+            // denials — the exact production policy shape (see MxcProvisioner.EnsurePolicy).
+            var json = MxcPolicyGenerator.Generate(
+                workspace,
+                MxcPolicyGenerator.DefaultWindowsCacheDirs(),
+                MxcPolicyGenerator.ExistingPaths(MxcPolicyGenerator.WindowsCredentialDenyDirs()));
             var policyPath = Path.Combine(root, "policy.json");
             File.WriteAllText(policyPath, json); // .NET default: UTF-8, no BOM (what wxc-exec needs)
 
