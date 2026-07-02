@@ -60,6 +60,19 @@ public sealed partial class ControlServer
         var name = Uri.UnescapeDataString(path["/command/".Length..]);
         var body = await ReadBodyAsync(request);
 
+        // Refuse a POST with no declared body length. On macOS/Linux HttpListener
+        // internally 411s this shape, but the request context IS still dispatched
+        // to the handler — so the command would execute behind a 411 error page.
+        // Detect the distinguishing shape (ContentLength64 == -1, no chunked
+        // transfer-encoding indicated by HasEntityBody == false) and reject
+        // BEFORE executing the command.
+        if (request.ContentLength64 < 0 && !request.HasEntityBody)
+        {
+            context.Response.StatusCode = 411;
+            await WriteJsonAsync(context, Json.Object(("ok", false), ("error", "length required")));
+            return;
+        }
+
         var (status, json) = await api.InvokeCommandAsync(name, body);
         context.Response.StatusCode = status;
         await WriteJsonAsync(context, json);
