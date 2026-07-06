@@ -20,10 +20,13 @@ The recommended way to run Visual Relay is to **clone the repo and launch it wit
 
 ```bash
 cd ~/repositories # or wherever you keep your repos
-git clone https://github.com/Nicholas-Westby/visual-relay.git
+git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
 cd visual-relay
 ./visual-relay launch
 ```
+
+`--depth 1` does a shallow clone (latest commit only) for a faster, smaller
+download; omit it to fetch the full history.
 
 `./visual-relay` is a tiny launcher that provisions its own toolchain via
 [Nix](https://nixos.org) (this avoids global installs).
@@ -36,10 +39,13 @@ Clone the repo and run (nix doesn't run on Windows, so dependencies are installe
 
 ```powershell
 cd ~/repositories # or wherever you keep your repos
-git clone https://github.com/Nicholas-Westby/visual-relay.git
+git clone --depth 1 https://github.com/Nicholas-Westby/visual-relay.git
 cd visual-relay
 ./visual-relay launch
 ```
+
+`--depth 1` does a shallow clone (latest commit only) for a faster, smaller
+download; omit it to fetch the full history.
 
 You can then run `visual-relay` in that folder the next time you want to launch it.
 

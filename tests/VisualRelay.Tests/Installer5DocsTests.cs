@@ -105,6 +105,18 @@ public sealed class Installer5DocsTests
         Assert.Contains("installed globally", winSection, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Readme_InstallSections_RecommendShallowClone()
+    {
+        var content = ReadReadme();
+        var macSection = ExtractSection(content, "# Install (macOS)");
+        var winSection = ExtractSection(content, "# Install (Windows)");
+
+        // Both install sections should recommend --depth 1 for faster clones.
+        Assert.Contains("--depth", macSection, StringComparison.Ordinal);
+        Assert.Contains("--depth", winSection, StringComparison.Ordinal);
+    }
+
     // ── README: sample-reset / dev-only references removed ───────────────
 
     [Fact]
