@@ -107,7 +107,8 @@ public partial class MainWindowViewModel
             }
             stage.Status = relayEvent.EventName switch
             {
-                "stage_done" or "stage_report" => "Done",
+                "stage_done" or "stage_report" =>
+                    relayEvent.Data is not null && relayEvent.Data.TryGetValue("status", out var s) && !string.IsNullOrEmpty(s) ? s : "Done",
                 "flagged" => "Flagged",
                 _ => stage.Status
             };
@@ -129,6 +130,7 @@ public partial class MainWindowViewModel
         {
             CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
             HydrateTurnBudget(configResult.Config);
+            HydrateSkipTests(configResult.Config);
         }
 
         // IsNullOrEmpty (not WhiteSpace) so detection runs only when the user hasn't

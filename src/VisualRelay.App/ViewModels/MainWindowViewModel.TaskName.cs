@@ -96,6 +96,7 @@ public partial class MainWindowViewModel
     private void RekeyTaskId(string oldId, string newId)
     {
         MigrateTrackingDictKey(_boostedTaskIds, oldId, newId);
+        MigrateTrackingDictKey(_skipTestsTaskIds, oldId, newId);
         MigrateDictKey(_liveEventsByTask, oldId, newId);
         MigrateDictKey(_liveTraceEntriesByTask, oldId, newId);
         MigrateTrackingDictKey(_runningTaskIds, oldId, newId);

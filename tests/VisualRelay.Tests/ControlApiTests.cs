@@ -18,7 +18,7 @@ namespace VisualRelay.Tests;
 /// <c>pause-toggle</c> command.
 /// </summary>
 [Collection("Headless")]
-public sealed class ControlApiTests
+public sealed partial class ControlApiTests
 {
     private static ControlApi NewApi(out MainWindowViewModel viewModel)
     {
@@ -70,7 +70,7 @@ public sealed class ControlApiTests
         [
             "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
             "archive-toggle", "new-task", "follow-running", "start-backend",
-            "edit", "select-task", "boost-turns", "open-folder",
+            "edit", "select-task", "boost-turns", "skip-tests", "open-folder",
             "obsidian-scan", "obsidian-bridge"
         ];
         foreach (var name in expected)

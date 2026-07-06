@@ -138,10 +138,10 @@ public partial class StageDetailViewModel : ViewModelBase
             InputSections = [];
             InputPromptRawText = "";
             IsInputRawText = false;
-            InputState = done ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
+            InputState = done || "Skipped".Equals(stage.Status, StringComparison.OrdinalIgnoreCase) ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
             OutputFields = [];
             RawJson = "";
-            OutputState = done ? StageDetailState.NotAvailable : StageDetailState.NotComplete;
+            OutputState = done ? StageDetailState.NotAvailable : "Skipped".Equals(stage.Status, StringComparison.OrdinalIgnoreCase) ? StageDetailState.Skipped : StageDetailState.NotComplete;
 
             Header = BuildHeader(stage, null);
             return;
@@ -197,7 +197,7 @@ public partial class StageDetailViewModel : ViewModelBase
             InputPromptRawText = "";
             IsInputRawText = false;
             var done = "Done".Equals(status, StringComparison.OrdinalIgnoreCase);
-            InputState = done ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
+            InputState = done || "Skipped".Equals(status, StringComparison.OrdinalIgnoreCase) ? StageDetailState.NotAvailable : StageDetailState.NotStarted;
         }
     }
 
@@ -210,7 +210,7 @@ public partial class StageDetailViewModel : ViewModelBase
             RawJson = "";
             OutputState = "Done".Equals(status, StringComparison.OrdinalIgnoreCase)
                 ? stageNumber == 10 ? StageDetailState.Skipped : StageDetailState.NotAvailable
-                : StageDetailState.NotComplete;
+                : "Skipped".Equals(status, StringComparison.OrdinalIgnoreCase) ? StageDetailState.Skipped : StageDetailState.NotComplete;
             return;
         }
 

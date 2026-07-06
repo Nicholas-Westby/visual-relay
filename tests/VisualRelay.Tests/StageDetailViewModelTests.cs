@@ -22,25 +22,14 @@ public sealed class StageDetailViewModelTests
         Assert.Empty(vm.SystemPromptText);
         Assert.Empty(vm.Header);
     }
-    [Fact]
-    public void Load_ValidStageNullDirectory_ShowsStaticSystemPrompt_InputNotStarted_OutputNotComplete()
+    [Theory]
+    [InlineData(null)]
+    [InlineData("/nonexistent/path/12345")]
+    public void Load_NoTaskDirectory_ShowsStaticSystemPrompt_InputNotStarted_OutputNotComplete(string? dir)
     {
         var vm = new StageDetailViewModel();
         var stage = MakeStage(1, "Ideate", "cheap");
-        vm.Load(stage, null);
-        Assert.Equal(StageDetailState.Ready, vm.SystemState);
-        Assert.Equal(RelayStages.All[0].SystemPrompt, vm.SystemPromptText);
-        Assert.Equal(StageDetailState.NotStarted, vm.InputState);
-        Assert.Equal(StageDetailState.NotComplete, vm.OutputState);
-        Assert.Contains("Stage 01 (Ideate)", vm.Header);
-        Assert.DoesNotContain("attempt", vm.Header);
-    }
-    [Fact]
-    public void Load_ValidStageNonexistentDirectory_ShowsStaticSystemPrompt_InputNotStarted_OutputNotComplete()
-    {
-        var vm = new StageDetailViewModel();
-        var stage = MakeStage(1, "Ideate", "cheap");
-        vm.Load(stage, "/nonexistent/path/12345");
+        vm.Load(stage, dir);
         Assert.Equal(StageDetailState.Ready, vm.SystemState);
         Assert.Equal(RelayStages.All[0].SystemPrompt, vm.SystemPromptText);
         Assert.Equal(StageDetailState.NotStarted, vm.InputState);
@@ -193,7 +182,6 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_StageDoneNoReport_OutputStateSkipped()
     {
-        // Done without report → Skipped; Done without input → NotAvailable.
         using var dir = new TempDirectory();
         var stage = MakeStage(10, "Fix-verify", "balanced");
         stage.Status = "Done";
@@ -204,6 +192,25 @@ public sealed class StageDetailViewModelTests
         Assert.Equal(StageDetailState.Ready, vm.SystemState);
         Assert.Equal(StageDetailState.NotAvailable, vm.InputState);
         Assert.True(vm.IsInputNotAvailable);
+    }
+    [Fact]
+    public void Load_SkippedStage_ShowsSkippedPanel()
+    {
+        using var dir = new TempDirectory();
+        var stage = MakeStage(5, "Author-tests", "balanced");
+        stage.Status = "Skipped";
+        var vm1 = new StageDetailViewModel();
+        vm1.Load(stage, dir.Path);
+        Assert.Equal(StageDetailState.Skipped, vm1.OutputState);
+        Assert.True(vm1.IsOutputSkipped);
+        Assert.Equal(StageDetailState.NotAvailable, vm1.InputState);
+        Assert.True(vm1.IsInputNotAvailable);
+        var vm2 = new StageDetailViewModel();
+        vm2.Load(stage, null);
+        Assert.Equal(StageDetailState.Skipped, vm2.OutputState);
+        Assert.True(vm2.IsOutputSkipped);
+        Assert.Equal(StageDetailState.NotAvailable, vm2.InputState);
+        Assert.True(vm2.IsInputNotAvailable);
     }
     [Fact]
     public void Load_StageNotDoneNoReport_OutputStateNotComplete()
@@ -219,7 +226,6 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_DoneNonVerifyStageNoReport_OutputStateNotAvailable()
     {
-        // Non-Verify Done stage without report → NotAvailable (not Skipped).
         using var dir = new TempDirectory();
         var stage = MakeStage(3, "Diagnose", "balanced");
         stage.Status = "Done";
@@ -232,7 +238,6 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_DoneStageNullDirectory_InputOutputNotAvailable()
     {
-        // Null directory + Done → early-return sets NotAvailable (not NotStarted/NotComplete).
         var vm = new StageDetailViewModel();
         var stage = MakeStage(1, "Ideate", "cheap");
         stage.Status = "Done";
@@ -246,8 +251,6 @@ public sealed class StageDetailViewModelTests
     [Fact]
     public void Load_DoneStageNoInputFile_InputNotAvailable()
     {
-        // Directory exists, no .input.json, stage Done → LoadInput sets NotAvailable.
-        // Non-Verify stage with no report → Output is NotAvailable, not Skipped.
         using var dir = new TempDirectory();
         var stage = MakeStage(3, "Diagnose", "balanced");
         stage.Status = "Done";
@@ -273,7 +276,6 @@ public sealed class StageDetailViewModelTests
         Assert.Contains("raw", outputTooltip, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("JSON", outputTooltip, StringComparison.OrdinalIgnoreCase);
     }
-
     private static void AssertAllStates(StageDetailViewModel vm, StageDetailState expected)
     {
         Assert.Equal(expected, vm.SystemState);

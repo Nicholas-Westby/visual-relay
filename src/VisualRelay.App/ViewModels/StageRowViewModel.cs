@@ -44,6 +44,7 @@ public sealed partial class StageRowViewModel : ViewModelBase
     {
         "Running" => string.IsNullOrEmpty(ElapsedLabel) ? "Running" : $"Running {ElapsedLabel}",
         "Done" => HasRecordedDuration ? $"Completed in {DurationLabel}" : "Complete",
+        "Skipped" => "Skipped",
         _ => Status
     };
 
@@ -71,6 +72,7 @@ public sealed partial class StageRowViewModel : ViewModelBase
         "Done" => SuccessBrush,
         "Running" => RunningBrush,
         "Flagged" => FlaggedBrush,
+        "Skipped" => MutedBrush,
         _ => MutedBrush
     };
     public IBrush CardBackgroundBrush => Status == "Running" ? ActiveCardBrush : IsSelected ? SelectedCardBrush : WaitingCardBrush;

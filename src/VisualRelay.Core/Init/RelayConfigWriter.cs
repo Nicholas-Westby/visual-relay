@@ -193,6 +193,65 @@ public static class RelayConfigWriter
     }
 
     /// <summary>
+    /// Read-modify-write upsert of the <c>skipTestsTaskIds</c> JSON array into
+    /// <c>.relay/config.json</c>. Adds or removes <paramref name="taskId"/>,
+    /// de-duplicating entries, while preserving all other keys.
+    /// </summary>
+    public static void SetSkipTests(string rootPath, string taskId, bool enabled)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+
+        var path = Path.Combine(relayDir, "config.json");
+
+        JsonObject json;
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            json = existing as JsonObject ?? new JsonObject();
+        }
+        else
+        {
+            json = new JsonObject();
+        }
+
+        // Get or create the skipTestsTaskIds array.
+        var array = json["skipTestsTaskIds"] as JsonArray;
+        if (array is null)
+        {
+            array = new JsonArray();
+            json["skipTestsTaskIds"] = array;
+        }
+
+        if (enabled)
+        {
+            // Add taskId if not already present (de-duplicate).
+            if (!array.Any(node => node is JsonValue v && v.TryGetValue(out string? existing) && string.Equals(existing, taskId, StringComparison.Ordinal)))
+            {
+                array.Add(JsonValue.Create(taskId));
+            }
+        }
+        else
+        {
+            // Remove all occurrences of taskId.
+            var toRemove = new List<JsonNode?>();
+            foreach (var node in array)
+            {
+                if (node is JsonValue v && v.TryGetValue(out string? existing) && string.Equals(existing, taskId, StringComparison.Ordinal))
+                {
+                    toRemove.Add(node);
+                }
+            }
+            foreach (var node in toRemove)
+            {
+                array.Remove(node);
+            }
+        }
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    /// <summary>
     /// Read-modify-write upsert of the <c>tierModelOverrides</c> key into
     /// <c>.relay/config.json</c>. Preserves all existing keys.
     /// </summary>

@@ -53,6 +53,22 @@ public sealed partial class RelayDriver
             IsTurnBoosted: boosted);
     }
 
+    private StageInvocation BuildStageInvocation(
+        string rootPath, string runId, string taskId, string taskDirectory,
+        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
+        StringBuilder ledger, IReadOnlyList<string> manifest,
+        string targetedTestCommand, bool implementationFrontLoaded,
+        TestRunResult? stage9TestResult, string pinnedSwivalProfileContent)
+    {
+        var effectiveStage = implementationFrontLoaded && stage.Number == 6
+            ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
+        return BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
+            testCommand: stage.Number is 6 or 8 ? targetedTestCommand : null,
+            fullTestCommand: stage.Number is 6 or 8 ? config.TestCommand : null,
+            lastTestOutput: stage9TestResult?.Output,
+            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+    }
+
     /// <summary>
     /// Records a stage's ledger entry, seal, artifacts, status, and stage_done event.
     /// Returns the updated <paramref name="previousSeal"/> and <paramref name="taskHash"/>.
@@ -89,9 +105,14 @@ public sealed partial class RelayDriver
         seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
         await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
         stopwatch.Stop();
-        MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
+        var idx = stage.Number - 1;
+        var alreadySkipped = idx >= 0 && idx < statusEntries.Count
+            && "Skipped".Equals(statusEntries[idx].Status, StringComparison.OrdinalIgnoreCase);
+        if (!alreadySkipped)
+            MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
         await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
+        var status = idx >= 0 && idx < statusEntries.Count ? statusEntries[idx].Status : null;
+        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, status: status);
         return (seal, seal);
     }
 }

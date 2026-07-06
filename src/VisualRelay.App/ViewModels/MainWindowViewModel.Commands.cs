@@ -174,9 +174,9 @@ public partial class MainWindowViewModel
         NotifyRunningTaskContextChanged();
         EditSelectedTaskCommand.NotifyCanExecuteChanged();
         AddAttachmentsCommand.NotifyCanExecuteChanged();
-        OnPropertyChanged(nameof(SelectedTaskBoostsTurns));
-        OnPropertyChanged(nameof(TurnBudgetLabel));
-        OnPropertyChanged(nameof(CanToggleTurnBudget));
+        OnPropertyChanged(nameof(SelectedTaskBoostsTurns)); OnPropertyChanged(nameof(SelectedTaskSkipsTests));
+        OnPropertyChanged(nameof(TurnBudgetLabel)); OnPropertyChanged(nameof(SkipTestsLabel));
+        OnPropertyChanged(nameof(CanToggleTurnBudget)); OnPropertyChanged(nameof(CanToggleSkipTests));
 
         // Notify rewrite-related bind targets on task selection change.
         OnPropertyChanged(nameof(IsSelectedTaskRewriting));

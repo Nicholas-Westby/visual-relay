@@ -171,4 +171,86 @@ public sealed class MainWindowViewModelSettingsTests
         var viewModel = new MainWindowViewModel();
         Assert.False(viewModel.SelectedTaskBoostsTurns);
     }
+
+    // ── Per-task skip-tests toggle ───────────────────────────────────────
+
+    [Fact]
+    public async Task SelectedTaskSkipsTests_hydrated_from_config_on_load()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        var json = new JsonObject
+        {
+            ["testCmd"] = "dotnet test",
+            ["logSources"] = new JsonArray(),
+            ["skipTestsTaskIds"] = new JsonArray("readme-only")
+        };
+        var configPath = Path.Combine(repo.Root, ".relay", "config.json");
+        await File.WriteAllTextAsync(
+            configPath,
+            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        repo.WriteTask("readme-only", "# README\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        Assert.True(viewModel.SelectedTaskSkipsTests);
+        Assert.Equal("Skip automated testing", viewModel.SkipTestsLabel);
+    }
+
+    [Fact]
+    public async Task SelectedTaskSkipsTests_not_skipped_when_id_not_in_set()
+    {
+        using var repo = TestRepository.Create();
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        var json = new JsonObject
+        {
+            ["testCmd"] = "dotnet test",
+            ["logSources"] = new JsonArray(),
+            ["skipTestsTaskIds"] = new JsonArray("other-task")
+        };
+        var configPath = Path.Combine(repo.Root, ".relay", "config.json");
+        await File.WriteAllTextAsync(
+            configPath,
+            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        repo.WriteTask("normal-task", "# Normal task\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        Assert.False(viewModel.SelectedTaskSkipsTests);
+    }
+
+    [Fact]
+    public async Task SelectedTaskSkipsTests_toggle_persists_to_config()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("readme-only", "# README\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+
+        Assert.False(viewModel.SelectedTaskSkipsTests);
+
+        viewModel.SelectedTaskSkipsTests = true;
+        Assert.True(viewModel.SelectedTaskSkipsTests);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Contains("readme-only", result.Config.SkipTestsTaskIds!);
+
+        viewModel.SelectedTaskSkipsTests = false;
+        Assert.False(viewModel.SelectedTaskSkipsTests);
+
+        var result2 = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.DoesNotContain("readme-only", result2.Config.SkipTestsTaskIds!);
+    }
+
+    [Fact]
+    public void SelectedTaskSkipsTests_defaults_to_false()
+    {
+        var viewModel = new MainWindowViewModel();
+        Assert.False(viewModel.SelectedTaskSkipsTests);
+    }
 }

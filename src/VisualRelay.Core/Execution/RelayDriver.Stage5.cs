@@ -126,4 +126,23 @@ public sealed partial class RelayDriver
 
         return new Stage5Result(null, null, null);
     }
+
+    /// <summary>
+    /// Re-check whether implementation is already underway after stage 5 ran.
+    /// WorktreeFilter inside <see cref="HandleStage5Async"/> may have reverted
+    /// premature non-test edits back to HEAD, so the implementation may no longer
+    /// be in the working tree — stage 6 should use the normal Implement prompt.
+    /// </summary>
+    private async Task<bool> RecheckEarlyImplementationAsync(
+        string rootPath,
+        RelayConfig config,
+        IReadOnlyList<string> manifest,
+        bool currentValue,
+        CancellationToken cancellationToken)
+    {
+        if (!config.DownshiftOnEarlyImplementation)
+            return currentValue;
+        return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
+            rootPath, manifest, IsImpl, cancellationToken, isTestFile: IsTestFile);
+    }
 }

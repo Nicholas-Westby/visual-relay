@@ -39,6 +39,7 @@ public static partial class RelayConfigLoader
             InactivityTimeoutMs: 600_000,
             CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
+            SkipTestsTaskIds: [],
             DownshiftOnEarlyImplementation: true,
             RetryFlakyVerify: true,
             TierModelOverrides: null)
@@ -226,6 +227,7 @@ public static partial class RelayConfigLoader
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds", []),
+                SkipTestsTaskIds = OptionalStringArray(root, "skipTestsTaskIds", []),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
                 RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify),

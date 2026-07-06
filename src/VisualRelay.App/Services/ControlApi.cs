@@ -51,7 +51,7 @@ public sealed partial class ControlApi(
 
     // Property-backed user actions (not ICommands). Names mirror UI affordances.
     private static readonly string[] PropertyActions =
-        ["select-task", "boost-turns", "open-folder", "obsidian-scan", "obsidian-bridge",
+        ["select-task", "boost-turns", "skip-tests", "open-folder", "obsidian-scan", "obsidian-bridge",
          "select-activity-tab", "select-detail-tab"];
 
     // Destructive commands that mirror a GUI confirm modal. Their SOLE role here is
@@ -188,6 +188,23 @@ public sealed partial class ControlApi(
                     }
 
                     viewModel.SelectedTaskBoostsTurns = value.Value;
+                    return (200, Json.Object(("ok", true), ("command", name)));
+                }
+
+            case "skip-tests":
+                {
+                    if (viewModel.SelectedTask is null)
+                    {
+                        return (409, Json.Object(("ok", false), ("command", name), ("error", "disabled")));
+                    }
+
+                    var value = Json.ReadBool(body, "value");
+                    if (value is null)
+                    {
+                        return (409, Json.Object(("ok", false), ("command", name), ("error", "missing value")));
+                    }
+
+                    viewModel.SelectedTaskSkipsTests = value.Value;
                     return (200, Json.Object(("ok", true), ("command", name)));
                 }
 

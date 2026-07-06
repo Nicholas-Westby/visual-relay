@@ -121,21 +121,25 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stage9GuardOutput = pre.GuardOutput;
                     }
 
+                    if (stage.Number == 5 && config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)
+                    {
+                        MarkStatusSkipped(statusEntries, stage);
+                        ledger.AppendLine("> **Skipped**: automated testing bypassed for this task.");
+                        ledger.AppendLine();
+                        (previousSeal, taskHash) = await RecordStageAsync(
+                            rootPath, runId, taskId, taskDirectory, stage,
+                            "_Skipped: automated testing bypassed for this task._",
+                            "green", null, stopwatch, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
+                            cancellationToken);
+                        continue;
+                    }
+
                     // Stage 9 (read-only Verify) is NOT handed an imperative full-suite
-                    // command: the harness already ran the suite mechanically and the
-                    // agent gets the captured output via `lastTestOutput` (## Verify
-                    // output). Handing it `## Verify command` ("run this exact command")
-                    // re-tempted the very double-run the read-only stage exists to avoid.
                     // Only the coding stages (6/8) get the TARGETED command to self-check.
-                    var testCommandForCodingStage = stage.Number is 6 or 8 ? targetedTestCommand : null;
-                    var fullTestCommandForCodingStage = stage.Number is 6 or 8 ? config.TestCommand : null;
-                    var effectiveStage = implementationFrontLoaded && stage.Number == 6
-                        ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
-                    var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
-                        testCommand: testCommandForCodingStage,
-                        fullTestCommand: fullTestCommandForCodingStage,
-                        lastTestOutput: stage9TestResult?.Output,
-                        pinnedSwivalProfileContent: pinnedSwivalProfileContent);
+                    var invocation = BuildStageInvocation(rootPath, runId, taskId, taskDirectory,
+                        config, stage, input, ledger, manifest, targetedTestCommand,
+                        implementationFrontLoaded, stage9TestResult, pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
                     // Fold EVERY attempt RunAsync ran for this stage (an in-process escalation
                     // writes a stage{n}-attempt{k}.report.json per run) so the one stage_done
@@ -193,15 +197,9 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             return o;
                         check = stage5Result.Check;
                         testDurationSeconds = stage5Result.TestDurationSeconds;
-
-                        // Re-check early implementation: WorktreeFilter inside
-                        // HandleStage5Async may have reverted premature non-test
-                        // edits back to HEAD, so the implementation is no longer
-                        // in the working tree. Stage 6 should use the normal
-                        // Implement prompt, not ConfirmImplementationSystemPrompt.
-                        if (config.DownshiftOnEarlyImplementation)
-                            implementationFrontLoaded = await EarlyImplementationDetector
-                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: IsTestFile);
+                        implementationFrontLoaded = await RecheckEarlyImplementationAsync(
+                            rootPath, config, manifest, implementationFrontLoaded,
+                            cancellationToken);
                     }
 
                     if (stage.Number == 9)
@@ -284,7 +282,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     }
                 }
 
-                if (stage.Number != 9 || !stage10Handled)
+                if ((stage.Number != 9 || !stage10Handled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);

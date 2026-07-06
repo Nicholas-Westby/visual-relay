@@ -262,6 +262,13 @@ public sealed partial class RelayDriver
         };
     }
 
+    private static void MarkStatusSkipped(List<StageStatusEntry> entries, RelayStageDefinition stage)
+    {
+        var idx = stage.Number - 1;
+        if (idx < 0 || idx >= entries.Count) return;
+        entries[idx] = entries[idx] with { Status = "Skipped", Check = "green" };
+    }
+
     private static void MarkStatusFlagged(List<StageStatusEntry> entries, int stageNumber, string error)
     {
         var idx = stageNumber - 1;

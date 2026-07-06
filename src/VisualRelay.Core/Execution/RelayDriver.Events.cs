@@ -19,7 +19,8 @@ public sealed partial class RelayDriver
         double sessionCostUsd,
         int unknownCostStageCount,
         CancellationToken cancellationToken,
-        double? testDurationSeconds = null)
+        double? testDurationSeconds = null,
+        string? status = null)
     {
         var costLabel = cost is not null
             ? MoneyFormatter.Dollars(cost.CostUsd)
@@ -62,6 +63,10 @@ public sealed partial class RelayDriver
         if (testDurationSeconds.HasValue)
         {
             data["testTime"] = FormatDuration(testDurationSeconds.Value);
+        }
+        if (status is not null)
+        {
+            data["status"] = status;
         }
 
         return _dependencies.EventSink.PublishAsync(

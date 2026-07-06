@@ -84,6 +84,10 @@ public sealed record RelayConfig(
     // Task ids whose per-stage turn budget is multiplied by 10 (for unusually
     // large tasks).
     IReadOnlyList<string>? BoostTurnsTaskIds = null,
+    // Task ids whose Author-tests stage (stage 5) is skipped — no test files
+    // are authored, no red gate runs, and no test-file manifest merge occurs.
+    // Use for README/docs tasks with no meaningful tests to write.
+    IReadOnlyList<string>? SkipTestsTaskIds = null,
     // When true (default), if the agent front-loads implementation into an earlier
     // stage (manifest impl files already differ from HEAD before Implement runs),
     // the redundant Implement narration stage runs on the cheapest tier with a
