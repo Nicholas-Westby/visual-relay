@@ -49,8 +49,8 @@ public static class RelayStages
     {
         "Ideate" => "Frame the task and list 2-3 solution options. Do not edit files.",
         "Research" => "Investigate the codebase; record findings and constraints. Do not edit files.",
-        "Diagnose" => "Read application logs and extract evidence that explains the issue.",
-        "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/). For files that already exist, use their exact repo-relative path. For files that do not yet exist and will be created, prefix the path with '+' (e.g. '+src/NewFeature.cs').",
+        "Diagnose" => "Read application logs and code; extract evidence that explains the issue. Do not edit files — do not implement or prototype the change. Any code you write in this stage is discarded and never reaches later stages, but your written claims DO carry forward: describe the needed change in prose, and never state that work is already implemented.",
+        "Plan" => "Write a concrete plan and exact impacted code and test files. The manifest must list only code files — never files under the tasks directory (e.g. llm-tasks/). For files that already exist, use their exact repo-relative path. For files that do not yet exist and will be created, prefix the path with '+' (e.g. '+src/NewFeature.cs'). Do not edit files.",
         "Author-tests" =>
             "Write tests for the target behavior only. They must fail before implementation. " +
             "Verify your tests compile and fail using ONLY the targeted test command shown in the " +
@@ -74,7 +74,8 @@ public static class RelayStages
             "## Verify command section of the prompt. Do NOT run the project's full " +
             "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
-            SelfVerifyStopRule,
+            SelfVerifyStopRule + " " +
+            "Do not edit files.",
         "Fix" =>
             "Resolve every blocker and warning from review. " +
             "Verify your changes using the targeted test command shown in the " +

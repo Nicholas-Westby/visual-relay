@@ -100,6 +100,39 @@ public sealed class CodingStageSystemPromptTests
     }
 
     [Fact]
+    public void Diagnose_SystemPrompt_ProhibitsEditingAndFalseClaims()
+    {
+        var stage = RelayStages.All.Single(s => s.Name == "Diagnose");
+
+        // Must forbid editing or implementing the change.
+        Assert.Contains("Do not edit files", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+
+        // Must state that any code written in this stage is discarded.
+        Assert.Contains("discarded", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+
+        // Must forbid claiming work as already implemented.
+        Assert.Contains("never state", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Every LLM stage whose Files mode is not "all" must contain
+    /// "Do not edit files" in its system prompt. Today that set is
+    /// Ideate, Research, Diagnose, Plan, Review, Verify.
+    /// </summary>
+    public static IEnumerable<object[]> ReadIntentStages =>
+        RelayStages.All
+            .Where(s => s.Kind == "llm" && s.Files != "all")
+            .Select(s => new object[] { s.Name });
+
+    [Theory]
+    [MemberData(nameof(ReadIntentStages))]
+    public void ReadIntentStageSystemPrompt_ProhibitsEditing(string stageName)
+    {
+        var stage = RelayStages.All.Single(s => s.Name == stageName);
+        Assert.Contains("Do not edit files", stage.SystemPrompt, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ConfirmImplementationPrompt_ProhibitsReNarrationAndFullGate()
     {
         var prompt = RelayStages.ConfirmImplementationSystemPrompt;
