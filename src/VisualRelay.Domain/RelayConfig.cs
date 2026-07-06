@@ -18,7 +18,7 @@ public sealed record RelayConfig(
     bool BaselineVerify,
     bool ArchiveOnDone,
     // Hard absolute wall-clock ceiling per stage invocation (ms).
-    // Default is 12_000_000 (200 turns × 60 s).  Scaled by 10× for
+    // Default is 2_700_000 (45 min).  Scaled by 10× for
     // tasks in BoostTurnsTaskIds.  Set to 0 to disable (not recommended).
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
