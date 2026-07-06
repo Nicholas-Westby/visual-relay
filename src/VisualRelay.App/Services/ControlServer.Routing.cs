@@ -65,20 +65,26 @@ public sealed partial class ControlServer
     private async Task HandleCommandAsync(HttpListenerContext context, HttpListenerRequest request, string path)
     {
         var name = Uri.UnescapeDataString(path[ControlRoutes.Command.Path.Length..]);
-        var body = await ReadBodyAsync(request);
 
         // Refuse a POST with no declared body length. On macOS/Linux HttpListener
         // internally 411s this shape, but the request context IS still dispatched
         // to the handler — so the command would execute behind a 411 error page.
-        // Detect the distinguishing shape (ContentLength64 == -1, no chunked
-        // transfer-encoding indicated by HasEntityBody == false) and reject
-        // BEFORE executing the command.
-        if (request.ContentLength64 < 0 && !request.HasEntityBody)
+        // Detect the distinguishing shape (no Content-Length header, no chunked
+        // transfer-encoding) and reject BEFORE reading the body or executing the
+        // command. Checking the raw headers is more reliable than the derived
+        // ContentLength64/HasEntityBody properties, which can return inconsistent
+        // values on the managed HttpListener when it internally 411s a bodyless
+        // POST — especially under heavy parallel-test thread-pool contention.
+        var hasContentLength = request.Headers["Content-Length"] is not null;
+        var hasTransferEncoding = !string.IsNullOrEmpty(request.Headers["Transfer-Encoding"]);
+        if (!hasContentLength && !hasTransferEncoding)
         {
             context.Response.StatusCode = 411;
             await WriteJsonAsync(context, Json.Object(("ok", false), ("error", "length required")));
             return;
         }
+
+        var body = await ReadBodyAsync(request);
 
         var (status, json) = await api.InvokeCommandAsync(name, body);
         context.Response.StatusCode = status;

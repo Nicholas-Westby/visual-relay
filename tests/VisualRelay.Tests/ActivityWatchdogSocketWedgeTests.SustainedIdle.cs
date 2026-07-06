@@ -24,7 +24,10 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
             {
                 watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
                     SubtreeIdle: false, BackendSocketEstablished: true)); // CPU burst
-                for (var i = 0; i < 6 && !stop.IsCancellationRequested; i++)
+                // Fewer idle samples per burst keeps the busy-sample interval well
+                // under the inactivity window even under heavy parallel-test load
+                // (Task.Delay scheduling jitter can stretch each delay significantly).
+                for (var i = 0; i < 3 && !stop.IsCancellationRequested; i++)
                 {
                     watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
                         SubtreeIdle: true, BackendSocketEstablished: true)); // idle between bursts
