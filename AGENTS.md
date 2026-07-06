@@ -47,6 +47,7 @@ backend/run lifecycle, and gives visual observability for troubleshooting.
 
 Endpoints:
 
+- `GET /` — HTML index page documenting the API surface (routes and commands).
 - `GET /health` — liveness, `{ "status": "ok", "app": "Visual Relay" }`.
 - `GET /state` — JSON snapshot: `rootPath`, `isBusy`, `pauseRequested`, `statusText`,
   `backend`, `selectedTask`, `tasks[]`, `stages[]`, and a `commands` map giving each

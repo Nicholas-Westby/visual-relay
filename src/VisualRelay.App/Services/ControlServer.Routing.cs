@@ -26,26 +26,33 @@ public sealed partial class ControlServer
         var path = request.Url?.AbsolutePath ?? "/";
         var method = request.HttpMethod;
 
-        if (path == "/health" && method == "GET")
+        if (path == ControlRoutes.Index.Path && method == ControlRoutes.Index.Method)
+        {
+            var html = ControlIndexPage.Render(ControlRoutes.All, ControlApi.CommandNames);
+            await WriteHtmlAsync(context, html);
+            return;
+        }
+
+        if (path == ControlRoutes.Health.Path && method == ControlRoutes.Health.Method)
         {
             await WriteJsonAsync(context, Json.Object(("status", "ok"), ("app", "Visual Relay")));
             return;
         }
 
-        if (path == "/state" && method == "GET")
+        if (path == ControlRoutes.State.Path && method == ControlRoutes.State.Method)
         {
             var json = await api.BuildStateJsonAsync();
             await WriteJsonAsync(context, json);
             return;
         }
 
-        if (path == "/screenshot" && method == "GET")
+        if (path == ControlRoutes.Screenshot.Path && method == ControlRoutes.Screenshot.Method)
         {
             await HandleScreenshotAsync(context, request);
             return;
         }
 
-        if (path.StartsWith("/command/", StringComparison.Ordinal) && method == "POST")
+        if (path.StartsWith(ControlRoutes.Command.Path, StringComparison.Ordinal) && method == ControlRoutes.Command.Method)
         {
             await HandleCommandAsync(context, request, path);
             return;
@@ -57,7 +64,7 @@ public sealed partial class ControlServer
 
     private async Task HandleCommandAsync(HttpListenerContext context, HttpListenerRequest request, string path)
     {
-        var name = Uri.UnescapeDataString(path["/command/".Length..]);
+        var name = Uri.UnescapeDataString(path[ControlRoutes.Command.Path.Length..]);
         var body = await ReadBodyAsync(request);
 
         // Refuse a POST with no declared body length. On macOS/Linux HttpListener
@@ -110,6 +117,14 @@ public sealed partial class ControlServer
     {
         var bytes = Encoding.UTF8.GetBytes(json);
         context.Response.ContentType = "application/json";
+        context.Response.ContentLength64 = bytes.Length;
+        await context.Response.OutputStream.WriteAsync(bytes);
+    }
+
+    private static async Task WriteHtmlAsync(HttpListenerContext context, string html)
+    {
+        var bytes = Encoding.UTF8.GetBytes(html);
+        context.Response.ContentType = "text/html; charset=utf-8";
         context.Response.ContentLength64 = bytes.Length;
         await context.Response.OutputStream.WriteAsync(bytes);
     }

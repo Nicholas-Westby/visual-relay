@@ -103,4 +103,12 @@ public sealed partial class ControlApi
         "archive-toggle", "new-task", "follow-running", "start-backend", "edit",
         "rewrite-selected", "cancel-rewrite", "revert-rewrite", "mark-done"
     ];
+
+    /// <summary>
+    /// Ordered list of every documented command name — ICommand-backed actions
+    /// first (from IcommandNames), then property-backed actions (from
+    /// PropertyActions). The index page renders this list; adding a command to
+    /// either source array automatically flows here and onto the page.
+    /// </summary>
+    public static IReadOnlyList<string> CommandNames { get; } = [.. IcommandNames, .. PropertyActions];
 }
