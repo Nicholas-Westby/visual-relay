@@ -175,7 +175,7 @@ public sealed partial class SandboxPathInspectorTests
                                        && e.Source == "acme_denies");
     }
 
-    // ── Fixtures modelled on real nono 0.61.1 output ─────────────────────
+    // ── Fixtures modelled on real nono 0.66.0 output ─────────────────────
 
     /// <summary>
     /// Maps a group name to a sample <c>nono profile groups &lt;name&gt; --json</c>

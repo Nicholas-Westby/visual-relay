@@ -45,7 +45,7 @@ public static class NonoGate
               The sandbox is always on; there is no opt-out. Install nono:
 
                 brew install nono
-                (or see https://github.com/jedisct1/nono for other platforms)
+                (or see https://github.com/nolabs-ai/nono for other platforms)
 
               If Nix is installed, the devshell provides nono automatically.
             """);

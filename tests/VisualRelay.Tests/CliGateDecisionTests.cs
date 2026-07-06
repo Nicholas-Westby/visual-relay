@@ -43,6 +43,25 @@ public sealed class CliGateDecisionTests
         Assert.Null(message);
     }
 
+    [Fact]
+    public void Nono_Missing_NonWindows_InstallMessagePointsToNolabsAiOrg()
+    {
+        // After the nono 0.66.0 org migration from jedisct1 → nolabs-ai, the install
+        // hint in the error message must point users to the current org.
+        var (_, message) = NonoGate.Decide(onPath: false, isWindows: false);
+
+        Assert.Contains("https://github.com/nolabs-ai/nono", message);
+    }
+
+    [Fact]
+    public void Nono_Missing_NonWindows_InstallMessageDoesNotPointToStaleOrg()
+    {
+        // The install hint must NOT reference the stale jedisct1/nono org.
+        var (_, message) = NonoGate.Decide(onPath: false, isWindows: false);
+
+        Assert.DoesNotContain("jedisct1/nono", message);
+    }
+
     // ── SwivalGate ───────────────────────────────────────────────────────
 
     [Fact]
