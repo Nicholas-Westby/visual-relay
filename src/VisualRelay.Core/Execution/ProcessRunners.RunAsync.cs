@@ -158,7 +158,7 @@ public sealed partial class SwivalSubagentRunner
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
                             ErrorHintClassifier.WithHint(
-                                $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
+                                $"swival timed out after {FormatCeilingMs(absoluteCeilingMs)} absolute ceiling. " +
                                 $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."),
                             HardAbort: true);
                     }
@@ -202,7 +202,7 @@ public sealed partial class SwivalSubagentRunner
             {
                 // ProcessCapture's own timeout fired — only possible when
                 // SubagentTimeoutMilliseconds > 0 (absolute ceiling backstop).
-                var reason = $"swival timed out after {absoluteCeilingMs}ms absolute ceiling. " +
+                var reason = $"swival timed out after {FormatCeilingMs(absoluteCeilingMs)} absolute ceiling. " +
                     "If swival was running a test command that hung, fix the hang and re-run only the specific " +
                     "tests you need (use a targeted subset, e.g. the TestFileCommand \"{files}\" pattern).";
                 return new SubagentResult(result.Output, null, false, ErrorHintClassifier.WithHint(reason), HardAbort: true);

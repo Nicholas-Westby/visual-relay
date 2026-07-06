@@ -208,6 +208,17 @@ public sealed class ErrorHintClassifierTests
     }
 
     [Fact]
+    public void HintFor_ReformattedCeiling_StillReturnsTimeoutHint()
+    {
+        const string raw = "swival timed out after 30m 00s (1800000 ms) absolute ceiling. Last signal: cpu, silence: 970ms.";
+
+        var hint = ErrorHintClassifier.HintFor(raw);
+
+        Assert.NotNull(hint);
+        Assert.Contains("maxTurns", hint, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void WithHint_UnrecognizedError_ReturnsRawUnchanged()
     {
         const string raw = "swival exit 7: some entirely novel failure mode nobody has seen";

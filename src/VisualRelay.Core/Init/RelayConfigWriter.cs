@@ -68,19 +68,7 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
+        var json = ReadOrCreateConfig(relayDir, out var path);
 
         json["testCmd"] = testCommand;
 
@@ -114,21 +102,24 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
+        var json = ReadOrCreateConfig(relayDir, out var path);
 
         json["commitProofArtifacts"] = commitProofArtifacts;
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    /// <summary>
+    /// Read-modify-write upsert of the <c>subagentTimeoutMs</c> key into
+    /// <c>.relay/config.json</c>. Preserves all existing keys.
+    /// </summary>
+    public static void UpsertSubagentTimeout(string rootPath, int milliseconds)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+        var json = ReadOrCreateConfig(relayDir, out var path);
+
+        json["subagentTimeoutMs"] = milliseconds;
 
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
     }
@@ -142,19 +133,7 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
+        var json = ReadOrCreateConfig(relayDir, out var path);
 
         // Get or create the boostTurnsTaskIds array.
         var array = json["boostTurnsTaskIds"] as JsonArray;
@@ -201,19 +180,7 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
+        var json = ReadOrCreateConfig(relayDir, out var path);
 
         // Get or create the skipTestsTaskIds array.
         var array = json["skipTestsTaskIds"] as JsonArray;
@@ -259,19 +226,7 @@ public static class RelayConfigWriter
     {
         var relayDir = Path.Combine(rootPath, ".relay");
         Directory.CreateDirectory(relayDir);
-
-        var path = Path.Combine(relayDir, "config.json");
-
-        JsonObject json;
-        if (File.Exists(path))
-        {
-            var existing = JsonNode.Parse(File.ReadAllText(path));
-            json = existing as JsonObject ?? new JsonObject();
-        }
-        else
-        {
-            json = new JsonObject();
-        }
+        var json = ReadOrCreateConfig(relayDir, out var path);
 
         var obj = new JsonObject();
         foreach (var (tier, model) in overrides)
@@ -279,5 +234,22 @@ public static class RelayConfigWriter
         json["tierModelOverrides"] = obj;
 
         File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Reads the existing <c>.relay/config.json</c> as a <see cref="JsonObject"/>,
+    /// or returns a new empty object when the file is missing or malformed.
+    /// </summary>
+    private static JsonObject ReadOrCreateConfig(string relayDir, out string path)
+    {
+        path = Path.Combine(relayDir, "config.json");
+        if (File.Exists(path))
+        {
+            var existing = JsonNode.Parse(File.ReadAllText(path));
+            return existing as JsonObject ?? new JsonObject();
+        }
+        return new JsonObject();
     }
 }

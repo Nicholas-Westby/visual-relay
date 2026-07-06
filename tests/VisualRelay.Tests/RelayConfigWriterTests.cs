@@ -32,9 +32,7 @@ public sealed partial class RelayConfigWriterTests
     [Fact]
     public async Task Write_WithNullTestCmd_ProducesIncompleteConfig()
     {
-        // (c) Exhaustion path: when no candidate can be validated, the
-        // writer receives null and must produce a config whose testCmd is
-        // null — which the loader treats as Incomplete (not a bad guess).
+        // Exhaustion path: null testCmd → loader returns Incomplete (not a bad guess).
         using var repo = TestRepository.Create();
         var path = RelayConfigWriter.Write(repo.Root, null);
         Assert.True(File.Exists(path));
@@ -46,9 +44,7 @@ public sealed partial class RelayConfigWriterTests
     [Fact]
     public async Task Write_WithNullTestCmd_JsonContainsNullValue()
     {
-        // The on-disk JSON must have a null value (not a missing key) so
-        // the file is self-documenting: the user can see testCmd was
-        // explicitly set to null because detection failed.
+        // On-disk JSON must have null (not missing key) — self-documenting exhaustion.
         using var repo = TestRepository.Create();
         var path = RelayConfigWriter.Write(repo.Root, null);
 
@@ -64,8 +60,7 @@ public sealed partial class RelayConfigWriterTests
     [Fact]
     public async Task Write_ThenLoad_RoundTripsCommandVerbatim()
     {
-        // (d) The validated command must survive the write → load
-        // round-trip exactly as provided — no trimming, no shell wrapping.
+        // Validated command survives write→load round-trip exactly — no trimming, no shell wrapping.
         using var repo = TestRepository.Create();
         var original = "dotnet test --filter Category=Unit --logger trx";
 
@@ -81,12 +76,8 @@ public sealed partial class RelayConfigWriterTests
     [Fact]
     public async Task Write_WithPlaceholderTestCmd_TestFileCommandIsPlaceholder_NotBunDefault()
     {
-        // Greenfield bootstrap writes the trivially-green placeholder testCmd.
-        // testFileCmd MUST track it (not silently inherit the "bun test {files}"
-        // global default), or the stage agent — shown a bun-shaped targeted
-        // command — infers the project uses Bun and writes .test.ts junk into a
-        // Go/Python repo. The placeholder has no {files} token, so the targeted
-        // command falls back to testCmd cleanly.
+        // testFileCmd tracks placeholder (not "bun test {files}" default) so the stage
+        // agent never infers Bun and writes .test.ts junk. No {files} token → clean fallback.
         using var repo = TestRepository.Create();
         RelayConfigWriter.Write(repo.Root, ProjectBootstrapper.PlaceholderTestCommand);
 
@@ -99,25 +90,19 @@ public sealed partial class RelayConfigWriterTests
     [Fact]
     public async Task Write_WithRealTestCmd_TestFileCommandIsConsistent_NotBunDefault()
     {
-        // A real, detected test command (here a Go project's) must yield a
-        // consistent testFileCmd — never the orphaned "bun test {files}".
         using var repo = TestRepository.Create();
         RelayConfigWriter.Write(repo.Root, "go test ./...");
 
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.DoesNotContain("bun", result.Config.TestFileCommand);
-        // Simplest correct choice: run the full suite for a changed file.
         Assert.Equal("go test ./...", result.Config.TestFileCommand);
     }
 
     [Fact]
     public async Task UpsertResolvedToolchain_FromPlaceholder_RewritesTestFileCommandConsistently()
     {
-        // The placeholder→real upgrade must also replace the placeholder
-        // testFileCmd with one consistent with the now-real testCmd — otherwise
-        // the upgraded config still carries a bun-shaped (or placeholder)
-        // targeted command after a real toolchain is detected.
+        // Placeholder→real upgrade must also replace placeholder testFileCmd with consistent one.
         using var repo = TestRepository.Create();
         RelayConfigWriter.Write(repo.Root, ProjectBootstrapper.PlaceholderTestCommand);
 
@@ -191,6 +176,59 @@ public sealed partial class RelayConfigWriterTests
         Assert.Contains("cheap", after.Config.TierProfiles);
         Assert.Equal("dotnet test", after.Config.TestCommand);
         Assert.Empty(after.Config.LogSources);
+    }
+
+    // ── UpsertSubagentTimeout ──────────────────────────────────────────
+
+    [Fact]
+    public async Task UpsertSubagentTimeout_SetsValue()
+    {
+        using var repo = TestRepository.Create();
+        RelayConfigWriter.Write(repo.Root, "dotnet test");
+
+        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(2_400_000, result.Config.SubagentTimeoutMilliseconds);
+    }
+
+    [Fact]
+    public async Task UpsertSubagentTimeout_PreservesOtherKeys()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: true);
+
+        var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, before.Status);
+        Assert.True(before.Config.BaselineVerify);
+        Assert.Contains("cheap", before.Config.TierProfiles);
+        Assert.Equal("dotnet test", before.Config.TestCommand);
+
+        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
+
+        var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, after.Status);
+        Assert.Equal(2_400_000, after.Config.SubagentTimeoutMilliseconds);
+        Assert.True(after.Config.BaselineVerify);
+        Assert.Contains("cheap", after.Config.TierProfiles);
+        Assert.Equal("dotnet test", after.Config.TestCommand);
+        Assert.Empty(after.Config.LogSources);
+    }
+
+    [Fact]
+    public async Task UpsertSubagentTimeout_CreatesKeyWhenAbsent()
+    {
+        using var repo = TestRepository.Create();
+        // Write a config without subagentTimeoutMs — the loader defaults to 2_700_000.
+        repo.WriteConfig("dotnet test", []);
+
+        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(2_400_000, result.Config.SubagentTimeoutMilliseconds);
+        Assert.Equal("dotnet test", result.Config.TestCommand);
     }
 
     // ── SetTurnBoost ────────────────────────────────────────────────────

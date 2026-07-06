@@ -128,6 +128,17 @@ public sealed partial class SwivalSubagentRunner
         return text.Length <= tailChars ? text : "…" + text[^tailChars..];
     }
 
+    /// <summary>
+    /// Formats a millisecond ceiling as human-readable minutes and seconds with
+    /// the raw ms preserved in parentheses, e.g. "30m 00s (1800000 ms)".
+    /// </summary>
+    internal static string FormatCeilingMs(int ms)
+    {
+        var minutes = ms / 60_000;
+        var seconds = (ms % 60_000) / 1_000;
+        return $"{minutes}m {seconds:00}s ({ms} ms)";
+    }
+
     private static string TrimForTrace(string value)
     {
         var text = value.Trim();
