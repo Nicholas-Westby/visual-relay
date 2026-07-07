@@ -1,133 +1,125 @@
-# Use Component Composition for Buttons
+# Use Component Composition for Buttons — and Consolidate Their API Into a Theme
 
-The three custom button components — `CommonButton`, `IconButton`, `StageCardButton` — currently
-subclass Avalonia `Button`. They must instead **contain** a `Button` (composition, not inheritance):
-no class in the app may inherit from `Button`. This keeps the components from inheriting button
-behaviors they don't want, while still rendering a real themed `Button` internally. The
-`NoClassInheritsFromButton` guard must stop grandfathering these three classes.
+Two goals, and the second is the one this task must not lose sight of:
 
-## Current state (researched)
+1. **Composition over inheritance.** The three custom button components — `CommonButton`,
+   `IconButton`, `StageCardButton` (all in `src/VisualRelay.App/Views/Controls/Buttons/`) —
+   currently subclass Avalonia `Button`. They must instead **contain** a `Button`. No class in the
+   app may inherit from `Button`, and the `NoClassInheritsFromButton` guard test must stop
+   grandfathering these three classes.
+2. **Consolidation.** The entire reason these custom components exist is to be the app's button
+   *theme*: a small, closed set of appearances and behaviors, defined once. The composed versions
+   must have **fewer** knobs than today's inherited versions, not a faithful re-plumbing of every
+   `Button` property. **Just because a call site currently sets some property on a custom button
+   does not mean the composed component must expose that property.** When the refactor hits a
+   consumer that uses something outside the closed API below, the fix is to change the consumer
+   (fold the one-off into a variant, or drop it) — not to widen the component.
 
-All three live in `src/VisualRelay.App/Views/Controls/Buttons/` and subclass `Button` with
-`protected override Type StyleKeyOverride => typeof(Button);`:
+## Design rule: the theme owns appearance
 
-- `CommonButton.cs` — `public partial class CommonButton : Button`. Styled props `AppearanceProperty`
-  (enum `ButtonAppearance`: Primary/Default/Warning/Hyperlink/Path) and `GlyphProperty`.
-  `ApplyAppearance` does `Classes.Add("primary"|"warning"|"hyperlink"|"path")`; `ApplyGlyph` wraps
-  `Content` in a `StackPanel` (glyph `TextBlock` + content) using `_originalContent`/`_isWrapping`
-  and an `OnPropertyChanged` override on `ContentProperty`.
-- `IconButton.cs` — `public partial class IconButton : Button`. Props `IconStyleProperty`
-  (enum `IconButtonStyle`: CollapseToggle/FocusToggle), `ChevronDirectionProperty`,
-  `IsContractedProperty`. `ApplyIconStyle` does `Classes.Add("collapseToggle"|"focusToggle")` and
-  sets `Content` to a `ChevronIcon` or `FocusToggleIcon` bound to direction/`IsContracted`.
-- `StageCardButton.cs` — `public partial class StageCardButton : Button`; ctor does
-  `Classes.Add("stageButton")`.
+- Everything visual — padding, heights, min-widths, font sizes, colors, hover states — is defined
+  per **variant** in the control theme, in one place. Call sites pick a variant; they do not
+  restyle instances. Per-instance `Width="…"`, `Height="…"`, `FontSize="…"`, `Padding="…"`,
+  `MinHeight="…"` attributes on custom-button tags in consumer XAML are exactly the drift this
+  task exists to remove: migrate each one into the appropriate variant's theme definition (or
+  delete it if the themed default already serves), and only then, if two-plus call sites genuinely
+  need a distinct look, consider whether that *is* a missing variant.
+- The variant set is the existing `ButtonAppearance` enum: Primary / Default / Warning / Hyperlink
+  / Path, plus the icon-button styles (CollapseToggle / FocusToggle) and the stage-card style. Do
+  not add new variants for single call sites, and do not add "escape hatch" properties (no
+  `InnerButtonStyle`, no pass-through `Classes`, etc.).
+- It is expected — not a regression — that a few buttons shift by a couple of pixels when their
+  hand-tuned per-instance metrics are replaced by the variant's canonical metrics. Normalizing
+  that drift is the point. Visual parity matters at the variant level (a Primary button looks like
+  a Primary button), not at the level of preserving every instance's quirks.
 
-Theme styles in `src/VisualRelay.App/Styles/VisualRelayTheme.axaml` key off `Button` instances
-carrying a class: `Button.primary`, `Button.warning`, `Button.stageButton`, `Button.path`,
-`Button.hyperlink`, `Button.collapseToggle`, `Button.focusToggle`. That file is included from
-`App.axaml` via `<StyleInclude Source="avares://VisualRelay.App/Styles/VisualRelayTheme.axaml"/>`.
+## Closed public API (the whole surface, after this task)
 
-XAML consumer surface that **must keep working unchanged** (do not edit these consumers):
+- `CommonButton`: `Content`, `Command`, `CommandParameter`, `Click` (routed event; XAML handlers
+  in `SettingsWindow.axaml`, `TopBar.axaml`, `StageOutputView.axaml`, `StageInputView.axaml` use
+  it), `Flyout` (used by `QueuePanel.axaml`), `Appearance`, `Glyph`.
+- `IconButton`: `IconStyle`, `ChevronDirection`, `IsContracted`, `Command`.
+- `StageCardButton`: `Content`, `Command`, `CommandParameter`.
 
-- `CommonButton`: `Content`, `Command`, `CommandParameter`, `Appearance`, `Glyph`; the `Click`
-  routed event (`SettingsWindow.axaml` `Click="OnCloseClick"`, `TopBar.axaml`
-  `Click="OnSettingsClick"`, `StageOutputView.axaml`/`StageInputView.axaml` `Click="Copy…"`); and
-  the `Flyout` property (`QueuePanel.axaml` `<buttons:CommonButton.Flyout>`). Plus standard
-  Control/ContentControl layout props set in XAML (`Padding`, `FontSize`, `MinHeight`, `Width`,
-  `Height`, `H/VAlignment`, `H/VContentAlignment`, `IsVisible`, `ToolTip.Tip`, `Grid.Column`,
-  `DockPanel.Dock`, `x:Name`).
-- `IconButton`: `IconStyle`, `ChevronDirection`, `IsContracted`, `Command`, layout props.
-- `StageCardButton`: `Command`, `CommandParameter`, rich `Content` (a `Border`) inside a
-  `DataTemplate` (`StageBoard.axaml`), `Width`.
+Nothing else gets a styled property or is forwarded to the inner button. Base-class members
+(`IsVisible`, `IsEnabled`, alignment, attached layout props like `Grid.Column`/`DockPanel.Dock`,
+`ToolTip.Tip`) exist inherently on any control and stay usable for *layout*; the line is that
+consumers must not use base-class members to *restyle* button visuals per instance.
 
-Only `App.axaml.cs::CreateConfirmButton` constructs these in code: `new CommonButton { Content=…,
-Appearance=ButtonAppearance.Primary, MinWidth=80, Padding=new Thickness(12,0), Height=32,
-HorizontalContentAlignment=Center, VerticalContentAlignment=Center }` (plus a Cancel
-`new CommonButton { Content="Cancel", … }`). No code-behind reads `.Appearance`/`.IconStyle`/etc.
-on instances.
+## Current state (researched — inventory, not a compatibility contract)
 
-Existing tests that constrain the design (`tests/VisualRelay.Tests/`):
+- All three components subclass `Button` with `protected override Type StyleKeyOverride =>
+  typeof(Button);`. `CommonButton` adds `Appearance`/`Glyph` styled props and applies classes
+  (`primary`/`warning`/`hyperlink`/`path`); `IconButton` adds `IconStyle`/`ChevronDirection`/
+  `IsContracted` and sets chevron/focus icon content; `StageCardButton` adds the `stageButton`
+  class.
+- Theme styles in `src/VisualRelay.App/Styles/VisualRelayTheme.axaml` select on `Button` +
+  class (`Button.primary`, `Button.warning`, `Button.stageButton`, `Button.path`,
+  `Button.hyperlink`, `Button.collapseToggle`, `Button.focusToggle`); included from `App.axaml`.
+- Guard tests in `tests/VisualRelay.Tests/ButtonsCentralizationTests.cs`:
+  `NoClassInheritsFromButton` (currently grandfathers the Buttons dir via
+  `IsInButtonsDirectory` — remove that), `NoRawButtonTags_InAxaml_OutsideButtonsDirectory` and
+  `NoNewButtonExpressions_InCs_OutsideButtonsDirectory` (stay in force: raw `<Button>` /
+  `new Button` may only live inside `Views/Controls/Buttons/`, plus the existing `App.axaml`
+  exemptions).
+- Known per-instance styling drift to clean up while migrating consumers: XAML call sites set
+  `Padding`, `FontSize`, `MinHeight`, `Width`, `Height` on custom buttons in several views, and
+  `App.axaml.cs::CreateConfirmButton` hand-builds its buttons in code
+  (`MinWidth=80, Padding=new Thickness(12,0), Height=32, …`) — those metrics move into the
+  variant (a Primary/Default dialog button should get its size from the theme).
+- `tests/VisualRelay.Tests/ConfirmationDialogButtonAlignmentTests.cs` currently pins
+  instance-level plumbing (reads `Padding`/`Height`/`MinWidth`/alignments off the `CommonButton`
+  instance). **These tests encode the old design and should be revised**: assert that the confirm
+  dialog's buttons are `CommonButton`s with the right variant and that the *rendered/themed*
+  button carries the correct metrics — however the theme delivers them — rather than requiring
+  per-instance property assignment.
 
-- `ButtonsCentralizationTests.cs::NoClassInheritsFromButton` — scans all `*.cs` under
-  `src/VisualRelay.App` for regex `\bclass\s+\w+\s*:\s*Button\b`, but **skips** the Buttons dir via
-  `IsInButtonsDirectory(file)` (the grandfather to remove). Sibling tests
-  `NoRawButtonTags_InAxaml_OutsideButtonsDirectory` (regex `<Button(?:\s|)>`, exempts the Buttons
-  dir + `App.axaml`) and `NoNewButtonExpressions_InCs_OutsideButtonsDirectory` (regex
-  `new\s+Button`, exempts the Buttons dir + `App.axaml.cs`) stay in force — so any `<Button>` tag in
-  XAML must live inside `Views/Controls/Buttons/`, and any `new Button(…)` must live there too.
-- `ConfirmationDialogButtonAlignmentTests.cs` (`[Collection("Headless")]`, `[AvaloniaFact]`):
-  `ConfirmButton_VerticalContentAlignment_IsCenter` reads `button.Content`, `Padding`, `Height`,
-  `MinWidth`, `HorizontalContentAlignment`, `VerticalContentAlignment` directly off the
-  `CommonButton` instance; `ConfirmButton_IsCommonButton_WithPrimaryAppearance` asserts
-  `GetType().Name == "CommonButton"` and `Appearance == 0`. These pin the component to a base that
-  still exposes `Content` + `Vertical/HorizontalContentAlignment`.
+## What to build
 
-## What to build (decided approach — final)
-
-Base class: each component subclasses **`ContentControl`** (not `Button`, not `TemplatedControl`).
-`ContentControl` preserves `Content` and `Vertical/HorizontalContentAlignment` so the
-`ConfirmationDialogButtonAlignmentTests` assertions still hold; the component's own `Content` stays
-the user's label/rich content (so `button.Content` reads correctly) while a **real inner `Button`**
-renders it.
-
-1. **Red first.** In `ButtonsCentralizationTests.cs::NoClassInheritsFromButton`, remove the
-   `IsInButtonsDirectory(file)` `continue` grandfather (and update the method XML doc + the
-   `Assert.True` message to state that **no** class under `src/VisualRelay.App` may inherit from
-   `Button`). This now fails against the still-`Button`-derived components — that is the failing
-   test driving the refactor.
-
-2. **Convert the three components** to `ContentControl` with a `ControlTheme` whose template is a
-   single inner `<Button Name="PART_Button">`. Remove `StyleKeyOverride => typeof(Button)` from all
-   three (the default `StyleKey` is the concrete type, matching the new `ControlTheme` selector).
-
-   - Grab the inner button in `OnApplyTemplate` (`e.NameScope.Find<Button>("PART_Button")`) and
-     store it; re-sync all forwarded state there and whenever the relevant properties change.
-   - **Theme classes go on the inner `Button`**, not the component, so `Button.primary` /
-     `Button.collapseToggle` / `Button.stageButton` etc. still match: `CommonButton.ApplyAppearance`
-     → `_button.Classes`; `IconButton.ApplyIconStyle` → `_button.Classes`;
-     `StageCardButton` ctor → `_button.Classes.Add("stageButton")`.
-   - **Inner-button `Content` is assigned in code** (do not `{TemplateBinding Content}` it):
-     `CommonButton` reuses its existing glyph-wrap logic but targets `_button.Content` instead of
-     `this.Content` (keep the `_originalContent`/`_isWrapping`/`OnPropertyChanged` machinery,
-     retargeted); `IconButton` sets `_button.Content` to the `ChevronIcon`/`FocusToggleIcon`
-     (preserve the existing `Bind` to `ChevronDirection`/`IsContracted`); `StageCardButton` passes
-     its `Content` straight through to `_button.Content`.
-   - Forward `Command` and `CommandParameter` to `_button` (set on the inner button on apply /
-     change). Template-bind the layout/styling props that affect the inner button's look
-     (`Padding`, `FontSize`, `MinHeight`, `Width`, `Height`, `H/VAlignment`,
-     `H/VContentAlignment`, `IsVisible`) via `{TemplateBinding …}` in the template so XAML-set
-     values take effect on the inner button.
-   - **`CommonButton` only:** declare a bubbling `Click` routed event
-     (`RoutedEvent.Register<CommonButton, RoutedEventArgs>`) + `Click` event accessor (the XAML
-     `Click="…"` handlers expect `RoutedEventArgs`), and raise it by subscribing to the inner
-     button's `Click`. Declare a `Flyout` `StyledProperty<FlyoutBase?>` and forward it to
-     `_button.Flyout` so `QueuePanel.axaml`'s `<buttons:CommonButton.Flyout>` keeps working.
-
-3. **ControlThemes file.** Put the three `ControlTheme`s (selectors `controls|CommonButton`,
-   `controls|IconButton`, `controls|StageCardButton`, with the `controls:` namespace already used
-   in `VisualRelayTheme.axaml`) in a **new** `.axaml` under
-   `src/VisualRelay.App/Views/Controls/Buttons/` — the `<Button>` template tags must be inside the
-   Buttons directory to satisfy `NoRawButtonTags_InAxaml_OutsideButtonsDirectory`. Include it from
-   `App.axaml` alongside the existing `VisualRelayTheme.axaml` `StyleInclude`. Keep each source file
-   under the 300-line guard.
-
-4. **Verify.** Run `./visual-relay check` (file-size guard, format, build, tests, screenshot
-   render). Use the running app's control API (`GET /screenshot`) to confirm visual parity for the
-   primary/warning/hyperlink/path variants, the collapse/focus icon toggles, and the stage cards.
+1. **Red first.** Remove the `IsInButtonsDirectory` grandfather from `NoClassInheritsFromButton`
+   (update its doc/assert message: no class under `src/VisualRelay.App` may inherit from
+   `Button`). This fails against the current components and drives the refactor.
+2. **Compose.** Re-base the three components on a non-`Button` base (`ContentControl` or
+   `TemplatedControl`) whose `ControlTheme` template hosts a single inner
+   `<Button Name="PART_Button">`. Forward only the closed API above: variant → classes on the
+   inner button (so the existing `Button.<class>` theme selectors keep matching), content/glyph
+   composition to the inner button's `Content`, `Command`/`CommandParameter`/`Flyout` to the inner
+   button, and re-raise the inner button's `Click` as the component's routed `Click` event
+   (`CommonButton` only). Do **not** template-bind a laundry list of layout/styling props into the
+   inner button; the theme supplies them per variant.
+3. **ControlThemes live in the Buttons dir.** The `<Button>` template markup must be in a new
+   `.axaml` under `src/VisualRelay.App/Views/Controls/Buttons/` (the raw-tag guard requires it);
+   include it from `App.axaml`. Variant metrics (the confirm-dialog sizes, any migrated
+   per-instance values) are defined here / in `VisualRelayTheme.axaml` — once.
+4. **Migrate consumers to the theme.** Sweep every XAML/code use of the three components: remove
+   per-instance visual attributes (fold needed values into the variant), switch
+   `CreateConfirmButton` to plain variant-picking construction, and leave layout-only usage
+   (grid placement, visibility, tooltips) alone. Consumers are expected to change in this task.
+5. **Keep the theme honest (recommended, small).** Extend `ButtonsCentralizationTests` with a
+   scan asserting consumer XAML sets no visual-styling attributes (`Width`, `Height`, `FontSize`,
+   `Padding`, `MinHeight`, `MinWidth`) on `CommonButton`/`IconButton`/`StageCardButton` tags —
+   the guard that keeps the surface from re-ballooning after this task.
+6. **Verify.** `./visual-relay check` (guards, format, build, tests, screenshot render); use the
+   running app's control API (`GET /screenshot`) to eyeball each variant, the icon toggles, and
+   stage cards.
 
 ## Done when
 
-- `NoClassInheritsFromButton` has **no** grandfather (scans the Buttons dir too) and passes; no
-  `*.cs` under `src/VisualRelay.App` matches `class … : Button`.
-- `CommonButton`, `IconButton`, `StageCardButton` subclass `ContentControl`, each hosting an inner
-  `Button` (the `new Button` / `<Button>` live inside `Views/Controls/Buttons/`, so
-  `NoNewButtonExpressions_InCs_OutsideButtonsDirectory` and
-  `NoRawButtonTags_InAxaml_OutsideButtonsDirectory` still pass).
-- `ConfirmationDialogButtonAlignmentTests` (both tests), all of `ButtonsCentralizationTests`, and
-  `ContrastTests` pass; `./visual-relay check` is green including the screenshot render.
-- All existing XAML consumers compile and behave unchanged (Click handlers, `Flyout`, `Command`,
-  `CommandParameter`, `Appearance`, `Glyph`, `IconStyle`/`ChevronDirection`/`IsContracted`, stage
-  card rich content).
-- Commit lands on `main` with a Conventional Commit subject per `docs/commit-messages.md`; only the
-  button component files, the new ControlThemes `.axaml`, `App.axaml`, and the test were touched.
+- `NoClassInheritsFromButton` passes with no grandfather; nothing under `src/VisualRelay.App`
+  inherits `Button`; the raw-tag / `new Button` guards still pass.
+- The three components expose exactly the closed API above — no additional styled properties, no
+  pass-through styling hooks — and render through an inner themed `Button`.
+- Consumer XAML/code contains no per-instance visual styling of custom buttons; variant metrics
+  (including the confirm dialog's) live in the theme.
+- `ConfirmationDialogButtonAlignmentTests` is revised per above and green;
+  `ButtonsCentralizationTests` (including the new consumer scan, if added) and `ContrastTests`
+  are green; `./visual-relay check` passes.
+
+## Guardrails
+
+- Do not preserve old surface for its own sake; do not add variants or properties to appease a
+  single call site — change the call site.
+- 300-line ceiling per file (`tools/VisualRelay.Guards`); split the new ControlTheme axaml from
+  component code as needed.
+- Conventional Commits (`docs/commit-messages.md`, `AGENTS.md`); minimal diffs outside the
+  Buttons dir, the consumer sweep, the theme files, and the named tests.
