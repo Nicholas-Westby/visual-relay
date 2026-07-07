@@ -49,6 +49,9 @@ download; omit it to fetch the full history.
 
 You can then run `visual-relay` in that folder the next time you want to launch it.
 
+Note: the Windows sandbox (MXC) is not yet as robust as macOS's `nono` due to current MXC
+limitations; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
 <!-- END install section -->
 
 # What Visual Relay Does
