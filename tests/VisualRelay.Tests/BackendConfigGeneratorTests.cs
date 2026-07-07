@@ -8,7 +8,6 @@ public sealed partial class BackendConfigGeneratorTests
         Path.Combine(RepoSetup.Root, "tools", "backend", "litellm-config.yaml");
 
     // ── Helpers ──────────────────────────────────────────────────────────
-
     private static Dictionary<string, string> GeneratedAliases(ISet<string> keys)
     {
         var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath);
@@ -76,7 +75,6 @@ public sealed partial class BackendConfigGeneratorTests
         => fb.TryGetValue(tier, out var c) && c.Count > 0 && c[^1] == "fallback";
 
     // ── 1. HF only ───────────────────────────────────────────────────────
-
     [Fact]
     public void HfOnly_DefaultTiersResolveToFallbackFloor()
     {
@@ -102,7 +100,6 @@ public sealed partial class BackendConfigGeneratorTests
     }
 
     // ── 2. HF + DeepSeek ─────────────────────────────────────────────────
-
     [Fact]
     public void HfPlusDeepSeek_CheapFlash_BalancedPro_FrontierPro()
     {
@@ -120,13 +117,17 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.False(aliases.ContainsKey("claude"));
         Assert.DoesNotContain("kimi-k2", aliases.Values);
 
-        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier" })
             Assert.True(ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
+
+        // Vision must not fall back to a text model.
+        Assert.True(fallbacks.ContainsKey("vision"));
+        Assert.DoesNotContain("fallback", fallbacks["vision"]);
+        Assert.DoesNotContain("kimi-k2", fallbacks["vision"]);
     }
 
     // ── 3. Trio: HF + DeepSeek + Moonshot ────────────────────────────────
-
     [Fact]
     public void Trio_FrontierKimi_ChainTerminatesInFallback()
     {
@@ -147,12 +148,16 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("hf-qwen3-coder-next", chain);
         Assert.Equal("fallback", chain[^1]);
 
-        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier" })
             Assert.True(ChainTerminatesInFallback(tier, fallbacks));
+
+        // Vision must not fall back to a text model.
+        Assert.True(fallbacks.ContainsKey("vision"));
+        Assert.DoesNotContain("fallback", fallbacks["vision"]);
+        Assert.DoesNotContain("kimi-k2", fallbacks["vision"]);
     }
 
     // ── 4. HF + Anthropic ────────────────────────────────────────────────
-
     [Fact]
     public void HfPlusAnthropic_ClaudeLit_OtherTiersFallback()
     {
@@ -174,7 +179,6 @@ public sealed partial class BackendConfigGeneratorTests
     }
 
     // ── 5. Shape guard ───────────────────────────────────────────────────
-
     [Fact]
     public void ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback()
     {
@@ -193,7 +197,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Contains("stream_timeout:", yaml, StringComparison.Ordinal);
         Assert.Contains("request_timeout:", yaml, StringComparison.Ordinal);
 
-        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision", "fallback" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier", "fallback" })
         {
             Assert.True(aliases.ContainsKey(tier), $"tier '{tier}' must have an alias");
             Assert.False(string.IsNullOrWhiteSpace(aliases[tier]),
@@ -201,10 +205,16 @@ public sealed partial class BackendConfigGeneratorTests
             Assert.True(ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
         }
+
+        // Vision tier: present with a vision-only fallback chain.
+        Assert.True(aliases.ContainsKey("vision"));
+        Assert.Equal("hf-qwen3-vl-235b", aliases["vision"]);
+        Assert.True(fallbacks.ContainsKey("vision"));
+        Assert.DoesNotContain("fallback", fallbacks["vision"]);
+        Assert.DoesNotContain("kimi-k2", fallbacks["vision"]);
     }
 
     // ── 6. Summary line ──────────────────────────────────────────────────
-
     [Fact]
     public void Summary_MentionsDetectedKeysAndResolution()
     {
@@ -220,7 +230,6 @@ public sealed partial class BackendConfigGeneratorTests
     }
 
     // ── 7. Degenerate: no keys at all ────────────────────────────────────
-
     [Fact]
     public void EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias()
     {
@@ -228,14 +237,16 @@ public sealed partial class BackendConfigGeneratorTests
         var (yaml, _) = Generate(present);
         var aliases = ParseAliases(yaml);
 
-        foreach (var tier in new[] { "cheap", "balanced", "frontier", "vision" })
+        foreach (var tier in new[] { "cheap", "balanced", "frontier" })
             Assert.True(aliases.ContainsKey(tier),
                 $"tier '{tier}' must have an alias even with no keys");
+        // Vision: skipped when no vision-capable model is available (no
+        // HF_TOKEN) — must never silently fall back to a text model.
+        Assert.False(aliases.ContainsKey("vision"));
         Assert.False(aliases.ContainsKey("claude"));
     }
 
-    // ── 8. Tier rows ────────────────────────────────────────────────────────
-
+    // ── 8. Tier rows ─────────────────────────────────────────────────────
     [Fact]
     public void TierRows_HfOnlyAndDeepSeek()
     {

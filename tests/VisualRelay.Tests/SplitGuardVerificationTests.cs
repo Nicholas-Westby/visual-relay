@@ -151,7 +151,10 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 180→182 on 2026-07-06: fix-lossy-flagged-work-snapshot added
         // RelayDriverResumeTests.FlaggedWork3.cs (2 [Fact]s) to the
         // RelayDriverResumeTests oversized family.
-        const int baseline = 182;
+        // Bumped 182→189 on 2026-07-07: fix-vision-tier-backend-routing added
+        // BackendConfigGeneratorTests.VisionTier.cs (7 [Fact]s) to the
+        // BackendConfigGeneratorTests oversized family.
+        const int baseline = 189;
 
         string[] prefixes =
         [

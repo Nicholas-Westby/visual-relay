@@ -27,7 +27,7 @@ public static partial class BackendConfigGenerator
             },
             ["vision"] = new List<string>
             {
-                "hf-qwen3-vl-235b", "hf-qwen3-vl-30b", "kimi-k2",
+                "hf-qwen3-vl-235b", "hf-qwen3-vl-30b",
             },
             ["claude"] = new List<string>
             {
@@ -97,12 +97,12 @@ public static partial class BackendConfigGenerator
         {
             if (tier != FallbackTier && survivors[0] == FallbackFloorModel)
                 survivors.RemoveAt(0);
-            if (tier != "claude" && (survivors.Count == 0 || survivors[^1] != FallbackTier))
+            if (tier != "claude" && tier != "vision" && (survivors.Count == 0 || survivors[^1] != FallbackTier))
                 survivors.Add(FallbackTier);
             if (survivors.Count > 0)
                 fallbacks[tier] = survivors;
         }
-        else if (tier != "claude")
+        else if (tier != "claude" && tier != "vision")
         {
             fallbacks[tier] = [FallbackTier];
         }

@@ -55,8 +55,6 @@ public static partial class BackendConfigGenerator
         [
             ("hf-qwen3-vl-235b", "HF_TOKEN"),
             ("hf-qwen3-vl-30b", "HF_TOKEN"),
-            ("kimi-k2", "MOONSHOT_API_KEY"),
-            ("fallback", "HF_TOKEN"),
         ],
         ["claude"] =
         [
@@ -248,11 +246,14 @@ public static partial class BackendConfigGenerator
                 .Select(c => c.Model)
                 .ToList();
 
-            // Degenerate: no key at all. Still produce a valid alias so the
-            // proxy boots (the model defs exist, just no api_key value).
+            // Degenerate: no key at all. Vision and claude are skipped
+            // entirely so a request produces "model not found" instead of
+            // a silent fallback to a text model. Other tiers still produce
+            // a valid alias so the proxy boots (the model defs exist, just
+            // no api_key value).
             if (chain.Count == 0)
             {
-                if (tier == "claude") continue;
+                if (tier is "claude" or "vision") continue;
                 aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier;
                 fallbacks[tier] = [FallbackTier];
                 continue;
@@ -278,8 +279,8 @@ public static partial class BackendConfigGenerator
 
             var fb = chain.Skip(chainStart).ToList();
 
-            // Every non-claude chain must terminate in the fallback tier.
-            if (tier != "claude" && (fb.Count == 0 || fb[^1] != FallbackTier))
+            // Every non-claude, non-vision chain must terminate in the fallback tier.
+            if (tier != "claude" && tier != "vision" && (fb.Count == 0 || fb[^1] != FallbackTier))
                 fb.Add(FallbackTier);
 
             if (fb.Count > 0)
