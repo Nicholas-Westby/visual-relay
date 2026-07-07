@@ -75,8 +75,8 @@ Examples:
     curl -s -X POST -d '' http://127.0.0.1:8765/command/run-all
     curl -s http://127.0.0.1:8765/screenshot -o /tmp/vr.png
 
-NOTE: macOS's managed `HttpListener` rejects a POST with no `Content-Length`, so bodyless
-commands must pass an empty body: `curl -X POST -d '' …`.
+NOTE: The control server runs on Kestrel (RFC 9112): a POST with no `Content-Length` is a
+valid empty-body request and executes the command. Use `curl -X POST …` for bodyless commands.
 
 ## Sample Tasks (dev-only)
 

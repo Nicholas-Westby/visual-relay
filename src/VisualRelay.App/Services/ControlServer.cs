@@ -1,27 +1,28 @@
-using System.Net;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace VisualRelay.App.Services;
 
 /// <summary>
-/// Embedded localhost HTTP control server. Binds a <see cref="HttpListener"/> to
-/// <c>http://127.0.0.1:&lt;port&gt;/</c> (loopback ONLY — never <c>+</c>/<c>*</c>,
-/// so macOS shows no firewall prompt and the surface is not remotely reachable)
-/// and dispatches to <see cref="ControlApi"/>. The accept loop runs on a
-/// background thread; ControlApi marshals every VM/window touch onto the UI
-/// thread. A startup failure (e.g. port in use) is caught and logged — it never
-/// crashes or blocks app startup.
+/// Embedded localhost HTTP control server. Hosts the control API handler on
+/// Kestrel (ASP.NET Core) bound to <c>http://127.0.0.1:&lt;port&gt;/</c>
+/// (loopback ONLY — never <c>+</c>/<c>*</c>, so macOS shows no firewall
+/// prompt and the surface is not remotely reachable). Kestrel manages its
+/// own accept loop internally; ControlApi marshals every VM/window touch
+/// onto the UI thread. A startup failure (e.g. port in use) is caught and
+/// logged — it never crashes or blocks app startup.
 /// </summary>
 public sealed partial class ControlServer(ControlApi api, ControlServerOptions options) : IDisposable
 {
-    private HttpListener? _listener;
-    private CancellationTokenSource? _cts;
-    private Task? _acceptLoop;
+    private WebApplication? _app;
+    private int _boundPort;
 
-    /// <summary>The loopback prefix the listener binds (also its confirmation URL).</summary>
-    private string Url => $"http://127.0.0.1:{options.Port}/";
+    /// <summary>The actual port the server bound (useful when <see cref="ControlServerOptions.Port"/> is 0).</summary>
+    public int BoundPort => _boundPort;
 
     /// <summary>
-    /// Starts the listener if enabled. Never throws: a bind/start failure is
+    /// Starts the server if enabled. Never throws: a bind/start failure is
     /// caught and reported to stderr/Console so app startup always continues.
     /// On success, writes one confirmation line to Console.
     /// </summary>
@@ -35,125 +36,74 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
 
         try
         {
-            var listener = new HttpListener();
-            listener.Prefixes.Add(Url);
-            listener.Start();
-            _listener = listener;
-            _cts = new CancellationTokenSource();
-            _acceptLoop = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));
-            Console.Error.WriteLine($"vr-control: listening on http://127.0.0.1:{options.Port}");
+            var builder = WebApplication.CreateEmptyBuilder(new WebApplicationOptions());
+            builder.Logging.ClearProviders();
+            builder.WebHost.UseKestrel();
+            builder.WebHost.UseUrls($"http://127.0.0.1:{options.Port}");
+
+            var app = builder.Build();
+            app.Run(BuildHandler(api, options));
+
+            // Run StartAsync on the thread pool so Kestrel never synchronises
+            // back to the Avalonia UI dispatcher, which would deadlock when
+            // the calling thread blocks on GetAwaiter().GetResult().
+            Task.Run(() => app.StartAsync()).GetAwaiter().GetResult();
+
+            // Read the actual bound port (surfaces port 0 → OS-assigned port).
+            _boundPort = app.Urls
+                .Select(u => new Uri(u))
+                .Where(u => u.Port > 0)
+                .Select(u => u.Port)
+                .FirstOrDefault();
+            if (_boundPort == 0) _boundPort = options.Port;
+
+            _app = app;
+
+            Console.Error.WriteLine($"vr-control: listening on http://127.0.0.1:{_boundPort}");
         }
         catch (Exception ex)
         {
-            // Port in use, HttpListener access error, etc. Degrade gracefully.
             Console.Error.WriteLine($"vr-control: failed to start ({ex.Message}); control API disabled");
-            _listener = null;
+            _app = null;
         }
     }
 
-    /// <summary>Releases the listener (idempotent; delegates to Stop()).</summary>
+    /// <summary>Releases the server (idempotent; delegates to Stop()).</summary>
     public void Dispose() => Stop();
 
-    /// <summary>Stops the listener and the accept loop. Safe to call when not started.</summary>
+    /// <summary>
+    /// Stops the server. Safe to call when not started. Bounded at 5 s by
+    /// a CancellationToken; any exception is swallowed — best-effort
+    /// teardown must never throw. The stop runs on the thread pool to avoid
+    /// synchronising back to the Avalonia dispatcher and deadlocking.
+    /// </summary>
     public void Stop()
     {
-        try
-        {
-            _cts?.Cancel();
-            _listener?.Stop();
-            _listener?.Close();
-        }
-        catch
-        {
-            // Best-effort shutdown — never throw from teardown.
-        }
-        finally
-        {
-            _listener = null;
-            _cts = null;
-        }
+        var app = _app;
+        _app = null;
 
-        // Await the accept loop to completion so the socket is fully torn down
-        // before Stop() returns. Bounded timeout preserves the "never hang"
-        // contract. Any exception from the accept loop is swallowed — best-effort
-        // teardown must never throw.
-        if (_acceptLoop is not null)
+        if (app is null) return;
+
+        // Offload the async stop to the thread pool so nothing synchronises
+        // back to the Avalonia dispatcher, which would deadlock. The 5 s
+        // CancellationToken passed to app.StopAsync is what bounds teardown
+        // (IHost.StopAsync honors it and forces shutdown at 5 s).
+        Task.Run(async () =>
         {
             try
             {
-                _acceptLoop.Wait(TimeSpan.FromSeconds(5));
+                using var stopCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await app.StopAsync(stopCts.Token);
             }
             catch
             {
-                // Accept loop faulted or timed out — ignore.
+                // Best-effort shutdown.
             }
             finally
             {
-                _acceptLoop = null;
+                try { (app as IDisposable).Dispose(); }
+                catch { /* Best-effort cleanup; nothing to do. */ }
             }
-        }
-    }
-
-    private async Task AcceptLoopAsync(HttpListener listener, CancellationToken token)
-    {
-        while (!token.IsCancellationRequested && listener.IsListening)
-        {
-            HttpListenerContext context;
-            try
-            {
-                context = await listener.GetContextAsync();
-            }
-            catch (Exception)
-            {
-                // Listener stopped/disposed during shutdown, or a transient
-                // accept error: exit the loop on cancellation, else keep serving.
-                if (token.IsCancellationRequested || !listener.IsListening)
-                {
-                    return;
-                }
-
-                continue;
-            }
-
-            // Handle each request without blocking the accept loop.
-            _ = Task.Run(() => HandleContextSafeAsync(context), token);
-        }
-    }
-
-    private async Task HandleContextSafeAsync(HttpListenerContext context)
-    {
-        try
-        {
-            await RouteAsync(context);
-        }
-        catch (Exception ex)
-        {
-            await TryWriteErrorAsync(context, ex);
-        }
-        finally
-        {
-            try
-            {
-                context.Response.Close();
-            }
-            catch
-            {
-                // Response already closed/aborted — ignore.
-            }
-        }
-    }
-
-    private static async Task TryWriteErrorAsync(HttpListenerContext context, Exception ex)
-    {
-        try
-        {
-            var json = Json.Object(("ok", false), ("error", "internal error"), ("detail", ex.Message));
-            context.Response.StatusCode = 500;
-            await WriteJsonAsync(context, json);
-        }
-        catch
-        {
-            // Nothing more we can do.
-        }
+        }).GetAwaiter().GetResult();
     }
 }

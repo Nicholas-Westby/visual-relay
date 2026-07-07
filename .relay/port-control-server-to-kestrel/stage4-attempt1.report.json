@@ -1,0 +1,512 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T02:37:57.716019+00:00",
+  "task": "# Relay stage 4: Plan\nTask: port-control-server-to-kestrel\nWorking directory: /tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel\n\n## Task input\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Replace System.Net.HttpListener with Kestrel (ASP.NET Core's cross-platform web server) for the embedded localhost control API. The current ControlServer uses HttpListener \u2014 a legacy API with known cross-platform limitations on macOS/Linux. The port must preserve the same lifecycle (Start/Stop/Dispose), route surface (5 endpoints), token auth, and ControlApi business logic while running as an in-process server inside the Avalonia desktop app (WinExe target).\", \"options\": [\"Option A: In-process Kestrel with Minimal API (full WebApplication + endpoint routing) \u2014 idiomatic ASP.NET Core, good testability, but adds ~30+ assemblies to the desktop app.\", \"Option B: Standalone Kestrel host via raw KestrelServer + IConnectionBuilder \u2014 minimal dependency weight (~5 assemblies), but requires manual HTTP parsing from PipeReader/PipeWriter.\", \"Option C: ASP.NET Core Generic Host with UseKestrel + terminal middleware \u2014 gives full HttpContext without MVC/MinimalAPI overhead, keeps existing RouteAsync dispatch pattern, standard IHost lifecycle.\"] }\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The ControlServer lives at src/VisualRelay.App/Services/ControlServer.cs + ControlServer.Routing.cs, using System.Net.HttpListener for an embedded localhost HTTP API on 127.0.0.1:{port} (default 8765). ControlServerOptions.cs parses env vars VR_CONTROL_DISABLE, VR_CONTROL_PORT, VR_CONTROL_TOKEN. The routing/response layer is tightly coupled to HttpListenerContext (route dispatch, token auth, 411 bodyless-POST guard, WriteJsonAsync/WriteHtmlAsync helper methods that set ContentType/ContentLength64 and write to OutputStream). ControlApi.cs holds the business logic and marshals all VM/window access onto Dispatcher.UIThread. The App.axaml.cs bootstraps with `new ControlServer(new ControlApi(viewModel, window), options).Start()`. Tests (3 files) use HttpClient E2E round-trips and raw TcpClient for the bodyless-POST test, plus a Dispose test that re-binds the port with a fresh HttpListener. The project has no ASP.NET packages yet (target net10.0, WinExe).\",\n  \"constraints\": [\n    \"Must preserve the 5-route surface: GET /, GET /health, GET /state, GET /screenshot[?path=\u2026], POST /command/{name}\",\n    \"Must preserve Start/Stop/Dispose lifecycle with identical exception-swallowing and never-block-startup semantics\",\n    \"Must preserve optional token auth via X-VR-Token header (401 on mismatch)\",\n    \"Must preserve the 411 bodyless-POST guard (no Content-Length + no Transfer-Encoding \u2192 411 before command execution); raw TcpClient tests confirm this behavior\",\n    \"Must preserve response ContentType headers: application/json, text/html; charset=utf-8, image/png\",\n    \"Must preserve X-Screenshot-Path header on screenshot responses\",\n    \"The Dispose test (ControlServer_Dispose_ReleasesListener) currently verifies port release by creating a new HttpListener; will need to be adapted to the new transport\",\n    \"The bodyless-POST test (ControlServerBodylessPostTests) uses raw TcpClient to send malformed HTTP \u2014 must still pass with Kestrel\",\n    \"The App project must remain a WinExe with no external HTTP host process; Kestrel must run in-process\",\n    \"Target framework is net10.0; ASP.NET Core packages must be compatible\",\n    \"All existing tests must pass without behavioral changes to the HTTP API surface\",\n    \"The 300-line-per-test-file guard applies to any modified test files\",\n    \"InternalsVisibleTo is set for VisualRelay.Tests and VisualRelay.Screenshots\",\n    \"The ControlApi constructor signature (MainWindowViewModel, Window, IReadOnlyCollection<string>?) must not change\",\n    \"No dependency on System.Net.HttpListener may remain after the port (it is a banned/legacy API surface)\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The ControlServer is implemented across two files \u2014 ControlServer.cs (159 lines) and ControlServer.Routing.cs (137 lines) \u2014 both deeply coupled to System.Net.HttpListener. ControlServer.cs manages the listener lifecycle (new HttpListener(), Prefixes.Add(), Start(), GetContextAsync() accept loop, Stop(), Close()). ControlServer.Routing.cs dispatches every request by reading typed properties off HttpListenerContext/HttpListenerRequest/HttpListenerResponse: Url.AbsolutePath, HttpMethod, Headers[\\\"X-VR-Token\\\"], Headers[\\\"Content-Length\\\"], Headers[\\\"Transfer-Encoding\\\"], QueryString[\\\"path\\\"], HasEntityBody, InputStream, ContentEncoding, StatusCode, ContentType, ContentLength64, OutputStream, Response.Headers[\\\"X-Screenshot-Path\\\"], and Response.Close(). The business logic (ControlApi.cs, ControlApi.State.cs, ControlApi.Tabs.cs, ControlScreenshot.cs) is clean \u2014 it takes no HTTP dependency, operating entirely on MainWindowViewModel + Window marshalled through Dispatcher.UIThread. ControlServerOptions.cs, ControlRoutes.cs, ControlIndexPage.cs, and ControlJson.cs are also transport-agnostic. The project file (VisualRelay.App.csproj) currently references only Avalonia packages and CommunityToolkit.Mvvm \u2014 zero ASP.NET Core packages. The project is a net10.0 WinExe.\\n\\nFour test files exercise the HTTP surface. ControlServerTests.cs (234 lines) creates ControlServer instances, does E2E round-trips via HttpClient, and crucially uses `new HttpListener()` as a port-release probe in ControlServer_Dispose_ReleasesListener (lines 206\u2013214) \u2014 that probe must be rewritten to use a TcpListener or Socket instead. ControlServerBodylessPostTests.cs (119 lines) sends raw HTTP over TcpClient (not HttpListener-dependent) and should work unchanged with Kestrel given the 411 guard is preserved. ControlIndexPageTests.cs (175 lines) has E2E HttpClient tests alongside pure renderer tests \u2014 no HttpListener dependency beyond constructing ControlServer. ControlApiTests.cs + ControlApiSkipTestsTests.cs, ControlApiConfirmGatedTests.cs, and ControlApiTabSelectionTests.cs test ControlApi directly with zero HTTP transport dependency and require no changes.\\n\\nThe routing layer must be rewritten from HttpListenerContext to ASP.NET Core's HttpContext. Every property access maps 1:1: Url.AbsolutePath\u2192Request.Path, HttpMethod\u2192Request.Method, Headers[key]\u2192Request.Headers[key], QueryString[key]\u2192Request.Query[key], InputStream\u2192Request.Body, StatusCode\u2192Response.StatusCode, ContentType\u2192Response.ContentType, OutputStream.WriteAsync\u2192Response.Body.WriteAsync, Response.Headers[key]\u2192Response.Headers[key]. ContentLength64 is handled automatically by Kestrel (it reads Content-Length from the body stream). Response.Close() is unnecessary \u2014 Kestrel manages response completion.\\n\\nThe server lifecycle changes from manual HttpListener management to either an IHost/IWebHost with Kestrel or a raw KestrelServer. The Start() method must create and start the Kestrel server on 127.0.0.1:{port} without ever throwing (same exception-swallowing contract). Stop()/Dispose() must tear down the server and await the accept-loop completion with the same 5-second bounded timeout. The 411 bodyless-POST guard must be preserved: on Kestrel, a POST with no Content-Length and no Transfer-Encoding will have Request.ContentLength == null and Request.Headers[\\\"Transfer-Encoding\\\"] empty \u2014 the guard logic translates directly.\\n\\nThe VisualRelay.App.csproj must add either a FrameworkReference to Microsoft.AspNetCore.App or the individual Kestrel + Http.Abstractions NuGet packages. For net10.0 WinExe, Microsoft.AspNetCore.App framework reference is available and is the simplest path, though it adds ~30 assemblies to the output. The alternative is referencing individual packages (Microsoft.AspNetCore.Server.Kestrel, Microsoft.AspNetCore.Http, Microsoft.AspNetCore.Hosting) for a leaner footprint. The App.axaml.cs bootstrap code (line 52: `new ControlServer(new ControlApi(viewModel, window), options).Start()`) should not need to change \u2014 the Start/Stop/Dispose public API surface is preserved.\",\n  \"excerpts\": [\n    \"ControlServer.cs:38-44 \u2014 HttpListener creation and start: `var listener = new HttpListener(); listener.Prefixes.Add(Url); listener.Start(); _listener = listener; _cts = new CancellationTokenSource(); _acceptLoop = Task.Run(() => AcceptLoopAsync(listener, _cts.Token));`\",\n    \"ControlServer.cs:97-121 \u2014 Accept loop using HttpListener.GetContextAsync: `context = await listener.GetContextAsync();` with cancellation/error handling and fire-and-forget dispatch via `Task.Run(() => HandleContextSafeAsync(context), token)`\",\n    \"ControlServer.cs:58-95 \u2014 Stop/Dispose lifecycle: `_cts?.Cancel(); _listener?.Stop(); _listener?.Close();` plus bounded `_acceptLoop.Wait(TimeSpan.FromSeconds(5))` with exception swallowing\",\n    \"ControlServer.Routing.cs:8-25 \u2014 Token auth reads HttpListenerContext headers: `var provided = request.Headers[\\\"X-VR-Token\\\"]; if (!string.Equals(provided, token, StringComparison.Ordinal)) { context.Response.StatusCode = 401; ... }`\",\n    \"ControlServer.Routing.cs:26-63 \u2014 Route dispatch reads `request.Url?.AbsolutePath` and `request.HttpMethod` to match against ControlRoutes catalog\",\n    \"ControlServer.Routing.cs:78-85 \u2014 411 bodyless-POST guard: `var hasContentLength = request.Headers[\\\"Content-Length\\\"] is not null; var hasTransferEncoding = !string.IsNullOrEmpty(request.Headers[\\\"Transfer-Encoding\\\"]); if (!hasContentLength && !hasTransferEncoding) { context.Response.StatusCode = 411; ... }`\",\n    \"ControlServer.Routing.cs:94-108 \u2014 Screenshot handler: reads `request.QueryString[\\\"path\\\"]`, sets `context.Response.Headers[\\\"X-Screenshot-Path\\\"]`, `context.Response.ContentType = \\\"image/png\\\"`, `context.Response.ContentLength64 = png.Length`, writes to `context.Response.OutputStream`\",\n    \"ControlServer.Routing.cs:122-136 \u2014 WriteJsonAsync/WriteHtmlAsync: set ContentType, ContentLength64, write bytes to OutputStream\",\n    \"ControlServerTests.cs:206-214 \u2014 Dispose test probes port release via `new HttpListener()`: `using var probe = new HttpListener(); probe.Prefixes.Add(...); probe.Start();` \u2014 must be adapted to a non-HttpListener probe\",\n    \"ControlServerTests.cs:228-233 \u2014 GetFreePort helper uses TcpListener (not HttpListener) and is already transport-agnostic\",\n    \"ControlServerBodylessPostTests.cs:42-53 \u2014 Bodyless POST test uses raw TcpClient to send malformed HTTP and reads `HTTP/1.1 411` from status line; should work unchanged against Kestrel\",\n    \"VisualRelay.App.csproj:1-33 \u2014 Project file has zero ASP.NET Core packages; must add FrameworkReference or NuGet packages for Kestrel\",\n    \"App.axaml.cs:52 \u2014 Bootstrap: `_controlServer = new ControlServer(new ControlApi(viewModel, window), options); _controlServer.Start();` \u2014 this line should not need to change\"\n  ],\n  \"repro\": \"1. Inspect src/VisualRelay.App/Services/ControlServer.cs \u2014 observe HttpListener, GetContextAsync accept loop, Start/Stop/Dispose lifecycle tied to HttpListener.\\n2. Inspect src/VisualRelay.App/Services/ControlServer.Routing.cs \u2014 observe every route handler reads from HttpListenerContext/HttpListenerRequest/HttpListenerResponse typed properties.\\n3. Inspect src/VisualRelay.App/VisualRelay.App.csproj \u2014 observe zero ASP.NET Core package references; project is net10.0 WinExe.\\n4. Run `grep -r 'HttpListener\\\\|HttpListenerContext\\\\|HttpListenerRequest\\\\|HttpListenerResponse' src/VisualRelay.App/Services/` \u2014 observe 2 files with dense HttpListener coupling, 7 files with zero HTTP dependency.\\n5. Run `grep -r 'HttpListener' tests/VisualRelay.Tests/ControlServerTests.cs` \u2014 observe Dispose test creates a fresh HttpListener as port-release probe at line 206; the GetFreePort helper at line 228 uses TcpListener (safe).\\n6. Run `grep -r 'HttpListener' tests/VisualRelay.Tests/ControlServerBodylessPostTests.cs` \u2014 observe zero HttpListener usage (raw TcpClient only); tests should pass against Kestrel unchanged.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"plan\": \"## Summary\\n\\nReplace `System.Net.HttpListener` with ASP.NET Core Kestrel (`WebApplication`) for the embedded localhost control API. All 5 HTTP endpoints, token auth, the 411 bodyless-POST guard, response Content-Type headers, the `X-Screenshot-Path` header, and the `Start`/`Stop`/`Dispose` lifecycle (never-throw, never-block-startup, 5-second bounded teardown) are preserved identically. The existing `ControlApi` business-logic layer, route catalog, options, JSON helpers, HTML renderer, and screenshot capture require **zero changes** \u2014 they have no HTTP-transport dependency.\\n\\n## Detailed changes\\n\\n### 1. `src/VisualRelay.App/VisualRelay.App.csproj`\\n\\nAdd a `<FrameworkReference Include=\\\"Microsoft.AspNetCore.App\\\" />` inside an `<ItemGroup>`. This pulls in Kestrel + `Microsoft.AspNetCore.Http` (for `HttpContext`) without individual NuGet package version management. The project stays `net10.0` `WinExe`.\\n\\n### 2. `src/VisualRelay.App/Services/ControlServer.cs` \u2014 lifecycle rewrite\\n\\n**Replace `HttpListener` with `WebApplication`:**\\n\\n- Remove field `private HttpListener? _listener`; add `private WebApplication? _app`.\\n- **`Start()`**: When enabled, create a `WebApplication` via `WebApplication.CreateBuilder([\\\"--urls\\\", $\\\"http://127.0.0.1:{options.Port}\\\"])`. Do **not** call `builder.WebHost.UseKestrel()` explicitly \u2014 the `Microsoft.AspNetCore.App` framework reference makes Kestrel the default. Build the app, register a single terminal middleware via `_app.Run(HandleRequestAsync)`. Store `_app`. Start the server on a background thread: `_acceptLoop = Task.Run(() => _app.RunAsync(_cts!.Token), _cts.Token)`. Swallow any exception from `CreateBuilder`/`Build`/`RunAsync` \u2014 same never-throw contract.\\n- **`Stop()`**: Cancel `_cts`, then call `_app?.StopAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult()` in a try/catch. Call `(_app as IDisposable)?.Dispose()` in a try/catch. Set `_app = null; _cts = null`. Await `_acceptLoop` completion with the same 5-second bounded `Wait` + exception swallowing. The accept-loop task (which is `_app.RunAsync`) completes when `StopAsync` tears down Kestrel.\\n- **`Dispose()`**: Unchanged \u2014 delegates to `Stop()`.\\n- **Remove `AcceptLoopAsync`** \u2014 Kestrel manages its own accept loop internally. The `_acceptLoop` task is now just the `RunAsync` awaiter.\\n- **`HandleContextSafeAsync(HttpListenerContext)` \u2192 `HandleRequestAsync(HttpContext)`**: try/catch/finally: call `await RouteAsync(context)`, catch \u2192 `await TryWriteErrorAsync(context, ex)`. Remove the `finally { context.Response.Close(); }` block \u2014 Kestrel manages response lifetime automatically.\\n- **`TryWriteErrorAsync(HttpListenerContext, Exception)` \u2192 `TryWriteErrorAsync(HttpContext, Exception)`**: same logic, adapted to `HttpContext`.\\n\\n### 3. `src/VisualRelay.App/Services/ControlServer.Routing.cs` \u2014 HttpListenerContext \u2192 HttpContext\\n\\n**Every method signature changes from `HttpListenerContext`/`HttpListenerRequest`/`HttpListenerResponse` to `HttpContext`/`HttpRequest`/`HttpResponse`.**\\n\\n| Old (HttpListener) | New (ASP.NET Core) |\\n|---|---|\\n| `request.Url?.AbsolutePath` | `request.Path` |\\n| `request.HttpMethod` | `request.Method` |\\n| `request.Headers[\\\"X-VR-Token\\\"]` | `request.Headers[\\\"X-VR-Token\\\"]` (same) |\\n| `request.Headers[\\\"Content-Length\\\"] is not null` | `request.Headers.ContentLength.HasValue` |\\n| `!string.IsNullOrEmpty(request.Headers[\\\"Transfer-Encoding\\\"])` | `request.Headers.TransferEncoding.Count > 0` |\\n| `request.QueryString[\\\"path\\\"]` | `request.Query[\\\"path\\\"]` |\\n| `request.HasEntityBody` guard | Remove \u2014 `StreamReader(request.Body)` handles empty/absent bodies trivially |\\n| `request.InputStream` | `request.Body` |\\n| `request.ContentEncoding` | `Encoding.UTF8` (all request bodies are JSON; charset negotiation unnecessary) |\\n| `context.Response.StatusCode = N` | `context.Response.StatusCode = N` (identical) |\\n| `context.Response.ContentType = \\\"...\\\"` | `context.Response.ContentType = \\\"...\\\"` (identical) |\\n| `context.Response.Headers[\\\"X-Screenshot-Path\\\"]` | `context.Response.Headers[\\\"X-Screenshot-Path\\\"]` (identical) |\\n| `context.Response.ContentLength64 = bytes.Length; await context.Response.OutputStream.WriteAsync(bytes)` | `await context.Response.Body.WriteAsync(bytes)` \u2014 Kestrel sets Content-Length automatically for buffered writes |\\n| `context.Response.Close()` | **Remove** \u2014 Kestrel flushes and completes the response when the handler returns |\\n\\n**Specific method rewrites:**\\n\\n- **`RouteAsync(HttpListenerContext)` \u2192 `RouteAsync(HttpContext)`**: Extract `var request = context.Request; var response = context.Response;`. Same 5-route match structure, same token-auth guard (401), same 404 fallback. The `path.StartsWith(ControlRoutes.Command.Path, StringComparison.Ordinal)` dispatch and `Uri.UnescapeDataString` are unchanged.\\n- **`HandleCommandAsync(HttpListenerContext, HttpListenerRequest, string)` \u2192 `HandleCommandAsync(HttpContext, HttpRequest, string)`**: The 411 guard uses `request.Headers.ContentLength.HasValue` and `request.Headers.TransferEncoding.Count > 0`. Read body via `ReadBodyAsync(request)`. Invoke `api.InvokeCommandAsync(name, body)`. Set `context.Response.StatusCode`. Write JSON.\\n- **`HandleScreenshotAsync(HttpListenerContext, HttpListenerRequest)` \u2192 `HandleScreenshotAsync(HttpContext, HttpRequest)`**: Read `request.Query[\\\"path\\\"]`. Capture screenshot. Set `X-Screenshot-Path` header (only when `writtenPath` is non-null). Set `StatusCode = 200`, `ContentType = \\\"image/png\\\"`. Write `png` bytes to `context.Response.Body`.\\n- **`ReadBodyAsync(HttpListenerRequest)` \u2192 `ReadBodyAsync(HttpRequest)`**: `using var reader = new StreamReader(request.Body, Encoding.UTF8); var body = await reader.ReadToEndAsync(); return string.IsNullOrWhiteSpace(body) ? null : body;`. No `HasEntityBody` check needed \u2014 Kestrel provides a readable empty stream for bodyless requests, and `ReadToEndAsync()` returns `\\\"\\\"` instantly.\\n- **`WriteJsonAsync(HttpListenerContext, string)` \u2192 `WriteJsonAsync(HttpContext, string)`**: Set `context.Response.ContentType = \\\"application/json\\\"`; `await context.Response.WriteAsync(json, Encoding.UTF8)`.\\n- **`WriteHtmlAsync(HttpListenerContext, string)` \u2192 `WriteHtmlAsync(HttpContext, string)`**: Set `context.Response.ContentType = \\\"text/html; charset=utf-8\\\"`; `await context.Response.WriteAsync(html, Encoding.UTF8)`.\\n\\n**Imports**: Replace `using System.Net;` with `using Microsoft.AspNetCore.Http;`.\\n\\n### 4. `tests/VisualRelay.Tests/ControlServerTests.cs` \u2014 port-release probe\\n\\n**`ControlServer_Dispose_ReleasesListener` (lines 200-223)**: The retry loop currently creates a `new HttpListener()` to probe that the port is free. Replace the probe body (lines 206-211) with:\\n\\n```csharp\\nusing var probe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, port);\\nprobe.Start();\\nAssert.True(probe.Server.IsBound, \\\"Dispose() must release the listener's port so a fresh TcpListener can bind the same port.\\\");\\nprobe.Stop();\\nreturn;\\n```\\n\\nThe retry loop, `catch (HttpListenerException)`, must change to `catch (SocketException)`. The `using System.Net;` import stays (needed for `HttpStatusCode`, `IPAddress`). The `GetFreePort` helper (line 226) already uses `TcpListener` \u2014 no change.\\n\\n### 5. Files NOT modified (zero changes needed)\\n\\nThese files contain **zero** references to `HttpListener`, `HttpListenerContext`, `HttpListenerRequest`, or `HttpListenerResponse` and are transport-agnostic:\\n\\n- `ControlServerOptions.cs`, `ControlRoutes.cs`, `ControlApi.cs`, `ControlApi.State.cs`, `ControlApi.Tabs.cs`, `ControlScreenshot.cs`, `ControlIndexPage.cs`, `ControlJson.cs`\\n- `App.axaml.cs` (the bootstrap line `new ControlServer(new ControlApi(viewModel, window), options).Start()` is unchanged)\\n- `ControlServerBodylessPostTests.cs` \u2014 uses raw `TcpClient`, zero `HttpListener` references\\n- `ControlIndexPageTests.cs` \u2014 pure renderer `[Fact]` tests + `HttpClient` E2E tests\\n- `ControlApiTests.cs`, `ControlApiSkipTestsTests.cs`, `ControlApiConfirmGatedTests.cs`, `ControlApiTabSelectionTests.cs` \u2014 test `ControlApi` directly, no HTTP transport dependency\\n\\n## Validation\\n\\nAfter the port:\\n1. `dotnet test tests/VisualRelay.Tests/` \u2014 all existing tests pass without behavioral changes.\\n2. `grep -r 'HttpListener\\\\|HttpListenerContext\\\\|HttpListenerRequest\\\\|HttpListenerResponse' src/VisualRelay.App/` \u2014 returns zero matches.\\n3. `grep -r 'HttpListener' tests/VisualRelay.Tests/ControlServerTests.cs` \u2014 returns only the comment referencing the old behavior (the Dispose test comment mentions \\\"HttpListener\\\" in context of what was replaced).\\n4. The `BannedSymbols.txt` in tests does not need updating \u2014 it bans Avalonia headless patterns, not `HttpListener`.\",\n  \"manifest\": [\n    \"src/VisualRelay.App/VisualRelay.App.csproj\",\n    \"src/VisualRelay.App/Services/ControlServer.cs\",\n    \"src/VisualRelay.App/Services/ControlServer.Routing.cs\",\n    \"tests/VisualRelay.Tests/ControlServerTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 11,
+    "tool_calls_total": 28,
+    "tool_calls_succeeded": 25,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 3
+      },
+      "read_file": {
+        "succeeded": 23,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 2,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 11,
+    "total_llm_time_s": 164.019,
+    "prompt_cache": {
+      "cached_tokens": 236416,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.035,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.399,
+      "prompt_tokens_est": 6555,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 640
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 5.269,
+      "prompt_tokens_est": 6855,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/Services/*.cs",
+        "path": "/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 440,
+      "error": "error: Path '/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel' resolves to /private/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel, which is outside base directory /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel. You are not allowed to access that directory by any means."
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*.cs",
+        "path": "/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 440,
+      "error": "error: Path '/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel' resolves to /private/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel, which is outside base directory /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel. You are not allowed to access that directory by any means."
+    },
+    {
+      "turn": 2,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/*.csproj",
+        "path": "/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 440,
+      "error": "error: Path '/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel' resolves to /private/tmp/nix-shell.Lha5Gz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel, which is outside base directory /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel. You are not allowed to access that directory by any means."
+    },
+    {
+      "turn": 2,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "stop"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 5.036,
+      "prompt_tokens_est": 7741,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlServer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5766
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlServer.Routing.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6015
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/VisualRelay.App.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1540
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 6.299,
+      "prompt_tokens_est": 11138,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlServerOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1587
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlRoutes.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1803
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13401
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlIndexPage.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3505
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlJson.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4010
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlScreenshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2956
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 6.318,
+      "prompt_tokens_est": 18067,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlServerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10340
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlServerBodylessPostTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5472
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlIndexPageTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7197
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2362
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.246,
+      "prompt_tokens_est": 24592,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 7533
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4857
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/BannedSymbols.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1921
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.869,
+      "prompt_tokens_est": 28040,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services/ControlApi.Tabs.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3268
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlApiTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13518
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlApiSkipTestsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1737
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.549,
+      "prompt_tokens_est": 32767,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlApiConfirmGatedTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12624
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/ControlApiTabSelectionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4783
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/tests/VisualRelay.Tests/HeadlessTestApp.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1868
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 62.951,
+      "prompt_tokens_est": 37695,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260707022900/port-control-server-to-kestrel/src/VisualRelay.App/Services"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 411
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.628,
+      "prompt_tokens_est": 41460,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "investigation-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 81
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 56.454,
+      "prompt_tokens_est": 41523,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

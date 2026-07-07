@@ -1,11 +1,31 @@
-using System.Net;
 using System.Text;
+using Microsoft.AspNetCore.Http;
 
 namespace VisualRelay.App.Services;
 
 public sealed partial class ControlServer
 {
-    private async Task RouteAsync(HttpListenerContext context)
+    /// <summary>
+    /// Creates a transport-agnostic <see cref="RequestDelegate"/> that handles
+    /// every control API route. Both the Kestrel host and in-memory tests share
+    /// this single handler factory — no sockets, no ports, no HttpListener.
+    /// </summary>
+    public static RequestDelegate BuildHandler(ControlApi api, ControlServerOptions options)
+    {
+        return async (context) =>
+        {
+            try
+            {
+                await RouteAsync(context, api, options);
+            }
+            catch (Exception ex)
+            {
+                await TryWriteErrorAsync(context, ex);
+            }
+        };
+    }
+
+    private static async Task RouteAsync(HttpContext context, ControlApi api, ControlServerOptions options)
     {
         var request = context.Request;
 
@@ -14,7 +34,7 @@ public sealed partial class ControlServer
         // learns nothing about the surface.
         if (options.Token is { } token)
         {
-            var provided = request.Headers["X-VR-Token"];
+            var provided = request.Headers["X-VR-Token"].FirstOrDefault();
             if (!string.Equals(provided, token, StringComparison.Ordinal))
             {
                 context.Response.StatusCode = 401;
@@ -23,8 +43,8 @@ public sealed partial class ControlServer
             }
         }
 
-        var path = request.Url?.AbsolutePath ?? "/";
-        var method = request.HttpMethod;
+        var path = request.Path.Value ?? "/";
+        var method = request.Method;
 
         if (path == ControlRoutes.Index.Path && method == ControlRoutes.Index.Method)
         {
@@ -48,13 +68,14 @@ public sealed partial class ControlServer
 
         if (path == ControlRoutes.Screenshot.Path && method == ControlRoutes.Screenshot.Method)
         {
-            await HandleScreenshotAsync(context, request);
+            await HandleScreenshotAsync(context, api);
             return;
         }
 
-        if (path.StartsWith(ControlRoutes.Command.Path, StringComparison.Ordinal) && method == ControlRoutes.Command.Method)
+        if (path.StartsWith(ControlRoutes.Command.Path, StringComparison.Ordinal)
+            && method == ControlRoutes.Command.Method)
         {
-            await HandleCommandAsync(context, request, path);
+            await HandleCommandAsync(context, api, path);
             return;
         }
 
@@ -62,38 +83,28 @@ public sealed partial class ControlServer
         await WriteJsonAsync(context, Json.Object(("ok", false), ("error", "not found")));
     }
 
-    private async Task HandleCommandAsync(HttpListenerContext context, HttpListenerRequest request, string path)
+    /// <summary>
+    /// Handles a POST /command/{name} request. Under Kestrel (RFC 9112), a
+    /// POST with no Content-Length and no Transfer-Encoding has a zero-length
+    /// body — it is a valid empty-body request and executes the command. The
+    /// old HttpListener 411 guard was removed because Kestrel never writes an
+    /// unsolicited error behind the handler's back: "a command never executes
+    /// while the client receives an error" holds by construction.
+    /// </summary>
+    private static async Task HandleCommandAsync(HttpContext context, ControlApi api, string path)
     {
         var name = Uri.UnescapeDataString(path[ControlRoutes.Command.Path.Length..]);
 
-        // Refuse a POST with no declared body length. On macOS/Linux HttpListener
-        // internally 411s this shape, but the request context IS still dispatched
-        // to the handler — so the command would execute behind a 411 error page.
-        // Detect the distinguishing shape (no Content-Length header, no chunked
-        // transfer-encoding) and reject BEFORE reading the body or executing the
-        // command. Checking the raw headers is more reliable than the derived
-        // ContentLength64/HasEntityBody properties, which can return inconsistent
-        // values on the managed HttpListener when it internally 411s a bodyless
-        // POST — especially under heavy parallel-test thread-pool contention.
-        var hasContentLength = request.Headers["Content-Length"] is not null;
-        var hasTransferEncoding = !string.IsNullOrEmpty(request.Headers["Transfer-Encoding"]);
-        if (!hasContentLength && !hasTransferEncoding)
-        {
-            context.Response.StatusCode = 411;
-            await WriteJsonAsync(context, Json.Object(("ok", false), ("error", "length required")));
-            return;
-        }
-
-        var body = await ReadBodyAsync(request);
+        var body = await ReadBodyAsync(context.Request);
 
         var (status, json) = await api.InvokeCommandAsync(name, body);
         context.Response.StatusCode = status;
         await WriteJsonAsync(context, json);
     }
 
-    private async Task HandleScreenshotAsync(HttpListenerContext context, HttpListenerRequest request)
+    private static async Task HandleScreenshotAsync(HttpContext context, ControlApi api)
     {
-        var path = request.QueryString["path"];
+        var path = context.Request.Query["path"].FirstOrDefault();
         var (png, writtenPath) = await api.CaptureScreenshotAsync(path);
 
         if (writtenPath is not null)
@@ -103,35 +114,39 @@ public sealed partial class ControlServer
 
         context.Response.StatusCode = 200;
         context.Response.ContentType = "image/png";
-        context.Response.ContentLength64 = png.Length;
-        await context.Response.OutputStream.WriteAsync(png);
+        await context.Response.Body.WriteAsync(png);
     }
 
-    private static async Task<string?> ReadBodyAsync(HttpListenerRequest request)
+    private static async Task<string?> ReadBodyAsync(HttpRequest request)
     {
-        if (!request.HasEntityBody)
-        {
-            return null;
-        }
-
-        using var reader = new StreamReader(request.InputStream, request.ContentEncoding);
+        using var reader = new StreamReader(request.Body, Encoding.UTF8);
         var body = await reader.ReadToEndAsync();
         return string.IsNullOrWhiteSpace(body) ? null : body;
     }
 
-    private static async Task WriteJsonAsync(HttpListenerContext context, string json)
+    private static async Task WriteJsonAsync(HttpContext context, string json)
     {
-        var bytes = Encoding.UTF8.GetBytes(json);
         context.Response.ContentType = "application/json";
-        context.Response.ContentLength64 = bytes.Length;
-        await context.Response.OutputStream.WriteAsync(bytes);
+        await context.Response.WriteAsync(json, Encoding.UTF8);
     }
 
-    private static async Task WriteHtmlAsync(HttpListenerContext context, string html)
+    private static async Task WriteHtmlAsync(HttpContext context, string html)
     {
-        var bytes = Encoding.UTF8.GetBytes(html);
         context.Response.ContentType = "text/html; charset=utf-8";
-        context.Response.ContentLength64 = bytes.Length;
-        await context.Response.OutputStream.WriteAsync(bytes);
+        await context.Response.WriteAsync(html, Encoding.UTF8);
+    }
+
+    private static async Task TryWriteErrorAsync(HttpContext context, Exception ex)
+    {
+        try
+        {
+            var json = Json.Object(("ok", false), ("error", "internal error"), ("detail", ex.Message));
+            context.Response.StatusCode = 500;
+            await WriteJsonAsync(context, json);
+        }
+        catch
+        {
+            // Nothing more we can do.
+        }
     }
 }

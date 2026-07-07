@@ -1,5 +1,8 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
+using Microsoft.AspNetCore.Http;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
@@ -8,9 +11,8 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Tests for the localhost HTTP control server: deterministic env-var option
-/// parsing (port/disable/token defaults + overrides) plus one end-to-end
-/// HttpListener round-trip (GET /health on an ephemeral free port). The E2E
-/// test binds 127.0.0.1 only.
+/// parsing (port/disable/token defaults + overrides), one real-socket smoke
+/// test to prove Kestrel binding, and in-memory handler integration tests.
 /// </summary>
 public sealed class ControlServerOptionsTests
 {
@@ -60,27 +62,64 @@ public sealed class ControlServerOptionsTests
 }
 
 [Collection("Headless")]
-public sealed class ControlServerEndToEndTests
+public sealed class ControlServerTests
 {
-    // One shared client for the whole class: HttpClient is designed to be reused
-    // (a fresh one per call leaks sockets — the ShortLivedHttpClient inspection).
-    // All requests target loopback over a short test run. Per-request headers
-    // (e.g. X-VR-Token) go on a per-call HttpRequestMessage, never on this shared
-    // client's DefaultRequestHeaders, so no auth state leaks between tests.
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
 
-    [AvaloniaFact]
-    public async Task HealthEndpoint_RoundTripsOverLoopback()
+    /// <summary>
+    /// Invokes the control API handler directly via <see cref="DefaultHttpContext"/>
+    /// — in-memory, no sockets, no ports. Returns the context for assertions.
+    /// </summary>
+    private static async Task<HttpContext> InvokeAsync(
+        ControlApi api, ControlServerOptions options,
+        string method, string path,
+        string? token = null,
+        string? requestBody = null)
     {
-        var port = GetFreePort();
+        var handler = ControlServer.BuildHandler(api, options);
+
+        var context = new DefaultHttpContext
+        {
+            Request = { Method = method, Path = path },
+            Response = { Body = new MemoryStream() }
+        };
+
+        if (token is not null)
+        {
+            context.Request.Headers["X-VR-Token"] = token;
+        }
+
+        if (requestBody is not null)
+        {
+            var bytes = Encoding.UTF8.GetBytes(requestBody);
+            context.Request.Body = new MemoryStream(bytes);
+            context.Request.Headers.ContentLength = bytes.Length;
+        }
+
+        await handler(context);
+        context.Response.Body.Position = 0;
+        return context;
+    }
+
+    /// <summary>
+    /// The ONE real-socket smoke test that proves Kestrel binds on port 0
+    /// and serves a request. Uses BoundPort to eliminate the GetFreePort
+    /// TOCTOU. All other integration tests run in-memory via DefaultHttpContext.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task KestrelSmokeTest_BindsOnPort0_AndServesHealth()
+    {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: 0, Token: null));
 
         server.Start();
         try
         {
+            var port = server.BoundPort;
+            Assert.True(port > 0, "BoundPort must reflect the OS-assigned port when Port=0.");
+
             var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
@@ -99,65 +138,47 @@ public sealed class ControlServerEndToEndTests
     [AvaloniaFact]
     public async Task Token_WhenConfigured_RejectsMissingHeaderWith401_AndAcceptsMatch()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: "letmein"));
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: "letmein");
 
-        server.Start();
-        try
-        {
-            // No header → 401. Uses the shared client with no auth state.
-            var noTok = await Client.GetAsync($"http://127.0.0.1:{port}/health");
-            Assert.Equal(HttpStatusCode.Unauthorized, noTok.StatusCode);
+        // No header → 401.
+        var noTok = await InvokeAsync(api, options, "GET", "/health");
+        Assert.Equal(401, noTok.Response.StatusCode);
 
-            // Correct token → 200. The header rides on this one request message,
-            // not the shared client, so it never leaks to other tests.
-            using var withTok = new HttpRequestMessage(HttpMethod.Get, $"http://127.0.0.1:{port}/health");
-            withTok.Headers.Add("X-VR-Token", "letmein");
-            var ok = await Client.SendAsync(withTok);
-            Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
-        }
-        finally
-        {
-            server.Stop();
-        }
+        // Correct token → 200.
+        var ok = await InvokeAsync(api, options, "GET", "/health", token: "letmein");
+        Assert.Equal(200, ok.Response.StatusCode);
     }
 
     [AvaloniaFact]
     public async Task StateAndCommand_RoundTrip_GatesDisabledCommandWith409()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: null);
 
-        server.Start();
-        try
+        // /state returns the snapshot with the commands map.
+        var stateCtx = await InvokeAsync(api, options, "GET", "/state");
+        Assert.Equal(200, stateCtx.Response.StatusCode);
+
+        stateCtx.Response.Body.Position = 0;
+        using (var reader = new StreamReader(stateCtx.Response.Body, Encoding.UTF8, leaveOpen: true))
         {
-            // /state returns the snapshot with the commands map.
-            var state = await Client.GetStringAsync($"http://127.0.0.1:{port}/state");
-            using (var doc = JsonDocument.Parse(state))
-            {
-                Assert.True(doc.RootElement.TryGetProperty("commands", out _));
-            }
-
-            // A disabled command (run-selected with no selection) → 409 over the wire.
-            var disabled = await Client.PostAsync(
-                $"http://127.0.0.1:{port}/command/run-selected", null);
-            Assert.Equal(HttpStatusCode.Conflict, disabled.StatusCode);
-
-            // A safe enabled command (pause-toggle) → 200.
-            var ok = await Client.PostAsync(
-                $"http://127.0.0.1:{port}/command/pause-toggle", null);
-            Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+            var state = await reader.ReadToEndAsync();
+            using var doc = JsonDocument.Parse(state);
+            Assert.True(doc.RootElement.TryGetProperty("commands", out _));
         }
-        finally
-        {
-            server.Stop();
-        }
+
+        // A disabled command (run-selected with no selection) → 409.
+        var disabledCtx = await InvokeAsync(api, options, "POST", "/command/run-selected");
+        Assert.Equal(409, disabledCtx.Response.StatusCode);
+
+        // A safe enabled command (pause-toggle) → 200.
+        var okCtx = await InvokeAsync(api, options, "POST", "/command/pause-toggle");
+        Assert.Equal(200, okCtx.Response.StatusCode);
     }
 
     /// <summary>
@@ -170,29 +191,31 @@ public sealed class ControlServerEndToEndTests
     {
         var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
         Assert.False(options.Enabled,
-            "Headless test app must disable the vr-control listener (VR_CONTROL_DISABLE=1) so booting the App in tests starts no leaked HttpListener.");
+            "Headless test app must disable the vr-control listener (VR_CONTROL_DISABLE=1) so booting the App in tests starts no leaked listener.");
     }
 
     /// <summary>
-    /// Verifies that ControlServer releases its HttpListener/port when Dispose() is
-    /// called, so a fresh listener can bind the same port immediately after disposal.
+    /// Verifies that ControlServer releases its Kestrel socket when Dispose() is
+    /// called, so a fresh TcpListener can bind the same port immediately after disposal.
     /// </summary>
     [AvaloniaFact]
     public async Task ControlServer_Dispose_ReleasesListener()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
 
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: 0, Token: null));
         server.Start();
+
+        var port = server.BoundPort;
+        Assert.True(port > 0);
 
         // Confirm it is listening before dispose.
         var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        // Dispose must release the port so a fresh listener can bind the same prefix.
+        // Dispose must release the port so a fresh TcpListener can bind it.
         // Kernel socket teardown (e.g. TIME_WAIT) can vary — poll with a bounded
         // retry instead of assuming the port is instantly bindable.
         server.Dispose();
@@ -203,15 +226,14 @@ public sealed class ControlServerEndToEndTests
         {
             try
             {
-                using var probe = new HttpListener();
-                probe.Prefixes.Add($"http://127.0.0.1:{port}/");
+                using var probe = new TcpListener(IPAddress.Loopback, port);
                 probe.Start();
-                Assert.True(probe.IsListening,
-                    "Dispose() must release the listener's port so a fresh HttpListener can bind the same prefix.");
+                Assert.True(probe.Server.IsBound,
+                    "Dispose() must release the listener's port so a fresh TcpListener can bind the same port.");
                 probe.Stop();
                 return;
             }
-            catch (HttpListenerException)
+            catch (SocketException)
             {
                 if (attempt < maxRetries - 1)
                     Thread.Sleep(retryMs);
@@ -221,14 +243,5 @@ public sealed class ControlServerEndToEndTests
         Assert.Fail(
             $"Dispose() did not release port {port} within {maxRetries * retryMs}ms. " +
             "The accept-loop task may not have completed socket teardown.");
-    }
-
-    private static int GetFreePort()
-    {
-        var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 }

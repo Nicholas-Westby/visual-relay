@@ -1,5 +1,6 @@
-using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Http;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
@@ -55,7 +56,7 @@ public sealed class ControlIndexPageTests
 
         Assert.DoesNotContain("<script", html, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("javascript:", html, StringComparison.OrdinalIgnoreCase);
-        Assert.False(Regex.IsMatch(html, @" on[a-z]+=", RegexOptions.IgnoreCase),
+        Assert.False(Regex.IsMatch(html, " on[a-z]+=", RegexOptions.IgnoreCase),
             "Output must not contain any inline event-handler attribute like onclick=.");
     }
 
@@ -88,88 +89,78 @@ public sealed class ControlIndexPageTests
 }
 
 /// <summary>
-/// End-to-end round-trip tests for GET / on the control server.
-/// Requires the Avalonia headless UI thread (AvaloniaFact, Headless collection).
+/// Integration tests for GET / on the control server, running in-memory
+/// via <see cref="DefaultHttpContext"/> (no sockets, no ports).
+/// Requires the Avalonia headless UI thread (AvaloniaFact, Headless collection)
+/// because constructing <see cref="ControlApi"/> needs it.
 /// </summary>
 [Collection("Headless")]
 public sealed class ControlIndexPageTestsEndToEnd
 {
-    private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
+    private static async Task<HttpContext> InvokeAsync(
+        ControlApi api, ControlServerOptions options,
+        string method, string path,
+        string? token = null)
+    {
+        var handler = ControlServer.BuildHandler(api, options);
+
+        var context = new DefaultHttpContext
+        {
+            Request = { Method = method, Path = path },
+            Response = { Body = new MemoryStream() }
+        };
+
+        if (token is not null)
+        {
+            context.Request.Headers["X-VR-Token"] = token;
+        }
+
+        await handler(context);
+        context.Response.Body.Position = 0;
+        return context;
+    }
 
     [AvaloniaFact]
     public async Task IndexPage_Returns200_WithHtmlContentType()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: null);
 
-        server.Start();
-        try
-        {
-            var response = await Client.GetAsync($"http://127.0.0.1:{port}/");
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal("text/html", response.Content.Headers.ContentType?.MediaType);
-            Assert.Equal("utf-8", response.Content.Headers.ContentType?.CharSet);
+        var context = await InvokeAsync(api, options, "GET", "/");
 
-            var body = await response.Content.ReadAsStringAsync();
-            Assert.StartsWith("<!doctype html", body, StringComparison.OrdinalIgnoreCase);
-        }
-        finally
-        {
-            server.Stop();
-        }
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal("text/html; charset=utf-8", context.Response.ContentType);
+
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8, leaveOpen: true);
+        var body = await reader.ReadToEndAsync();
+        Assert.StartsWith("<!doctype html", body, StringComparison.OrdinalIgnoreCase);
     }
 
     [AvaloniaFact]
     public async Task IndexPage_WithToken_Returns401WithoutHeader()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: "letmein"));
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: "letmein");
 
-        server.Start();
-        try
-        {
-            var noTok = await Client.GetAsync($"http://127.0.0.1:{port}/");
-            Assert.Equal(HttpStatusCode.Unauthorized, noTok.StatusCode);
-        }
-        finally
-        {
-            server.Stop();
-        }
+        var context = await InvokeAsync(api, options, "GET", "/");
+
+        Assert.Equal(401, context.Response.StatusCode);
     }
 
     [AvaloniaFact]
     public async Task IndexPage_NonGetOnRoot_Returns404()
     {
-        var port = GetFreePort();
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: port, Token: null));
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: null);
 
-        server.Start();
-        try
-        {
-            var post = await Client.PostAsync($"http://127.0.0.1:{port}/", null);
-            Assert.Equal(HttpStatusCode.NotFound, post.StatusCode);
-        }
-        finally
-        {
-            server.Stop();
-        }
-    }
+        var context = await InvokeAsync(api, options, "POST", "/");
 
-    private static int GetFreePort()
-    {
-        var listener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
+        Assert.Equal(404, context.Response.StatusCode);
     }
 }

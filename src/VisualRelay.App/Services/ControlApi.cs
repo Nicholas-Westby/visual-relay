@@ -10,8 +10,8 @@ namespace VisualRelay.App.Services;
 /// Unit-testable core behind the localhost HTTP control surface
 /// (<see cref="ControlServer"/>). Holds the live <see cref="MainWindowViewModel"/>
 /// and <see cref="Window"/> and performs ALL access to them on the Avalonia UI
-/// thread via <see cref="Dispatcher.UIThread"/>. The HttpListener callback runs
-/// on a background thread, so every method here marshals onto the UI thread
+/// thread via <see cref="Dispatcher.UIThread"/>. The Kestrel request handler
+/// runs on a background thread, so every method here marshals onto the UI thread
 /// before touching VM/window state.
 ///
 /// The API exposes ONLY actions a user can take through the UI, and honors the

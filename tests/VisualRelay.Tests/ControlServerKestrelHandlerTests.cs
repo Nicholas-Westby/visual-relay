@@ -1,0 +1,175 @@
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Http;
+using VisualRelay.App.Services;
+using VisualRelay.App.ViewModels;
+using VisualRelay.App.Views;
+
+namespace VisualRelay.Tests;
+
+/// <summary>
+/// In-memory handler tests for the basic control API surface (health, token
+/// auth, 404, index page) — no sockets, no ports. The handler
+/// (<see cref="ControlServer.BuildHandler"/>) operates on
+/// <see cref="HttpContext"/> and is exercised via
+/// <see cref="DefaultHttpContext"/>.
+/// </summary>
+[Collection("Headless")]
+public sealed class ControlServerKestrelHandlerTests
+{
+    private static async Task<(HttpContext Context, ControlApi Api, MainWindowViewModel Vm)> InvokeAsync(
+        string method, string path, string? token = null, string? requestBody = null,
+        Dictionary<string, string>? requestHeaders = null)
+    {
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
+        var window = new MainWindow { DataContext = vm };
+        var api = new ControlApi(vm, window);
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token);
+        var handler = ControlServer.BuildHandler(api, options);
+
+        var context = new DefaultHttpContext
+        {
+            Request = { Method = method, Path = path },
+            Response = { Body = new MemoryStream() }
+        };
+
+        if (requestHeaders is not null)
+        {
+            foreach (var (key, value) in requestHeaders)
+            {
+                context.Request.Headers[key] = value;
+            }
+        }
+
+        if (requestBody is not null)
+        {
+            var bytes = Encoding.UTF8.GetBytes(requestBody);
+            context.Request.Body = new MemoryStream(bytes);
+            context.Request.Headers.ContentLength = bytes.Length;
+        }
+
+        await handler(context);
+        context.Response.Body.Position = 0;
+        return (context, api, vm);
+    }
+
+    private static async Task<string> ReadBodyAsync(HttpContext context)
+    {
+        using var reader = new StreamReader(context.Response.Body, Encoding.UTF8, leaveOpen: true);
+        return await reader.ReadToEndAsync();
+    }
+
+    private static async Task<JsonDocument> ReadJsonBodyAsync(HttpContext context)
+    {
+        var body = await ReadBodyAsync(context);
+        return JsonDocument.Parse(body);
+    }
+
+    // ── Health ──────────────────────────────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task HealthEndpoint_Returns200_WithJsonBody()
+    {
+        var (context, _, _) = await InvokeAsync("GET", "/health");
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal("application/json", context.Response.ContentType);
+
+        using var doc = await ReadJsonBodyAsync(context);
+        Assert.Equal("ok", doc.RootElement.GetProperty("status").GetString());
+        Assert.Equal("Visual Relay", doc.RootElement.GetProperty("app").GetString());
+    }
+
+    // ── Token auth ──────────────────────────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task Token_WhenConfigured_Returns401_WithoutHeader()
+    {
+        var (context, _, _) = await InvokeAsync("GET", "/health", token: "letmein");
+
+        Assert.Equal(401, context.Response.StatusCode);
+        Assert.Equal("application/json", context.Response.ContentType);
+
+        using var doc = await ReadJsonBodyAsync(context);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("unauthorized", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [AvaloniaFact]
+    public async Task Token_WhenConfigured_Returns200_WithCorrectHeader()
+    {
+        var (context, _, _) = await InvokeAsync(
+            "GET", "/health", token: "letmein",
+            requestHeaders: new Dictionary<string, string> { ["X-VR-Token"] = "letmein" });
+
+        Assert.Equal(200, context.Response.StatusCode);
+
+        using var doc = await ReadJsonBodyAsync(context);
+        Assert.Equal("ok", doc.RootElement.GetProperty("status").GetString());
+    }
+
+    [AvaloniaFact]
+    public async Task Token_GatesAllRoutes_IncludingHealth()
+    {
+        // /health is also gated — an unauthorized caller learns nothing.
+        var (context, _, _) = await InvokeAsync("GET", "/health", token: "s3cret");
+
+        Assert.Equal(401, context.Response.StatusCode);
+    }
+
+    [AvaloniaFact]
+    public async Task Token_WithoutToken_AllRoutesSucceed()
+    {
+        // No token configured → no auth; every route passes through.
+        var (context, _, _) = await InvokeAsync("GET", "/health", token: null);
+
+        Assert.Equal(200, context.Response.StatusCode);
+    }
+
+    // ── 404 ─────────────────────────────────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task UnknownRoute_Returns404_Json()
+    {
+        var (context, _, _) = await InvokeAsync("GET", "/nonexistent");
+
+        Assert.Equal(404, context.Response.StatusCode);
+        Assert.Equal("application/json", context.Response.ContentType);
+
+        using var doc = await ReadJsonBodyAsync(context);
+        Assert.False(doc.RootElement.GetProperty("ok").GetBoolean());
+        Assert.Equal("not found", doc.RootElement.GetProperty("error").GetString());
+    }
+
+    [AvaloniaFact]
+    public async Task WrongMethodOnRoute_Returns404()
+    {
+        // POST /health is not a valid route (only GET).
+        var (context, _, _) = await InvokeAsync("POST", "/health");
+
+        Assert.Equal(404, context.Response.StatusCode);
+    }
+
+    // ── Index page ──────────────────────────────────────────────────────
+
+    [AvaloniaFact]
+    public async Task IndexPage_Returns200_WithHtmlContentType()
+    {
+        var (context, _, _) = await InvokeAsync("GET", "/");
+
+        Assert.Equal(200, context.Response.StatusCode);
+        Assert.Equal("text/html; charset=utf-8", context.Response.ContentType);
+
+        var body = await ReadBodyAsync(context);
+        Assert.StartsWith("<!DOCTYPE html>", body, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("<title>Visual Relay — Control API</title>", body, StringComparison.Ordinal);
+    }
+
+    [AvaloniaFact]
+    public async Task IndexPage_NonGet_Returns404()
+    {
+        var (context, _, _) = await InvokeAsync("POST", "/");
+
+        Assert.Equal(404, context.Response.StatusCode);
+    }
+}
