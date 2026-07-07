@@ -30,6 +30,7 @@ public partial class MainWindowViewModel
                 RelayConfigWriter.SetSkipTests(RootPath, SelectedTask.Id, value);
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(SkipTestsLabel));
+                OnPropertyChanged(nameof(AreTaskTogglesVisible));
             }
         }
     }
@@ -37,10 +38,7 @@ public partial class MainWindowViewModel
     /// <summary>
     /// Human-readable label for the skip-tests toggle.
     /// </summary>
-    public string SkipTestsLabel =>
-        SelectedTask is not null && !string.IsNullOrEmpty(RootPath)
-            ? "Skip automated testing"
-            : string.Empty;
+    public string SkipTestsLabel => "Skip automated testing";
 
     /// <summary>
     /// Whether the skip-tests toggle can be interacted with. False when no
@@ -58,5 +56,6 @@ public partial class MainWindowViewModel
         _skipTestsTaskIds = new HashSet<string>(config.SkipTestsTaskIds ?? [], StringComparer.Ordinal);
         OnPropertyChanged(nameof(SelectedTaskSkipsTests));
         OnPropertyChanged(nameof(SkipTestsLabel));
+        OnPropertyChanged(nameof(AreTaskTogglesVisible));
     }
 }

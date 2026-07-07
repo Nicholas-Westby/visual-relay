@@ -48,9 +48,7 @@ public sealed class MainWindowViewModelSettingsTests
             ["commitProofArtifacts"] = false
         };
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await File.WriteAllTextAsync(configPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
         await viewModel.LoadInitialAsync();
@@ -84,9 +82,7 @@ public sealed class MainWindowViewModelSettingsTests
             ["boostTurnsTaskIds"] = new JsonArray("boost-me")
         };
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await File.WriteAllTextAsync(configPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         // Write a task so there is something to select.
         repo.WriteTask("boost-me", "# Boost me\n");
 
@@ -96,6 +92,7 @@ public sealed class MainWindowViewModelSettingsTests
         // The first (and only) task should be selected, and it's in the boost set.
         Assert.True(viewModel.SelectedTaskBoostsTurns);
         Assert.Equal("10× turn budget (200 → 2000)", viewModel.TurnBudgetLabel);
+        Assert.True(viewModel.AreTaskTogglesVisible);
     }
 
     [Fact]
@@ -110,9 +107,7 @@ public sealed class MainWindowViewModelSettingsTests
             ["boostTurnsTaskIds"] = new JsonArray("other-task")
         };
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await File.WriteAllTextAsync(configPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         repo.WriteTask("normal-task", "# Normal task\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
@@ -157,12 +152,17 @@ public sealed class MainWindowViewModelSettingsTests
     public void TurnBudgetLabel_shows_calculated_numbers()
     {
         var viewModel = new MainWindowViewModel();
-
-        // No task selected, no root path — label should be empty.
-        Assert.Equal(string.Empty, viewModel.TurnBudgetLabel);
-
-        // CanToggleTurnBudget should be false with no selection.
+        Assert.Equal("10× turn budget (200 → 2000)", viewModel.TurnBudgetLabel);
+        Assert.False(viewModel.AreTaskTogglesVisible);
         Assert.False(viewModel.CanToggleTurnBudget);
+    }
+
+    [Fact]
+    public void SkipTestsLabel_always_shows_text()
+    {
+        var viewModel = new MainWindowViewModel();
+        Assert.Equal("Skip automated testing", viewModel.SkipTestsLabel);
+        Assert.False(viewModel.AreTaskTogglesVisible);
     }
 
     [Fact]
@@ -186,9 +186,7 @@ public sealed class MainWindowViewModelSettingsTests
             ["skipTestsTaskIds"] = new JsonArray("readme-only")
         };
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await File.WriteAllTextAsync(configPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         repo.WriteTask("readme-only", "# README\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
@@ -210,9 +208,7 @@ public sealed class MainWindowViewModelSettingsTests
             ["skipTestsTaskIds"] = new JsonArray("other-task")
         };
         var configPath = Path.Combine(repo.Root, ".relay", "config.json");
-        await File.WriteAllTextAsync(
-            configPath,
-            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await File.WriteAllTextAsync(configPath, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
         repo.WriteTask("normal-task", "# Normal task\n");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };

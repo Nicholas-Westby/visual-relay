@@ -1,0 +1,238 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T05:28:59.613737+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: always-show-checkbox-labels\nWorking directory: /tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels\n\n## Task input\n# Always Show Checkbox Labels\n\nThe two per-task toggles in the task-detail header \u2014 \"10\u00d7 turn budget\" and \"Skip automated testing\" \u2014 render their labels via `TurnBudgetLabel` / `SkipTestsLabel`, which return `string.Empty` whenever no task is selected or the repo isn't initialized. The `CheckBox`es themselves have no `IsVisible` binding, so in those states (e.g. authoring the first task in an empty repo) the boxes appear with blank labels. Fix: labels always return their text; when the toggles shouldn't apply, hide the **whole** `CheckBox` via visibility, never by blanking the label.\n\n## Current state (researched)\n\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.TurnBudget.cs` \u2014\n  `public string TurnBudgetLabel => SelectedTask is not null && !string.IsNullOrEmpty(RootPath) ? $\"10\u00d7 turn budget ({_maxTurns} \u2192 {_maxTurns * 10})\" : string.Empty;`\n  (`_maxTurns` defaults to `200`, so the text form is deterministic even before config loads.)\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.SkipTests.cs` \u2014\n  `public string SkipTestsLabel => SelectedTask is not null && !string.IsNullOrEmpty(RootPath) ? \"Skip automated testing\" : string.Empty;`\n- Both files also define the matching `CanToggleTurnBudget` / `CanToggleSkipTests` =>\n  `SelectedTask is not null && !string.IsNullOrEmpty(RootPath) && !IsBusy` (used for `IsEnabled`, **not** visibility \u2014 busy must keep the box visible-but-disabled).\n- `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` \u2014 the two `CheckBox`es (`Grid.Row=\"2\"` bound to `SelectedTaskBoostsTurns`/`TurnBudgetLabel`/`CanToggleTurnBudget`, and `Grid.Row=\"3\"` bound to `SelectedTaskSkipsTests`/`SkipTestsLabel`/`CanToggleSkipTests`) have **no `IsVisible` binding**. This file is 299 lines \u2014 at the repo's 300-line cap, so the `IsVisible` attributes must go inline on the existing `CheckBox` tags (no net new lines).\n- The labels are re-raised on selection change in `src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs`:\n  `OnPropertyChanged(nameof(TurnBudgetLabel)); OnPropertyChanged(nameof(SkipTestsLabel));`\n  (next to the `CanToggle*` re-raises), and in `HydrateTurnBudget` / `HydrateSkipTests`.\n- Tests live in `tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs` (xUnit `[Fact]`). `TurnBudgetLabel_shows_calculated_numbers` currently asserts `Assert.Equal(string.Empty, viewModel.TurnBudgetLabel)` with no selection \u2014 this assertion must change.\n\n## What to build (TDD-first)\n\n1. **Tests first** in `MainWindowViewModelSettingsTests.cs`:\n   - Update `TurnBudgetLabel_shows_calculated_numbers`: with a bare `new MainWindowViewModel()` (no selection, no root), assert `TurnBudgetLabel == \"10\u00d7 turn budget (200 \u2192 2000)\"` (no longer empty) and `Assert.False(viewModel.AreTaskTogglesVisible)`.\n   - Add `SkipTestsLabel_always_shows_text`: bare viewmodel \u2192 `SkipTestsLabel == \"Skip automated testing\"` and `Assert.False(viewModel.AreTaskTogglesVisible)`.\n   - In one existing hydrated test that has a selected task (e.g. `SelectedTaskBoostsTurns_hydrated_from_config_on_load`), also assert `Assert.True(viewModel.AreTaskTogglesVisible)`.\n2. **Labels always return text.** In `MainWindowViewModel.TurnBudget.cs` drop the `?: string.Empty` branch so `TurnBudgetLabel` always returns `$\"10\u00d7 turn budget ({_maxTurns} \u2192 {_maxTurns * 10})\"`. In `MainWindowViewModel.SkipTests.cs` drop the branch so `SkipTestsLabel` always returns `\"Skip automated testing\"`.\n3. **Add one shared visibility property** (both toggles share the identical condition, so a single property avoids duplication). In `MainWindowViewModel.TurnBudget.cs` next to `CanToggleTurnBudget`:\n   `public bool AreTaskTogglesVisible => SelectedTask is not null && !string.IsNullOrEmpty(RootPath);`\n   Re-raise `nameof(AreTaskTogglesVisible)` at every site that currently raises `TurnBudgetLabel`/`SkipTestsLabel`: the selection-change block in `MainWindowViewModel.Commands.cs`, `HydrateTurnBudget`, and `HydrateSkipTests`.\n4. **Bind visibility in XAML.** In `TaskDetailPanel.axaml`, add `IsVisible=\"{Binding AreTaskTogglesVisible}\"` inline to each of the two existing `CheckBox` tags (do not add new elements/lines \u2014 the file is at the 300-line cap).\n5. Run `./visual-relay check`.\n\n## Done when\n\n- With no task selected (e.g. empty repo / new-task dialog with no prior selection), both `CheckBox`es are hidden \u2014 no label-less boxes render.\n- With a task selected, both `CheckBox`es are visible with their full labels (`10\u00d7 turn budget (200 \u2192 2000)` and `Skip automated testing`); while busy they remain visible but disabled (via the existing `CanToggle*` `IsEnabled` binding).\n- `TurnBudgetLabel` and `SkipTestsLabel` never return `string.Empty`.\n- `./visual-relay check` passes (file-size guard, format, build, tests, screenshot render).\n\n## Guardrails\n\n- Build/test/gate through the single entry point: `./visual-relay build`, `./visual-relay test`, `./visual-relay check` (file-size guard + format + build + tests + screenshot). Filter to the settings tests during dev: `./visual-relay test MainWindowViewModelSettingsTests`.\n- These are non-UI ViewModel unit tests \u2014 keep using xUnit `[Fact]` (not `[AvaloniaFact]`).\n- C# and Avalonia XAML sources must stay under 300 lines (`TaskDetailPanel.axaml` is at 299 \u2014 fold `IsVisible` into existing tags, no net new lines).\n- Commit directly on `main` with a Conventional Commit subject: fixed type set, \u226472-char subject, lowercase after the prefix, no trailing period, no em dashes, body \u22643 `- ` bullets (\u226420 words each). See `docs/commit-messages.md`.\n- Minimal diff: change only the two partial ViewModel files, the axaml, and the test file. Do not reformat unrelated code.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### labels-shown.png (28183 bytes, not inlined)\n\n### missing-labels.png (20405 bytes, not inlined)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the detailed task description (the files are outside the `.swival/` sandbox, so I cannot read/write them), here is my framing and analysis.\n\n---\n\n## Task framing\n\n**Problem:** Two `CheckBox` controls in the task-detail header (`10\u00d7 turn budget` and `Skip automated testing`) appear with blank labels when no task is selected or the repo isn't initialized, because their label properties return `string.Empty`. The `CheckBox` elements have no `IsVisible` binding, so they render visibly but label-less.\n\n**Goal:** Make the labels always return their full text, and hide the entire `CheckBox` via a visibility binding when no task is selected / repo isn't initialized.\n\n**Files to change (minimal diff, no unrelated reformatting):**\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.TurnBudget.cs` \u2014 drop conditional empty branch for `TurnBudgetLabel`, add `AreTaskTogglesVisible` property, re-raise in `HydrateTurnBudget`\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.SkipTests.cs` \u2014 drop conditional empty branch for `SkipTestsLabel`, re-raise in `HydrateSkipTests`\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs` \u2014 re-raise `AreTaskTogglesVisible` in the selection-change block\n- `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml` \u2014 add `IsVisible=\"{Binding AreTaskTogglesVisible}\"` inline on each existing `CheckBox` tag (no net new lines \u2014 file is at 299/300)\n- `tests/VisualRelay.Tests/MainWindowViewModelSettingsTests.cs` \u2014 update assertions\n\n**Guardrails:** `./visual-relay check` must pass; commit with Conventional Commit format (\u226472-char subject, lowercase after prefix, no period, body \u22643 bullets \u226420 words each).\n\n---\n\n## Solution options\n\n```json\n{\n  \"summary\": \"Always-show-checkbox-labels: fix two CheckBox controls that render with blank labels in empty-state (no task selected / no root path) by having label properties always return their text, adding a shared AreTaskTogglesVisible visibility property, binding IsVisible on the existing CheckBox tags (no net new lines in the 299-line axaml), updating tests, and re-raising the new property on every path that currently re-raises the labels.\",\n  \"options\": [\n    \"Option A \u2014 Inline IsVisible directly on each CheckBox's opening tag via edit_file (replace the opening tag to insert IsVisible=\\\"{Binding AreTaskTogglesVisible}\\\" before the closing >). This keeps zero net new lines \u2014 the tag simply gains one attribute. Risk: if the opening tag spans multiple lines, the old_string must capture exactly the multi-line text to avoid collision.\",\n    \"Option B \u2014 Fold IsVisible into the existing attribute list by using a whitespace-preserving edit that replaces the final attribute on each CheckBox line to also include IsVisible. Slightly more fragile if attribute ordering differs.\",\n    \"Option C \u2014 (Discarded) Add a wrapping container or a second row with visibility. Rejected because it would add net new lines, violating the 300-line cap.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 7,
+    "tool_calls_total": 9,
+    "tool_calls_succeeded": 2,
+    "tool_calls_failed": 7,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 0,
+        "failed": 7
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 7,
+    "total_llm_time_s": 24.495,
+    "prompt_cache": {
+      "cached_tokens": 39680,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.745,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.675,
+      "prompt_tokens_est": 5293,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.TurnBudget.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 420,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.TurnBudget.cs' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.TurnBudget.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.SkipTests.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 418,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.SkipTests.cs' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.SkipTests.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 404,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 416,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.616,
+      "prompt_tokens_est": 6131,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 193,
+      "error": "error: Path '.' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.678,
+      "prompt_tokens_est": 6246,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 37,
+      "error": "error: path does not exist: \".swival\""
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 1.644,
+      "prompt_tokens_est": 6293,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 1.66,
+      "result_length": 217
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 1.618,
+      "prompt_tokens_est": 6456,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.081,
+      "result_length": 121
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 1.933,
+      "prompt_tokens_est": 6572,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 290,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/always-show-checkbox-labels, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 11.332,
+      "prompt_tokens_est": 6756,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -33,19 +33,25 @@ public partial class MainWindowViewModel
                 RelayConfigWriter.SetTurnBoost(RootPath, SelectedTask.Id, value);
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(TurnBudgetLabel));
+                OnPropertyChanged(nameof(AreTaskTogglesVisible));
             }
         }
     }
 
     /// <summary>
     /// Human-readable label showing the effect of the toggle: e.g.
-    /// "10× turn budget (200 → 2000)". Empty when no task is selected or the
-    /// repo is uninitialized.
+    /// "10× turn budget (200 → 2000)". Always returns the formatted text;
+    /// visibility is controlled by <see cref="AreTaskTogglesVisible"/>.
     /// </summary>
     public string TurnBudgetLabel =>
-        SelectedTask is not null && !string.IsNullOrEmpty(RootPath)
-            ? $"10× turn budget ({_maxTurns} → {_maxTurns * 10})"
-            : string.Empty;
+        $"10× turn budget ({_maxTurns} → {_maxTurns * 10})";
+
+    /// <summary>
+    /// Whether the task-level toggles (turn budget and skip tests) should be
+    /// visible. True only when a task is selected and the repo is initialized.
+    /// </summary>
+    public bool AreTaskTogglesVisible =>
+        SelectedTask is not null && !string.IsNullOrEmpty(RootPath);
 
     /// <summary>
     /// Whether the turn-budget toggle can be interacted with. False when no
@@ -64,5 +70,6 @@ public partial class MainWindowViewModel
         _maxTurns = config.MaxTurns;
         OnPropertyChanged(nameof(SelectedTaskBoostsTurns));
         OnPropertyChanged(nameof(TurnBudgetLabel));
+        OnPropertyChanged(nameof(AreTaskTogglesVisible));
     }
 }
