@@ -163,11 +163,13 @@ public sealed partial class SwivalSubagentRunner
                 ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
                 _ => "stall"
             };
+            var traceDir = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
+            var (traceFiles, traceBytes) = CountTraceFiles(traceDir);
             var header =
                 $"# killed-attempt output (autopsy artifact){Environment.NewLine}" +
                 $"# reason: {reason}  lastSignal: {wdResult.LastPulseSource}  silenceMs: {wdResult.SilenceMs}{Environment.NewLine}" +
                 $"# firstOutputTimeoutMs: {firstOutputMs}  inactivityTimeoutMs: {inactivityMs}{Environment.NewLine}" +
-                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}{Environment.NewLine}{Environment.NewLine}";
+                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}  traceFiles: {traceFiles}  traceBytes: {traceBytes}{Environment.NewLine}{Environment.NewLine}";
             File.WriteAllText(path, header + output);
             return path;
         }
@@ -189,10 +191,12 @@ public sealed partial class SwivalSubagentRunner
         try
         {
             var path = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}.killed-output.txt");
+            var traceDir = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
+            var (traceFiles, traceBytes) = CountTraceFiles(traceDir);
             var header =
                 $"# killed-attempt output (autopsy artifact){Environment.NewLine}" +
                 $"# reason: {reason}{Environment.NewLine}" +
-                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}{Environment.NewLine}{Environment.NewLine}";
+                $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}  traceFiles: {traceFiles}  traceBytes: {traceBytes}{Environment.NewLine}{Environment.NewLine}";
             File.WriteAllText(path, header + output);
             return path;
         }
@@ -200,6 +204,23 @@ public sealed partial class SwivalSubagentRunner
         {
             return null;
         }
+    }
+
+    private static (int Files, long Bytes) CountTraceFiles(string traceDir)
+    {
+        if (!Directory.Exists(traceDir)) return (0, 0);
+        var files = 0;
+        long bytes = 0;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(traceDir))
+            {
+                files++;
+                try { bytes += new FileInfo(f).Length; } catch { /* inaccessible */ }
+            }
+        }
+        catch { /* directory enumeration failed */ }
+        return (files, bytes);
     }
 
     private async Task PublishContractRetryAsync(StageInvocation invocation, int attempt, CancellationToken cancellationToken)

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace VisualRelay.Core.Execution;
 
-internal static class ProcessCapture
+internal static partial class ProcessCapture
 {
     // CPU delta per sample window that counts as real work rather than
     // scheduler dust from an idle-blocked process.
@@ -153,13 +153,17 @@ internal static class ProcessCapture
         {
             // ReSharper disable once AccessToDisposedClosure — killRegistration is
             // disposed (end of this try) strictly before 'process' (end of method),
-            // and CancellationTokenRegistration.Dispose() waits for any in-flight
-            // callback, so the Kill closure can never run against a disposed process.
+            // and CancellationTokenRegistration.Dispose() waits for the in-flight
+            // callback to return. The callback body is instant (fire-and-forget task
+            // start), so Dispose() blocks only briefly. However, the background
+            // graceful-stop task may still be running after Dispose() returns and
+            // could encounter a disposed 'process'; GracefulStopThenKillAsync guards
+            // every process access via SafeHasExited (catches ObjectDisposedException).
             // ReSharper disable once UseAwaitUsing — sync Dispose() is REQUIRED here: it
             // blocks until any running Kill callback finishes (the guarantee above);
             // DisposeAsync() does not provide that synchronous wait.
             using var killRegistration = killToken.CanBeCanceled
-                ? killToken.Register(() => { try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already exited */ } })
+                ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId); })
                 : default;
 
             // Propagate cancellation, mirroring the old WaitForExitAsync(cancellationToken).
@@ -167,11 +171,7 @@ internal static class ProcessCapture
 
             if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, cancellationToken)) != exitedTcs.Task)
             {
-                process.Kill(entireProcessTree: true);
-                if (stageGroupId.HasValue)
-                {
-                    try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
-                }
+                await GracefulStopThenKillAsync(process, stageGroupId);
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
