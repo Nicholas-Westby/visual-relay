@@ -44,6 +44,32 @@ public sealed class SandboxExtraAllowPathsConfigTests
     }
 
     [Fact]
+    public async Task JetBrainsApplicationSupport_ExpandsTildeWithSpaces()
+    {
+        using var repo = TestRepository.Create();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"), """
+            {
+              "testCmd": "true",
+              "logSources": [],
+              "sandboxExtraAllowPaths": ["~/Library/Application Support/JetBrains"]
+            }
+            """);
+
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        var paths = result.Config.SandboxExtraAllowPaths;
+        Assert.NotNull(paths);
+        Assert.Single(paths);
+        Assert.StartsWith(home, paths[0], StringComparison.Ordinal);
+        Assert.EndsWith(
+            Path.Combine("Library", "Application Support", "JetBrains"),
+            paths[0],
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task DotDot_ProducesLoadError()
     {
         using var repo = TestRepository.Create();
