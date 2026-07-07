@@ -129,6 +129,10 @@ public partial class MainWindowViewModel
         if (configResult.Status == RelayConfigStatus.Loaded)
         {
             CommitProofArtifacts = configResult.Config.CommitProofArtifacts;
+            _isHydrating = true;
+            StageTimeoutMinutes = Math.Clamp((int)Math.Round(configResult.Config.SubagentTimeoutMilliseconds / 60_000.0), 1, 720);
+            TestTimeoutMinutes = Math.Clamp((int)Math.Round(configResult.Config.TestTimeoutMilliseconds / 60_000.0), 1, 720);
+            _isHydrating = false;
             HydrateTurnBudget(configResult.Config);
             HydrateSkipTests(configResult.Config);
         }

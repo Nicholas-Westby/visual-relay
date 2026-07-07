@@ -103,4 +103,32 @@ public partial class MainWindowViewModel
 
         FileReveal.Reveal(dir);
     }
+
+    /// <summary>Stage timeout in minutes (1–720). Persisted as subagentTimeoutMs in .relay/config.json.</summary>
+    [ObservableProperty]
+    private int _stageTimeoutMinutes = 30;
+
+    partial void OnStageTimeoutMinutesChanged(int value)
+    {
+        if (_isHydrating) return;
+        var clamped = Math.Clamp(value, 1, 720);
+        if (clamped != value) { StageTimeoutMinutes = clamped; return; }
+        if (Directory.Exists(RootPath))
+            RelayConfigWriter.UpsertSubagentTimeout(RootPath, clamped * 60_000);
+    }
+
+    /// <summary>Test timeout in minutes (1–720). Persisted as testTimeoutMs in .relay/config.json.</summary>
+    [ObservableProperty]
+    private int _testTimeoutMinutes = 20;
+
+    partial void OnTestTimeoutMinutesChanged(int value)
+    {
+        if (_isHydrating) return;
+        var clamped = Math.Clamp(value, 1, 720);
+        if (clamped != value) { TestTimeoutMinutes = clamped; return; }
+        if (Directory.Exists(RootPath))
+            RelayConfigWriter.UpsertTestTimeout(RootPath, clamped * 60_000);
+    }
+
+    private bool _isHydrating;
 }

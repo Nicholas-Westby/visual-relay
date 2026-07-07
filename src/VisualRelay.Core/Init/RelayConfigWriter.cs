@@ -125,6 +125,21 @@ public static class RelayConfigWriter
     }
 
     /// <summary>
+    /// Read-modify-write upsert of the <c>testTimeoutMs</c> key into
+    /// <c>.relay/config.json</c>. Preserves all existing keys.
+    /// </summary>
+    public static void UpsertTestTimeout(string rootPath, int milliseconds)
+    {
+        var relayDir = Path.Combine(rootPath, ".relay");
+        Directory.CreateDirectory(relayDir);
+        var json = ReadOrCreateConfig(relayDir, out var path);
+
+        json["testTimeoutMs"] = milliseconds;
+
+        File.WriteAllText(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+    }
+
+    /// <summary>
     /// Read-modify-write upsert of the <c>boostTurnsTaskIds</c> JSON array into
     /// <c>.relay/config.json</c>. Adds or removes <paramref name="taskId"/>,
     /// de-duplicating entries, while preserving all other keys.

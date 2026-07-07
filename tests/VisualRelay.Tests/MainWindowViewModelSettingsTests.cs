@@ -253,4 +253,48 @@ public sealed class MainWindowViewModelSettingsTests
         var viewModel = new MainWindowViewModel();
         Assert.False(viewModel.SelectedTaskSkipsTests);
     }
+
+    // ── Timeout minutes ───────────────────────────────────────────────
+
+    [Fact]
+    public async Task TimeoutMinutes_hydrate_clamp_and_persist()
+    {
+        using var repo = TestRepository.Create();
+        var viewModel = new MainWindowViewModel();
+        Assert.Equal(30, viewModel.StageTimeoutMinutes); Assert.Equal(20, viewModel.TestTimeoutMinutes);
+
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
+        var json = new JsonObject { ["testCmd"] = "dotnet test", ["logSources"] = new JsonArray(), ["subagentTimeoutMs"] = 3_600_001, ["testTimeoutMs"] = 1_200_001 };
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"),
+            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+
+        viewModel.RootPath = repo.Root;
+        await viewModel.LoadInitialAsync();
+        Assert.Equal(60, viewModel.StageTimeoutMinutes);
+        Assert.Equal(20, viewModel.TestTimeoutMinutes);
+
+        // Verify no write-back on load: config ms values preserved as-is.
+        var preChange = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(3_600_001, preChange.Config.SubagentTimeoutMilliseconds); Assert.Equal(1_200_001, preChange.Config.TestTimeoutMilliseconds);
+
+        // Clamp: below → 1, above → 720.
+        viewModel.StageTimeoutMinutes = 0; Assert.Equal(1, viewModel.StageTimeoutMinutes);
+        viewModel.TestTimeoutMinutes = -5; Assert.Equal(1, viewModel.TestTimeoutMinutes);
+        viewModel.StageTimeoutMinutes = 999; Assert.Equal(720, viewModel.StageTimeoutMinutes);
+
+        // Persist and round-trip: minutes → ms.
+        viewModel.StageTimeoutMinutes = 45; viewModel.TestTimeoutMinutes = 15;
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(2_700_000, result.Config.SubagentTimeoutMilliseconds);
+        Assert.Equal(900_000, result.Config.TestTimeoutMilliseconds);
+
+        // Hand-edited 0 (disable) escape hatch: UI clamps for display, config preserves 0.
+        json["subagentTimeoutMs"] = 0; json["testTimeoutMs"] = 0;
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "config.json"),
+            json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine);
+        await viewModel.LoadInitialAsync();
+        Assert.Equal(1, viewModel.StageTimeoutMinutes); Assert.Equal(1, viewModel.TestTimeoutMinutes);
+        var final = await RelayConfigLoader.TryLoadAsync(repo.Root); Assert.Equal(0, final.Config.SubagentTimeoutMilliseconds); Assert.Equal(0, final.Config.TestTimeoutMilliseconds);
+    }
 }

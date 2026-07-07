@@ -181,53 +181,36 @@ public sealed partial class RelayConfigWriterTests
     // ── UpsertSubagentTimeout ──────────────────────────────────────────
 
     [Fact]
-    public async Task UpsertSubagentTimeout_SetsValue()
-    {
-        using var repo = TestRepository.Create();
-        RelayConfigWriter.Write(repo.Root, "dotnet test");
-
-        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
-
-        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
-        Assert.Equal(2_400_000, result.Config.SubagentTimeoutMilliseconds);
-    }
-
-    [Fact]
-    public async Task UpsertSubagentTimeout_PreservesOtherKeys()
+    public async Task UpsertSubagentTimeout_sets_preserves_creates()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", [], baselineVerify: true);
-
-        var before = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, before.Status);
-        Assert.True(before.Config.BaselineVerify);
-        Assert.Contains("cheap", before.Config.TierProfiles);
-        Assert.Equal("dotnet test", before.Config.TestCommand);
+        Assert.True((await RelayConfigLoader.TryLoadAsync(repo.Root)).Config.BaselineVerify);
 
         RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
-
-        var after = await RelayConfigLoader.TryLoadAsync(repo.Root);
-        Assert.Equal(RelayConfigStatus.Loaded, after.Status);
-        Assert.Equal(2_400_000, after.Config.SubagentTimeoutMilliseconds);
-        Assert.True(after.Config.BaselineVerify);
-        Assert.Contains("cheap", after.Config.TierProfiles);
-        Assert.Equal("dotnet test", after.Config.TestCommand);
-        Assert.Empty(after.Config.LogSources);
-    }
-
-    [Fact]
-    public async Task UpsertSubagentTimeout_CreatesKeyWhenAbsent()
-    {
-        using var repo = TestRepository.Create();
-        // Write a config without subagentTimeoutMs — the loader defaults to 2_700_000.
-        repo.WriteConfig("dotnet test", []);
-
-        RelayConfigWriter.UpsertSubagentTimeout(repo.Root, 2_400_000);
-
         var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.Equal(2_400_000, result.Config.SubagentTimeoutMilliseconds);
+        Assert.True(result.Config.BaselineVerify);
+        Assert.Contains("cheap", result.Config.TierProfiles);
+        Assert.Equal("dotnet test", result.Config.TestCommand);
+    }
+
+    // ── UpsertTestTimeout ─────────────────────────────────────────────
+
+    [Fact]
+    public async Task UpsertTestTimeout_sets_preserves_creates()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], baselineVerify: true);
+        Assert.True((await RelayConfigLoader.TryLoadAsync(repo.Root)).Config.BaselineVerify);
+
+        RelayConfigWriter.UpsertTestTimeout(repo.Root, 900_000);
+        var result = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, result.Status);
+        Assert.Equal(900_000, result.Config.TestTimeoutMilliseconds);
+        Assert.True(result.Config.BaselineVerify);
+        Assert.Contains("cheap", result.Config.TierProfiles);
         Assert.Equal("dotnet test", result.Config.TestCommand);
     }
 
