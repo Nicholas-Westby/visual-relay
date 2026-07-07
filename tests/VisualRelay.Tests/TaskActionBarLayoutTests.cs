@@ -4,6 +4,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -42,7 +43,7 @@ public sealed class TaskActionBarLayoutTests
             .OfType<TaskActionBar>()
             .Single();
 
-        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as Button;
+        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as CommonButton;
         Assert.True(markDoneButton is not null,
             "'Mark done' button must exist in the TaskActionBar name scope.");
 
@@ -93,7 +94,7 @@ public sealed class TaskActionBarLayoutTests
             .OfType<TaskActionBar>()
             .Single();
 
-        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as Button;
+        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as CommonButton;
         Assert.True(markDoneButton is not null,
             "'Mark done' button must exist in the TaskActionBar name scope.");
 
@@ -140,7 +141,7 @@ public sealed class TaskActionBarLayoutTests
             .OfType<TaskActionBar>()
             .Single();
 
-        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as Button;
+        var markDoneButton = taskActionBar.FindNameScope()?.Find("MarkDoneButton") as CommonButton;
         Assert.True(markDoneButton is not null,
             "'Mark done' button must exist in the TaskActionBar name scope.");
 

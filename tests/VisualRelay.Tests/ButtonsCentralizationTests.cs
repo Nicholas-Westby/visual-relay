@@ -232,11 +232,11 @@ public sealed class ButtonsCentralizationTests
     }
 
     /// <summary>
-    /// No class may inherit directly from <c>Button</c> outside the central
-    /// Buttons directory.  The existing button components
-    /// (<c>CommonButton</c>, <c>IconButton</c>, <c>StageCardButton</c>) are
-    /// grandfathered in; any new class that inherits from <c>Button</c>
-    /// anywhere else in the source tree will fail this test.
+    /// No class anywhere under <c>src/VisualRelay.App</c> may inherit directly
+    /// from <c>Button</c>.  The three button components
+    /// (<c>CommonButton</c>, <c>IconButton</c>, <c>StageCardButton</c>) must
+    /// use composition (contain a <c>Button</c> via ControlTheme) rather than
+    /// inheritance.
     /// </summary>
     [Fact]
     public void NoClassInheritsFromButton()
@@ -259,13 +259,6 @@ public sealed class ButtonsCentralizationTests
 
         foreach (var file in files)
         {
-            // Allowed: the three grandfathered button components inside the
-            // central Buttons directory (CommonButton, IconButton,
-            // StageCardButton).  They inherit from Button so the Fluent
-            // theme applies correctly via StyleKeyOverride.
-            if (IsInButtonsDirectory(file))
-                continue;
-
             var matches = FindButtonInheritance(file);
             if (matches.Count > 0)
             {
@@ -276,10 +269,9 @@ public sealed class ButtonsCentralizationTests
         }
 
         Assert.True(violations.Count == 0,
-            $"Found {violations.Count} class(es) inheriting from Button outside "
-            + "Views/Controls/Buttons/.  New button types must not inherit "
-            + "directly from Button; use the existing centralized button "
-            + "components (CommonButton, IconButton, StageCardButton) instead.\n\n"
+            $"Found {violations.Count} class(es) inheriting from Button.  "
+            + "No class under src/VisualRelay.App may inherit from Button.  "
+            + "Use composition (contain a Button via ControlTheme) instead.\n\n"
             + $"Violations:\n{string.Join("\n", violations)}");
     }
 

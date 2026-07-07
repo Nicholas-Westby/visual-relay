@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -36,10 +37,10 @@ public sealed class InitPanelButtonsLayoutTests
         var queuePanel = window.GetVisualDescendants().OfType<QueuePanel>().Single();
 
         // ── Find the two action buttons ──
-        var createConfigButton = queuePanel.FindControl<Button>("CreateConfigButton");
+        var createConfigButton = queuePanel.FindControl<CommonButton>("CreateConfigButton");
         Assert.NotNull(createConfigButton);
 
-        var allButtons = queuePanel.GetVisualDescendants().OfType<Button>().ToList();
+        var allButtons = queuePanel.GetVisualDescendants().OfType<CommonButton>().ToList();
         var findItButton = allButtons.FirstOrDefault(b => b.Content?.ToString() == "Find it for me");
         Assert.NotNull(findItButton);
 
@@ -59,10 +60,13 @@ public sealed class InitPanelButtonsLayoutTests
         AssertButtonWidthSufficient(findItButton, "Find it for me");
     }
 
-    private static void AssertButtonWidthSufficient(Button button, string expectedLabel)
+    private static void AssertButtonWidthSufficient(CommonButton button, string expectedLabel)
     {
-        // Avalonia wraps string Content in a TextBlock inside a ContentPresenter.
-        var textBlock = button.GetVisualDescendants().OfType<TextBlock>()
+        // Find the actual Button inside the composed component (inner template Button).
+        var innerButton = button.GetVisualDescendants().OfType<Button>().FirstOrDefault()
+            ?? throw new InvalidOperationException("Composed button must contain an inner Button.");
+
+        var textBlock = innerButton.GetVisualDescendants().OfType<TextBlock>()
             .FirstOrDefault(tb => tb.Text == expectedLabel);
         Assert.NotNull(textBlock);
 
@@ -70,12 +74,8 @@ public sealed class InitPanelButtonsLayoutTests
         textBlock.Measure(Size.Infinity);
         var labelDesiredWidth = textBlock.DesiredSize.Width;
 
-        // The bare-text comparison is a near-tautology: the button's outer width
-        // always exceeds the text width by its horizontal padding (~24 px here),
-        // so it would pass even when the content area is too narrow. Account for
-        // the button's own padding so this is a real "label is not clipped" guard:
-        // the arranged width must fit the text PLUS the left/right padding.
-        var horizontalPadding = button.Padding.Left + button.Padding.Right;
+        // Use the inner Button's padding (from the theme), not the outer CommonButton's.
+        var horizontalPadding = innerButton.Padding.Left + innerButton.Padding.Right;
         var requiredWidth = labelDesiredWidth + horizontalPadding;
 
         Assert.True(

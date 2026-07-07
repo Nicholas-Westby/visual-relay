@@ -6,6 +6,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -79,12 +80,12 @@ public sealed class TaskDetailRemoveButtonLayoutTests
             .Single();
 
         ScrollViewer? attachmentsScrollViewer = null;
-        Button? removeButton = null;
+        CommonButton? removeButton = null;
 
         foreach (var sv in taskDetailPanel.GetVisualDescendants().OfType<ScrollViewer>())
         {
             var removeButtons = sv.GetVisualDescendants()
-                .OfType<Button>()
+                .OfType<CommonButton>()
                 .Where(b => b.Content?.ToString() == "Remove")
                 .ToList();
             if (removeButtons.Count > 0)
@@ -167,11 +168,11 @@ public sealed class TaskDetailRemoveButtonLayoutTests
             .OfType<TaskDetailPanel>()
             .Single();
 
-        Button? removeButton = null;
+        CommonButton? removeButton = null;
         foreach (var sv in taskDetailPanel.GetVisualDescendants().OfType<ScrollViewer>())
         {
             var btn = sv.GetVisualDescendants()
-                .OfType<Button>()
+                .OfType<CommonButton>()
                 .FirstOrDefault(b => b.Content?.ToString() == "Remove");
             if (btn is not null)
             {

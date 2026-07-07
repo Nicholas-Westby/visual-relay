@@ -12,12 +12,6 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
-    private static readonly IBrush PauseIdleBackground = Brush.Parse("#2B2416");
-    private static readonly IBrush PauseIdleBorder = Brush.Parse("#9E7A2D");
-    private static readonly IBrush PauseIdleForeground = Brush.Parse("#F0CA66");
-    private static readonly IBrush PauseActiveBackground = Brush.Parse("#3A2D12");
-    private static readonly IBrush PauseActiveBorder = Brush.Parse("#F2C66D");
-    private static readonly IBrush PauseActiveForeground = Brush.Parse("#FFE7A4");
     private static readonly IBrush BackendUpBrush = Brush.Parse("#5AD47D");
     private static readonly IBrush BackendDownBrush = Brush.Parse("#F36F63");
 
@@ -84,9 +78,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseButtonText))]
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     [NotifyPropertyChangedFor(nameof(IsPauseNoticeVisible))]
-    [NotifyPropertyChangedFor(nameof(PauseButtonBackground))]
-    [NotifyPropertyChangedFor(nameof(PauseButtonBorderBrush))]
-    [NotifyPropertyChangedFor(nameof(PauseButtonForeground))]
     private bool _pauseRequested;
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]

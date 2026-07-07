@@ -1,5 +1,7 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
@@ -27,10 +29,10 @@ public sealed class ChevronAffordanceRenderTests
         CollectControls(window.Content as Control, icons);
         Assert.NotEmpty(icons);
 
-        // There must be at least one chevron per visible toggle (Queue, Stages,
-        // Run Log, LLM Commands header chevrons are all present by default).
-        Assert.True(icons.Count >= 4,
-            $"expected >= 4 chevron icons, found {icons.Count}");
+        // There must be at least one chevron per visible header toggle (Queue,
+        // Stages, Activity column toggles are all present by default).
+        Assert.True(icons.Count >= 3,
+            $"expected >= 3 chevron icons, found {icons.Count}");
 
         // The one shared geometry exists and every chevron renders at the one
         // shared fixed size regardless of which way it points.
@@ -242,6 +244,11 @@ public sealed class ChevronAffordanceRenderTests
         {
             if (FindVisualOfType(ltc.Child, out result, predicate)) return true;
         }
+        else if (root is TemplatedControl)
+        {
+            foreach (var child in root.GetVisualChildren().OfType<Control>())
+                if (FindVisualOfType(child, out result, predicate)) return true;
+        }
 
         return false;
     }
@@ -266,6 +273,11 @@ public sealed class ChevronAffordanceRenderTests
         else if (root is LayoutTransformControl { Child: not null } ltc)
         {
             CollectControls(ltc.Child, results);
+        }
+        else if (root is TemplatedControl)
+        {
+            foreach (var child in root.GetVisualChildren().OfType<Control>())
+                CollectControls(child, results);
         }
     }
 }

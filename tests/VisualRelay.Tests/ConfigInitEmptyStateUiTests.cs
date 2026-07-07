@@ -7,6 +7,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -59,7 +60,7 @@ public sealed class ConfigInitEmptyStateUiTests
 
         // ── Act: click the Create config button and await the command's
         // in-flight task deterministically (no wall-clock poll). ──
-        var button = queuePanel.FindControl<Button>("CreateConfigButton");
+        var button = queuePanel.FindControl<Control>("CreateConfigButton");
         Assert.NotNull(button);
         var buttonCenter = new Point(button.Bounds.Width / 2, button.Bounds.Height / 2);
         var clickPoint = button.TranslatePoint(buttonCenter, window) ?? buttonCenter;
@@ -134,7 +135,7 @@ public sealed class ConfigInitEmptyStateUiTests
         Assert.True(initBorder.IsVisible);
 
         // ── Find the "Set up empty project" button by content (no x:Name) ──
-        var allButtons = queuePanel.GetVisualDescendants().OfType<Button>().ToList();
+        var allButtons = queuePanel.GetVisualDescendants().OfType<CommonButton>().ToList();
         var bootstrapButton = allButtons.FirstOrDefault(
             b => b.Content?.ToString() == "Set up empty project");
         Assert.NotNull(bootstrapButton);

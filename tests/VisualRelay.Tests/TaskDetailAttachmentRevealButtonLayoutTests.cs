@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -62,11 +63,11 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
             .OfType<TaskDetailPanel>()
             .Single();
 
-        Button? revealButton = null;
+        CommonButton? revealButton = null;
         foreach (var sv in taskDetailPanel.GetVisualDescendants().OfType<ScrollViewer>())
         {
             var btn = sv.GetVisualDescendants()
-                .OfType<Button>()
+                .OfType<CommonButton>()
                 .FirstOrDefault(b => b.Content?.ToString() == "Reveal");
             if (btn is not null)
             {
@@ -124,11 +125,11 @@ public sealed class TaskDetailAttachmentRevealButtonLayoutTests
             .OfType<TaskDetailPanel>()
             .Single();
 
-        Button? revealButton = null;
+        CommonButton? revealButton = null;
         foreach (var sv in taskDetailPanel.GetVisualDescendants().OfType<ScrollViewer>())
         {
             var btn = sv.GetVisualDescendants()
-                .OfType<Button>()
+                .OfType<CommonButton>()
                 .FirstOrDefault(b => b.Content?.ToString() == "Reveal");
             if (btn is not null)
             {

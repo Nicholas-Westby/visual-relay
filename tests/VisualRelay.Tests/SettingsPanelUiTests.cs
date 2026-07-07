@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
@@ -156,7 +157,7 @@ public sealed partial class SettingsPanelUiTests
         var hfInput = panel.FindControl<TextBox>("HfTokenInput");
         Assert.NotNull(hfInput);
 
-        var hfSave = panel.FindControl<Button>("HfSaveButton");
+        var hfSave = panel.FindControl<CommonButton>("HfSaveButton");
         Assert.NotNull(hfSave);
 
         dialog.Close();
@@ -208,11 +209,11 @@ public sealed partial class SettingsPanelUiTests
 
         var topBar = SettingsTestHelpers.GetTopBar(window);
         // The separate "Keys" button must be gone after consolidation.
-        var keyButton = topBar.FindControl<Button>("KeySetupButton");
+        var keyButton = topBar.FindControl<CommonButton>("KeySetupButton");
         Assert.Null(keyButton);
 
         // The Settings cog must still be present.
-        var settingsButton = topBar.FindControl<Button>("SettingsButton");
+        var settingsButton = topBar.FindControl<CommonButton>("SettingsButton");
         Assert.NotNull(settingsButton);
     }
 
@@ -236,7 +237,7 @@ public sealed partial class SettingsPanelUiTests
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
 
-        var revealButton = panel.FindControl<Button>("RevealSettingsFileButton");
+        var revealButton = panel.FindControl<CommonButton>("RevealSettingsFileButton");
         Assert.NotNull(revealButton);
         Assert.NotNull(revealButton.Command);
 

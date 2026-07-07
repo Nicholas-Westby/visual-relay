@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Input.Platform;
 using VisualRelay.App.Services;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.App.Views.Controls;
 
@@ -18,7 +19,7 @@ public partial class StageInputView : UserControl
         // the clipboard flow can never tear down the process.
         try
         {
-            if (sender is Button { DataContext: PromptSection section }
+            if (sender is CommonButton { DataContext: PromptSection section }
                 && TopLevel.GetTopLevel(this)?.Clipboard is { } clipboard)
             {
                 await clipboard.SetValueAsync(DataFormat.Text, section.Body);

@@ -80,18 +80,6 @@ public partial class App : Application
         {
             Content = confirmLabel,
             Appearance = ButtonAppearance.Primary,
-            // Grow to fit a longer label (e.g. "Rewrite and Replace")
-            // rather than clipping at a fixed width.
-            MinWidth = 80,
-            Padding = new Thickness(12, 0),
-            Height = 32,
-            HorizontalContentAlignment = Avalonia.Layout.HorizontalAlignment.Center,
-            // The Fluent Button ControlTheme does NOT set
-            // VerticalContentAlignment, so it falls to Top.  The Cancel
-            // button inherits theme ButtonPadding (with vertical inset)
-            // that masks the Top default; our Padding=(12,0) zeroes the
-            // vertical padding and exposes it.  Center explicitly.
-            VerticalContentAlignment = Avalonia.Layout.VerticalAlignment.Center
         };
     }
 
@@ -134,8 +122,6 @@ public partial class App : Application
                             new CommonButton
                             {
                                 Content = "Cancel",
-                                Width = 80,
-                                Height = 32
                             },
                             CreateConfirmButton(confirmLabel)
                         }
@@ -147,8 +133,8 @@ public partial class App : Application
         // Wire up button clicks.
         var grid = (Grid)dialog.Content;
         var buttons = (StackPanel)grid.Children[1];
-        var cancelBtn = (Button)buttons.Children[0];
-        var confirmBtn = (Button)buttons.Children[1];
+        var cancelBtn = (CommonButton)buttons.Children[0];
+        var confirmBtn = (CommonButton)buttons.Children[1];
 
         cancelBtn.Click += (_, _) => { tcs.TrySetResult(false); dialog.Close(); };
         confirmBtn.Click += (_, _) => { tcs.TrySetResult(true); dialog.Close(); };

@@ -1,5 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Interactivity;
+using Avalonia.Metadata;
 
 namespace VisualRelay.App.Views.Controls.Buttons;
 
@@ -12,16 +15,12 @@ public enum ButtonAppearance
 {
     /// <summary>Blue primary-action button (theme class "primary").</summary>
     Primary = 0,
-
     /// <summary>Grey default button (no extra style class).</summary>
     Default,
-
     /// <summary>Yellow warning/pause button (theme class "warning").</summary>
     Warning,
-
     /// <summary>Transparent blue link (theme class "hyperlink").</summary>
     Hyperlink,
-
     /// <summary>Dark folder-path button (theme class "path").</summary>
     Path,
 }
@@ -29,40 +28,50 @@ public enum ButtonAppearance
 /// <summary>
 /// Every general-purpose text button in the app.  Set
 /// <see cref="Appearance"/> to choose the visual variant; the control
-/// automatically applies the matching Avalonia style class so the
-/// existing theme selectors (<c>Button.primary</c>, <c>Button.warning</c>,
-/// etc.) match without any theme changes.
+/// automatically applies the matching Avalonia style class to its inner
+/// <c>Button</c> so the existing theme selectors (<c>Button.primary</c>,
+/// <c>Button.warning</c>, etc.) match without any theme changes.
 ///
 /// When <see cref="Glyph"/> is set the control prepends a small
-/// <see cref="TextBlock"/> before the <see cref="ContentControl.Content"/>,
-/// replacing the old inline-⚙ pattern.
+/// <see cref="TextBlock"/> before the <see cref="Content"/>.
+///
+/// <see cref="CommonButton"/> uses composition — it contains a single
+/// <c>Button</c> via its ControlTheme rather than inheriting from
+/// <c>Button</c>.
 /// </summary>
-public partial class CommonButton : Button
+public partial class CommonButton : TemplatedControl
 {
-    // Ensure the Button theme (template, visual states, pointer handling)
-    // from the Fluent theme applies exactly as it does to plain Button.
-    protected override Type StyleKeyOverride => typeof(Button);
     /// <summary>
-    /// Identifies the <see cref="Appearance"/> styled property.
+    /// Identifies the <see cref="Content"/> styled property.
+    /// Registered on <see cref="CommonButton"/> so the composed control
+    /// owns its own Content property (TemplatedControl does not provide one).
     /// </summary>
+    public static readonly StyledProperty<object?> ContentProperty =
+        AvaloniaProperty.Register<CommonButton, object?>(nameof(Content));
+
     public static readonly StyledProperty<ButtonAppearance> AppearanceProperty =
         AvaloniaProperty.Register<CommonButton, ButtonAppearance>(
-            nameof(Appearance),
-            defaultValue: ButtonAppearance.Default);
+            nameof(Appearance), defaultValue: ButtonAppearance.Default);
 
-    /// <summary>
-    /// Identifies the <see cref="Glyph"/> styled property.
-    /// </summary>
     public static readonly StyledProperty<string?> GlyphProperty =
-        AvaloniaProperty.Register<CommonButton, string?>(
-            nameof(Glyph));
+        AvaloniaProperty.Register<CommonButton, string?>(nameof(Glyph));
 
-    /// <summary>The original <see cref="ContentControl.Content"/> set by the
-    /// consumer, saved so we can re-wrap it when <see cref="Glyph"/> changes.</summary>
+    public static readonly StyledProperty<System.Windows.Input.ICommand?> CommandProperty =
+        AvaloniaProperty.Register<CommonButton, System.Windows.Input.ICommand?>(nameof(Command));
+
+    public static readonly StyledProperty<object?> CommandParameterProperty =
+        AvaloniaProperty.Register<CommonButton, object?>(nameof(CommandParameter));
+
+    public static readonly StyledProperty<FlyoutBase?> FlyoutProperty =
+        AvaloniaProperty.Register<CommonButton, FlyoutBase?>(nameof(Flyout));
+
+    public static readonly RoutedEvent<RoutedEventArgs> ClickEvent =
+        RoutedEvent.Register<CommonButton, RoutedEventArgs>(
+            nameof(Click), RoutingStrategies.Bubble);
+
     private object? _originalContent;
-
-    /// <summary>Whether we are currently wrapping content for a glyph.</summary>
     private bool _isWrapping;
+    private Button? _innerButton;
 
     static CommonButton()
     {
@@ -70,73 +79,123 @@ public partial class CommonButton : Button
         GlyphProperty.Changed.AddClassHandler<CommonButton>(OnGlyphChanged);
     }
 
-    /// <summary>The visual variant of this button.</summary>
+    /// <summary>
+    /// Gets or sets the content displayed inside the composed button.
+    /// </summary>
+    [Content]
+    public object? Content
+    {
+        get => GetValue(ContentProperty);
+        set => SetValue(ContentProperty, value);
+    }
+
     public ButtonAppearance Appearance
     {
         get => GetValue(AppearanceProperty);
         set => SetValue(AppearanceProperty, value);
     }
 
-    /// <summary>
-    /// Optional Unicode glyph (e.g. "⚙") to prepend before the button
-    /// <see cref="ContentControl.Content"/>.  When set the control
-    /// automatically wraps content in a horizontal <see cref="StackPanel"/>.
-    /// </summary>
+    /// <summary>Optional Unicode glyph (e.g. "⚙") prepended to <see cref="Content"/>.</summary>
     public string? Glyph
     {
         get => GetValue(GlyphProperty);
         set => SetValue(GlyphProperty, value);
     }
 
-    /// <inheritdoc />
+    public System.Windows.Input.ICommand? Command
+    {
+        get => GetValue(CommandProperty);
+        set => SetValue(CommandProperty, value);
+    }
+
+    public object? CommandParameter
+    {
+        get => GetValue(CommandParameterProperty);
+        set => SetValue(CommandParameterProperty, value);
+    }
+
+    public FlyoutBase? Flyout
+    {
+        get => GetValue(FlyoutProperty);
+        set => SetValue(FlyoutProperty, value);
+    }
+
+    /// <summary>Re-raised from the inner Button so XAML Click="…" handlers keep working.</summary>
+    public event EventHandler<RoutedEventArgs> Click
+    {
+        add => AddHandler(ClickEvent, value);
+        remove => RemoveHandler(ClickEvent, value);
+    }
+
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
+    {
+        base.OnApplyTemplate(e);
+
+        if (_innerButton is not null)
+        {
+            _innerButton.Click -= OnInnerButtonClick;
+            _innerButton = null;
+        }
+
+        _innerButton = e.NameScope.Find<Button>("PART_Button");
+        if (_innerButton is not null)
+        {
+            _innerButton.Click += OnInnerButtonClick;
+            ApplyAppearanceToInner(Appearance);
+            _innerButton.Bind(Button.CommandProperty, this.GetObservable(CommandProperty));
+            _innerButton.Bind(Button.CommandParameterProperty, this.GetObservable(CommandParameterProperty));
+            _innerButton.Bind(Button.FlyoutProperty, this.GetObservable(FlyoutProperty));
+            _originalContent = GetValue(ContentProperty);
+            ApplyGlyphToInner();
+        }
+    }
+
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
         base.OnPropertyChanged(change);
-
-        // Capture the raw content before Glyph logic wraps it.
         if (change.Property == ContentProperty && !_isWrapping)
         {
             _originalContent = change.NewValue;
-            ApplyGlyph();
+            ApplyGlyphToInner();
         }
     }
 
     private static void OnAppearanceChanged(CommonButton button, AvaloniaPropertyChangedEventArgs e)
     {
-        button.ApplyAppearance((ButtonAppearance)(e.NewValue ?? ButtonAppearance.Default));
+        button.ApplyAppearanceToInner((ButtonAppearance)(e.NewValue ?? ButtonAppearance.Default));
     }
 
     private static void OnGlyphChanged(CommonButton button, AvaloniaPropertyChangedEventArgs e)
     {
-        button.ApplyGlyph();
+        button.ApplyGlyphToInner();
     }
 
-    private void ApplyAppearance(ButtonAppearance appearance)
+    private void ApplyAppearanceToInner(ButtonAppearance appearance)
     {
-        Classes.Remove("primary");
-        Classes.Remove("warning");
-        Classes.Remove("hyperlink");
-        Classes.Remove("path");
+        if (_innerButton is null) return;
+
+        _innerButton.Classes.Remove("primary");
+        _innerButton.Classes.Remove("warning");
+        _innerButton.Classes.Remove("hyperlink");
+        _innerButton.Classes.Remove("path");
 
         switch (appearance)
         {
             case ButtonAppearance.Primary:
-                Classes.Add("primary");
-                break;
+                _innerButton.Classes.Add("primary"); break;
             case ButtonAppearance.Warning:
-                Classes.Add("warning");
-                break;
+                _innerButton.Classes.Add("warning"); break;
             case ButtonAppearance.Hyperlink:
-                Classes.Add("hyperlink");
-                break;
+                _innerButton.Classes.Add("hyperlink"); break;
             case ButtonAppearance.Path:
-                Classes.Add("path");
-                break;
+                _innerButton.Classes.Add("path"); break;
         }
     }
 
-    private void ApplyGlyph()
+    private void ApplyGlyphToInner()
     {
+        if (_innerButton is null) return;
+
         _isWrapping = true;
         try
         {
@@ -145,11 +204,11 @@ public partial class CommonButton : Button
 
             if (string.IsNullOrEmpty(glyph) || content is null)
             {
-                Content = content;
+                _innerButton.Content = content;
                 return;
             }
 
-            Content = new StackPanel
+            _innerButton.Content = new StackPanel
             {
                 Orientation = Avalonia.Layout.Orientation.Horizontal,
                 Spacing = 6,
@@ -165,34 +224,27 @@ public partial class CommonButton : Button
                 },
             };
         }
-        finally
-        {
-            _isWrapping = false;
-        }
+        finally { _isWrapping = false; }
     }
 
-    /// <summary>
-    /// Wraps a string content value in a <see cref="TextBlock"/> so it
-    /// renders; passes through any other object unchanged (it will be
-    /// hosted by Avalonia's content presenter inside the StackPanel).
-    /// </summary>
     private static Control CreateContentPresenter(object content)
     {
         if (content is string s)
-        {
             return new TextBlock
             {
                 Text = s,
                 VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
             };
-        }
 
-        // For non-string content (e.g. a Grid), wrap in a ContentControl
-        // so it renders inside the StackPanel.
         return new ContentControl
         {
             Content = content,
             VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
         };
+    }
+
+    private void OnInnerButtonClick(object? sender, RoutedEventArgs e)
+    {
+        RaiseEvent(new RoutedEventArgs(ClickEvent));
     }
 }

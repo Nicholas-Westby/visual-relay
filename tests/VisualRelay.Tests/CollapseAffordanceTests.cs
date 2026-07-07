@@ -1,8 +1,11 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -99,7 +102,10 @@ public sealed class CollapseAffordanceTests
             b => b.Classes.Contains("collapseToggle") && b.IsVisible);
         foreach (var btn in visibleCollapseButtons)
         {
-            var tip = ToolTip.GetTip(btn) as string;
+            // ToolTip is set on the outer IconButton, not the inner Button.
+            var iconButton = btn.GetVisualAncestors().OfType<IconButton>().FirstOrDefault();
+            Assert.NotNull(iconButton);
+            var tip = ToolTip.GetTip(iconButton) as string;
             Assert.NotNull(tip);
             Assert.NotEmpty(tip);
         }
@@ -107,12 +113,15 @@ public sealed class CollapseAffordanceTests
         // Rail toggles must say "Expand X".
         var railButtons = allButtons.FindAll(
             b => b.Classes.Contains("collapseToggle")
-                && b is { IsVisible: true, Parent: StackPanel { Parent: Border brd } }
+                && b is { IsVisible: true }
+                && b.GetVisualAncestors().OfType<IconButton>().FirstOrDefault()
+                    is { Parent: StackPanel { Parent: Border brd } }
                 && brd.Classes.Contains("rail"));
         Assert.NotEmpty(railButtons);
         foreach (var btn in railButtons)
         {
-            var tip = ToolTip.GetTip(btn) as string;
+            var iconButton = btn.GetVisualAncestors().OfType<IconButton>().First();
+            var tip = ToolTip.GetTip(iconButton) as string;
             Assert.NotNull(tip);
             Assert.StartsWith("Expand ", tip);
         }
@@ -136,15 +145,16 @@ public sealed class CollapseAffordanceTests
             b => b.Classes.Contains("collapseToggle"));
         Assert.NotNull(queueToggle);
 
-        Assert.Equal("Collapse Queue", ToolTip.GetTip(queueToggle) as string);
+        var queueIconButton = queueToggle.GetVisualAncestors().OfType<IconButton>().First();
+        Assert.Equal("Collapse Queue", ToolTip.GetTip(queueIconButton) as string);
 
         viewModel.IsQueueCollapsed = true;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Expand Queue", ToolTip.GetTip(queueToggle) as string);
+        Assert.Equal("Expand Queue", ToolTip.GetTip(queueIconButton) as string);
 
         viewModel.IsQueueCollapsed = false;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Collapse Queue", ToolTip.GetTip(queueToggle) as string);
+        Assert.Equal("Collapse Queue", ToolTip.GetTip(queueIconButton) as string);
 
         // ── Stages ──
         FindVisualOfType(window.Content as Control, out StageBoard? stageBoard);
@@ -154,15 +164,16 @@ public sealed class CollapseAffordanceTests
             b => b.Classes.Contains("collapseToggle"));
         Assert.NotNull(stagesToggle);
 
-        Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesToggle) as string);
+        var stagesIconButton = stagesToggle.GetVisualAncestors().OfType<IconButton>().First();
+        Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesIconButton) as string);
 
         viewModel.IsStagesCollapsed = true;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Expand Stages", ToolTip.GetTip(stagesToggle) as string);
+        Assert.Equal("Expand Stages", ToolTip.GetTip(stagesIconButton) as string);
 
         viewModel.IsStagesCollapsed = false;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesToggle) as string);
+        Assert.Equal("Collapse Stages", ToolTip.GetTip(stagesIconButton) as string);
 
         // ── Activity ──
         FindVisualOfType(window.Content as Control, out ActivityColumn? activityColumn);
@@ -175,15 +186,16 @@ public sealed class CollapseAffordanceTests
         Assert.Single(headerToggles);
 
         var activityToggle = headerToggles[0];
-        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityToggle) as string);
+        var activityIconButton = activityToggle.GetVisualAncestors().OfType<IconButton>().First();
+        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityIconButton) as string);
 
         viewModel.IsActivityColumnCollapsed = true;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Expand Activity", ToolTip.GetTip(activityToggle) as string);
+        Assert.Equal("Expand Activity", ToolTip.GetTip(activityIconButton) as string);
 
         viewModel.IsActivityColumnCollapsed = false;
         Dispatcher.UIThread.RunJobs();
-        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityToggle) as string);
+        Assert.Equal("Collapse Activity", ToolTip.GetTip(activityIconButton) as string);
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
@@ -231,6 +243,11 @@ public sealed class CollapseAffordanceTests
         {
             if (FindVisualOfType(ltc.Child, out result, predicate)) return true;
         }
+        else if (root is TemplatedControl)
+        {
+            foreach (var child in root.GetVisualChildren().OfType<Control>())
+                if (FindVisualOfType(child, out result, predicate)) return true;
+        }
 
         return false;
     }
@@ -255,6 +272,11 @@ public sealed class CollapseAffordanceTests
         else if (root is LayoutTransformControl { Child: not null } ltc)
         {
             CollectControls(ltc.Child, results);
+        }
+        else if (root is TemplatedControl)
+        {
+            foreach (var child in root.GetVisualChildren().OfType<Control>())
+                CollectControls(child, results);
         }
     }
 }

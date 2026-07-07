@@ -4,6 +4,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 
 namespace VisualRelay.Tests;
 
@@ -41,7 +42,7 @@ public sealed class StatusFooterFlyoutTests
             .OfType<QueuePanel>()
             .Single();
 
-        var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
+        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
         Assert.NotNull(expandButton.Flyout);
         Assert.IsType<Flyout>(expandButton.Flyout);
@@ -69,7 +70,7 @@ public sealed class StatusFooterFlyoutTests
             .OfType<QueuePanel>()
             .Single();
 
-        var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
+        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         var flyout = Assert.IsType<Flyout>(expandButton.Flyout);
@@ -123,7 +124,7 @@ public sealed class StatusFooterFlyoutTests
             .OfType<QueuePanel>()
             .Single();
 
-        var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
+        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         // Initial state: StatusText == "Idle" (non-empty), so button is visible.
@@ -176,7 +177,7 @@ public sealed class StatusFooterFlyoutTests
             .OfType<QueuePanel>()
             .Single();
 
-        var expandButton = queuePanel.FindControl<Button>("StatusExpandButton");
+        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         // Open the flyout so its visual tree is materialised.

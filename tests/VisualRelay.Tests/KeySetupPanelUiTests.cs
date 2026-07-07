@@ -5,6 +5,7 @@ using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
+using VisualRelay.App.Views.Controls.Buttons;
 using VisualRelay.Core.Configuration;
 using Ellipse = Avalonia.Controls.Shapes.Ellipse;
 
@@ -21,7 +22,6 @@ public sealed class KeySetupPanelUiTests
     private void EnsureNoUserEnv() => SettingsTestHelpers.EnsureNoUserEnv(_env);
     private static SettingsWindow OpenSettings(MainWindow window) =>
         SettingsTestHelpers.OpenSettings(window);
-
     [AvaloniaFact]
     public async Task PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv()
     {
@@ -134,7 +134,7 @@ public sealed class KeySetupPanelUiTests
         Assert.Equal("hf-pasted-token-789",
             vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN").PendingValue);
 
-        var saveButton = panel.FindControl<Button>("HfSaveButton")!;
+        var saveButton = panel.FindControl<CommonButton>("HfSaveButton")!;
         Assert.NotNull(saveButton.Command);
         var hfState = vm.KeyStates.First(s => s.Row.EnvVarName == "HF_TOKEN");
         await vm.SaveKeyCommand.ExecuteAsync(hfState);

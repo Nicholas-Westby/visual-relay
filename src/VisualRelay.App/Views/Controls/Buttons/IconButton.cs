@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 
 namespace VisualRelay.App.Views.Controls.Buttons;
 
@@ -18,18 +19,22 @@ public enum IconButtonStyle
 /// <summary>
 /// An icon-only toggle button that auto-composes the correct vector icon
 /// (<see cref="ChevronIcon"/> or <see cref="FocusToggleIcon"/>)
-/// and applies the matching Avalonia style class so the existing theme
-/// selectors (<c>Button.collapseToggle</c>, <c>Button.focusToggle</c>)
+/// and applies the matching Avalonia style class to its inner
+/// <c>Button</c> so the existing theme selectors
+/// (<c>Button.collapseToggle</c>, <c>Button.focusToggle</c>)
 /// match without any theme changes.
 ///
 /// Bind <see cref="ChevronDirection"/> when <see cref="IconStyle"/> is
 /// <see cref="IconButtonStyle.CollapseToggle"/>, and
 /// <see cref="IsContracted"/> when <see cref="IconStyle"/> is
 /// <see cref="IconButtonStyle.FocusToggle"/>.
+///
+/// <see cref="IconButton"/> uses composition — it contains a single
+/// <c>Button</c> via its ControlTheme rather than inheriting from
+/// <c>Button</c>.
 /// </summary>
-public partial class IconButton : Button
+public partial class IconButton : TemplatedControl
 {
-    protected override Type StyleKeyOverride => typeof(Button);
     /// <summary>
     /// Identifies the <see cref="IconStyle"/> styled property.
     /// </summary>
@@ -56,6 +61,16 @@ public partial class IconButton : Button
         AvaloniaProperty.Register<IconButton, bool>(
             nameof(IsContracted));
 
+    /// <summary>
+    /// Identifies the <see cref="Command"/> styled property
+    /// (forwarded from the inner <c>Button</c>).
+    /// </summary>
+    public static readonly StyledProperty<System.Windows.Input.ICommand?> CommandProperty =
+        AvaloniaProperty.Register<IconButton, System.Windows.Input.ICommand?>(
+            nameof(Command));
+
+    private Button? _innerButton;
+
     static IconButton()
     {
         IconStyleProperty.Changed.AddClassHandler<IconButton>(OnIconStyleChanged);
@@ -63,7 +78,7 @@ public partial class IconButton : Button
 
     public IconButton()
     {
-        ApplyIconStyle(IconStyle);
+        ApplyIconStyleToInner(IconStyle);
     }
 
     /// <summary>Which icon this button displays.</summary>
@@ -95,31 +110,61 @@ public partial class IconButton : Button
         set => SetValue(IsContractedProperty, value);
     }
 
-    private static void OnIconStyleChanged(IconButton button, AvaloniaPropertyChangedEventArgs e)
+    /// <summary>
+    /// The <see cref="System.Windows.Input.ICommand"/> to invoke when the
+    /// inner button is clicked.
+    /// </summary>
+    public System.Windows.Input.ICommand? Command
     {
-        button.ApplyIconStyle((IconButtonStyle)(e.NewValue ?? IconButtonStyle.CollapseToggle));
+        get => GetValue(CommandProperty);
+        set => SetValue(CommandProperty, value);
     }
 
-    private void ApplyIconStyle(IconButtonStyle style)
+    /// <inheritdoc />
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
     {
-        Classes.Remove("collapseToggle");
-        Classes.Remove("focusToggle");
+        base.OnApplyTemplate(e);
+
+        _innerButton = e.NameScope.Find<Button>("PART_Button");
+        if (_innerButton is not null)
+        {
+            // Forward Command from outer to inner.
+            _innerButton.Bind(Button.CommandProperty, this.GetObservable(CommandProperty));
+
+            // Apply the current icon style (which sets Content + classes on
+            // the inner button).
+            ApplyIconStyleToInner(IconStyle);
+        }
+    }
+
+    private static void OnIconStyleChanged(IconButton button, AvaloniaPropertyChangedEventArgs e)
+    {
+        button.ApplyIconStyleToInner((IconButtonStyle)(e.NewValue ?? IconButtonStyle.CollapseToggle));
+    }
+
+    private void ApplyIconStyleToInner(IconButtonStyle style)
+    {
+        if (_innerButton is null)
+            return;
+
+        _innerButton.Classes.Remove("collapseToggle");
+        _innerButton.Classes.Remove("focusToggle");
 
         switch (style)
         {
             case IconButtonStyle.CollapseToggle:
-                Classes.Add("collapseToggle");
+                _innerButton.Classes.Add("collapseToggle");
                 var chevron = new ChevronIcon();
                 chevron.Bind(ChevronIcon.DirectionProperty,
                     this.GetObservable(ChevronDirectionProperty));
-                Content = chevron;
+                _innerButton.Content = chevron;
                 break;
             case IconButtonStyle.FocusToggle:
-                Classes.Add("focusToggle");
+                _innerButton.Classes.Add("focusToggle");
                 var focusIcon = new FocusToggleIcon();
                 focusIcon.Bind(FocusToggleIcon.IsContractedProperty,
                     this.GetObservable(IsContractedProperty));
-                Content = focusIcon;
+                _innerButton.Content = focusIcon;
                 break;
         }
     }

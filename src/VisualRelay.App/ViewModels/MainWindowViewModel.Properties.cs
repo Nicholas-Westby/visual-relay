@@ -34,9 +34,6 @@ public partial class MainWindowViewModel
     public string BackendStatusLabel => IsBackendReachable
         ? $"backend: {new Uri(ModelBackend.BaseUrl).Authority}"
         : "backend down";
-    public IBrush PauseButtonBackground => PauseRequested ? PauseActiveBackground : PauseIdleBackground;
-    public IBrush PauseButtonBorderBrush => PauseRequested ? PauseActiveBorder : PauseIdleBorder;
-    public IBrush PauseButtonForeground => PauseRequested ? PauseActiveForeground : PauseIdleForeground;
     public bool IsViewingDifferentTaskDuringRun =>
         _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);
     public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $"Viewing {SelectedTask!.Id} · running {_runningTaskId}" : string.Empty;

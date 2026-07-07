@@ -19,9 +19,9 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal static class SettingsTestHelpers
 {
-    private static Button FindButton(Control root, string name)
+    private static Control FindButton(Control root, string name)
     {
-        var btn = root.FindControl<Button>(name);
+        var btn = root.FindControl<Control>(name);
         Assert.NotNull(btn);
         return btn;
     }
