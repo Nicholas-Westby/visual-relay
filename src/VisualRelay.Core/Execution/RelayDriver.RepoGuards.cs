@@ -221,7 +221,7 @@ public sealed partial class RelayDriver
     /// segments; <c>*</c> matches any characters within a single segment.
     /// Comparison is case-insensitive.
     /// </summary>
-    private static bool MatchesGuardGlob(string relativePath, string pattern)
+    internal static bool MatchesGuardGlob(string relativePath, string pattern)
     {
         relativePath = relativePath.Replace('\\', '/');
         pattern = pattern.Replace('\\', '/');

@@ -112,7 +112,10 @@ public sealed record RelayConfig(
     // value = model_name from that tier's SelectableModels. When null (default),
     // every tier auto-resolves. Entries absent from a tier's SelectableModels
     // are dropped on load so a stale config never references a removed model.
-    IReadOnlyDictionary<string, string>? TierModelOverrides = null)
+    IReadOnlyDictionary<string, string>? TierModelOverrides = null,
+    // Root-relative glob patterns that classify paths as test-related in addition
+    // to the built-in heuristics. Default empty (built-in heuristics only).
+    IReadOnlyList<string>? TestPaths = null)
 {
     // Glob patterns (relative to targetRoot) that identify guard/gate scripts.
     // When a manifest entry matches any pattern, the harness executes it once

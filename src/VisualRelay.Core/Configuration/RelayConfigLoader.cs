@@ -44,7 +44,8 @@ public static partial class RelayConfigLoader
             RetryFlakyVerify: true,
             TierModelOverrides: null)
         {
-            NewGuardPatterns = ["tools/guards/**/*.sh"]
+            NewGuardPatterns = ["tools/guards/**/*.sh"],
+            TestPaths = []
         };
     public static async Task<RelayConfig> LoadAsync(string rootPath, CancellationToken cancellationToken = default)
     {
@@ -232,7 +233,8 @@ public static partial class RelayConfigLoader
                 DownshiftOnEarlyImplementation = OptionalBool(root, "downshiftOnEarlyImplementation", defaults.DownshiftOnEarlyImplementation),
                 RetryFlakyVerify = OptionalBool(root, "retryFlakyVerify", defaults.RetryFlakyVerify),
                 SandboxExtraAllowPaths = sandboxExtraAllowPaths,
-                TierModelOverrides = tierModelOverrides
+                TierModelOverrides = tierModelOverrides,
+                TestPaths = OptionalStringArray(root, "testPaths", [])
             };
             return new RelayConfigResult(config, RelayConfigStatus.Loaded, null);
         }

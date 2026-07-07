@@ -15,7 +15,7 @@ namespace VisualRelay.Core.Init;
 //   5. Go            (go.mod)                     → "go test ./..."
 //   6. Swift         (Package.swift)              → "swift test"
 //   7. Node          (package.json)              → scripts.test value or "npm test"
-//   8. Python (weak) (tests/ directory only)     → "pytest"  ← LAST, weakest signal
+//   8. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
 public static class TestCommandDetector
 {
     /// <summary>
@@ -78,8 +78,9 @@ public static class TestCommandDetector
             candidates.Add(script ?? "npm test");
         }
 
-        // 8. Python (weak) — tests/ directory is a last-resort signal
-        if (Directory.Exists(Path.Combine(rootPath, "tests")))
+        // 8. Python (weak) — tests/ or test/ directory is a last-resort signal
+        if (Directory.Exists(Path.Combine(rootPath, "tests"))
+            || Directory.Exists(Path.Combine(rootPath, "test")))
         {
             candidates.Add("pytest");
         }

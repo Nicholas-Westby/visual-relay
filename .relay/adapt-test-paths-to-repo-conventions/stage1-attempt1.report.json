@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T05:29:14.591939+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: adapt-test-paths-to-repo-conventions\nWorking directory: /tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions\n\n## Task input\n# Adapt Test-File Detection to Each Repo's Conventions\n\nVisual Relay runs on arbitrary repos, but its notion of \"this changed file is a test\" is largely\nhardcoded to one convention (a `tests/` directory plus three filename shapes). Repos name and\nplace their tests very differently (survey below). On a repo that doesn't match, classification\nsilently misfires \u2014 and three run-critical behaviors depend on it. Make test-file detection adapt\nper repo: broaden the built-in heuristics using the survey evidence, and add a repo-specific\nconfig override for the long tail.\n\n## Current state (researched)\n\n- **The classifier** \u2014 `src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs`,\n  `private static bool IsTestFile(string path)`. Its complete rule set today (case-insensitive,\n  backslash-normalized): path starts with `tests/` or contains `/tests/`; filename contains\n  `.tests.`; filename (sans extension) ends with `_test`; filename contains `.spec.`.\n  Note the file is at **289 lines \u2014 effectively at the 300-line guard ceiling**\n  (`tools/VisualRelay.Guards`), so new classification logic must live in a **new file**, not here.\n- **Consumer 1: targeted test runs** \u2014 `RelayDriver.Artifacts.cs`,\n  `BuildTargetedTestCommand(RelayConfig config, IReadOnlyList<string> manifest)`: replaces the\n  `{files}` token in `testFileCmd` with `manifest.Where(IsTestFile)`; falls back to the full\n  `testCmd` when no manifest file classifies as a test. Missed conventions mean targeted runs\n  silently degrade to full-suite runs (slow), and misclassified impl files could be passed to the\n  test runner as test files.\n- **Consumer 2: the TDD early-implementation gate** \u2014\n  `src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs`\n  (`ImplementationAlreadyUnderwayAsync(..., isTestFile: IsTestFile)`), invoked from\n  `RelayDriver.cs` and `RelayDriver.Stage5.cs`. Test files are *excluded* when deciding whether an\n  agent front-loaded implementation. On a repo whose tests don't match the heuristic (e.g. Jest's\n  `Button.test.tsx`), the test files a stage legitimately writes are counted as *implementation*,\n  and the gate misfires.\n- **Consumer 3: the code-change gate** \u2014 `src/VisualRelay.Core/Execution/RelayDriver.CodeChangeGate.cs`:\n  `.Any(f => IsImpl(f) && !IsTestFile(f))` \u2014 \"did this stage change real code?\" A tests-only\n  change on a non-conforming repo wrongly counts as an implementation change.\n- **Init-time detection** \u2014 `src/VisualRelay.Core/Init/TestCommandDetector.cs` uses\n  `Directory.Exists(Path.Combine(rootPath, \"tests\"))` as its weakest-priority Python signal\n  (`pytest`); a repo using `test/` (see pytorch below) misses even that.\n- **Repo config precedent** \u2014 `.relay/config.json` already repo-scopes `testCmd`/`testFileCmd`;\n  arrays are parsed in `src/VisualRelay.Core/Configuration/RelayConfigLoader.cs` via\n  `OptionalStringArray(root, \"boostTurnsTaskIds\", [])` etc., with record fields on\n  `src/VisualRelay.Domain/RelayConfig.cs`. Classification is the only piece that is *not*\n  configurable today.\n- **Existing philosophy** \u2014 `src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs` /\n  `GitCommitter.cs` comments: committing deliberately does *not* assume a `src`/`tests`/`tools`\n  layout \"since Visual Relay runs on any repo\". Classification should live up to the same bar.\n\n## Survey: where 40 popular repos actually keep tests\n\nGathered 2026-07-06 via the GitHub API (top-level listing per repo, plus targeted subdirectory\nchecks). Directory names are verbatim.\n\n| Convention | Repos (language) |\n| --- | --- |\n| `tests/` top-level | TypeScript, django (`tests/` + `js_tests/`), flask, requests, rust-lang/rust, ripgrep, redis, laravel/framework, Avalonia (C#) |\n| `test/` top-level (singular) | nodejs/node, express, next.js, pytorch, golang/go, kubernetes, PowerShell, jekyll, phoenix (Elixir), elasticsearch (+ `qa/`), llvm (`test/` + `unittests/` per project) |\n| `spec/` top-level (RSpec) | mastodon, discourse (has `spec/` *and* `test/`) |\n| `t/` top-level | git (`t/t0000-*.sh`) |\n| `Tests/` capitalized | Alamofire (Swift); symfony nests `Tests/` inside each `src/Symfony/**` component |\n| Nested per-package `tests/` | pandas (`pandas/tests/`), scikit-learn (`sklearn/**/tests/`), dotnet/runtime & aspnetcore (`src/<lib>/tests/`), tokio (per-crate `tests/` + `tests-integration/`, `tests-build/`, `stress-test/`) |\n| `src/test/` (Maven/Gradle) | spring-boot (`core/spring-boot/src/{main,test,testFixtures}/`), guava (top-level `guava-tests/`, `integration-tests/`), elasticsearch modules, kafka-style JVM repos generally |\n| Colocated test *files*, no test dir | golang/go & gin & hugo (`*_test.go` beside impl; `testdata/` fixture dirs), rust crates (inline `#[cfg(test)]` modules), react (`packages/*/src/__tests__/*-test.js`), vuejs/core & svelte (`packages/*/__tests__/`) |\n| Suffix/prefix dir variants | serde (`test_suite/`), spring-boot (`integration-test/`, `smoke-test/`, `system-test/`, `test-support/`), hugo (`htesting/`, `testscripts/`), jekyll (`features/` cucumber), pandas (`_testing/`) |\n| Basically everything at once | linux (`tools/testing/`, colocated KUnit), postgres (`src/test/`) |\n\nFilename conventions in the wild: `*_test.go` / `*_test.py` (caught today); `test_*.py` (pytest\ndefault \u2014 **missed**); `*.test.ts` / `*.test.tsx` / `*.test.js` (Jest default \u2014 **missed**;\nonly `.tests.` and `.spec.` are caught); `*-test.js` (react \u2014 **missed**); `*_spec.rb` (RSpec \u2014\n**missed**); `FooTest.java` / `FooTests.cs` / `FooTest.php` / `FooTests.swift` (JUnit/xUnit/\nPHPUnit/XCTest suffix \u2014 **missed** by filename, saved only when they also sit under a `tests/`\ndir); `t/tNNNN-*.sh` (git \u2014 **missed**).\n\nDirectory-name gaps vs. today's `tests/`-only rule: `test/`, `spec/`, `t/`, `__tests__/`,\n`unittests/`, `src/test/\u2026`, `testdata/` (Go fixtures), plus the suffixed families\n(`*-test/`, `test-*/`, `tests-*/`, `*_test(s)/`, `test_suite/`). The existing checks are already\ncase-insensitive, which covers `Tests/`.\n\n## What to build\n\n1. **A dedicated classifier in a new file** (e.g.\n   `src/VisualRelay.Core/Execution/TestPathClassifier.cs`), TDD-first, replacing the private\n   heuristic. Layered design:\n   - **Built-in directory rule:** a path is a test path when *any* path segment matches, case-\n     insensitively: exact names `test`, `tests`, `spec`, `specs`, `t`, `__tests__`, `unittests`,\n     `testdata`, `test_suite`, `testfixtures`, `htesting`; or a segment that starts with `test-`/\n     `tests-`/`test_`, or ends with `-test`/`-tests`/`_test`/`_tests`. Segment matching (not\n     substring) keeps `attestation/`, `contest/`, `latest/` from false-positiving.\n   - **Built-in filename rules:** keep today's four; add `.test.` infix, `test_` prefix,\n     `-test` suffix, `_spec` suffix (all case-insensitive, on the name sans final extension where\n     that's the natural reading); add the PascalCase `\u2026Test`/`\u2026Tests`/`\u2026Spec` suffix **only** for\n     extensions where that is the ecosystem convention (`.java`, `.kt`, `.cs`, `.php`, `.swift`)\n     to keep false positives down elsewhere.\n   - **Repo override:** new optional `.relay/config.json` key `testPaths` \u2014 an array of\n     root-relative globs (e.g. `[\"spec/**\", \"**/*_spec.rb\"]`) that classify as test paths **in\n     addition to** the built-ins. Parse via the `OptionalStringArray` pattern in\n     `RelayConfigLoader`, new `RelayConfig` record field, default `[]`. (If during implementation\n     a repo clearly needs to *suppress* a built-in match, an optional `nonTestPaths` deny-list is\n     acceptable scope \u2014 otherwise skip it.)\n2. **Wire all consumers through it:** `BuildTargetedTestCommand`, both\n   `EarlyImplementationDetector` call sites (`RelayDriver.cs`, `RelayDriver.Stage5.cs`), and\n   `RelayDriver.CodeChangeGate.cs`. Config is in hand at these call sites, so the configured\n   globs can reach the classifier. Update `TestCommandDetector`'s weak Python signal to accept\n   `test/` alongside `tests/`.\n3. **One refinement worth making while here:** `BuildTargetedTestCommand` should pass only\n   *runnable test code* to `{files}` \u2014 a classified-as-test path whose extension is non-code\n   (the `NonCodeExtensions` set in `RelayDriver.Artifacts.cs`: `.md`, `.json`, `.yaml`, \u2026, i.e.\n   fixtures under `testdata/` or `tests/fixtures/`) must not be handed to the test runner, while\n   still counting as test-related for the impl-exclusion gates. Two predicates (test-related vs.\n   runnable-test-file) or an equivalent single design \u2014 your call, but cover it with tests.\n4. **Test matrix** (new test file, xUnit `[Theory]`): drive the classifier with cases lifted from\n   the survey table \u2014 at minimum one positive per row above (`test/foo.c`, `spec/user_spec.rb`,\n   `t/t0001-init.sh`, `src/test/java/FooTest.java`, `packages/x/__tests__/y.js`,\n   `Button.test.tsx`, `ReactHooks-test.js`, `test_config.py`, `fmt/errors_test.go`,\n   `Sources/../AlamofireTests.swift`, `tokio/tests-integration/\u2026`, `testdata/golden.json`\n   [test-related but not runnable]) \u2014 and negatives (`attestation/keys.cs`, `contest.py`,\n   `latest.ts`, `src/detest/foo.cs`, `protest/readme.md`). Plus: config `testPaths` globs\n   classify; empty config preserves every current-behavior case (all four existing rules must\n   still pass verbatim).\n\n## Done when\n\n- The classifier passes the full matrix; every convention row in the survey table classifies\n  correctly out of the box, and `testPaths` handles an arbitrary extra convention.\n- All three run-time consumers and `TestCommandDetector` share the classifier; no behavior change\n  on repos that matched the old rules (this repo's own `tests/VisualRelay.Tests/**` keeps\n  classifying identically).\n- Fixture-style non-code files under test dirs are excluded from `{files}` expansion but excluded\n  from impl gates too.\n- `./visual-relay check` passes (guards, format, build, full suite).\n\n## Guardrails\n\n- **Bias toward impl when genuinely ambiguous**: misreading an impl file as a test weakens the\n  TDD gates (`IsImpl` already documents fail-safe-toward-requiring-a-test; keep that spirit).\n  Prefer segment-exact directory matches and the scoped filename rules above over anything\n  fuzzier; the `testPaths` override exists for the long tail.\n- `RelayDriver.Artifacts.cs` is at 289/300 lines \u2014 the classifier and its rules go in a new file;\n  keep every touched file under the 300-line ceiling (`tools/VisualRelay.Guards`).\n- Do not change `testCmd`/`testFileCmd` semantics or any config key names; `testPaths` is purely\n  additive and optional. No settings-UI work in this task.\n- Conventional Commits (`docs/commit-messages.md`, `AGENTS.md`); minimal diffs.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The task description is extremely detailed \u2014 I have all the context needed. Let me frame the analysis and lay out the solution options.\n\n---\n\n## Task Framing\n\n**What needs to happen:** Visual Relay's hardcoded `IsTestFile(string path)` \u2014 a single private static method with four rules inside a 289-line file \u2014 silently misclassifies tests on most repos. The survey of 40 popular repos shows ~20 distinct directory-layout and filename conventions in the wild. Three runtime behaviors degrade when classification misses (targeted runs fall back to full suite, the TDD gate counts test files as implementation, the code-change gate sees tests-only changes as real changes), plus `TestCommandDetector`'s Python signal only checks `tests/` (not `test/`).\n\n**Design constraints:**\n1. New file only \u2014 `RelayDriver.Artifacts.cs` is at line 289/300\n2. Segment-based directory matching (not substring) to avoid false positives on `attestation/`, `contest/`, `latest/`\n3. The existing four rules must still pass verbatim (backward compatibility)\n4. Two predicates needed: \"is test related\" (for impl gates) vs. \"is runnable test file\" (for `{files}` expansion \u2014 exclude `.md`, `.json`, `.yaml` fixtures)\n5. Config override `testPaths` is additive only; no rename of existing config keys\n6. Bias toward impl-when-ambiguous (the TDD gate already fail-safes toward requiring a test)\n7. Conventional Commits, minimal diffs\n\n---\n\n## Solution Options\n\n### Option 1: Static `TestPathClassifier` with two static methods\n\nA standalone static class `TestPathClassifier` with two entry points:\n- `IsTestRelated(string path, string[]? testPathGlobs = null) \u2192 bool` \u2014 the full directory + filename heuristic, plus any configured globs\n- `IsRunnableTestFile(string path, string[]? testPathGlobs = null) \u2192 bool` \u2014 `IsTestRelated` AND the extension is not in `NonCodeExtensions`\n\nInternally: a single `IsTestRelated` that runs through ordered rule layers (segment-match directories \u2192 filename heuristics \u2192 config globs), plus `IsRunnableTestFile` that delegates and applies the extension filter. The old `IsTestFile` private method is gutted to delegate to the static method (preserving the existing signature callers).\n\n**Pros:** Simplest approach \u2014 no DI wiring, no constructor injection, no new interfaces. Every consumer already has config available at the call site and can pass it inline. Zero risk of behavioral regressions on existing repos. Trivially testable via xUnit `[Theory]` with `InlineData`.\n\n**Cons:** Static methods are less mockable if any consumer ever needs a test double (not a concern today \u2014 every caller is the real driver). The `NonCodeExtensions` set must be either duplicated or moved to a shared location (could live on `TestPathClassifier` itself).\n\n**Key decisions in this option:**\n- The old `IsTestFile` delegates to `TestPathClassifier.IsTestRelated` \u2014 no rework of any caller signature.\n- `NonCodeExtensions` moves from `RelayDriver.Artifacts.cs` to `TestPathClassifier` (or a shared constants file) to keep it accessible for `IsRunnableTestFile`.\n- `TestCommandDetector.cs` changes `Directory.Exists(\"tests\")` \u2192 `Directory.Exists(\"tests\") || Directory.Exists(\"test\")`.\n\n---\n\n### Option 2: Instance-based `ITestPathClassifier` with config injection\n\nNew interface `ITestPathClassifier` with methods `bool IsTestRelated(string path)` and `bool IsRunnableTestFile(string path)`. The implementation `TestPathClassifier` takes `RelayConfig` (or just the `testPaths` array) via constructor or a `Configure` method. Consumers receive the interface via constructor injection or as a passed parameter.\n\n**Pros:** Clean DI separation \u2014 the classifier is a proper service, injectable via whatever DI container the project uses. The config-binding logic lives entirely inside the classifier's constructor (it reads `testPaths` from config once). Easy to mock in unit tests for consumers. Future-proof for additional config-driven rules.\n\n**Cons:** More plumbing. Every consumer call site that currently calls `IsTestFile(path)` directly would need the interface injected \u2014 that's at least 5 call sites across 4 files. The `RelayDriver` class or its consumers would need constructor signature changes. The existing `IsTestFile` private method still needs to delegate or be replaced. Over-engineered for what's fundamentally a pure function of `(path, config)`.\n\n**Key decisions in this option:**\n- Register `ITestPathClassifier` as singleton (stateless rules + config snapshot).\n- Each consumer adds `ITestPathClassifier classifier` to its constructor.\n- The old `IsTestFile` private method is removed entirely; all callers switch to the interface.\n- `RelayConfig` gets the new `testPaths` field; `RelayConfigLoader` gains `OptionalStringArray(root, \"testPaths\", [])`.\n\n---\n\n### Option 3: Extension method on `string` with optional config parameter\n\nDefine `TestPathExtensions` with extension methods on `string` (the path):\n```csharp\npublic static bool IsTestRelated(this string path, string[]? testPathGlobs = null)\npublic static bool IsRunnableTestFile(this string path, string[]? testPathGlobs = null)\n```\n\nAlso move `NonCodeExtensions` to the same static class. Consuming code changes `IsTestFile(path)` \u2192 `path.IsTestRelated()` or `path.IsTestRelated(config.TestPaths)`.\n\n**Pros:** Syntax reads naturally (`path.IsTestRelated()`). Zero DI. No new classes to inject. Easy to mock at the static level for tests.\n\n**Cons:** Extension methods on primitive types can hide dependencies \u2014 harder to find where classification logic is used. Static methods have the same mockability limits as Option 1. May feel unconventional in a C# codebase that otherwise uses DI and instance methods. The file ceiling concern still applies (the extensions file will be sizable).\n\n---\n\n## Recommendation\n\n**Option 1 (Static classifier) is the strongest fit here.** The task explicitly asks for a \"dedicated classifier in a new file\" that replaces the private heuristic \u2014 that's a static replacement. Every consumer already holds the config at the call site (no DI plumbing needed). The \"two predicates\" requirement maps cleanly to two static methods. The old `IsTestFile` can delegate in one line, making the diff minimal and backward-compatible. The test matrix is a pure `[Theory]` with no mocking infrastructure needed. Option 2 adds architectural ceremony without tangible benefit for a pure function, and Option 3's extension-method style is less discoverable and deviates from the codebase's existing patterns.\n\n```json\n{\n  \"summary\": \"Replace the private hardcoded IsTestFile heuristic (4 rules) with a new static TestPathClassifier class in a dedicated file. Two entry points: IsTestRelated (directory segment + filename heuristics + config globs) for impl gates, and IsRunnableTestFile (adds non-code extension filter) for {files} expansion. Wire all four consumers with minimal signature changes. The old IsTestFile delegates to the new classifier. Update TestCommandDetector to check test/ alongside tests/. New xUnit [Theory] test file covers the full 40-repo survey matrix.\",\n  \"options\": [\n    \"Option 1 (recommended): Static TestPathClassifier with two static methods \u2014 minimal diffs, no DI plumbing, old IsTestFile delegates, pure-function testable via [Theory]\",\n    \"Option 2: Instance-based ITestPathClassifier with constructor injection \u2014 cleaner DI separation but needs injector plumbing across 5+ call sites, over-engineered for a pure function\",\n    \"Option 3: Extension methods on string \u2014 natural call syntax but hides dependencies and deviates from project patterns\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 4,
+    "tool_calls_total": 4,
+    "tool_calls_succeeded": 0,
+    "tool_calls_failed": 4,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 0,
+        "failed": 3
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 4,
+    "total_llm_time_s": 41.228,
+    "prompt_cache": {
+      "cached_tokens": 22400,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.003,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.746,
+      "prompt_tokens_est": 6689,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 308,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 308,
+      "error": "error: Path '/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.744,
+      "prompt_tokens_est": 7099,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival"
+      },
+      "succeeded": false,
+      "duration_s": 0.002,
+      "result_length": 37,
+      "error": "error: path does not exist: \".swival\""
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.603,
+      "prompt_tokens_est": 7272,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 202,
+      "error": "error: Path '.' resolves to /private/tmp/nix-shell.cYQvM3/visual-relay/wt/fbb5c78605a5/plan-20260707052814/adapt-test-paths-to-repo-conventions, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 33.135,
+      "prompt_tokens_est": 7363,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

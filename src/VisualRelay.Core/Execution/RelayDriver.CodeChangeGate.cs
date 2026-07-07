@@ -36,7 +36,7 @@ public sealed partial class RelayDriver
         // read-only runs still complete.
         var expectsCode =
             manifest.Select(p => p.StartsWith('+') ? p[1..] : p)
-                    .Any(f => IsImpl(f) && !IsTestFile(f))
+                    .Any(f => IsImpl(f) && !TestPathClassifier.IsTestRelated(f, config.TestPaths))
             || PlanCompletenessGate.HasChecklist(taskMarkdown);
         if (!expectsCode)
             return null;

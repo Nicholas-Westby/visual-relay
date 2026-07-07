@@ -143,6 +143,6 @@ public sealed partial class RelayDriver
         if (!config.DownshiftOnEarlyImplementation)
             return currentValue;
         return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            rootPath, manifest, IsImpl, cancellationToken, isTestFile: IsTestFile);
+            rootPath, manifest, IsImpl, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
     }
 }

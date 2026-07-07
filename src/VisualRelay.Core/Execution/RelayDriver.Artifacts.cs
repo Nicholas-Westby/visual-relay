@@ -109,58 +109,23 @@ public sealed partial class RelayDriver
         return chain;
     }
 
-    private static readonly HashSet<string> NonCodeExtensions = new(StringComparer.OrdinalIgnoreCase)
-    { ".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".csv" };
-
-    /// <summary>
-    /// Returns true when <paramref name="path"/> is implementation code —
-    /// anything with an extension not in the non-code allowlist.
-    /// Files with no extension are treated as non-code (docs/config/data).
-    /// Unknown extensions default to code (fail-safe toward requiring a test).
-    /// </summary>
     private static bool IsImpl(string path) =>
-        Path.GetExtension(path) is { Length: > 0 } ext && !NonCodeExtensions.Contains(ext);
-
-    /// <summary>
-    /// Returns true when <paramref name="path"/> is an authored test file.
-    /// Heuristic is toolchain-agnostic: recognizes paths under a <c>tests/</c>
-    /// directory, filenames matching <c>*.tests.*</c>, <c>*_test.*</c>, or
-    /// <c>*.spec.*</c>. Normalises backslashes so Windows paths match.
-    /// </summary>
-    private static bool IsTestFile(string path)
-    {
-        var normalized = path.Replace('\\', '/');
-        var fileName = Path.GetFileName(path);
-
-        if (normalized.StartsWith("tests/", StringComparison.OrdinalIgnoreCase) ||
-            normalized.Contains("/tests/", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (fileName.Contains(".tests.", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (Path.GetFileNameWithoutExtension(fileName)
-                .EndsWith("_test", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        if (fileName.Contains(".spec.", StringComparison.OrdinalIgnoreCase))
-            return true;
-
-        return false;
-    }
+        Path.GetExtension(path) is { Length: > 0 } ext && !TestPathClassifier.NonCodeExtensions.Contains(ext);
 
     /// <summary>
     /// Returns <paramref name="config"/>.TestFileCommand with the <c>{files}</c> token replaced
-    /// by the space-joined authored test files (<see cref="IsTestFile"/>) from
-    /// <paramref name="manifest"/>. Falls back to <paramref name="config"/>.TestCommand when
+    /// by the space-joined runnable test files (<see cref="TestPathClassifier.IsRunnableTestFile"/>)
+    /// from <paramref name="manifest"/>. Falls back to <paramref name="config"/>.TestCommand when
     /// <c>testFileCmd</c> contains no <c>{files}</c> token, or when the manifest has no
-    /// authored test files after filtering.
+    /// runnable test files after filtering. Non-code fixtures under test dirs are excluded
+    /// from <c>{files}</c> expansion while still test-related for impl gates.
     /// </summary>
     internal static string BuildTargetedTestCommand(RelayConfig config, IReadOnlyList<string> manifest)
     {
         if (!config.TestFileCommand.Contains("{files}", StringComparison.Ordinal))
             return config.TestCommand;
-        var testFiles = manifest.Where(IsTestFile).ToList();
+        var testPaths = config.TestPaths ?? [];
+        var testFiles = manifest.Where(f => TestPathClassifier.IsRunnableTestFile(f, testPaths)).ToList();
         if (testFiles.Count == 0)
             return config.TestCommand;
         return config.TestFileCommand.Replace("{files}", string.Join(' ', testFiles),
