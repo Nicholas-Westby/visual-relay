@@ -91,9 +91,12 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public IBrush AccentBrush => IsRunning ? RunningBrush : NeedsReview ? ReviewBrush : SelectedBrush;
     public IBrush RailBrush => IsRunning ? RunningBrush : IsSelected ? SelectedBrush : Brushes.Transparent;
     public IBrush CardBackgroundBrush => IsRunning ? RunningCardBrush : IsSelected ? SelectedCardBrush : WaitingCardBrush;
-    public IBrush BorderBrush => IsRunning ? RunningBorderBrush : IsSelected ? SelectedBorderBrush : WaitingBorderBrush;
-    public Thickness CardBorderThickness => IsRunning || IsSelected ? new Thickness(2) : new Thickness(1);
-    public BoxShadows CardShadow => IsRunning ? RunningShadow : IsSelected ? SelectedShadow : NoShadow;
+    public IBrush SelectedHighlightBorderBrush => IsSelected ? SelectedBorderBrush : Brushes.Transparent;
+    public Thickness SelectedHighlightBorderThickness => IsSelected ? new Thickness(2) : new Thickness(0);
+    public BoxShadows SelectedHighlightShadow => IsSelected ? SelectedShadow : NoShadow;
+    public IBrush CardBorderBrush => IsRunning ? RunningBorderBrush : WaitingBorderBrush;
+    public Thickness CardBorderThickness => IsRunning ? new Thickness(2) : new Thickness(1);
+    public BoxShadows CardShadow => IsSelected ? NoShadow : IsRunning ? RunningShadow : NoShadow;
     public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 11.0, 0, 1);
 
     public bool IsSelected
@@ -179,7 +182,10 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         OnPropertyChanged(nameof(AccentBrush));
         OnPropertyChanged(nameof(RailBrush));
         OnPropertyChanged(nameof(CardBackgroundBrush));
-        OnPropertyChanged(nameof(BorderBrush));
+        OnPropertyChanged(nameof(SelectedHighlightBorderBrush));
+        OnPropertyChanged(nameof(SelectedHighlightBorderThickness));
+        OnPropertyChanged(nameof(SelectedHighlightShadow));
+        OnPropertyChanged(nameof(CardBorderBrush));
         OnPropertyChanged(nameof(CardBorderThickness));
         OnPropertyChanged(nameof(CardShadow));
     }
