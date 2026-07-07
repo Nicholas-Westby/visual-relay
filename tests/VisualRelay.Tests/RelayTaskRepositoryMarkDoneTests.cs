@@ -1,4 +1,7 @@
+using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Init;
 using VisualRelay.Core.Tasks;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -90,5 +93,26 @@ public sealed class RelayTaskRepositoryMarkDoneTests
 
         // Original directory must be gone.
         Assert.False(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "nested-feature")));
+    }
+
+    [Fact]
+    public async Task MarkDoneAsync_PrunesSkipTestsTaskId()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", [], archiveOnDone: true);
+        RelayConfigWriter.SetSkipTests(repo.Root, "windows-support", enabled: true);
+        repo.WriteNestedTask("windows-support", "# Windows Support\n\nCross-platform fixes.");
+
+        var repository = new RelayTaskRepository(repo.Root);
+
+        var pending = await repository.ListPendingAsync();
+        var task = Assert.Single(pending, t => t.Id == "windows-support");
+
+        var destinationPath = await repository.MarkDoneAsync(task);
+        Assert.NotNull(destinationPath);
+
+        var config = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, config.Status);
+        Assert.DoesNotContain("windows-support", config.Config.SkipTestsTaskIds!);
     }
 }

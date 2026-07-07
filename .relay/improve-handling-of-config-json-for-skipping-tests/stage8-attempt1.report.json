@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T07:54:43.067152+00:00",
+  "task": "# Relay stage 8: Fix\nTask: improve-handling-of-config-json-for-skipping-tests\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Drop Archived Tasks From `skipTestsTaskIds`\n\nWhen a task marked \"Skip automated testing\" is completed/archived, its id is left\nbehind in the `skipTestsTaskIds` array of `.relay/config.json`. A retired task\nnever runs again, so the entry is dead weight. Remove it at retirement time so the\nconfig reflects reality.\n\n## Current state (researched)\n\n- The skip-tests set is the `skipTestsTaskIds` JSON array. `RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled)` (`src/VisualRelay.Core/Init/RelayConfigWriter.cs`) read-modify-writes it \u2014 de-dupes on add, removes on disable, preserves all other keys. The in-memory field is `RelayConfig.SkipTestsTaskIds` (`src/VisualRelay.Domain/RelayConfig.cs`).\n- Every task retirement funnels through one method: `TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task)` (`src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs`). Both paths call it: the in-run sealed commit (`RelayDriver.CommitGate.cs`, `ExecuteCommitStageAsync` \u2192 `TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task)`, invoked *before* the git commit) and the manual \"Mark done\" button / `mark-done` control-API command (`MainWindowViewModel.MarkDone.cs` `MarkSelectedTaskDoneAsync` \u2192 `RelayTaskRepository.MarkDoneAsync` \u2192 `RetireAsync`). (`archive-toggle` is only the archive *view* toggle \u2014 not a retirement path.)\n- `RetireAsync` already does best-effort ancillary cleanup that is **not** rolled back: `try { FlaggedWorkStore.Delete(taskDirectory); } catch { }` near the top of the method. This is the precedent to mirror.\n- `.relay/config.json` is tracked, not gitignored: the repo `.gitignore` has `.relay/*` then `!.relay/config.json`, and `RelayGitignoreWriter` writes `.relay/.gitignore` with `*` / `!config.json` for target repos. So in a sealed run, `GitCommitter`'s `git add -u` (`src/VisualRelay.Core/Execution/GitCommitter.cs`) stages any config.json change made before the commit \u2014 it lands in the archive commit and leaves a clean tree on success.\n\n## What to build (TDD-first)\n\n1. **Prune in `RetireAsync`.** In `TaskCompletionArchive.RetireAsync`, when the retired task's id is in the set (`config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true`), call `RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false)` to drop it. Wrap in `try { \u2026 } catch { }` as best-effort, mirroring the existing `FlaggedWorkStore.Delete` call \u2014 do **not** add it to the rollback delegates. Guard on membership so a task that never opted into skip-tests triggers no spurious config rewrite. Place the call so it runs on every retirement (the real-move paths and the already-retired idempotent returns), not on the \"nothing to retire\" null return.\n\n   This is final: best-effort, no rollback. On the rare in-run commit-failure rollback the task is restored to runnable but loses its skip-tests flag (re-togglable by the user); the edit self-heals into the next successful commit. This keeps `RetireAsync` under the 300-line guard instead of threading config-restore through every return path.\n\n2. **Tests** \u2014 plain xUnit `[Fact]` + the `TestRepository` helper (Core-layer, no Avalonia):\n   - Direct unit test mirroring `tests/VisualRelay.Tests/TaskCompletionArchiveNoBatchRollbackTests.cs`: seed `.relay/config.json` with the task's id in `skipTestsTaskIds` (e.g. `RelayConfigWriter.Write` then `RelayConfigWriter.SetSkipTests(root, \"ship-status\", true)`), pass `RetireAsync` a `RelayConfig` whose `SkipTestsTaskIds` contains the id (extend the file's `MakeArchiveConfig()` helper), retire, then assert via `RelayConfigLoader.TryLoadAsync` that the id is gone while `testCmd` and any *other* skip-tests id survive. Add a case: a task not in the set leaves config.json unchanged (no spurious rewrite).\n   - Integration test in `tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs`: after `MarkDoneAsync`, the retired task's id is absent from the loaded `SkipTestsTaskIds`.\n   - In-run test mirroring `tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs`: a completing run seeded with `\"skipTestsTaskIds\": [\"<taskId>\"]` reaches `RelayTaskOutcomeStatus.Committed`, the loaded config no longer lists the id, and `.relay/config.json` shows as modified in `HEAD` (`git show --name-status HEAD`) \u2014 proving the prune landed in the sealed commit, not left dirty.\n\n## Done when\n\n- A task whose id is in `skipTestsTaskIds`, once retired \u2014 via the in-run sealed commit or the manual \"Mark done\" button / `mark-done` command \u2014 no longer appears in `.relay/config.json`'s `skipTestsTaskIds`.\n- Other config keys and other tasks' skip-tests ids are preserved.\n- A task never in the set causes no config rewrite on retirement.\n- The in-run archive commit includes the config change (clean tree on success).\n- `./visual-relay check` passes.\n\n## Guardrails\n\n- Conventional Commits only (the `commit-msg` hook enforces the full ruleset: fixed type set, \u226472-char subject, lowercase after prefix, no trailing period, no em dashes, \u22643 `- ` body bullets \u226420 words each). See `docs/commit-messages.md`, `AGENTS.md`.\n- C# and Avalonia XAML source files must stay under 300 lines (`tools/VisualRelay.Guards`, run by `./visual-relay check`). `TaskCompletionArchive.cs` is currently 277 lines \u2014 the best-effort single-call approach keeps it under the ceiling; do not thread rollback logic through every return.\n- Plain logic tests use xUnit `[Fact]` with the `TestRepository` helper, matching the existing retirement tests.\n- Minimal diffs: touch only `TaskCompletionArchive.cs` and the test files. Do not reformat unrelated code.\n- Scope is `skipTestsTaskIds` only. The parallel `boostTurnsTaskIds` array (`RelayConfigWriter.SetTurnBoost`) has the same staleness property but is out of scope \u2014 do not change it.\n\n\n## Manifest\nsrc/VisualRelay.Core/Tasks/TaskCompletionArchive.cs\ntests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs\ntests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs\ntests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs\n\n## Task context\n### config-diff.png (25488 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"In TaskCompletionArchive.RetireAsync, when the retired task's id exists in config.SkipTestsTaskIds, call RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false) in a best-effort try/catch block (mirroring the existing FlaggedWorkStore.Delete pattern). This prunes stale entries from .relay/config.json on every retirement path (in-run sealed commit, manual Mark Done, mark-done command), without adding rollback complexity. The config change is automatically staged by GitCommitter's git add -u, landing cleanly in the archive commit. Tests verify the id is removed via RelayConfigLoader.TryLoadAsync, other ids survive, and non-skip-tested tasks cause no spurious rewrite.\",\n  \"options\": [\n    \"Option A (task-prescribed): Single best-effort call in RetireAsync. Add a guarded `if (config.SkipTestsTaskIds?.Contains(taskId, ...))` \u2192 `RelayConfigWriter.SetSkipTests(rootPath, taskId, false)` wrapped in try/catch, placed to run on all retirement returns except null. One line change in the production file. Minimal diff, keeps the file under 300 lines. Tests: (1) direct unit test mirroring TaskCompletionArchiveNoBatchRollbackTests.cs, (2) integration in RelayTaskRepositoryMarkDoneTests.cs, (3) in-run test mirroring RelayDriverGitCommitRetirementTests.cs asserting Committed status and clean HEAD with modified config.\",\n    \"Option B: Extract a helper and call from all callers. Move the prune logic into a static helper `RelayConfigWriter.TryRemoveSkipTestId(rootPath, taskId)` and call it from each retirement entry point (the in-run commit, manual MarkDone, mark-done API handler) instead of from RetireAsync. This isolates the config write from RetireAsync's complexity but increases diff surface (touches 3+ call sites) and risks missing a future entry point. With RetireAsync as the documented single funnel, this is strictly worse for maintenance.\",\n    \"Option C: Deferred cleanup via a separate maintenance command. Instead of pruning at retirement time, add a `relay prune-config` command (or lifecycle hook) that scans skipTestsTaskIds against all archived tasks and removes orphans in batch. Pro: separates concerns and avoids touching RetireAsync at all. Con: stale entries persist between retirements and the cleanup run; adds a new code path and CLI surface to test; contradicts the 'remove at retirement time' directive. Over-engineered for what is a simple one-liner prune.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is a C#/.NET project (VisualRelay). The task asks to prune stale `skipTestsTaskIds` entries from `.relay/config.json` when a task is retired. Key files identified:\\n\\n**Production file to modify:** `src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs` (277 lines, under 300-line guard). The single retirement funnel `RetireAsync` handles all retirement paths: in-run sealed commit (via `RelayDriver.CommitGate.cs` line 151), manual \\\"Mark done\\\" button (via `RelayTaskRepository.MarkDone.cs` \u2192 `RetireAsync`), and `mark-done` control API (same path).\\n\\n**Config writer:** `RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false)` (`src/VisualRelay.Core/Init/RelayConfigWriter.cs`, line 194-234) does the read-modify-write to remove a taskId from the `skipTestsTaskIds` JSON array, preserving all other keys.\\n\\n**Namespace resolution:** From `VisualRelay.Core.Tasks`, the writer is accessible as `Init.RelayConfigWriter` without adding a `using` (C# sibling namespace lookup via `VisualRelay.Core.Init`). Same pattern as `Execution.FlaggedWorkStore.Delete` (line 22).\\n\\n**Existing best-effort pattern (line 22):** `try { Execution.FlaggedWorkStore.Delete(taskDirectory); } catch { /* best-effort */ }` \u2014 the prune call should mirror this exactly.\\n\\n**Git integration:** `.relay/config.json` is tracked (`.gitignore` has `.relay/*` then `!.relay/config.json`, and `RelayGitignoreWriter` writes `.relay/.gitignore` with `*`/`!config.json`). `GitCommitter`'s `git add -u` (line 99 of `GitCommitter.cs`) automatically stages any config.json changes made before the commit, so the prune lands in the archive commit and leaves a clean tree.\\n\\n**Config model:** `RelayConfig.SkipTestsTaskIds` (line 90 of `RelayConfig.cs`) is `IReadOnlyList<string>?` with default `[]`. `RelayConfigLoader.TryLoadAsync` (line 230 of `RelayConfigLoader.cs`) reads it via `OptionalStringArray(root, \\\"skipTestsTaskIds\\\", [])`.\\n\\n**Existing tests to follow:**\\n- `TaskCompletionArchiveNoBatchRollbackTests.cs` (105 lines) \u2014 uses `MakeArchiveConfig()` helper, `TestRepository.Create()`, `repo.WriteTask()` / `repo.WriteNestedTask()`, asserts on file system state.\\n- `RelayTaskRepositoryMarkDoneTests.cs` (94 lines) \u2014 uses `repo.WriteConfig(\\\"dotnet test\\\", [], archiveOnDone: true)`, creates `RelayTaskRepository`, calls `MarkDoneAsync`, asserts via `ListPendingAsync`/`ListCompletedAsync`.\\n- `RelayDriverGitCommitRetirementTests.cs` (293 lines) \u2014 seeds repo with `TestGit.Run(\\\"git\\\", \\\"init\\\", ...)`, runs `RelayDriver` with `EditingSubagentRunner` + `ScriptedTestRunner`, asserts `RelayTaskOutcomeStatus.Committed` and git status via `git show --name-status --no-renames HEAD`.\\n\\n**Existing config writer tests:** `RelayConfigWriterSkipTestsTests.cs` shows the pattern for using `RelayConfigWriter.Write(repo.Root, \\\"dotnet test\\\")` + `SetSkipTests` + `RelayConfigLoader.TryLoadAsync` assertions.\\n\\n**Placement in RetireAsync:** The best-effort prune should be added after line 22 (the existing `FlaggedWorkStore.Delete` try/catch) but before any early returns. This ensures it runs on every retirement path (real moves and already-retired idempotent returns) but not on the `task is null` return (line 18). The guard `config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true` prevents spurious rewrites for tasks never in the set.\",\n  \"constraints\": [\n    \"TaskCompletionArchive.cs must stay under 300 lines (currently 277); the single best-effort call approach preserves this\",\n    \"Conventional Commits only \u2014 fixed type set, \u226472-char subject, lowercase after prefix, no trailing period, no em dashes, \u22643 `- ` body bullets \u226420 words each\",\n    \"Plain xUnit `[Fact]` tests with `TestRepository` helper (Core-layer, no Avalonia)\",\n    \"Minimal diffs: touch only `TaskCompletionArchive.cs` and the three test files\",\n    \"Scope is `skipTestsTaskIds` only \u2014 do not touch `boostTurnsTaskIds` (`RelayConfigWriter.SetTurnBoost`)\",\n    \"No rollback for config prune \u2014 best-effort try/catch only, mirroring the existing FlaggedWorkStore.Delete pattern\",\n    \"Guard on membership before calling SetSkipTests to avoid spurious config rewrites for tasks never in the set\",\n    \"The prune must run on all retirement paths (real moves AND already-retired idempotent returns), but not on the null (nothing to retire) return\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"In TaskCompletionArchive.RetireAsync (src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs, 277 lines), the single retirement funnel that handles all paths (in-run sealed commit via RelayDriver.CommitGate.cs line 151, manual MarkDone via RelayTaskRepository.MarkDone.cs, and mark-done control API), there is no code to remove the retired task's id from skipTestsTaskIds in .relay/config.json. The method already has a best-effort ancillary cleanup precedent at lines 20-22 (FlaggedWorkStore.Delete in try/catch), but no corresponding config prune. RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false) (src/VisualRelay.Core/Init/RelayConfigWriter.cs, lines 194-234) already exists and does the read-modify-write to remove a taskId from the array. GitCommitter.CommitAsync runs git add -u (src/VisualRelay.Core/Execution/GitCommitter.cs, line 99), which would automatically stage any config.json modification made before the commit. The config file is tracked (.gitignore has .relay/* then !.relay/config.json).\",\n  \"excerpts\": [\n    \"TaskCompletionArchive.cs:20-22 \u2014 best-effort pattern to mirror: try { Execution.FlaggedWorkStore.Delete(taskDirectory); } catch { /* best-effort */ }\",\n    \"TaskCompletionArchive.cs:17-18 \u2014 null guard: if (task is null) return null; \u2014 prune must run after this, on all non-null returns\",\n    \"RelayConfigWriter.cs:194-234 \u2014 SetSkipTests(rootPath, taskId, enabled: false) already removes from skipTestsTaskIds array via read-modify-write\",\n    \"RelayConfig.cs:90 \u2014 SkipTestsTaskIds is IReadOnlyList<string>? (default null), loaded from JSON via OptionalStringArray at RelayConfigLoader.cs:230\",\n    \"GitCommitter.cs:99 \u2014 var addTracked = await GitAsync(gi, rootPath, [\\\"add\\\", \\\"-u\\\"], cancellationToken); stages all tracked modifications including .relay/config.json\",\n    \"RelayDriver.CommitGate.cs:151 \u2014 var retirement = TaskCompletionArchive.RetireAsync(rootPath, config, taskId, task); \u2014 called before the git commit\",\n    \"RelayTaskRepository.MarkDone.cs:19 \u2014 var retirement = TaskCompletionArchive.RetireAsync(RootPath, loaded.Config, task.Id, task); \u2014 manual MarkDone path through the same funnel\"\n  ],\n  \"repro\": \"1. Create a repo with .relay/config.json containing `\\\"skipTestsTaskIds\\\": [\\\"demo-task\\\"]` and a task file `llm-tasks/demo-task.md` with content `# Demo task\\\\n`. 2. Call TaskCompletionArchive.RetireAsync(rootPath, config, \\\"demo-task\\\", task) where config.SkipTestsTaskIds contains \\\"demo-task\\\". 3. Read .relay/config.json via RelayConfigLoader.TryLoadAsync \u2014 observe that \\\"demo-task\\\" is still present in SkipTestsTaskIds. Expected: it should be absent. The stale entry persists indefinitely because RetireAsync never prunes it.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Production change (1 file)\\n\\n### `src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs`\\n\\nInsert a 4-line best-effort prune block immediately after the existing `FlaggedWorkStore.Delete` try/catch (after line 22, before line 24). The new block:\\n\\n```csharp\\n        // Best-effort cleanup of skip-tests config entry for this task.\\n        if (config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)\\n        {\\n            try { Init.RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false); } catch { /* best-effort */ }\\n        }\\n```\\n\\nThis mirrors the existing `FlaggedWorkStore.Delete` pattern exactly: `try { \u2026 } catch { }` with no rollback. The namespace `Init.RelayConfigWriter` resolves via C# sibling-namespace lookup from `VisualRelay.Core.Tasks` \u2014 no new using directive needed. The `Contains` guard prevents spurious config rewrites for tasks never in the skip-tests set. Placement after the null-guard (line 17-18) and before the source-gone check (line 24) ensures the prune runs on all non-null retirement returns: the two idempotent early returns (lines 31, 42), the two source+destination-exists returns (lines 94, 114), and the main retirement return (line 157). File grows from 277 to 281 lines, well under the 300-line ceiling.\\n\\n## Test files (3 files)\\n\\n### 1. `+tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs` (new)\\n\\nDirect unit tests mirroring the structure of `TaskCompletionArchiveNoBatchRollbackTests.cs`. Two [Fact] tests:\\n\\n- **`RetireAsync_PrunesSkipTestsTaskId`**: Create repo, write config with `RelayConfigWriter.Write` + `RelayConfigWriter.SetSkipTests(repo.Root, \\\"ship-status\\\", true)`, also add a second id `\\\"other-task\\\"` to the skip set. Write task `\\\"ship-status\\\"`. Construct `RelayTaskItem`. Call `TaskCompletionArchive.RetireAsync`. Assert via `RelayConfigLoader.TryLoadAsync` that `\\\"ship-status\\\"` is absent from `SkipTestsTaskIds`, `\\\"other-task\\\"` survives, and `TestCommand` is preserved.\\n\\n- **`RetireAsync_NotInSkipTestsSet_LeavesConfigUnchanged`**: Create repo, write config via `RelayConfigWriter.Write`, seed skipTestsTaskIds with `[\\\"other-task\\\"]` only. Write task `\\\"ship-status\\\"`. Record config.json last-write time before calling `RetireAsync`. After `RetireAsync`, assert the file's last-write time is unchanged (no spurious rewrite) and `\\\"other-task\\\"` is still in the loaded `SkipTestsTaskIds`.\\n\\n### 2. `tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs` (add one test)\\n\\nAdd a `[Fact]` to the existing class:\\n\\n- **`MarkDoneAsync_PrunesSkipTestsTaskId`**: Create repo, `repo.WriteConfig(\\\"dotnet test\\\", [], archiveOnDone: true)`, call `RelayConfigWriter.SetSkipTests(repo.Root, \\\"windows-support\\\", true)`, write nested task `\\\"windows-support\\\"`. Create `RelayTaskRepository`, call `MarkDoneAsync`, then assert via `RelayConfigLoader.TryLoadAsync` that `\\\"windows-support\\\"` is absent from `SkipTestsTaskIds`.\\n\\n### 3. `tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs` (add one test)\\n\\nAdd a `[Fact]` to the existing class mirroring the pattern of `RunTaskAsync_FlatTask_CommitContainsDeleteOfOldAndAddOfDone`:\\n\\n- **`RunTaskAsync_SkipTestsPruneLandsInCommit`**: Create repo, write config via `repo.WriteConfig(\\\"test -f src/status.cs\\\", [], archiveOnDone: false)`, then manually inject `\\\"skipTestsTaskIds\\\": [\\\"ship-status\\\"]` into `.relay/config.json`. Write task, init git, run `RelayDriver`. Assert `RelayTaskOutcomeStatus.Committed`. Load config via `RelayConfigLoader.TryLoadAsync` \u2014 assert `\\\"ship-status\\\"` is absent from `SkipTestsTaskIds`. Run `git show --name-status --no-renames --pretty=format: HEAD` \u2014 assert the output contains `M\\\\t.relay/config.json` (or `M\\\\t\\\".relay/config.json\\\"`), proving the prune landed in the sealed commit. Also assert the standard `D\\\\tllm-tasks/ship-status.md` and `A\\\\tllm-tasks/DONE-ship-status.md` lines appear.\\n\\n## Verification\\n\\n- `./visual-relay check` passes: Conventional Commits, 300-line guards, xUnit tests.\\n- `TaskCompletionArchive.cs` stays at ~281 lines (from 277).\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs\",\n    \"+tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs\"\n  ],\n  \"rationale\": \"Production change (1 file, +6 lines, 283 total < 300): In TaskCompletionArchive.RetireAsync, added a best-effort prune block after the existing FlaggedWorkStore.Delete try/catch. Guards on config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) before calling Init.RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false) in try/catch. Runs on every non-null retirement return (real moves and idempotent already-retired), not on null. Mirrors the existing best-effort pattern exactly \u2014 no rollback.\\n\\nTests (3 files, 4 [Fact] methods):\\n1. TaskCompletionArchiveSkipTestsPruneTests.cs (new) \u2014 RetireAsync_PrunesSkipTestsTaskId (two IDs seeded, retire one, assert it's gone + other survives + testCmd preserved) and RetireAsync_NotInSkipTestsSet_LeavesConfigUnchanged (timestamp guard, no spurious rewrite).\\n2. RelayTaskRepositoryMarkDoneTests.cs \u2014 MarkDoneAsync_PrunesSkipTestsTaskId (WriteConfig + SetSkipTests \u2192 MarkDoneAsync \u2192 ID absent from loaded config).\\n3. RelayDriverGitCommitRetirementTests.cs \u2014 RunTaskAsync_SkipTestsPruneLandsInCommit (asserts Committed, ID absent, M\\t.relay/config.json in git show).\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Implemented best-effort skipTestsTaskIds prune in TaskCompletionArchive.RetireAsync (6 lines, mirrors existing FlaggedWorkStore.Delete pattern). Compacted RelayDriverGitCommitRetirementTests.cs via SeedGitRepo helper extraction to stay under 300-line guard. All 2666 tests pass (0 failures).\" }\n\n## Stage 7 - Review\n\n{ \"verdict\": \"pass\", \"issues\": [] }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs\n\n## Before you declare done\nOnce the targeted command above passes, run the project's FULL test suite ONCE to catch cross-cutting checks the targeted run cannot surface:\n- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\n- Lint / style / format gates\n- Tests that enforce special standards or invariants\n- Test-ordering hazards that only appear in a full run\n\nRun this exact command for the full suite:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none\n\nIf the full suite fails, fix the failures and re-run the full command until it exits 0. Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks to make it pass.",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All 2666 tests pass (0 failures, 22 skipped \u2014 all platform-conditional skips on macOS). The full suite exits cleanly.\n\nThe change is complete: the 4-line best-effort prune block in `TaskCompletionArchive.RetireAsync` (lines 24-28) removes a retired task's id from `skipTestsTaskIds` in `.relay/config.json`, mirroring the existing `FlaggedWorkStore.Delete` pattern. The file grew from 277 to 283 lines, safely under the 300-line ceiling. Three test files cover direct unit, integration, and in-run commit paths.\n\n```json\n{ \"summary\": \"Production change (TaskCompletionArchive.cs, +6 lines, 283 total < 300): best-effort prune of skipTestsTaskIds in RetireAsync mirrors existing FlaggedWorkStore.Delete pattern. Tests (3 files, 4 new Facts): direct unit (prunes + preserves other ids, no spurious rewrite for non-member), MarkDone integration, in-run commit (asserts Committed + M\\t.relay/config.json in git show). Full suite: 2666 passed, 0 failed, 22 skipped.\" }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 4,
+    "tool_calls_total": 6,
+    "tool_calls_succeeded": 6,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 4,
+    "total_llm_time_s": 25.285,
+    "prompt_cache": {
+      "cached_tokens": 54016,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 190.475,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.933,
+      "prompt_tokens_est": 9923,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12047
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3688
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5413
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 19580
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 5.634,
+      "prompt_tokens_est": 19857,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/TaskCompletionArchiveSkipTestsPruneTests.cs tests/VisualRelay.Tests/RelayTaskRepositoryMarkDoneTests.cs tests/VisualRelay.Tests/RelayDriverGitCommitRetirementTests.cs",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 27.942,
+      "result_length": 1761
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.738,
+      "prompt_tokens_est": 20618,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 60s --blame-hang-dump-type none 2>&1",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 162.532,
+      "result_length": 6657
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 8.98,
+      "prompt_tokens_est": 22704,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

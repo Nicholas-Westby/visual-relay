@@ -1,4 +1,6 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -14,19 +16,12 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteTask("ship-status", "# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         // The commit MUST stage the deletion of the old task file and the
         // addition of the DONE- file in the same commit as the work.
@@ -55,19 +50,12 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
         Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
@@ -90,19 +78,12 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteNestedTask("ship-status", "# Ship status\n", ("notes.txt", "some notes"), ("diagram.png", "fake png"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
         // The nested task's canonical markdown is deleted and a DONE- version added
@@ -129,19 +110,12 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteNestedTask("ship-status", "batch: 2\n\n# Ship status\n", ("notes.txt", "some notes"), ("diagram.png", "fake png"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
         // Deletions are for the ORIGINAL tracked filenames (git compares
@@ -172,13 +146,8 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteTask("ship-status", "# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        SeedGitRepo(repo.Root);
         var seedSha = TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim();
-
         // First run.
         var runner1 = new EditingSubagentRunner();
         var sink1 = new InMemoryRelayEventSink();
@@ -189,7 +158,6 @@ public sealed class RelayDriverGitCommitRetirementTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome1.Status);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "DONE-ship-status.md")));
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
-
         // Simulate a crash-recovery scenario: reset git to the seed commit
         // (soft reset keeps the working tree) then restore the original task
         // file from seed.  This gives us both files on disk — the original
@@ -201,7 +169,6 @@ public sealed class RelayDriverGitCommitRetirementTests
             "original task file should be restored from the seed commit");
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "DONE-ship-status.md")),
             "DONE- file should survive the soft reset (it was never in the seed)");
-
         // Second run — must succeed without a done_rename_failed event.
         var runner2 = new EditingSubagentRunner();
         var sink2 = new InMemoryRelayEventSink();
@@ -209,7 +176,6 @@ public sealed class RelayDriverGitCommitRetirementTests
             RelayDriverDependencies.ForTests(runner2, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), sink2),
             RelayDriverOptions.Default);
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "ship-status");
-
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);
         Assert.DoesNotContain(sink2.Events, e => e.EventName == "done_rename_failed");
         // HEAD should be unchanged in content (only the second run's commit
@@ -230,25 +196,17 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteTask("ship-status", "# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "DONE-ship-status.md")));
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
-
         // Simulate a worktree cleanup: checkout the tasks directory from HEAD.
         TestGit.Run(repo.Root, "checkout", "HEAD", "--", "llm-tasks/");
-
         // The original task file must NOT reappear.
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")),
             "original task file must not be resurrected by git checkout — retirement is part of HEAD");
@@ -265,29 +223,55 @@ public sealed class RelayDriverGitCommitRetirementTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-
+        SeedGitRepo(repo.Root);
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.Default);
-
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
-
         // Checkout the tasks directory from HEAD.
         TestGit.Run(repo.Root, "checkout", "HEAD", "--", "llm-tasks/");
-
         // The original task file must NOT reappear.
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")),
             "original task file must not be resurrected by git checkout — retirement is part of HEAD");
         // The archived file must still exist.
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_SkipTestsPruneLandsInCommit()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("test -f src/status.cs", [], archiveOnDone: false);
+        RelayConfigWriter.SetSkipTests(repo.Root, "ship-status", enabled: true);
+        repo.WriteTask("ship-status", "# Ship status\n");
+        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
+        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
+        SeedGitRepo(repo.Root);
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(new EditingSubagentRunner(), new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverOptions.Default);
+        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+        var config = await RelayConfigLoader.TryLoadAsync(repo.Root);
+        Assert.Equal(RelayConfigStatus.Loaded, config.Status);
+        Assert.DoesNotContain("ship-status", config.Config.SkipTestsTaskIds!);
+        // The prune must land in the commit — config.json shown as modified.
+        var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
+        Assert.Contains("M\t.relay/config.json", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
+        Assert.Contains("A\tllm-tasks/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
+    }
+
+    private static void SeedGitRepo(string root)
+    {
+        TestGit.Run(root, "init");
+        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
+        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
+        TestGit.Run(root, "add", ".");
+        TestGit.Run(root, "commit", "-m", "chore: seed repo");
     }
 }

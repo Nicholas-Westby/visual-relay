@@ -21,6 +21,12 @@ internal static partial class TaskCompletionArchive
         var taskDirectory = Path.Combine(rootPath, ".relay", taskId);
         try { Execution.FlaggedWorkStore.Delete(taskDirectory); } catch { /* best-effort */ }
 
+        // Best-effort cleanup of skip-tests config entry for this task.
+        if (config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)
+        {
+            try { Init.RelayConfigWriter.SetSkipTests(rootPath, taskId, enabled: false); } catch { /* best-effort */ }
+        }
+
         if (!File.Exists(task.MarkdownPath))
         {
             // Source gone — check whether destination already exists.
