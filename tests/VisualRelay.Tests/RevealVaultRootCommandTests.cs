@@ -4,12 +4,33 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-public sealed class RevealVaultRootCommandTests
+public sealed class RevealVaultRootCommandTests : IDisposable
 {
+    private readonly string _scratch = Path.Combine(Path.GetTempPath(),
+        "vr-reveal-cmd", Guid.NewGuid().ToString("N"));
+
+    public void Dispose() => TestFileSystem.DeleteDirectoryResilient(_scratch);
+
+    /// <summary>
+    /// Create a sandboxed accessor (HOME + XDG_CONFIG_HOME in scratch) so
+    /// constructing the VM and toggling properties never touches the user's
+    /// real ~/.config/visual-relay/.env.
+    /// </summary>
+    private DictionaryEnvironmentAccessor SandboxedEnv()
+    {
+        var env = new DictionaryEnvironmentAccessor
+        {
+            ["HOME"] = Path.Combine(_scratch, "home"),
+            ["XDG_CONFIG_HOME"] = Path.Combine(_scratch, "xdg")
+        };
+        Directory.CreateDirectory(env["HOME"]!);
+        return env;
+    }
+
     [Fact]
     public void RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet()
     {
-        var env = new DictionaryEnvironmentAccessor();
+        var env = SandboxedEnv();
         var viewModel = new MainWindowViewModel(environmentAccessor: env)
         {
             ObsidianVaultRoot = "/Users/dev/obsidian-vault"
@@ -23,7 +44,7 @@ public sealed class RevealVaultRootCommandTests
     {
         // The guard is in the method body (null/whitespace check), not in CanExecute.
         // The button is always clickable — it just no-ops when the root is empty.
-        var env = new DictionaryEnvironmentAccessor();
+        var env = SandboxedEnv();
         var viewModel = new MainWindowViewModel(environmentAccessor: env)
         {
             ObsidianVaultRoot = string.Empty

@@ -116,6 +116,14 @@ public sealed partial class SplitGuardVerificationTests
             // VR_CONTROL_DISABLE=1 in BuildAvaloniaApp() so the headless App starts
             // no listener. Joins the other documented infrastructure exemptions above.
             if (Path.GetFileName(file) == "HeadlessTestApp.cs") continue;
+            // TestModuleInitializer.cs is a [ModuleInitializer] that sets
+            // XDG_CONFIG_HOME to a temp dir before any test runs — it is
+            // infrastructure, not a test, and the set is intentional.
+            if (Path.GetFileName(file) == "TestModuleInitializer.cs") continue;
+            // KeyEnvFileHermeticityTests.cs tests that a supplied accessor is
+            // authoritative — it sets/clears process env vars in try/finally
+            // blocks to prove the accessor wins over the real environment.
+            if (Path.GetFileName(file) == "KeyEnvFileHermeticityTests.cs") continue;
 
             var content = File.ReadAllText(file);
             if (content.Contains("Environment.SetEnvironmentVariable", StringComparison.Ordinal))

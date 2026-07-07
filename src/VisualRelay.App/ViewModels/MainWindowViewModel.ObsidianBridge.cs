@@ -23,6 +23,13 @@ public partial class MainWindowViewModel
     private bool _bridgeCycleBusy;
     private DispatcherTimer? _obsidianBridgeTimer;
 
+    /// <summary>
+    /// Distinguishes the writer of bridge settings for the audit log.
+    /// Defaults to <c>"settings-ui"</c>; the control API sets it to
+    /// <c>"control-api"</c> before mutating properties.
+    /// </summary>
+    internal string BridgeSettingsSource { get; set; } = "settings-ui";
+
     // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnObsidianEnabledChanged(bool value) => PersistBridgeSettings();
     // ReSharper disable once UnusedParameterInPartialMethod
@@ -45,10 +52,14 @@ public partial class MainWindowViewModel
 
     private void PersistBridgeSettings()
     {
+        if (_isHydrating) return;
+
         try
         {
             ObsidianBridgeSettings.Save(new ObsidianBridgeConfig(
-                ObsidianEnabled, ObsidianVaultRoot, ObsidianPollSeconds), EnvironmentAccessor);
+                ObsidianEnabled, ObsidianVaultRoot, ObsidianPollSeconds),
+                EnvironmentAccessor, BridgeSettingsSource);
+            StatusText = "Obsidian bridge settings saved";
         }
         catch { /* best-effort */ }
     }
@@ -57,12 +68,17 @@ public partial class MainWindowViewModel
     {
         try
         {
+            _isHydrating = true;
             var config = ObsidianBridgeSettings.Load(EnvironmentAccessor);
             ObsidianEnabled = config.Enabled;
             ObsidianVaultRoot = config.VaultRoot;
             ObsidianPollSeconds = config.PollSeconds;
         }
         catch { /* best-effort */ }
+        finally
+        {
+            _isHydrating = false;
+        }
     }
 
     [RelayCommand]

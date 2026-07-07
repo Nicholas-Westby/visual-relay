@@ -94,31 +94,55 @@ public static class ObsidianBridgeSettings
 
     /// <summary>
     /// Writes the bridge settings to the user-level <c>.env</c> file via
-    /// three surgical <see cref="KeyEnvFile.Upsert"/> calls.
-    /// <see cref="KeyEnvFile.Upsert"/> creates the parent directory with
-    /// <c>0700</c> and the file with <c>0600</c>.
+    /// surgical <see cref="KeyEnvFile.Upsert"/> calls — but only for keys
+    /// whose values actually changed (dirty-checked against the current file
+    /// contents). Each changed key also appends an audit line via
+    /// <see cref="SettingsAuditLog"/>.
     /// </summary>
-    public static void Save(ObsidianBridgeConfig settings, IEnvironmentAccessor? accessor = null)
+    public static void Save(ObsidianBridgeConfig settings, IEnvironmentAccessor? accessor = null,
+        string source = "settings-ui")
     {
         try
         {
-            KeyEnvFile.Upsert(
-                "VR_OBSIDIAN_ENABLED",
+            // Read current .env values for dirty-check and audit old→new.
+            Dictionary<string, string> current;
+            try
+            {
+                current = KeyEnvFile.Read(accessor);
+            }
+            catch (InvalidOperationException)
+            {
+                // Can't read — treat as empty (all keys are new).
+                current = new Dictionary<string, string>();
+            }
+
+            UpsertIfChanged("VR_OBSIDIAN_ENABLED",
                 settings.Enabled ? "true" : "false",
-                accessor);
-            KeyEnvFile.Upsert(
-                "VR_OBSIDIAN_VAULT_ROOT",
+                current.GetValueOrDefault("VR_OBSIDIAN_ENABLED"),
+                source, accessor);
+            UpsertIfChanged("VR_OBSIDIAN_VAULT_ROOT",
                 settings.VaultRoot,
-                accessor);
-            KeyEnvFile.Upsert(
-                "VR_OBSIDIAN_POLL_SECONDS",
+                current.GetValueOrDefault("VR_OBSIDIAN_VAULT_ROOT"),
+                source, accessor);
+            UpsertIfChanged("VR_OBSIDIAN_POLL_SECONDS",
                 settings.PollSeconds.ToString(),
-                accessor);
+                current.GetValueOrDefault("VR_OBSIDIAN_POLL_SECONDS"),
+                source, accessor);
         }
         catch (InvalidOperationException)
         {
             // Nowhere to save — bail.
         }
+    }
+
+    private static void UpsertIfChanged(string key, string newValue, string? currentValue,
+        string source, IEnvironmentAccessor? accessor)
+    {
+        if (string.Equals(newValue, currentValue, StringComparison.Ordinal))
+            return;
+
+        KeyEnvFile.Upsert(key, newValue, accessor);
+        SettingsAuditLog.Append(key, currentValue, newValue, source, accessor);
     }
 
     // ── Migration ─────────────────────────────────────────────────────────
@@ -152,9 +176,17 @@ public static class ObsidianBridgeSettings
                 && root.TryGetProperty("enabled", out var enabledProp))
             {
                 if (enabledProp.ValueKind == JsonValueKind.True)
+                {
                     KeyEnvFile.Upsert("VR_OBSIDIAN_ENABLED", "true", accessor);
+                    SettingsAuditLog.Append("VR_OBSIDIAN_ENABLED", null, "true",
+                        "migration", accessor);
+                }
                 else if (enabledProp.ValueKind == JsonValueKind.False)
+                {
                     KeyEnvFile.Upsert("VR_OBSIDIAN_ENABLED", "false", accessor);
+                    SettingsAuditLog.Append("VR_OBSIDIAN_ENABLED", null, "false",
+                        "migration", accessor);
+                }
             }
 
             if (!envDict.ContainsKey("VR_OBSIDIAN_VAULT_ROOT")
@@ -163,7 +195,11 @@ public static class ObsidianBridgeSettings
             {
                 var val = vaultProp.GetString();
                 if (!string.IsNullOrWhiteSpace(val))
+                {
                     KeyEnvFile.Upsert("VR_OBSIDIAN_VAULT_ROOT", val, accessor);
+                    SettingsAuditLog.Append("VR_OBSIDIAN_VAULT_ROOT", null, val,
+                        "migration", accessor);
+                }
             }
 
             if (!envDict.ContainsKey("VR_OBSIDIAN_POLL_SECONDS")
@@ -172,6 +208,8 @@ public static class ObsidianBridgeSettings
                 && pollProp.TryGetInt32(out var pollVal))
             {
                 KeyEnvFile.Upsert("VR_OBSIDIAN_POLL_SECONDS", pollVal.ToString(), accessor);
+                SettingsAuditLog.Append("VR_OBSIDIAN_POLL_SECONDS", null,
+                    pollVal.ToString(), "migration", accessor);
             }
 
             // Migration succeeded — delete the legacy file.

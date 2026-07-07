@@ -215,7 +215,9 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         // ── temporarily point HOME at the temp dir so LoadProviderKeys ──
         // ── resolves the user-level .env from the same temp home        ──
         var originalHome = Environment.GetEnvironmentVariable("HOME");
+        var originalXdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
         Environment.SetEnvironmentVariable("HOME", _home);
+        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", null);
         try
         {
             var options = new BackendStartOptions
@@ -248,6 +250,7 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("HOME", originalHome);
+            Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", originalXdg);
         }
     }
 

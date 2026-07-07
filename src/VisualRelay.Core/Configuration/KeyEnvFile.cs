@@ -23,14 +23,15 @@ public static class KeyEnvFile
 
     /// <summary>
     /// Reads an environment variable through <paramref name="accessor"/> when
-    /// non-null, falling back to the real process environment. The fallback is
-    /// by design: callers (e.g. the settings panel) inject an accessor that
-    /// overrides only specific keys and expect the rest to resolve against the
-    /// real environment.
+    /// non-null; otherwise reads the real process environment. When an accessor
+    /// is supplied it is authoritative — its answer (even null) is returned
+    /// directly with no fallback, so that tests with an empty accessor never
+    /// leak through to the real process environment.
     /// </summary>
     public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>
-        accessor?.GetEnvironmentVariable(name)
-        ?? Environment.GetEnvironmentVariable(name);
+        accessor is not null
+            ? accessor.GetEnvironmentVariable(name)
+            : Environment.GetEnvironmentVariable(name);
 
     // ── Path resolution ──────────────────────────────────────────────────
 
@@ -81,10 +82,20 @@ public static class KeyEnvFile
     /// <summary>
     /// Parses <c>KEY=VALUE</c> lines from the resolved user-level dotenv,
     /// skipping blank lines and <c>#</c> comments. Returns an empty dictionary
-    /// when the file does not exist.
+    /// when the file does not exist or the config path cannot be resolved.
     /// </summary>
-    public static Dictionary<string, string> Read(IEnvironmentAccessor? accessor = null) =>
-        Read(ResolvePath(accessor));
+    public static Dictionary<string, string> Read(IEnvironmentAccessor? accessor = null)
+    {
+        try
+        {
+            return Read(ResolvePath(accessor));
+        }
+        catch (InvalidOperationException)
+        {
+            // Cannot resolve config path — treat as empty.
+            return new Dictionary<string, string>();
+        }
+    }
 
     /// <summary>
     /// Parses <c>KEY=VALUE</c> lines from <paramref name="filePath"/>,

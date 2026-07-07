@@ -240,7 +240,10 @@ public sealed partial class ControlApi(
                     var boolVal = Json.ReadBool(body, "value");
                     if (boolVal.HasValue)
                     {
-                        viewModel.ObsidianEnabled = boolVal.Value;
+                        var prev = viewModel.BridgeSettingsSource;
+                        viewModel.BridgeSettingsSource = "control-api";
+                        try { viewModel.ObsidianEnabled = boolVal.Value; }
+                        finally { viewModel.BridgeSettingsSource = prev; }
                         return (200, Json.Object(("ok", true), ("command", name)));
                     }
 
@@ -248,7 +251,10 @@ public sealed partial class ControlApi(
                     var path = Json.ReadString(body, "path");
                     if (path is not null)
                     {
-                        viewModel.ObsidianVaultRoot = path;
+                        var prev = viewModel.BridgeSettingsSource;
+                        viewModel.BridgeSettingsSource = "control-api";
+                        try { viewModel.ObsidianVaultRoot = path; }
+                        finally { viewModel.BridgeSettingsSource = prev; }
                         return (200, Json.Object(("ok", true), ("command", name)));
                     }
 

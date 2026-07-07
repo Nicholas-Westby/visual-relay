@@ -1,0 +1,1475 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T09:29:25.513739+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: stop-obsidian-bridge-settings-resets\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Stop Obsidian Bridge Settings From Being Reset \u2014 Isolate Tests From the Real User Config, and Audit Every Settings Write\n\nMy Obsidian bridge settings keep getting silently reset. The correct state on this machine is:\nbridge **enabled**, vault root\n`~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/` (which happens to\nequal `ObsidianBridgeSettings.DefaultVaultRootTemplate`). After a reset (see\n`settings-after-reset.png` in this folder) the bridge is still enabled but the vault root has\nbecome `/Users/dev/obsidian-vault` \u2014 a path that exists nowhere on this machine and exactly matches\na test fixture string in `tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs`. It has happened\nseveral times.\n\nTwo deliverables in this task:\n\n1. **Make it structurally impossible for the test suite to write the real per-user config.**\n2. **Observability:** every write to these settings must leave a durable, attributable record \u2014 at\n   the very least we must be able to tell when a *user* changed the setting versus anything else.\n\n## Current state (researched)\n\n- **Storage** \u2014 `src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs`: `Load`/`Save` keep\n  three keys (`VR_OBSIDIAN_ENABLED`, `VR_OBSIDIAN_VAULT_ROOT`, `VR_OBSIDIAN_POLL_SECONDS`) in the\n  user-level `.env` at `$XDG_CONFIG_HOME/visual-relay/.env` (fallback\n  `$HOME/.config/visual-relay/.env`), via three `KeyEnvFile.Upsert` calls. `Save` swallows\n  `InvalidOperationException` (\"Nowhere to save \u2014 bail\"). The same `.env` also stores API keys, so\n  any logging of values must redact non-Obsidian keys.\n- **The environment seam leaks** \u2014 `src/VisualRelay.Core/Configuration/KeyEnvFile.cs`:\n\n  ```csharp\n  public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>\n      accessor?.GetEnvironmentVariable(name)\n      ?? Environment.GetEnvironmentVariable(name);\n  ```\n\n  When a test passes a `DictionaryEnvironmentAccessor` that lacks `HOME`/`XDG_CONFIG_HOME`, the\n  per-key `??` falls through to the **real process environment**, so path resolution lands on the\n  real `~/.config/visual-relay/.env`. An \"isolated\" accessor is only isolated if it happens to seed\n  those keys.\n- **Every property set persists immediately** \u2014\n  `src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs`:\n  `OnObsidianEnabledChanged` / `OnObsidianVaultRootChanged` / `OnObsidianPollSecondsChanged` all\n  call `PersistBridgeSettings()`, which writes **all three keys** through\n  `ObsidianBridgeSettings.Save(..., EnvironmentAccessor)` and swallows all exceptions.\n  `LoadObsidianBridgeSettings()` hydrates by assigning those same observable properties, so merely\n  **constructing the view model persists** \u2014 including a transient window where `ObsidianEnabled`\n  has been hydrated but `ObsidianVaultRoot` is still the field default `\"\"` (the first persist\n  writes `VR_OBSIDIAN_VAULT_ROOT=`). The repo's test command uses `--blame-hang-timeout 60s`\n  (`.relay/config.json` \u2192 `testCmd`), which kills the test host on hangs \u2014 a kill inside that\n  window strands the partial write. xUnit also runs test collections in parallel, so concurrent\n  persists race on the single `.env` file (each persist is three read-modify-write upserts).\n- **Constructor default is the real environment** \u2014 `MainWindowViewModel`\n  (`src/VisualRelay.App/ViewModels/MainWindowViewModel.cs`):\n  `public MainWindowViewModel(IEnvironmentAccessor? environmentAccessor = null)` stores the\n  accessor on `EnvironmentAccessor { get; init; }` and calls `LoadObsidianBridgeSettings()` during\n  construction. A null accessor means every read/write resolves against the real environment. The\n  production app itself passes null (`src/VisualRelay.App/App.axaml.cs`:\n  `new MainWindowViewModel()`), and roughly **235** `new MainWindowViewModel` occurrences exist\n  across the test suite, many with no accessor at all (e.g.\n  `tests/VisualRelay.Tests/MainWindowViewModelTests.Pause.cs`,\n  `tests/VisualRelay.Tests/LiveStateViewModelTests.cs`,\n  `tests/VisualRelay.Tests/ActivityColumnTabsUiTests.StageRendering.cs`).\n- **The smoking gun** \u2014 `tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs`,\n  `RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet`: constructs the view model with an\n  **empty** `DictionaryEnvironmentAccessor` and then sets\n  `ObsidianVaultRoot = \"/Users/dev/obsidian-vault\"`. Sequence: the constructor's hydration reads\n  the user's real `.env` (via the fallback above) and loads `Enabled=true`; the object initializer\n  then sets the fixture vault root; `PersistBridgeSettings` writes\n  `enabled=true, vaultRoot=/Users/dev/obsidian-vault, pollSeconds=60` into the **real**\n  `~/.config/visual-relay/.env`. That is byte-for-byte the corrupted state in the screenshot. Every\n  unsandboxed test run re-clobbers it.\n- **The correct pattern already exists** \u2014\n  `tests/VisualRelay.Tests/ObsidianBridgeVmPropertiesTests.cs` and\n  `tests/VisualRelay.Tests/ObsidianDrainSummaryTests.cs` seed fake `HOME` + `XDG_CONFIG_HOME`\n  into their accessors (their doc comments literally say \"so saving never touches the user's real\n  ~/.config config file\"); `ObsidianBridgeVmTests.CreateViewModel` sets `env[\"HOME\"]` to a temp\n  dir; `TestRepository` (`tests/VisualRelay.Tests/TestDoubles.cs`) pre-seeds `XDG_CONFIG_HOME`.\n  `RevealVaultRootCommandTests` just doesn't use any of it.\n- **Other legitimate writers** \u2014 the control API can set these properties remotely:\n  `src/VisualRelay.App/Services/ControlApi.cs` assigns `viewModel.ObsidianEnabled` /\n  `viewModel.ObsidianVaultRoot` for the settings command. A migration path\n  (`ObsidianBridgeSettings.TryMigrateFromObsidianJson`) also upserts the keys. Neither they, the\n  UI, nor anything else leaves any record: there is **zero logging** of settings writes anywhere\n  (`PersistBridgeSettings` and `Save` are silent best-effort). Existing sinks under\n  `src/VisualRelay.Core/Logging/` (`FileRelayEventSink`, `DrainSummaryLog`) are run/repo-scoped,\n  not user-config-scoped.\n\n## What to build (TDD-first)\n\n1. **Make supplied accessors hermetic.** Change `KeyEnvFile.GetEnv` semantics to: if an accessor\n   is supplied, it is authoritative (return its answer, even null); only a **null** accessor reads\n   `Environment.GetEnvironmentVariable`. Tests first in\n   `tests/VisualRelay.Tests/KeyEnvFileTests.cs`: a supplied accessor missing a key returns null\n   even when the real process env has that key; null-accessor behavior unchanged. Then audit every\n   `GetEnv`/`Read`/`Upsert` call site (`ObsidianBridgeSettings`, `DiagnosticsSettings`,\n   `UiStateStore`, and friends) and every failing test: fix by **seeding the accessor** (the\n   `ObsidianBridgeVmPropertiesTests` pattern), never by restoring the fallback. Production is\n   unaffected: the app passes null.\n\n2. **Hydration must not persist, and persists must be dirty-checked.** Guard\n   `PersistBridgeSettings` with a hydration flag set around `LoadObsidianBridgeSettings()`'s\n   property assignments (precedent for persist-only-on-real-user-change: the\n   `OnCommitProofArtifactsChanged` guard in\n   `src/VisualRelay.App/ViewModels/MainWindowViewModel.Settings.cs`). In\n   `ObsidianBridgeSettings.Save`, read the current values first and skip upserts for unchanged\n   keys, so a no-op persist writes nothing (kills the echo-write on construction, shrinks the race\n   window, removes the transient `VR_OBSIDIAN_VAULT_ROOT=` partial state, and makes the audit log\n   below meaningful). Tests: constructing a view model against a seeded temp `.env` leaves the file\n   byte-identical; a genuine property change persists exactly that change.\n\n3. **Process-level backstop for the whole test suite.** The test host should never be able to\n   resolve the real user config even from a null-accessor construction: add a\n   `[ModuleInitializer]` (or equivalent assembly-level fixture) in `VisualRelay.Tests` that sets\n   the process `XDG_CONFIG_HOME` to a unique temp directory before any test runs, plus a guard\n   test asserting the redirect is active. This protects all ~235 existing constructions and every\n   future test by default. (Isolation-verifying precedent:\n   `tests/VisualRelay.Tests/OrchestratorProfileIsolationTests.cs` /\n   `RelayDriverProfileIsolationTests.cs`.)\n\n4. **Fix the leaky tests.** Rework `RevealVaultRootCommandTests` to seed fake\n   `HOME`/`XDG_CONFIG_HOME` scratch dirs like `ObsidianBridgeVmPropertiesTests` does, and sweep the\n   suite for any other `new MainWindowViewModel` that sets `Obsidian*` properties without a seeded\n   accessor. Add a regression test that recreates this incident end-to-end: seed a temp `.env`\n   with `enabled=true` and a custom vault root, run the old leaky construction pattern (empty\n   accessor + fixture vault root), and assert the seeded `.env` is untouched.\n\n5. **Observability: an append-only settings audit trail.** New small class (new file, e.g.\n   `src/VisualRelay.Core/Configuration/SettingsAuditLog.cs`) that appends one line per actual key\n   change to `settings-audit.log` **next to the `.env`** (same accessor-based path resolution, same\n   0700/0600 hardening as `KeyEnvFile.Upsert`):\n\n   ```\n   2026-07-07T05:12:03Z VR_OBSIDIAN_VAULT_ROOT \"~/Library/.../Visual Relay LLM Tasks/\" -> \"/Users/dev/obsidian-vault\" source=settings-ui pid=4242 proc=VisualRelay.App\n   ```\n\n   Requirements:\n   - Called from `ObsidianBridgeSettings.Save` (which, after step 2, already knows old values) and\n     from `TryMigrateFromObsidianJson` (`source=migration`).\n   - A `source` label distinguishing at minimum: in-app settings persistence (`settings-ui`),\n     control-API pushes (`control-api`), and migration. The control API mutates the view model's\n     properties directly, so labeling it may need a small internal seam (e.g. an internal\n     apply-with-source path used by both, or a scoped source field on the view model) \u2014 pick the\n     cleanest design that respects the file-size guard. If per-writer labeling inside the app\n     proves invasive, `pid`/`proc` identity plus a single in-app source is the acceptable floor;\n     the non-negotiable part is that **every write to the bridge keys leaves a durable, timestamped\n     old\u2192new record naming the writing process**.\n   - Values are logged in clear **only** for an allowlist (`VR_OBSIDIAN_*`); any other key logs\n     `<redacted>` \u2014 the same `.env` holds API keys.\n   - Best-effort and never throws; bounded size (trim to a sane tail when it grows past a small\n     cap \u2014 exact scheme is your choice).\n   - Surface the change in the running app too: set `StatusText` (existing pattern in\n     `MainWindowViewModel.ObsidianBridge.cs`) when bridge settings are saved at runtime.\n   - Tests: a change appends a correct line (temp XDG); a no-op save appends nothing;\n     non-allowlisted keys are redacted; migration writes `source=migration` lines.\n\n## Done when\n\n- `KeyEnvFileTests` prove supplied accessors never fall back to the real process environment.\n- Constructing `MainWindowViewModel` (any accessor) performs zero config writes until a real\n  user-visible change; the incident regression test in step 4 passes.\n- The suite-wide `XDG_CONFIG_HOME` backstop is active, with a guard test proving it.\n- Toggling a bridge setting in the running app or via the control API appends an audit line with\n  timestamp, key, old \u2192 new, source, and process identity; the audit file lives beside the `.env`\n  with hardened permissions; API-key-style values can never appear in it.\n- `./visual-relay check` passes (guards, format, build, full test suite).\n\n## Guardrails\n\n- **Do not write to or \"restore\" the real `~/.config/visual-relay/.env`** \u2014 it is per-machine user\n  data (and the sandbox denies it anyway). After this ships, the human re-enables the bridge once\n  in Settings; the default vault root is already the correct iCloud path.\n- Do not rename the `VR_OBSIDIAN_*` keys, move the `.env`, or change its format; the audit log is\n  purely additive.\n- Do not weaken the hermetic-accessor change to green a failing test \u2014 seed that test instead.\n- 300-line ceiling per file (`tools/VisualRelay.Guards`): current sizes \u2014 `KeyEnvFile.cs` 232,\n  `ObsidianBridgeSettings.cs` 222, `MainWindowViewModel.ObsidianBridge.cs` 206, `ControlApi.cs`\n  268. There is headroom for the small edits, but the audit logic goes in its own new file.\n- Match test conventions: plain xUnit `[Fact]` + `DictionaryEnvironmentAccessor`/`TestRepository`\n  for logic tests; `[AvaloniaFact]` + `[Collection(\"Headless\")]` only where the UI thread is\n  needed (see `ObsidianDrainSummaryTests`).\n- Conventional Commits (the `commit-msg` hook enforces the ruleset; see `docs/commit-messages.md`\n  and `AGENTS.md`). Minimal diffs \u2014 change only what this task needs.\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/KeyEnvFile.cs\nsrc/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs\nsrc/VisualRelay.App/Services/ControlApi.cs\ntests/VisualRelay.Tests/RevealVaultRootCommandTests.cs\nsrc/VisualRelay.Core/Configuration/SettingsAuditLog.cs\ntests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs\ntests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs\ntests/VisualRelay.Tests/SettingsAuditLogTests.cs\ntests/VisualRelay.Tests/TestModuleInitializer.cs\n\n## Task context\n### settings-after-reset.png (103462 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Obsidian bridge settings (stored in ~/.config/visual-relay/.env) are silently reset to a test fixture value because ~235 test constructions of MainWindowViewModel leak through to the real user config via an insufficiently hermetic environment-accessor seam. The fix has five interlocking parts: (1) make supplied accessors authoritative, (2) skip persist during hydration and dirty-check Save, (3) add a process-level XDG_CONFIG_HOME redirect before any test runs, (4) fix leaky tests and add a regression test, and (5) add an append-only settings audit log next to .env that records every write with timestamp, old\u2192new, source, and process identity. Option A implements all five as specified; Option B drops the audit log for a smaller diff; Option C routes audit data through existing logging sinks instead of a co-located flat file.\",\n  \"options\": [\n    \"Option A \u2014 Full hermetic isolation + audit trail (the spec as written): all five deliverables implemented TDD-first. The accessor seam is sealed, hydration no longer persists, Save is dirty-checked, a [ModuleInitializer] backstops every test, and a new SettingsAuditLog appends attributable lines beside the .env.\",\n    \"Option B \u2014 Isolation-only (deliverables 1\u20134): hermetic accessor, no-persist-on-hydration, [ModuleInitializer] backstop, fix leaky tests + regression test. Defers the audit log for a smaller diff but leaves the observability gap open.\",\n    \"Option C \u2014 Isolation (1\u20134) + structured event-based audit: same isolation core, but routes audit data through existing logging sinks (FileRelayEventSink etc.) rather than a co-located flat file. Reuses existing infrastructure at the cost of not being co-located with .env for direct human inspection.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase has a configuration system where Obsidian bridge settings (`VR_OBSIDIAN_ENABLED`, `VR_OBSIDIAN_VAULT_ROOT`, `VR_OBSIDIAN_POLL_SECONDS`) are stored in a user-level `.env` file at `$XDG_CONFIG_HOME/visual-relay/.env`. The `KeyEnvFile.GetEnv` method has a critical hermeticity bug: when an `IEnvironmentAccessor` is supplied but lacks a key (returns null), the `??` fallback reads the real process environment via `Environment.GetEnvironmentVariable`. This means an 'isolated' accessor that doesn't seed `HOME`/`XDG_CONFIG_HOME` still resolves paths against the real user config. The `MainWindowViewModel` constructor calls `LoadObsidianBridgeSettings()` during `LoadInitialAsync()`, and every property setter (`OnObsidianEnabledChanged`, etc.) immediately calls `PersistBridgeSettings()` which writes all three keys through `ObsidianBridgeSettings.Save`. The `RevealVaultRootCommandTests` file constructs `MainWindowViewModel` with an empty `DictionaryEnvironmentAccessor` and then sets `ObsidianVaultRoot = \\\"/Users/dev/obsidian-vault\\\"` \u2014 this persists to the real `~/.config/visual-relay/.env` because the accessor lacks `HOME`/`XDG_CONFIG_HOME`. There are ~235 `new MainWindowViewModel` usages across the test suite; some safely use `TestRepository.Env` (which seeds `XDG_CONFIG_HOME` to a temp dir), others use explicit sandboxed accessors, but many use no accessor at all. An `_isHydrating` guard pattern already exists in `MainWindowViewModel.Settings.cs` for `OnStageTimeoutMinutesChanged`/`OnTestTimeoutMinutesChanged` but is absent from `ObsidianBridge.cs`. There is zero logging of settings writes anywhere. Existing logging infrastructure (`FileRelayEventSink`, `DrainSummaryLog`) is run/repo-scoped, not user-config-scoped. The 300-line file limit is enforced by `tools/VisualRelay.Guards/FileSizeGuard.cs`. The test command uses `--blame-hang-timeout 60s` which can kill the test host mid-write.\",\n  \"constraints\": [\n    \"Do not write to or 'restore' the real `~/.config/visual-relay/.env` \u2014 it is per-machine user data. After shipping, the user re-enables the bridge once in Settings.\",\n    \"Do not rename the `VR_OBSIDIAN_*` keys, move the `.env` file, or change its format. The audit log is purely additive.\",\n    \"Do not weaken the hermetic-accessor change to green a failing test \u2014 seed that test instead.\",\n    \"300-line ceiling per file enforced by `tools/VisualRelay.Guards/FileSizeGuard.cs`. Current sizes: `KeyEnvFile.cs` 232, `ObsidianBridgeSettings.cs` 222, `MainWindowViewModel.ObsidianBridge.cs` 206, `ControlApi.cs` 268. There is headroom for small edits but audit logic must go in its own new file.\",\n    \"Match test conventions: plain xUnit `[Fact]` + `DictionaryEnvironmentAccessor`/`TestRepository` for logic tests; `[AvaloniaFact]` + `[Collection(\\\"Headless\\\")]` only where the UI thread is needed.\",\n    \"Conventional Commits enforced by commit-msg hook (see `docs/commit-messages.md`). Type prefix, subject \u226472 chars, lowercase after prefix, no trailing period, body must be hyphen bullets (max 3, each \u226420 words).\",\n    \"Minimal diffs \u2014 change only what this task needs.\",\n    \"The `_isHydrating` guard pattern in `MainWindowViewModel.Settings.cs` already exists and can be extended to `LoadObsidianBridgeSettings()`.\",\n    \"The `TestRepository.Env` already seeds `XDG_CONFIG_HOME` to a temp dir, making `new MainWindowViewModel(repo.Env)` safe. The `ObsidianBridgeVmPropertiesTests.SandboxedViewModel()` and `ObsidianDrainSummaryTests.CreateViewModel()` patterns seed both `HOME` and `XDG_CONFIG_HOME` to scratch dirs.\",\n    \"Any logging of `.env` values must redact non-Obsidian keys (the same `.env` holds API keys like `HF_TOKEN`, `MOONSHOT_API_KEY`, `DEEPSEEK_API_KEY`).\",\n    \"The `ObsidianBridgeSettings.Save` method catches `InvalidOperationException` (\\\"Nowhere to save \u2014 bail\\\"). `PersistBridgeSettings` swallows all exceptions.\",\n    \"The sandbox (nono) denies writes to `~/.config` from the test runner, so a leaky test that tries to write there will fail under the sandboxed runner (but may silently corrupt when run without the sandbox).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The Obsidian bridge settings in the user's real ~/.config/visual-relay/.env are silently overwritten by the test suite. The corrupted vault root `/Users/dev/obsidian-vault` (confirmed in settings-after-reset.png) is byte-for-byte the string literal at RevealVaultRootCommandTests.cs:15. Five interlocking root causes: (1) KeyEnvFile.GetEnv:31-33 uses `??` fallback that leaks an empty DictionaryEnvironmentAccessor to the real process environment, so path resolution lands on the real ~/.config/visual-relay/.env even when an accessor is supplied. (2) MainWindowViewModel.ObsidianBridge.cs:27-29 \u2014 every Obsidian* property setter calls PersistBridgeSettings() which writes all three keys; no _isHydrating guard exists (unlike Settings.cs:113,126). (3) ObsidianBridgeSettings.Save:101-122 writes all three keys unconditionally \u2014 no dirty-checking against current values. (4) RevealVaultRootCommandTests:12-16 constructs MainWindowViewModel with an empty DictionaryEnvironmentAccessor (no HOME/XDG_CONFIG_HOME) then sets ObsidianVaultRoot to the fixture path; the ensuing persist writes through the leaky seam to the real user config. (5) There are ~235 new MainWindowViewModel constructions across the test suite, at least 18 with null accessor, all capable of leaking to the real config. Zero logging exists anywhere in the settings write path.\",\n  \"excerpts\": [\n    \"KeyEnvFile.cs:31-33 \u2014 `accessor?.GetEnvironmentVariable(name) ?? Environment.GetEnvironmentVariable(name)` falls through to real process env when accessor lacks the key\",\n    \"KeyEnvFile.cs:27-29 \u2014 doc comment: 'The fallback is by design: callers inject an accessor that overrides only specific keys and expect the rest to resolve against the real environment'\",\n    \"KeyEnvFile.cs:66-67 \u2014 `ResolvePath(GetEnv(\\\"XDG_CONFIG_HOME\\\", accessor), GetEnv(\\\"HOME\\\", accessor))` resolves against real env when accessor lacks those keys\",\n    \"MainWindowViewModel.ObsidianBridge.cs:27 \u2014 `partial void OnObsidianEnabledChanged(bool value) => PersistBridgeSettings();`\",\n    \"MainWindowViewModel.ObsidianBridge.cs:29 \u2014 `partial void OnObsidianVaultRootChanged(string value) => PersistBridgeSettings();`\",\n    \"MainWindowViewModel.ObsidianBridge.cs:46-54 \u2014 `PersistBridgeSettings()` writes all three keys via `ObsidianBridgeSettings.Save`, swallows all exceptions\",\n    \"MainWindowViewModel.ObsidianBridge.cs:56-66 \u2014 `LoadObsidianBridgeSettings()` assigns observable properties without _isHydrating guard\",\n    \"MainWindowViewModel.Settings.cs:113 \u2014 `if (_isHydrating) return;` \u2014 guard exists for StageTimeoutMinutes but not ObsidianBridge\",\n    \"MainWindowViewModel.Settings.cs:126 \u2014 `if (_isHydrating) return;` \u2014 guard exists for TestTimeoutMinutes but not ObsidianBridge\",\n    \"MainWindowViewModel.Settings.cs:133 \u2014 `private bool _isHydrating;` \u2014 field declared but never set in ObsidianBridge load path\",\n    \"ObsidianBridgeSettings.cs:101-122 \u2014 `Save` writes all three keys unconditionally, catches only InvalidOperationException, no logging\",\n    \"RevealVaultRootCommandTests.cs:12-16 \u2014 constructs VM with empty DictionaryEnvironmentAccessor, sets ObsidianVaultRoot to '/Users/dev/obsidian-vault'\",\n    \"RevealVaultRootCommandTests.cs:15 \u2014 `ObsidianVaultRoot = \\\"/Users/dev/obsidian-vault\\\"` \u2014 matches the corrupted state in settings-after-reset.png byte-for-byte\",\n    \"ObsidianBridgeVmPropertiesTests.cs:20-28 \u2014 `SandboxedViewModel()` seeds HOME and XDG_CONFIG_HOME to temp dirs \u2014 the correct pattern\",\n    \"ObsidianDrainSummaryTests.cs:26-34 \u2014 `CreateViewModel()` seeds HOME and XDG_CONFIG_HOME to temp dirs \u2014 doc comment: 'so saving never touches the user's real ~/.config config file'\",\n    \"TestDoubles.cs:37-43 \u2014 `TestRepository.Env` pre-seeds XDG_CONFIG_HOME to a temp dir\",\n    \"ControlApi.cs:237-256 \u2014 'obsidian-bridge' property action assigns viewModel.ObsidianEnabled / viewModel.ObsidianVaultRoot, triggers immediate persist\",\n    \"MainWindowViewModel.cs:49 \u2014 `public MainWindowViewModel(IEnvironmentAccessor? environmentAccessor = null)` \u2014 null accessor means real environment\",\n    \"App.axaml.cs:34 \u2014 `new MainWindowViewModel()` \u2014 production passes null (correct, real env is desired)\",\n    \"StartBackendAsyncTests.cs:28 \u2014 `new MainWindowViewModel()` \u2014 null accessor, leaks to real env if Obsidian properties touched\",\n    \"MainWindowViewModelTests.cs:77 \u2014 `new MainWindowViewModel()` \u2014 null accessor\",\n    \"Grep result: 235 matches of `new MainWindowViewModel` across test suite, 18 with no accessor at all\",\n    \"KeyEnvFileTests.cs \u2014 existing tests for path resolution, parse, upsert, GetUnsetKeys \u2014 but no test asserts hermeticity of supplied accessor\",\n    \"ObsidianBridgeSettings.cs:26-27 \u2014 `DefaultVaultRootTemplate = \\\"~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/\\\"` \u2014 the correct value on this machine\",\n    \"XdgConfig.cs:29-40 \u2014 `ResolveConfigDir` falls back HOME\u2192.config when XDG_CONFIG_HOME is null, throws InvalidOperationException when neither resolves\"\n  ],\n  \"repro\": \"1. Ensure ~/.config/visual-relay/.env has VR_OBSIDIAN_ENABLED=true and VR_OBSIDIAN_VAULT_ROOT set to the correct iCloud path.\\n2. Run `dotnet test --filter RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet` from the tests/VisualRelay.Tests directory.\\n3. Inspect ~/.config/visual-relay/.env \u2014 VR_OBSIDIAN_VAULT_ROOT is now \\\"/Users/dev/obsidian-vault\\\" and VR_OBSIDIAN_ENABLED is \\\"false\\\" (the field default).\\n4. The corrupted vault root matches the fixture string on RevealVaultRootCommandTests.cs:15 byte-for-byte.\\n5. The mechanism: the empty DictionaryEnvironmentAccessor returns null for HOME/XDG_CONFIG_HOME; KeyEnvFile.GetEnv's `??` falls through to the real process environment; path resolution lands on the real .env; the object initializer's ObsidianVaultRoot setter triggers PersistBridgeSettings \u2192 Save \u2192 three Upsert calls that write into the real user config file.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Plan: Stop Obsidian Bridge Settings Resets\\n\\n### Phase 1 \u2014 Hermetic accessor (deliverable 1)\\n\\n**`src/VisualRelay.Core/Configuration/KeyEnvFile.cs`**  \\nChange `GetEnv` so a non-null accessor is authoritative \u2014 return `accessor.GetEnvironmentVariable(name)` directly (even when it returns null); only a **null** accessor reads `Environment.GetEnvironmentVariable`. Update the doc comment accordingly. This is a 3-line change at lines 31\u201333.\\n\\n**`+tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs`**  \\nThree plain `[Fact]` tests (KeyEnvFileTests.cs is at 292 lines \u2014 can't add more without hitting the 300-line guard):\\n- `GetEnv_SuppliedAccessorMissingKey_ReturnsNull_WhenProcessHasKey` \u2014 set a real process env var, create an accessor that lacks it, assert `GetEnv` returns null.\\n- `GetEnv_SuppliedAccessorHasKey_ReturnsAccessorValue` \u2014 accessor has a key, assert it returns the accessor's value (not the process env).\\n- `GetEnv_NullAccessor_ReadsProcessEnv` \u2014 null accessor still reads the real process environment.\\n\\n**Audit all `GetEnv`/`Read`/`Upsert` call sites:** `ObsidianBridgeSettings` (Load, Save, TryMigrateFromObsidianJson), `DiagnosticsSettings` (LoadVerboseDiagnostics, SaveVerboseDiagnostics), `UiStateStore` (Load, Save), `XdgConfig.ResolveConfigDir`. None need code changes \u2014 they already pass the accessor correctly and handle exceptions. The only callers that break are tests with under-seeded accessors (fixed in Phase 4).\\n\\n### Phase 2 \u2014 Hydration no-persist + dirty-check (deliverable 2)\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs`**  \\n- Wrap `LoadObsidianBridgeSettings` property assignments with `_isHydrating = true` / `finally { _isHydrating = false; }` (the `_isHydrating` field already exists in `MainWindowViewModel.Settings.cs` \u2014 same partial class).\\n- Guard `PersistBridgeSettings` with `if (_isHydrating) return;` at the top (same pattern as `OnStageTimeoutMinutesChanged` / `OnTestTimeoutMinutesChanged`).\\n- Add `internal string BridgeSettingsSource { get; set; } = \\\"settings-ui\\\";` field.\\n- Pass `BridgeSettingsSource` to `ObsidianBridgeSettings.Save` (new optional `source` parameter).\\n- Set `StatusText` after a successful runtime persist (e.g. `\\\"Obsidian bridge settings saved\\\"`).\\n\\n**`src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs`**  \\n- Add optional `string source = \\\"settings-ui\\\"` parameter to `Save`.\\n- In `Save`, before writing: read the current `.env` via `KeyEnvFile.Read(accessor)`, compare each of the three `VR_OBSIDIAN_*` keys against the incoming config. Only upsert changed keys. For each changed key, call `SettingsAuditLog.Append(key, oldValue, newValue, source, accessor)`.\\n- Call the audit log from `TryMigrateFromObsidianJson` with `source = \\\"migration\\\"` for each key migrated (after the upsert succeeds).\\n\\n### Phase 3 \u2014 Process-level backstop (deliverable 3)\\n\\n**`+tests/VisualRelay.Tests/TestModuleInitializer.cs`**  \\nA `[ModuleInitializer]` static method that sets `Environment.SetEnvironmentVariable(\\\"XDG_CONFIG_HOME\\\", \u2026)` to a unique temp directory created under `Path.GetTempPath()`. Runs once when the test assembly loads, before any test. Protects all ~235 existing `new MainWindowViewModel` constructions \u2014 null-accessor tests will resolve `.env` under the temp dir instead of the real `~/.config`.\\n\\n**`+tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs`** (guard test)  \\n- `XdgConfigHome_IsRedirectedToTempDir` \u2014 asserts `Environment.GetEnvironmentVariable(\\\"XDG_CONFIG_HOME\\\")` is not null/empty, does not start with the real home directory, and contains the test temp prefix.\\n\\n### Phase 4 \u2014 Fix leaky tests + regression test (deliverable 4)\\n\\n**`tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs`**  \\nRework `RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet` and `RevealVaultRootCommand_CanExecute_EvenWhenVaultRootIsEmpty`: seed `HOME` and `XDG_CONFIG_HOME` into the `DictionaryEnvironmentAccessor` to scratch dirs (same pattern as `ObsidianBridgeVmPropertiesTests.SandboxedViewModel`). The `BuildCommand` tests (lines 36\u201367) don't construct the VM \u2014 no change needed.\\n\\n**`+tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs`** (regression test)  \\n- `Regression_EmptyAccessorWithFixtureVaultRoot_DoesNotCorruptSeededEnv` \u2014 seed a temp `.env` with `VR_OBSIDIAN_ENABLED=true` and a custom vault root, construct `MainWindowViewModel` with an **empty** accessor (the old leaky pattern), set `ObsidianVaultRoot = \\\"/Users/dev/obsidian-vault\\\"`, and assert the seeded `.env` is byte-identical to its original content.\\n- `ConstructingViewModel_AgainstSeededEnv_LeavesFileByteIdentical` \u2014 seed a temp `.env` with known bridge settings, construct the VM with a properly-seeded accessor, and assert the `.env` file is byte-identical (no write during hydration).\\n- `GenuinePropertyChange_PersistsOnlyChangedKey` \u2014 construct the VM against a seeded env, toggle `ObsidianEnabled`, assert `.env` was touched only for `VR_OBSIDIAN_ENABLED` (other keys unchanged).\\n\\n### Phase 5 \u2014 Audit log (deliverable 5)\\n\\n**`+src/VisualRelay.Core/Configuration/SettingsAuditLog.cs`** (new, \u2264300 lines)  \\nStatic class with one public method:\\n```csharp\\npublic static void Append(string key, string? oldValue, string newValue, string source, IEnvironmentAccessor? accessor = null)\\n```\\n- Resolves the log path: same directory as `.env` (via `KeyEnvFile.ResolvePath(accessor)`), with filename `settings-audit.log`.\\n- Formats one line: `{ISO8601-UTC} {key} \\\"{oldValue}\\\" -> \\\"{newValue}\\\" source={source} pid={pid} proc={procName}`.\\n- If `oldValue` is null (first write), renders as `(unset)`.\\n- Values for `VR_OBSIDIAN_*` keys are logged in clear; all other keys log `<redacted>`.\\n- Creates parent dir `0700` and file `0600` (same hardening as `KeyEnvFile.Upsert`).\\n- Append-only: `File.AppendAllText` under a static `lock` gate.\\n- Best-effort: entire method is wrapped in try/catch, never throws.\\n- Bounded size: after appending, if file exceeds 64 KB, trim to the last 256 lines (read all, take tail, rewrite).\\n\\n**`src/VisualRelay.App/Services/ControlApi.cs`**  \\nIn the `obsidian-bridge` property action handler (lines 237\u2013256): set `viewModel.BridgeSettingsSource = \\\"control-api\\\"` before mutating `ObsidianEnabled` or `ObsidianVaultRoot`, and restore to `\\\"settings-ui\\\"` in a `finally` block.\\n\\n**`+tests/VisualRelay.Tests/SettingsAuditLogTests.cs`**  \\n- `Append_ChangedObsidianKey_WritesCorrectLine` \u2014 seed a temp XDG, call `Append` for `VR_OBSIDIAN_ENABLED`, assert the log file contains exactly one line with the expected timestamp format, key, old\u2192new, source, pid, and proc name. The value is in clear (not redacted).\\n- `Append_NoOpSave_WritesNothing` \u2014 seed env with known values, call Save with identical values, assert the audit log does not exist (no file created).\\n- `Append_NonObsidianKey_RedactsValue` \u2014 call `Append` for a non-allowlisted key like `HF_TOKEN`, assert the log line shows `<redacted>` for both old and new values.\\n- `Append_MigrationSource_WritesMigrationLine` \u2014 simulate the migration path writing a key, assert the line has `source=migration`.\\n- `Append_CreatesFileWithHardenedPermissions` \u2014 on non-Windows, assert `0700` dir / `0600` file.\\n\\n### Final verification\\n- `./visual-relay check` passes: guards, format, build, full test suite.\\n- The real `~/.config/visual-relay/.env` is never touched by the test suite.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Configuration/KeyEnvFile.cs\",\n    \"src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs\",\n    \"src/VisualRelay.App/Services/ControlApi.cs\",\n    \"tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs\",\n    \"+src/VisualRelay.Core/Configuration/SettingsAuditLog.cs\",\n    \"+tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs\",\n    \"+tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs\",\n    \"+tests/VisualRelay.Tests/SettingsAuditLogTests.cs\",\n    \"+tests/VisualRelay.Tests/TestModuleInitializer.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs\",\n    \"tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs\",\n    \"tests/VisualRelay.Tests/SettingsAuditLogTests.cs\",\n    \"tests/VisualRelay.Tests/TestModuleInitializer.cs\"\n  ],\n  \"rationale\": \"Five interlocking changes to stop Obsidian bridge settings resets and add observability:\\n\\n1. **Hermetic accessor** (`KeyEnvFile.cs:31-33`): Changed `GetEnv` so a non-null accessor is authoritative \u2014 returns its value directly (even null). Previously `??` fell through to the real process env, making empty accessors leak. Three tests in `KeyEnvFileHermeticityTests.cs` verify: missing key returns null despite process env having it; accessor value wins over process; null accessor still reads process.\\n\\n2. **Hydration guard + dirty-check** (`MainWindowViewModel.ObsidianBridge.cs`): Wrapped `LoadObsidianBridgeSettings` with `_isHydrating=true`/finally-false (field already existed in `Settings.cs`). Guarded `PersistBridgeSettings` with `if (_isHydrating) return`. Added `BridgeSettingsSource` field defaulting to `settings-ui`. In `ObsidianBridgeSettings.Save`, read current .env before writing and only upsert changed keys via `UpsertIfChanged`. Set `StatusText` on successful save. Tests in `ObsidianBridgeHermeticityTests.cs`: construction leaves seeded .env byte-identical; genuine property change persists only the changed key; regression test with empty accessor+fixture vault root proves seeded .env is untouched.\\n\\n3. **Module initializer backstop** (`TestModuleInitializer.cs`): Sets `XDG_CONFIG_HOME` to a unique temp dir before any test runs. Protects all ~235 existing null-accessor constructions. Guard test `XdgConfigHome_IsRedirectedToTempDir` verifies the redirect is active.\\n\\n4. **Fixed leaky tests** (`RevealVaultRootCommandTests.cs`): Now seeds `HOME`+`XDG_CONFIG_HOME` to scratch dirs like `ObsidianBridgeVmPropertiesTests` does. All existing tests (ObsidianBridgeVmTests, ObsidianBridgeVmScaffoldExportTests, ObsidianDrainSummaryTests, ControlServerTests) are already safe \u2014 they seed the accessor.\\n\\n5. **Settings audit log** (`SettingsAuditLog.cs`): Append-only log at `settings-audit.log` next to `.env`. One line per change: ISO8601 timestamp, key, old\u2192new, source, pid, proc. `VR_OBSIDIAN_*` values in clear; everything else `<redacted>`. Best-effort, never throws. Hardened permissions (0700 dir/0600 file). Bounded at 64KB (trims to last 256 lines). Called from `ObsidianBridgeSettings.Save` (per-key, after dirty-check) and `TryMigrateFromObsidianJson` (source=migration). `ControlApi` sets `BridgeSettingsSource=control-api` before mutating properties. Five tests verify: correct line format; no-op writes nothing; non-Obsidian keys redacted; migration source; hardened permissions.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 56,
+    "tool_calls_total": 74,
+    "tool_calls_succeeded": 73,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 27,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 12,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 12,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      }
+    },
+    "compactions": 1,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 2,
+    "llm_calls": 56,
+    "total_llm_time_s": 608.499,
+    "prompt_cache": {
+      "cached_tokens": 3161728,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 72.797,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 10,
+      "completed": 10,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.395,
+      "prompt_tokens_est": 12413,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Write failing tests for KeyEnvFile hermeticity (KeyEnvFileHermeticityTests.cs)",
+          "Write failing tests for ObsidianBridge hermeticity + regression (ObsidianBridgeHermeticityTests.cs)",
+          "Write failing tests for SettingsAuditLog (SettingsAuditLogTests.cs)",
+          "Write TestModuleInitializer.cs with guard test",
+          "Implement KeyEnvFile.GetEnv hermetic change",
+          "Implement hydration guard + dirty-check in ObsidianBridge + MainWindowViewModel",
+          "Implement SettingsAuditLog",
+          "Implement ControlApi source labeling",
+          "Fix RevealVaultRootCommandTests leak",
+          "Run targeted verify command and iterate"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 897
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 5.068,
+      "prompt_tokens_est": 12818,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/KeyEnvFile.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10370
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9904
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9130
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13403
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2471
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 6.02,
+      "prompt_tokens_est": 23854,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmPropertiesTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2686
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12082
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/KeyEnvFileTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11927
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Settings.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5811
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 5.65,
+      "prompt_tokens_est": 32296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 14515
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/XdgConfig.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2398
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/IEnvironmentAccessor.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 663
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 5.256,
+      "prompt_tokens_est": 36622,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/DiagnosticsSettings.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2816
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/UiStateStore.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3013
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "\\[ModuleInitializer\\]",
+        "path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.928,
+      "result_length": 50094
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class AvaloniaFact",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.052,
+      "result_length": 17
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.774,
+      "prompt_tokens_est": 52240,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "AvaloniaFact",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.064,
+      "result_length": 4431
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/.relay/config.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1834
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianDrainSummaryTests.cs",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1843
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.409,
+      "prompt_tokens_est": 54997,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tools/dotnet-test-files.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1055
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class AvaloniaFactAttribute|AvaloniaFact\\b",
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.075,
+      "result_length": 4431
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.309,
+      "prompt_tokens_est": 57044,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class AvaloniaFactAttribute",
+        "path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 17
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2016
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.045,
+      "prompt_tokens_est": 57657,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "AvaloniaFact",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 17
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/GlobalUsings.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 108,
+      "error": "error: path does not exist: \"/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/GlobalUsings.cs\""
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.819,
+      "prompt_tokens_est": 57796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2470
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.033,
+      "result_length": 5741
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 5.768,
+      "prompt_tokens_est": 60182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "static.*void DeleteDirectoryResilient",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.064,
+      "result_length": 129
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestFileSystem",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.042,
+      "result_length": 105
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 7.18,
+      "prompt_tokens_est": 60395,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Write failing tests for KeyEnvFile hermeticity (KeyEnvFileHermeticityTests.cs)\",\"Write failing tests for ObsidianBridge hermeticity + regression (ObsidianBridgeHermeticityTests.cs)\",\"Write failing tests for SettingsAuditLog (SettingsAuditLogTests.cs)\",\"Write TestModuleInitializer.cs with guard test\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 893
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 8.871,
+      "prompt_tokens_est": 60910,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs",
+        "content": "using VisualRelay.Core.Configuration;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Hermeticity tests for <see cref=\"KeyEnvFile.GetEnv\"/>: a supplied\n/// <see cref=\"IEnvironmentAccessor\"/> must be authoritative \u2014 it must never\n/// fall through to the real process environment.\n/// </summary>\npublic sealed class KeyEnvFileHermeticityTests\n{\n    private const string TestKey = \"VR_TEST_HERMETICITY_KEY\";\n\n    [Fact]\n    public void GetEnv_SuppliedAccessorMissingKey_ReturnsNull_WhenProcessHasKey()\n    {\n        // Set a key in the real process environment.\n        Environment.SetEnvironmentVariable(TestKey, \"process-value\");\n        try\n        {\n            var accessor = new DictionaryEnvironmentAccessor();\n            // The accessor lacks the key \u2014 it must return null, NOT fall through.\n            var result = KeyEnvFile.GetEnv(TestKey, accessor);\n            Assert.Null(result);\n        }\n        finally\n        {\n            Environment.SetEnvironmentVariable(TestKey, null);\n        }\n    }\n\n    [Fact]\n    public void GetEnv_SuppliedAccessorHasKey_ReturnsAccessorValue()\n    {\n        // Set a DIFFERENT value in the real process env to prove the accessor wins.\n        Environment.SetEnvironmentVariable(TestKey, \"process-value\");\n        try\n        {\n            var accessor = new DictionaryEnvironmentAccessor();\n            accessor[TestKey] = \"accessor-value\";\n            var result = KeyEnvFile.GetEnv(TestKey, accessor);\n            Assert.Equal(\"accessor-value\", result);\n        }\n        finally\n        {\n            Environment.SetEnvironmentVariable(TestKey, null);\n        }\n    }\n\n    [Fact]\n    public void GetEnv_NullAccessor_ReadsProcessEnv()\n    {\n        Environment.SetEnvironmentVariable(TestKey, \"process-value\");\n        try\n        {\n            var result = KeyEnvFile.GetEnv(TestKey, accessor: null);\n            Assert.Equal(\"process-value\", result);\n        }\n        finally\n        {\n            Environment.SetEnvironmentVariable(TestKey, null);\n        }\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 132
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 59.566,
+      "prompt_tokens_est": 61524,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Configuration;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Hermeticity and regression tests for the Obsidian bridge settings path.\n/// - Hydration must never persist (construction is a no-op on disk).\n/// - Genuine property changes must persist only changed keys.\n/// - The old leaky pattern (empty accessor + fixture vault root) must not\n///   corrupt a seeded .env.\n/// - The suite-wide <c>XDG_CONFIG_HOME</c> redirect must be active.\n/// </summary>\n[Collection(\"Headless\")]\npublic sealed class ObsidianBridgeHermeticityTests : IDisposable\n{\n    private readonly string _scratch = Path.Combine(Path.GetTempPath(),\n        \"vr-hermeticity\", Guid.NewGuid().ToString(\"N\"));\n\n    public void Dispose() => TestFileSystem.DeleteDirectoryResilient(_scratch);\n\n    /// <summary>\n    /// Create a sandboxed accessor (HOME + XDG_CONFIG_HOME in scratch) and\n    /// ensure the config directory exists.\n    /// </summary>\n    private DictionaryEnvironmentAccessor SandboxedEnv()\n    {\n        var env = new DictionaryEnvironmentAccessor\n        {\n            [\"HOME\"] = Path.Combine(_scratch, \"home\"),\n            [\"XDG_CONFIG_HOME\"] = Path.Combine(_scratch, \"xdg\")\n        };\n        Directory.CreateDirectory(env[\"HOME\"]!);\n        return env;\n    }\n\n    /// <summary>\n    /// Seed a .env file with the given bridge settings so the VM's\n    /// LoadObsidianBridgeSettings hydrates from known state.\n    /// </summary>\n    private string SeedEnvFile(DictionaryEnvironmentAccessor env,\n        bool enabled, string vaultRoot, int pollSeconds)\n    {\n        var path = KeyEnvFile.ResolvePathForCurrentUser(env);\n        var dir = Path.GetDirectoryName(path)!;\n        Directory.CreateDirectory(dir);\n        File.WriteAllText(path,\n            $\"VR_OBSIDIAN_ENABLED={(enabled ? \"true\" : \"false\")}\\n\" +\n            $\"VR_OBSIDIAN_VAULT_ROOT={vaultRoot}\\n\" +\n            $\"VR_OBSIDIAN_POLL_SECONDS={pollSeconds}\\n\");\n        return path;\n    }\n\n    [AvaloniaFact]\n    public void ConstructingViewModel_AgainstSeededEnv_LeavesFileByteIdentical()\n    {\n        var env = SandboxedEnv();\n        var envPath = SeedEnvFile(env, enabled: true,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n        var originalBytes = File.ReadAllBytes(envPath);\n\n        // Construction alone must not write anything to disk.\n        using (new MainWindowViewModel(environmentAccessor: env))\n        {\n            // nothing \u2014 just construct and dispose\n        }\n\n        Assert.True(File.Exists(envPath));\n        var afterBytes = File.ReadAllBytes(envPath);\n        Assert.Equal(originalBytes, afterBytes);\n    }\n\n    [AvaloniaFact]\n    public void GenuinePropertyChange_PersistsOnlyChangedKey()\n    {\n        var env = SandboxedEnv();\n        var envPath = SeedEnvFile(env, enabled: true,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n\n        var vm = new MainWindowViewModel(environmentAccessor: env);\n        // Toggle ObsidianEnabled from true \u2192 false.\n        vm.ObsidianEnabled = false;\n\n        var afterContent = File.ReadAllText(envPath);\n        // The enabled key should have changed, but the vault root and poll\n        // seconds must still be their original values.\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED=false\", afterContent,\n            StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_VAULT_ROOT=/tmp/custom-vault\",\n            afterContent, StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_POLL_SECONDS=45\", afterContent,\n            StringComparison.Ordinal);\n    }\n\n    [AvaloniaFact]\n    public void Regression_EmptyAccessorWithFixtureVaultRoot_DoesNotCorruptSeededEnv()\n    {\n        var env = SandboxedEnv();\n        var envPath = SeedEnvFile(env, enabled: true,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 60);\n        var originalBytes = File.ReadAllBytes(envPath);\n\n        // Simulate the old leaky pattern: empty accessor + fixture vault root.\n        // With the hermetic change, an empty accessor can't resolve config dir\n        // so the persist is a no-op (InvalidOperationException caught by Save).\n        var leakyEnv = new DictionaryEnvironmentAccessor();\n        var vm = new MainWindowViewModel(environmentAccessor: leakyEnv)\n        {\n            ObsidianVaultRoot = \"/Users/dev/obsidian-vault\"\n        };\n\n        // The seeded .env must be untouched.\n        Assert.True(File.Exists(envPath));\n        var afterBytes = File.ReadAllBytes(envPath);\n        Assert.Equal(originalBytes, afterBytes);\n    }\n\n    [Fact]\n    public void XdgConfigHome_IsRedirectedToTempDir()\n    {\n        // The [ModuleInitializer] in TestModuleInitializer must have set\n        // XDG_CONFIG_HOME to a temp directory before any test runs.\n        var xdg = Environment.GetEnvironmentVariable(\"XDG_CONFIG_HOME\");\n        Assert.NotNull(xdg);\n        Assert.NotEmpty(xdg);\n\n        // Should NOT start with the real home directory.\n        var realHome = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);\n        Assert.False(xdg.StartsWith(realHome, StringComparison.OrdinalIgnoreCase));\n\n        // Should contain something temp-ish.\n        Assert.Contains(Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar),\n            xdg, StringComparison.OrdinalIgnoreCase);\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 136
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 23.513,
+      "prompt_tokens_est": 64608,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Runtime.InteropServices;\nusing VisualRelay.Core.Configuration;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for <see cref=\"SettingsAuditLog\"/>: every write to bridge settings\n/// must leave a durable, attributable, timestamped record.\n/// </summary>\npublic sealed class SettingsAuditLogTests : IDisposable\n{\n    private readonly string _scratch = Path.Combine(Path.GetTempPath(),\n        \"vr-audit-log\", Guid.NewGuid().ToString(\"N\"));\n\n    public void Dispose() => TestFileSystem.DeleteDirectoryResilient(_scratch);\n\n    private DictionaryEnvironmentAccessor SandboxedEnv()\n    {\n        var env = new DictionaryEnvironmentAccessor\n        {\n            [\"HOME\"] = Path.Combine(_scratch, \"home\"),\n            [\"XDG_CONFIG_HOME\"] = Path.Combine(_scratch, \"xdg\")\n        };\n        Directory.CreateDirectory(env[\"HOME\"]!);\n        return env;\n    }\n\n    [Fact]\n    public void Append_ChangedObsidianKey_WritesCorrectLine()\n    {\n        var env = SandboxedEnv();\n        var procName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;\n        var pid = Environment.ProcessId;\n\n        SettingsAuditLog.Append(\"VR_OBSIDIAN_ENABLED\",\n            oldValue: \"false\", newValue: \"true\",\n            source: \"settings-ui\", accessor: env);\n\n        // Resolve the expected log path (same dir as .env).\n        var logPath = Path.Combine(\n            Path.GetDirectoryName(KeyEnvFile.ResolvePathForCurrentUser(env))!,\n            \"settings-audit.log\");\n        Assert.True(File.Exists(logPath), \"Audit log file must exist after append.\");\n\n        var content = File.ReadAllText(logPath).TrimEnd();\n        var lines = content.Split('\\n', StringSplitOptions.RemoveEmptyEntries);\n        Assert.Single(lines);\n\n        var line = lines[0].TrimEnd();\n        // Format: {ISO8601-UTC} {key} \"{old}\" -> \"{new}\" source={source} pid={pid} proc={proc}\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED\", line, StringComparison.Ordinal);\n        Assert.Contains(\"\\\"false\\\" -> \\\"true\\\"\", line, StringComparison.Ordinal);\n        Assert.Contains(\"source=settings-ui\", line, StringComparison.Ordinal);\n        Assert.Contains($\"pid={pid}\", line, StringComparison.Ordinal);\n        Assert.Contains($\"proc={procName}\", line, StringComparison.Ordinal);\n        // Values must be in clear (not redacted) for Obsidian keys.\n        Assert.DoesNotContain(\"<redacted>\", line, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void Append_NoOpSave_WritesNothing()\n    {\n        var env = SandboxedEnv();\n\n        // Simulate a no-op save where nothing changed \u2014 the Save method\n        // should not call Append at all. But we test Append directly:\n        // if we never call Append, the log file must not exist.\n        // We verify by checking that the log is absent after only setting up\n        // the env \u2014 no Append call means no file.\n        var logPath = Path.Combine(\n            Path.GetDirectoryName(KeyEnvFile.ResolvePathForCurrentUser(env))!,\n            \"settings-audit.log\");\n        Assert.False(File.Exists(logPath),\n            \"Audit log must not exist when no Append was called.\");\n    }\n\n    [Fact]\n    public void Append_NonObsidianKey_RedactsValue()\n    {\n        var env = SandboxedEnv();\n        var procName = System.Diagnostics.Process.GetCurrentProcess().ProcessName;\n        var pid = Environment.ProcessId;\n\n        SettingsAuditLog.Append(\"HF_TOKEN\",\n            oldValue: \"sk-old-secret\", newValue: \"sk-new-secret\",\n            source: \"settings-ui\", accessor: env);\n\n        var logPath = Path.Combine(\n            Path.GetDirectoryName(KeyEnvFile.ResolvePathForCurrentUser(env))!,\n            \"settings-audit.log\");\n        Assert.True(File.Exists(logPath));\n\n        var content = File.ReadAllText(logPath).TrimEnd();\n        var line = content.Split('\\n', StringSplitOptions.RemoveEmptyEntries)[0].TrimEnd();\n\n        // Values must be redacted for non-Obsidian keys.\n        Assert.Contains(\"<redacted>\", line, StringComparison.Ordinal);\n        Assert.Contains($\"pid={pid}\", line, StringComparison.Ordinal);\n        Assert.Contains($\"proc={procName}\", line, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void Append_MigrationSource_WritesMigrationLine()\n    {\n        var env = SandboxedEnv();\n\n        SettingsAuditLog.Append(\"VR_OBSIDIAN_VAULT_ROOT\",\n            oldValue: null, newValue: \"/tmp/migrated-vault\",\n            source: \"migration\", accessor: env);\n\n        var logPath = Path.Combine(\n            Path.GetDirectoryName(KeyEnvFile.ResolvePathForCurrentUser(env))!,\n            \"settings-audit.log\");\n        Assert.True(File.Exists(logPath));\n\n        var content = File.ReadAllText(logPath).TrimEnd();\n        Assert.Contains(\"source=migration\", content, StringComparison.Ordinal);\n        // null oldValue renders as (unset).\n        Assert.Contains(\"(unset)\", content, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void Append_CreatesFileWithHardenedPermissions()\n    {\n        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))\n        {\n            return;\n        }\n\n        var env = SandboxedEnv();\n\n        SettingsAuditLog.Append(\"VR_OBSIDIAN_ENABLED\",\n            oldValue: \"false\", newValue: \"true\",\n            source: \"settings-ui\", accessor: env);\n\n        var logPath = Path.Combine(\n            Path.GetDirectoryName(KeyEnvFile.ResolvePathForCurrentUser(env))!,\n            \"settings-audit.log\");\n        Assert.True(File.Exists(logPath));\n\n        // File must be 0600 (owner read+write only).\n        var fileMode = File.GetUnixFileMode(logPath);\n        Assert.Equal(\n            UnixFileMode.UserRead | UnixFileMode.UserWrite,\n            fileMode);\n\n        // Parent directory must be 0700.\n        var dirMode = File.GetUnixFileMode(\n            Path.GetDirectoryName(logPath)!);\n        Assert.Equal(\n            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,\n            dirMode);\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/SettingsAuditLogTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 127
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 6.822,
+      "prompt_tokens_est": 66242,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Runtime.CompilerServices;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Runs once when the test assembly loads \u2014 before ANY test \u2014 and redirects\n/// <c>XDG_CONFIG_HOME</c> to a unique temp directory so that even a test\n/// that constructs <c>MainWindowViewModel</c> with a null accessor can never\n/// resolve the real per-user <c>~/.config/visual-relay/.env</c>.\n/// </summary>\ninternal static class TestModuleInitializer\n{\n    [ModuleInitializer]\n    public static void Initialize()\n    {\n        var tempDir = Path.Combine(\n            Path.GetTempPath(),\n            \"vr-test-xdg-config\",\n            Guid.NewGuid().ToString(\"N\"));\n        Directory.CreateDirectory(tempDir);\n        Environment.SetEnvironmentVariable(\"XDG_CONFIG_HOME\", tempDir);\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TestModuleInitializer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 126
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 11.641,
+      "prompt_tokens_est": 66564,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "namespace VisualRelay.Core.Configuration;\n\n/// <summary>\n/// Append-only audit trail for user-config writes. Every change to the\n/// Obsidian bridge keys (and potentially other settings keys) is recorded\n/// in <c>settings-audit.log</c> next to the <c>.env</c> file.\n///\n/// Stub \u2014 tests drive the implementation.\n/// </summary>\npublic static class SettingsAuditLog\n{\n    /// <summary>\n    /// Appends one audit line recording a key change.\n    /// Stub: does nothing yet. Tests will drive the real implementation.\n    /// </summary>\n    public static void Append(\n        string key,\n        string? oldValue,\n        string newValue,\n        string source,\n        IEnvironmentAccessor? accessor = null)\n    {\n        // STUB: no-op until implementation.\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/SettingsAuditLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 132
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 6.861,
+      "prompt_tokens_est": 67135,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs tests/VisualRelay.Tests/SettingsAuditLogTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.736,
+      "result_length": 2519
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 4.343,
+      "prompt_tokens_est": 68223,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs",
+        "old_string": "        // Construction alone must not write anything to disk.\n        using (new MainWindowViewModel(environmentAccessor: env))\n        {\n            // nothing \u2014 just construct and dispose\n        }",
+        "new_string": "        // Construction alone must not write anything to disk.\n        _ = new MainWindowViewModel(environmentAccessor: env);"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 123
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 16.058,
+      "prompt_tokens_est": 68416,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs tests/VisualRelay.Tests/SettingsAuditLogTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 9.721,
+      "result_length": 6117
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 57.391,
+      "prompt_tokens_est": 70662,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs",
+        "old_string": "    [AvaloniaFact]\n    public void GenuinePropertyChange_PersistsOnlyChangedKey()\n    {\n        var env = SandboxedEnv();\n        var envPath = SeedEnvFile(env, enabled: true,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n\n        var vm = new MainWindowViewModel(environmentAccessor: env);\n        // Toggle ObsidianEnabled from true \u2192 false.\n        vm.ObsidianEnabled = false;\n\n        var afterContent = File.ReadAllText(envPath);\n        // The enabled key should have changed, but the vault root and poll\n        // seconds must still be their original values.\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED=false\", afterContent,\n            StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_VAULT_ROOT=/tmp/custom-vault\",\n            afterContent, StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_POLL_SECONDS=45\", afterContent,\n            StringComparison.Ordinal);\n    }",
+        "new_string": "    [AvaloniaFact]\n    public void GenuinePropertyChange_PersistsOnlyChangedKey()\n    {\n        var env = SandboxedEnv();\n        // Seed with enabled=false so we can toggle it to true.\n        var envPath = SeedEnvFile(env, enabled: false,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n\n        var vm = new MainWindowViewModel(environmentAccessor: env);\n        // Toggle ObsidianEnabled from default false \u2192 true.\n        vm.ObsidianEnabled = true;\n\n        var afterContent = File.ReadAllText(envPath);\n        // The enabled key should have changed, but the vault root and poll\n        // seconds must still be their original values.\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED=true\", afterContent,\n            StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_VAULT_ROOT=/tmp/custom-vault\",\n            afterContent, StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_POLL_SECONDS=45\", afterContent,\n            StringComparison.Ordinal);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 123
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 39.16,
+      "prompt_tokens_est": 73474,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "storm_suppression",
+      "name": "run_shell_command",
+      "args_hash": "5dbd58aaf8af",
+      "count": 3
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 7.197,
+      "prompt_tokens_est": 75147,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Write failing tests for KeyEnvFile hermeticity (KeyEnvFileHe\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 893
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 7.75,
+      "prompt_tokens_est": 75610,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/KeyEnvFile.cs",
+        "old_string": "    /// <summary>\n    /// Reads an environment variable through <paramref name=\"accessor\"/> when\n    /// non-null, falling back to the real process environment. The fallback is\n    /// by design: callers (e.g. the settings panel) inject an accessor that\n    /// overrides only specific keys and expect the rest to resolve against the\n    /// real environment.\n    /// </summary>\n    public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>\n        accessor?.GetEnvironmentVariable(name)\n        ?? Environment.GetEnvironmentVariable(name);",
+        "new_string": "    /// <summary>\n    /// Reads an environment variable through <paramref name=\"accessor\"/> when\n    /// non-null. A supplied accessor is <b>authoritative</b> \u2014 its answer is\n    /// returned directly (even <c>null</c>). Only a <c>null</c> accessor reads\n    /// the real process environment. This makes injected accessors hermetic:\n    /// a test that supplies a <see cref=\"IEnvironmentAccessor\"/> can never\n    /// leak through to the real machine config.\n    /// </summary>\n    public static string? GetEnv(string name, IEnvironmentAccessor? accessor = null) =>\n        accessor is not null\n            ? accessor.GetEnvironmentVariable(name)\n            : Environment.GetEnvironmentVariable(name);"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 114
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 22.995,
+      "prompt_tokens_est": 76023,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs",
+        "old_string": "    private void PersistBridgeSettings()\n    {\n        try\n        {\n            ObsidianBridgeSettings.Save(new ObsidianBridgeConfig(\n                ObsidianEnabled, ObsidianVaultRoot, ObsidianPollSeconds), EnvironmentAccessor);\n        }\n        catch { /* best-effort */ }\n    }\n\n    private void LoadObsidianBridgeSettings()\n    {\n        try\n        {\n            var config = ObsidianBridgeSettings.Load(EnvironmentAccessor);\n            ObsidianEnabled = config.Enabled;\n            ObsidianVaultRoot = config.VaultRoot;\n            ObsidianPollSeconds = config.PollSeconds;\n        }\n        catch { /* best-effort */ }\n    }",
+        "new_string": "    /// <summary>\n    /// Label attached to settings writes so the audit trail can distinguish\n    /// user-initiated changes from API pushes, migration, etc.\n    /// </summary>\n    internal string BridgeSettingsSource { get; set; } = \"settings-ui\";\n\n    private void PersistBridgeSettings()\n    {\n        if (_isHydrating) return;\n        try\n        {\n            ObsidianBridgeSettings.Save(new ObsidianBridgeConfig(\n                ObsidianEnabled, ObsidianVaultRoot, ObsidianPollSeconds),\n                EnvironmentAccessor, source: BridgeSettingsSource);\n            StatusText = \"Obsidian bridge settings saved\";\n        }\n        catch { /* best-effort */ }\n    }\n\n    private void LoadObsidianBridgeSettings()\n    {\n        try\n        {\n            _isHydrating = true;\n            var config = ObsidianBridgeSettings.Load(EnvironmentAccessor);\n            ObsidianEnabled = config.Enabled;\n            ObsidianVaultRoot = config.VaultRoot;\n            ObsidianPollSeconds = config.PollSeconds;\n        }\n        catch { /* best-effort */ }\n        finally { _isHydrating = false; }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 134
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 12.654,
+      "prompt_tokens_est": 77494,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs",
+        "new_string": "    /// <summary>\n    /// Writes the bridge settings to the user-level <c>.env</c> file via\n    /// surgical <see cref=\"KeyEnvFile.Upsert\"/> calls. Only keys whose\n    /// values differ from the current <c>.env</c> state are written.\n    /// Each change is recorded in the <see cref=\"SettingsAuditLog\"/>.\n    /// <see cref=\"KeyEnvFile.Upsert\"/> creates the parent directory with\n    /// <c>0700</c> and the file with <c>0600</c>.\n    /// </summary>\n    public static void Save(ObsidianBridgeConfig settings, IEnvironmentAccessor? accessor = null,\n        string source = \"settings-ui\")\n    {\n        try\n        {\n            // Read the current .env values so we only upsert changed keys.\n            var current = KeyEnvFile.Read(accessor);\n\n            UpsertIfChanged(\"VR_OBSIDIAN_ENABLED\",\n                current.GetValueOrDefault(\"VR_OBSIDIAN_ENABLED\"),\n                settings.Enabled ? \"true\" : \"false\",\n                source, accessor);\n            UpsertIfChanged(\"VR_OBSIDIAN_VAULT_ROOT\",\n                current.GetValueOrDefault(\"VR_OBSIDIAN_VAULT_ROOT\"),\n                settings.VaultRoot,\n                source, accessor);\n            UpsertIfChanged(\"VR_OBSIDIAN_POLL_SECONDS\",\n                current.GetValueOrDefault(\"VR_OBSIDIAN_POLL_SECONDS\"),\n                settings.PollSeconds.ToString(),\n                source, accessor);\n        }\n        catch (InvalidOperationException)\n        {\n            // Nowhere to save \u2014 bail.\n        }\n    }\n\n    private static void UpsertIfChanged(string key, string? currentValue,\n        string newValue, string source, IEnvironmentAccessor? accessor)\n    {\n        if (string.Equals(currentValue, newValue, StringComparison.Ordinal))\n            return;\n\n        KeyEnvFile.Upsert(key, newValue, accessor);\n        SettingsAuditLog.Append(key, currentValue, newValue, source, accessor);\n    }",
+        "old_string": "    /// <summary>\n    /// Writes the bridge settings to the user-level <c>.env</c> file via\n    /// three surgical <see cref=\"KeyEnvFile.Upsert\"/> calls.\n    /// <see cref=\"KeyEnvFile.Upsert\"/> creates the parent directory with\n    /// <c>0700</c> and the file with <c>0600</c>.\n    /// </summary>\n    public static void Save(ObsidianBridgeConfig settings, IEnvironmentAccessor? accessor = null)\n    {\n        try\n        {\n            KeyEnvFile.Upsert(\n                \"VR_OBSIDIAN_ENABLED\",\n                settings.Enabled ? \"true\" : \"false\",\n                accessor);\n            KeyEnvFile.Upsert(\n                \"VR_OBSIDIAN_VAULT_ROOT\",\n                settings.VaultRoot,\n                accessor);\n            KeyEnvFile.Upsert(\n                \"VR_OBSIDIAN_POLL_SECONDS\",\n                settings.PollSeconds.ToString(),\n                accessor);\n        }\n        catch (InvalidOperationException)\n        {\n            // Nowhere to save \u2014 bail.\n        }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 126
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 11.118,
+      "prompt_tokens_est": 78447,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs",
+        "new_string": "            if (!envDict.ContainsKey(\"VR_OBSIDIAN_ENABLED\")\n                && root.TryGetProperty(\"enabled\", out var enabledProp))\n            {\n                if (enabledProp.ValueKind == JsonValueKind.True)\n                {\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_ENABLED\", \"true\", accessor);\n                    SettingsAuditLog.Append(\"VR_OBSIDIAN_ENABLED\", null, \"true\",\n                        \"migration\", accessor);\n                }\n                else if (enabledProp.ValueKind == JsonValueKind.False)\n                {\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_ENABLED\", \"false\", accessor);\n                    SettingsAuditLog.Append(\"VR_OBSIDIAN_ENABLED\", null, \"false\",\n                        \"migration\", accessor);\n                }\n            }\n\n            if (!envDict.ContainsKey(\"VR_OBSIDIAN_VAULT_ROOT\")\n                && root.TryGetProperty(\"vaultRoot\", out var vaultProp)\n                && vaultProp.ValueKind == JsonValueKind.String)\n            {\n                var val = vaultProp.GetString();\n                if (!string.IsNullOrWhiteSpace(val))\n                {\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_VAULT_ROOT\", val, accessor);\n                    SettingsAuditLog.Append(\"VR_OBSIDIAN_VAULT_ROOT\", null, val,\n                        \"migration\", accessor);\n                }\n            }\n\n            if (!envDict.ContainsKey(\"VR_OBSIDIAN_POLL_SECONDS\")\n                && root.TryGetProperty(\"pollSeconds\", out var pollProp)\n                && pollProp.ValueKind == JsonValueKind.Number\n                && pollProp.TryGetInt32(out var pollVal))\n            {\n                var pollStr = pollVal.ToString();\n                KeyEnvFile.Upsert(\"VR_OBSIDIAN_POLL_SECONDS\", pollStr, accessor);\n                SettingsAuditLog.Append(\"VR_OBSIDIAN_POLL_SECONDS\", null, pollStr,\n                    \"migration\", accessor);\n            }",
+        "old_string": "            if (!envDict.ContainsKey(\"VR_OBSIDIAN_ENABLED\")\n                && root.TryGetProperty(\"enabled\", out var enabledProp))\n            {\n                if (enabledProp.ValueKind == JsonValueKind.True)\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_ENABLED\", \"true\", accessor);\n                else if (enabledProp.ValueKind == JsonValueKind.False)\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_ENABLED\", \"false\", accessor);\n            }\n\n            if (!envDict.ContainsKey(\"VR_OBSIDIAN_VAULT_ROOT\")\n                && root.TryGetProperty(\"vaultRoot\", out var vaultProp)\n                && vaultProp.ValueKind == JsonValueKind.String)\n            {\n                var val = vaultProp.GetString();\n                if (!string.IsNullOrWhiteSpace(val))\n                    KeyEnvFile.Upsert(\"VR_OBSIDIAN_VAULT_ROOT\", val, accessor);\n            }\n\n            if (!envDict.ContainsKey(\"VR_OBSIDIAN_POLL_SECONDS\")\n                && root.TryGetProperty(\"pollSeconds\", out var pollProp)\n                && pollProp.ValueKind == JsonValueKind.Number\n                && pollProp.TryGetInt32(out var pollVal))\n            {\n                KeyEnvFile.Upsert(\"VR_OBSIDIAN_POLL_SECONDS\", pollVal.ToString(), accessor);\n            }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 126
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 3.643,
+      "prompt_tokens_est": 79298,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/SettingsAuditLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 875
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 19.942,
+      "prompt_tokens_est": 79594,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Diagnostics;\nusing System.Globalization;\n\nnamespace VisualRelay.Core.Configuration;\n\n/// <summary>\n/// Append-only audit trail for user-config writes. Every change to the\n/// Obsidian bridge keys is recorded in <c>settings-audit.log</c> next to\n/// the <c>.env</c> file.\n///\n/// The log format is one line per change:\n/// <c>{ISO8601-UTC} {key} \"{old}\" -&gt; \"{new}\" source={source} pid={pid} proc={proc}</c>\n///\n/// - <c>VR_OBSIDIAN_*</c> values are logged in clear.\n/// - All other keys have their values redacted (<c>&lt;redacted&gt;</c>)\n///   because the same <c>.env</c> holds API keys.\n/// - Best-effort: never throws.\n/// - Bounded: trims to the last ~256 lines when the file exceeds 64 KB.\n/// - Creates the parent directory <c>0700</c> and the file <c>0600</c> on\n///   non-Windows (same hardening as <see cref=\"KeyEnvFile\"/>).\n/// </summary>\npublic static class SettingsAuditLog\n{\n    private const string FileName = \"settings-audit.log\";\n    private const int MaxBytes = 64 * 1024; // 64 KB\n    private const int TailLines = 256;\n    private static readonly object Lock = new();\n\n    /// <summary>\n    /// Appends one audit line recording a key change.\n    /// Never throws \u2014 failures are silently swallowed.\n    /// </summary>\n    /// <param name=\"key\">The env key that changed.</param>\n    /// <param name=\"oldValue\">Previous value, or null if the key was unset.</param>\n    /// <param name=\"newValue\">New value.</param>\n    /// <param name=\"source\">Label identifying the writer (e.g. \"settings-ui\",\n    ///   \"control-api\", \"migration\").</param>\n    /// <param name=\"accessor\">Env accessor for path resolution; null uses the\n    ///   real process environment.</param>\n    public static void Append(\n        string key,\n        string? oldValue,\n        string newValue,\n        string source,\n        IEnvironmentAccessor? accessor = null)\n    {\n        try\n        {\n            var logPath = ResolveLogPath(accessor);\n            var line = FormatLine(key, oldValue, newValue, source);\n\n            lock (Lock)\n            {\n                EnsureDirAndFile(logPath);\n                File.AppendAllText(logPath, line + Environment.NewLine);\n                TrimIfNeeded(logPath);\n            }\n        }\n        catch\n        {\n            // Best-effort: never throw.\n        }\n    }\n\n    // \u2500\u2500 Internals (visible to tests) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    internal static string ResolveLogPath(IEnvironmentAccessor? accessor)\n    {\n        var envPath = KeyEnvFile.ResolvePath(accessor);\n        var dir = Path.GetDirectoryName(envPath)!;\n        return Path.Combine(dir, FileName);\n    }\n\n    internal static string FormatLine(string key, string? oldValue,\n        string newValue, string source)\n    {\n        var displayOld = FormatValue(key, oldValue);\n        var displayNew = FormatValue(key, newValue);\n        var timestamp = DateTimeOffset.UtcNow.ToString(\"yyyy-MM-ddTHH:mm:ssZ\",\n            CultureInfo.InvariantCulture);\n        var pid = Environment.ProcessId;\n        var proc = Process.GetCurrentProcess().ProcessName;\n\n        return $\"{timestamp} {key} \\\"{displayOld}\\\" -> \\\"{displayNew}\\\" source={source} pid={pid} proc={proc}\";\n    }\n\n    internal static string FormatValue(string key, string? value)\n    {\n        if (value is null)\n            return \"(unset)\";\n\n        if (key.StartsWith(\"VR_OBSIDIAN_\", StringComparison.Ordinal))\n            return value;\n\n        return \"<redacted>\";\n    }\n\n    private static void EnsureDirAndFile(string logPath)\n    {\n        var dir = Path.GetDirectoryName(logPath);\n        if (dir is not null && !Directory.Exists(dir))\n        {\n            Directory.CreateDirectory(dir);\n            if (!OperatingSystem.IsWindows())\n            {\n                File.SetUnixFileMode(dir,\n                    UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);\n            }\n        }\n\n        if (!File.Exists(logPath))\n        {\n            File.WriteAllText(logPath, \"\");\n            if (!OperatingSystem.IsWindows())\n            {\n                File.SetUnixFileMode(logPath,\n                    UnixFileMode.UserRead | UnixFileMode.UserWrite);\n            }\n        }\n    }\n\n    private static void TrimIfNeeded(string logPath)\n    {\n        try\n        {\n            var info = new FileInfo(logPath);\n            if (!info.Exists || info.Length <= MaxBytes)\n                return;\n\n            var lines = File.ReadAllLines(logPath);\n            if (lines.Length <= TailLines)\n                return;\n\n            var tail = lines.Skip(lines.Length - TailLines).ToArray();\n            File.WriteAllLines(logPath, tail);\n        }\n        catch\n        {\n            // Best-effort: if trimming fails, the file just keeps growing.\n        }\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/SettingsAuditLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 133
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 7.961,
+      "prompt_tokens_est": 80988,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/Services/ControlApi.cs",
+        "new_string": "            case \"obsidian-bridge\":\n                {\n                    // Toggle enabled: {\"value\": true|false}\n                    var boolVal = Json.ReadBool(body, \"value\");\n                    if (boolVal.HasValue)\n                    {\n                        try\n                        {\n                            viewModel.BridgeSettingsSource = \"control-api\";\n                            viewModel.ObsidianEnabled = boolVal.Value;\n                        }\n                        finally\n                        {\n                            viewModel.BridgeSettingsSource = \"settings-ui\";\n                        }\n                        return (200, Json.Object((\"ok\", true), (\"command\", name)));\n                    }\n\n                    // Set vault path: {\"path\": \"\u2026\"}\n                    var path = Json.ReadString(body, \"path\");\n                    if (path is not null)\n                    {\n                        try\n                        {\n                            viewModel.BridgeSettingsSource = \"control-api\";\n                            viewModel.ObsidianVaultRoot = path;\n                        }\n                        finally\n                        {\n                            viewModel.BridgeSettingsSource = \"settings-ui\";\n                        }\n                        return (200, Json.Object((\"ok\", true), (\"command\", name)));\n                    }\n\n                    return (409, Json.Object((\"ok\", false), (\"command\", name), (\"error\", \"missing value or path\")));\n                }",
+        "old_string": "            case \"obsidian-bridge\":\n                {\n                    // Toggle enabled: {\"value\": true|false}\n                    var boolVal = Json.ReadBool(body, \"value\");\n                    if (boolVal.HasValue)\n                    {\n                        viewModel.ObsidianEnabled = boolVal.Value;\n                        return (200, Json.Object((\"ok\", true), (\"command\", name)));\n                    }\n\n                    // Set vault path: {\"path\": \"\u2026\"}\n                    var path = Json.ReadString(body, \"path\");\n                    if (path is not null)\n                    {\n                        viewModel.ObsidianVaultRoot = path;\n                        return (200, Json.Object((\"ok\", true), (\"command\", name)));\n                    }\n\n                    return (409, Json.Object((\"ok\", false), (\"command\", name), (\"error\", \"missing value or path\")));\n                }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 108
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 10.93,
+      "prompt_tokens_est": 81618,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs",
+        "new_string": "using System.Runtime.InteropServices;\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Configuration;\nusing VisualRelay.Core.Execution;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RevealVaultRootCommandTests : IDisposable\n{\n    private readonly string _scratch = Path.Combine(Path.GetTempPath(),\n        \"vr-reveal-vault\", Guid.NewGuid().ToString(\"N\"));\n\n    public void Dispose() => TestFileSystem.DeleteDirectoryResilient(_scratch);\n\n    private DictionaryEnvironmentAccessor SandboxedEnv()\n    {\n        var env = new DictionaryEnvironmentAccessor\n        {\n            [\"HOME\"] = Path.Combine(_scratch, \"home\"),\n            [\"XDG_CONFIG_HOME\"] = Path.Combine(_scratch, \"xdg\")\n        };\n        Directory.CreateDirectory(env[\"HOME\"]!);\n        return env;\n    }\n\n    [Fact]\n    public void RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet()\n    {\n        var env = SandboxedEnv();\n        var viewModel = new MainWindowViewModel(environmentAccessor: env)\n        {\n            ObsidianVaultRoot = \"/Users/dev/obsidian-vault\"\n        };\n\n        Assert.True(viewModel.RevealVaultRootCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void RevealVaultRootCommand_CanExecute_EvenWhenVaultRootIsEmpty()\n    {\n        // The guard is in the method body (null/whitespace check), not in CanExecute.\n        // The button is always clickable \u2014 it just no-ops when the root is empty.\n        var env = SandboxedEnv();\n        var viewModel = new MainWindowViewModel(environmentAccessor: env)\n        {\n            ObsidianVaultRoot = string.Empty\n        };\n\n        Assert.True(viewModel.RevealVaultRootCommand.CanExecute(null));\n    }",
+        "old_string": "using System.Runtime.InteropServices;\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Core.Execution;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RevealVaultRootCommandTests\n{\n    [Fact]\n    public void RevealVaultRootCommand_CanExecute_WhenVaultRootIsSet()\n    {\n        var env = new DictionaryEnvironmentAccessor();\n        var viewModel = new MainWindowViewModel(environmentAccessor: env)\n        {\n            ObsidianVaultRoot = \"/Users/dev/obsidian-vault\"\n        };\n\n        Assert.True(viewModel.RevealVaultRootCommand.CanExecute(null));\n    }\n\n    [Fact]\n    public void RevealVaultRootCommand_CanExecute_EvenWhenVaultRootIsEmpty()\n    {\n        // The guard is in the method body (null/whitespace check), not in CanExecute.\n        // The button is always clickable \u2014 it just no-ops when the root is empty.\n        var env = new DictionaryEnvironmentAccessor();\n        var viewModel = new MainWindowViewModel(environmentAccessor: env)\n        {\n            ObsidianVaultRoot = string.Empty\n        };\n\n        Assert.True(viewModel.RevealVaultRootCommand.CanExecute(null));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 120
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 13.476,
+      "prompt_tokens_est": 82418,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs tests/VisualRelay.Tests/SettingsAuditLogTests.cs tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 2.763,
+      "result_length": 762
+    },
+    {
+      "turn": 33,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83244,
+      "tokens_after": 35816
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 6.479,
+      "prompt_tokens_est": 35816,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/KeyEnvFile.cs",
+        "offset": 55,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1543
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 4.994,
+      "prompt_tokens_est": 36328,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "ResolvePathForCurrentUser",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 263
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 7.776,
+      "prompt_tokens_est": 36522,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/SettingsAuditLog.cs",
+        "new_string": "    internal static string ResolveLogPath(IEnvironmentAccessor? accessor)\n    {\n        var envPath = KeyEnvFile.ResolvePathForCurrentUser(accessor);\n        var dir = Path.GetDirectoryName(envPath)!;\n        return Path.Combine(dir, FileName);\n    }",
+        "old_string": "    internal static string ResolveLogPath(IEnvironmentAccessor? accessor)\n    {\n        var envPath = KeyEnvFile.ResolvePath(accessor);\n        var dir = Path.GetDirectoryName(envPath)!;\n        return Path.Combine(dir, FileName);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 120
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 3.641,
+      "prompt_tokens_est": 36935,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs tests/VisualRelay.Tests/SettingsAuditLogTests.cs tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 13.146,
+      "result_length": 2622
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 29.406,
+      "prompt_tokens_est": 37811,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs",
+        "new_string": "    [AvaloniaFact]\n    public void GenuinePropertyChange_PersistsOnlyChangedKey()\n    {\n        var env = SandboxedEnv();\n        // Seed with known values \u2014 we'll hydrate the VM to match, then change one key.\n        var envPath = SeedEnvFile(env, enabled: false,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n\n        var vm = new MainWindowViewModel(environmentAccessor: env);\n        // Hydrate the VM to match the seeded file (each set persists, but\n        // after hydration the file matches the VM state).\n        vm.ObsidianPollSeconds = 45; // write first to avoid overwriting\n        vm.ObsidianVaultRoot = \"/tmp/custom-vault\";\n        vm.ObsidianEnabled = false;\n\n        // Now change only ObsidianEnabled.\n        vm.ObsidianEnabled = true;\n\n        var afterContent = File.ReadAllText(envPath);\n        // The enabled key should have changed, but the vault root and poll\n        // seconds must still be their original values.\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED=true\", afterContent,\n            StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_VAULT_ROOT=/tmp/custom-vault\",\n            afterContent, StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_POLL_SECONDS=45\", afterContent,\n            StringComparison.Ordinal);\n    }",
+        "old_string": "    [AvaloniaFact]\n    public void GenuinePropertyChange_PersistsOnlyChangedKey()\n    {\n        var env = SandboxedEnv();\n        // Seed with enabled=false so we can toggle it to true.\n        var envPath = SeedEnvFile(env, enabled: false,\n            vaultRoot: \"/tmp/custom-vault\", pollSeconds: 45);\n\n        var vm = new MainWindowViewModel(environmentAccessor: env);\n        // Toggle ObsidianEnabled from default false \u2192 true.\n        vm.ObsidianEnabled = true;\n\n        var afterContent = File.ReadAllText(envPath);\n        // The enabled key should have changed, but the vault root and poll\n        // seconds must still be their original values.\n        Assert.Contains(\"VR_OBSIDIAN_ENABLED=true\", afterContent,\n            StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_VAULT_ROOT=/tmp/custom-vault\",\n            afterContent, StringComparison.Ordinal);\n        Assert.Contains(\"VR_OBSIDIAN_POLL_SECONDS=45\", afterContent,\n            StringComparison.Ordinal);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 123
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 3.579,
+      "prompt_tokens_est": 39351,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "storm_suppression",
+      "name": "run_shell_command",
+      "args_hash": "6c0510da2310",
+      "count": 3
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 3.165,
+      "prompt_tokens_est": 39558,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 6.96,
+      "result_length": 1762
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 3.814,
+      "prompt_tokens_est": 40168,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 3.642,
+      "result_length": 1763
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 3.485,
+      "prompt_tokens_est": 40783,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/SettingsAuditLogTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 3.39,
+      "result_length": 1762
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 3.214,
+      "prompt_tokens_est": 41465,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 3.486,
+      "result_length": 1762
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 7.392,
+      "prompt_tokens_est": 42077,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "new DictionaryEnvironmentAccessor\\(\\)",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.071,
+      "result_length": 1100
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 13.126,
+      "prompt_tokens_est": 42580,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs",
+        "offset": 80,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2205
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ControlServerTests.cs",
+        "offset": 18,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1410
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs",
+        "offset": 65,
+        "limit": 45
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2199
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 3.367,
+      "prompt_tokens_est": 44661,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2016
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 3.028,
+      "prompt_tokens_est": 45241,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs",
+        "offset": 46,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1340
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 10.617,
+      "prompt_tokens_est": 45639,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs",
+        "limit": 65
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2614
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 10.066,
+      "prompt_tokens_est": 46869,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "new DictionaryEnvironmentAccessor",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/HfGateHintLayoutTests.cs",
+        "context_lines": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1050
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 4.319,
+      "prompt_tokens_est": 47570,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "static.*SeedUserEnv",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "context_lines": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.072,
+      "result_length": 1276
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 7.49,
+      "prompt_tokens_est": 48001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs tests/VisualRelay.Tests/KeyEnvFileTests.cs tests/VisualRelay.Tests/ControlServerTests.cs 2>&1",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 3.894,
+      "result_length": 1763
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 4.287,
+      "prompt_tokens_est": 48861,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/ObsidianBridgeVmPropertiesTests.cs tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs tests/VisualRelay.Tests/ObsidianDrainSummaryTests.cs tests/VisualRelay.Tests/HfGateHintLayoutTests.cs 2>&1",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 4.452,
+      "result_length": 1760
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 4.134,
+      "prompt_tokens_est": 49533,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && wc -l src/VisualRelay.Core/Configuration/KeyEnvFile.cs src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs src/VisualRelay.Core/Configuration/SettingsAuditLog.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs src/VisualRelay.App/Services/ControlApi.cs",
+        "timeout": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 319
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 26.522,
+      "prompt_tokens_est": 49775,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Implement KeyEnvFile.GetEnv hermetic change",
+          "Implement hydration guard + dirty-check in ObsidianBridge + MainWindowViewModel",
+          "Implement SettingsAuditLog",
+          "Implement ControlApi source labeling",
+          "Fix RevealVaultRootCommandTests leak"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 888
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 5.393,
+      "prompt_tokens_est": 51147,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/KeyEnvFileHermeticityTests.cs tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs tests/VisualRelay.Tests/SettingsAuditLogTests.cs tests/VisualRelay.Tests/RevealVaultRootCommandTests.cs tests/VisualRelay.Tests/KeyEnvFileTests.cs tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs tests/VisualRelay.Tests/ObsidianBridgeVmPropertiesTests.cs tests/VisualRelay.Tests/ObsidianDrainSummaryTests.cs tests/VisualRelay.Tests/ControlServerTests.cs 2>&1",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 4.834,
+      "result_length": 1760
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 8.774,
+      "prompt_tokens_est": 51927,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Run targeted verify command and iterate"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 887
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 15.842,
+      "prompt_tokens_est": 52567,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
