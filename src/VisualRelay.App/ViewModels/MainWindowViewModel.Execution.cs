@@ -11,6 +11,8 @@ namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    private RelayQueueController? _activeDrainController;
+
     [RelayCommand(CanExecute = nameof(CanRunSelected))]
     private async Task RunSelectedAsync()
     {
@@ -95,6 +97,8 @@ public partial class MainWindowViewModel
                 planEventSinkFactory: PlanSinkFactory,
                 lifecycle: lifecycle);
 
+            _activeDrainController = controller;
+
             // Bridge: when a new task is created mid-drain (CreateNewTaskAsync →
             // ReloadTaskListAsync), it lands in the GUI's Tasks collection but not in
             // controller.Tasks. This source lets the drain loop pull fresh task items
@@ -115,11 +119,16 @@ public partial class MainWindowViewModel
                 if (rewritingSnapshot.Contains(controller.Tasks[i].Id))
                     controller.Tasks.RemoveAt(i);
             }
-            // Wire pause.
-            if (PauseRequested)
-                controller.RequestPause();
 
-            var results = await controller.DrainAsync(mode: SelectedRunAllMode);
+            IReadOnlyList<RelayTaskOutcome> results;
+            try
+            {
+                results = await controller.DrainAsync(mode: SelectedRunAllMode);
+            }
+            finally
+            {
+                _activeDrainController = null;
+            }
 
             var flaggedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Flagged);
             var committedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Committed);
@@ -263,5 +272,13 @@ public partial class MainWindowViewModel
         ConfigDiagnostic = null;
         return true;
     }
+
+    /// <summary>
+    /// Test seam: installs a controller as the active drain controller so the
+    /// VM-level pause test can verify the full UI→controller round-trip.
+    /// Production sets <see cref="_activeDrainController"/> in
+    /// <see cref="DrainQueueAsync"/>; only tests call this setter.
+    /// </summary>
+    internal void SetActiveDrainControllerForTests(RelayQueueController? c) => _activeDrainController = c;
 
 }

@@ -62,11 +62,11 @@ public partial class MainWindowViewModel
     }
 
     private bool CanStartBackend() => !IsBackendReachable;
-
     [RelayCommand]
     private void TogglePause()
     {
         PauseRequested = !PauseRequested;
+        if (PauseRequested) _activeDrainController?.RequestPause();
         StatusText = PauseRequested
             ? IsBusy ? $"Pause armed: finishing {_runningTaskId ?? "current task"} before stopping" : "Paused: no new task will start"
             : IsBusy ? $"Running {_runningTaskId ?? "task"}" : FormatQueueStatus();
