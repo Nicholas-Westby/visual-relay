@@ -1,0 +1,276 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-06T21:46:12.273790+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: fix-lossy-flagged-work-snapshot\nWorking directory: /tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot\n\n## Task input\n# Fix the Lossy Flagged-Work Snapshot and Restore\n\nResuming a flagged task corrupts the working tree. Observed on 2026-07-06: clicking **Resume** on a\nflagged task restored its flagged-work bundle and thereby (a) **deleted the tracked\n`.relay/config.json` and `.relay/.gitignore`** \u2014 the app then showed the \"Initialize this project\"\nscreen because config.json was gone \u2014 and (b) **stripped the executable bit** from\n`.githooks/command-guard`, `.githooks/commit-msg`, `.githooks/pre-commit`, `test.sh`, `me.sh`,\n`tools/dotnet-test-files.sh`, and `visual-relay`. The de-executabled command-guard then made every\nstage-8 attempt die in ~6 seconds with `swival exit 1: Error: command_middleware executable not\nfound or not executable: \u2026/.githooks/command-guard`, burning all retries and escalations\n(run 3/3, attempts 1\u201310) in about a minute before re-flagging. Make the snapshot/restore\nround-trip faithful: tracked `.relay/` files and file modes must survive.\n\n## Current state (researched)\n\n- `src/VisualRelay.Core/Execution/FlaggedWorkStore.cs` `CaptureAsync` builds the kill-time\n  snapshot in a **fresh temporary index** (`GIT_INDEX_FILE` pointed at a new path):\n  1. `git add -A` stages everything;\n  2. `git rm --cached -r -q --ignore-unmatch -- .relay/` then de-indexes ALL `.relay/` paths;\n  3. `write-tree` / `commit-tree -p <runBaseSha>` produce the snapshot commit.\n- **Defect 1 (deletions):** step 2's intent is to keep runtime relay metadata out of the bundle,\n  but `.relay/config.json` and `.relay/.gitignore` are **tracked at the run base**, so removing\n  them from the index makes the snapshot tree record them as *deleted* relative to base.\n  `RestoreAsync` applies the snapshot with `git cherry-pick -n <snapshotSha>`, which faithfully\n  deletes them from the working tree on resume.\n- **Defect 2 (modes):** populating a **brand-new empty index** with `git add -A` under\n  `core.fileMode=false` records every path as `100644` \u2014 there is no prior index entry to carry\n  the mode, and git does not read modes from disk in that configuration. Verified: the run base\n  has `100755` for `.githooks/command-guard`, `test.sh`, and `visual-relay`; the captured\n  snapshot tree has `100644` for all of them. The cherry-pick then chmods the working files.\n  (This repo had `core.fileMode=false` from a VM-shared-folder era; it has since been unset, but\n  capture must be robust on any clone where it is false.)\n- Restore call site: `RelayDriver.FlaggedWork.cs` (\"On resume, restores the flagged working tree\n  from a flagged-work bundle\"). Why the exec bit matters: `SwivalSubagentRunner.BuildArguments`\n  (`ProcessRunners.cs`) passes `--command-middleware <root>/.githooks/command-guard` whenever the\n  file exists, and swival refuses to start when it is not executable.\n- Existing test surfaces: `tests/VisualRelay.Tests/RelayDriverResumeTests.FlaggedWork.cs` and\n  `.FlaggedWork2.cs` (capture/restore behavior through the driver), plus the sidecar assertions\n  mentioned in `FlaggedWorkStore.cs`. There is no test covering tracked-`.relay` preservation or\n  mode fidelity.\n\n## What to build (TDD-first)\n\n1. **Tests first** (extend `RelayDriverResumeTests.FlaggedWork*.cs` or add a focused\n   `FlaggedWorkStoreTests.cs` using the same repo fixtures): a capture\u2192restore round-trip on a\n   test repo that has (a) a tracked `.relay/config.json` committed at base, (b) a tracked\n   executable script (`100755` at base), and (c) `core.fileMode=false` set in the repo config.\n   After capture on a dirty tree and restore onto a fresh checkout of base:\n   - `.relay/config.json` still exists with its base content (never recorded as deleted);\n   - the script's index/tree mode is still `100755` and the working file is executable;\n   - the task's real edits are present (the existing behavior keeps working).\n2. **Fix capture's `.relay/` handling** in `CaptureAsync`: instead of `git rm --cached -r --\n   .relay/`, reset the `.relay/` paths in the temp index back to the run base's versions (e.g.\n   `git restore --source=<runBaseSha> --staged -- .relay/` under the same `GIT_INDEX_FILE`\n   environment, or an equivalent `ls-tree`-driven re-add of exactly the tracked-at-base `.relay/`\n   entries). Result: the snapshot tree's `.relay/` content equals the base's, so the cherry-pick\n   diff contains no `.relay/` changes at all \u2014 runtime metadata still never enters the bundle,\n   and nothing gets deleted on restore.\n3. **Fix capture's mode fidelity**: seed the temp index from the run base **before** staging\n   (`git read-tree <runBaseSha>` with the `GIT_INDEX_FILE` environment, then `git add -A`) so\n   tracked files carry their base modes through `add` even under `core.fileMode=false`, and/or\n   run the capture-side `add` with `-c core.fileMode=true` so real on-disk bits are honored where\n   the filesystem supports them. Either way the round-trip test in (1) must pass with\n   `core.fileMode=false` set.\n4. **Belt-and-braces on restore** (small, optional if (2)+(3) prove sufficient): after a\n   successful cherry-pick in `RestoreAsync`, verify `.relay/config.json` still exists when it\n   existed before the restore, and surface a loud failure (`RestoreResult`-level, not silent)\n   instead of proceeding into a run with a deleted config.\n\n## Done when\n\n- The round-trip test proves: tracked `.relay/` files survive restore byte-for-byte, executable\n  modes survive capture+restore under `core.fileMode=false`, and the task's actual edits are\n  restored as before.\n- Existing resume/flagged-work tests still pass; `./visual-relay check` passes (file-size guard,\n  format verification, build, full test suite, README screenshot render).\n\n## Guardrails\n\n- Conventional Commits only (the `commit-msg` hook enforces the full ruleset). See\n  `docs/commit-messages.md` and `AGENTS.md`.\n- `FlaggedWorkStore.cs` is 253 lines \u2014 stay under the 300-line guard (extract a partial like the\n  existing `FlaggedWorkStore` partial split if needed).\n- All git operations must remain harness-side plumbing through `IGitInvoker` \u2014 no shelling out\n  around it, no hook bypasses (matches the file's existing doc comment).\n- Do not change the bundle format/ref layout (`refs/relay-snapshot/<taskId>`, sidecar JSON) \u2014\n  existing bundles on disk should still restore; only their `.relay`/mode defects go away for\n  newly captured ones.\n- Minimal diffs: change only what this task needs; do not reformat or reflow unrelated code.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "---\n\n## Task frame: fix-lossy-flagged-work-snapshot\n\n**The bug in one sentence:** `FlaggedWorkStore.CaptureAsync` builds a snapshot via a temp index where it strips tracked `.relay/` files (making them \"deleted\" in the diff) and loses executable bits (recording everything as `100644`), so `RestoreAsync`'s `cherry-pick -n` faithfully destroys those files and strips +x on resume \u2014 crashing the next run.\n\n**Root causes:**\n- **Defect 1 (deletions):** After `git add -A`, the code runs `git rm --cached -r -- .relay/` to exclude runtime metadata. But `.relay/config.json` and `.relay/.gitignore` are *tracked at the run base* \u2014 removing them from the temp index makes the snapshot tree record them as deletions (not a no-op exclusion).\n- **Defect 2 (modes):** Creating a fresh temp index under `core.fileMode=false` means `git add -A` doesn't read filemodes from disk; every entry defaults to `100644`. The capture never sees the original `100755` bits.\n\n**What's needed (TDD-first, 4 parts):**\n1. A round-trip test proving tracked `.relay/` files and executable modes survive under `core.fileMode=false`.\n2. Fix `.relay/` exclusion \u2192 restore base versions instead of deleting.\n3. Fix mode fidelity \u2192 seed temp index from base so `git add` preserves modes.\n4. Belt-and-braces: a post-restore guard verifying `.relay/config.json` exists.\n\n---\n\n### Solution option A: `git read-tree` seed + `git restore --source` for `.relay/`\n\nSeed the temporary GIT_INDEX_FILE with `git read-tree <runBaseSha>` before `git add -A`. This populates every tracked path with its base tree entry (correct mode), and `git add -A` updates only content-changed files while preserving the existing mode for unchanged files. Then replace the `git rm --cached -r -- .relay/` line with `git restore --source=<runBaseSha> --staged -- .relay/` under the same temp index, which rewrites `.relay/` entries to match the base exactly \u2014 runtime metadata never appears in the diff.\n\n**Effect on existing code:** ~3-4 lines change in `CaptureAsync`; no new methods, no bundle format change.\n\n**Mode-handling edge case:** If `core.fileMode=false` is still set, `git add -A` might still flatten modes of *new* (untracked) files to `100644`. To cover that case, pass `-c core.fileMode=true` as a git env override during the `add` call so on-disk modes are read for new entries. Already-tracked files get their mode from `read-tree` regardless.\n\n**Trade-off:** Requires the `runBaseSha` tree to be fully available (it should always be \u2014 it's the commit the task branched from). If the run base is a detached HEAD that was already gc'd, `read-tree` could fail. But that scenario is vanishingly rare and would also break other parts of the system.\n\n---\n\n### Solution option B: Two-pass staging (filter tracked `.relay/` via `ls-tree`)\n\nSkip `git read-tree` entirely. Instead, use `git ls-tree <runBaseSha> -- .relay/` before the temp-index work to enumerate exactly the `.relay/` files that are tracked at base, then after `git add -A` and the current `git rm --cached -- .relay/` (which strips runtime metadata), re-inject only those base-tracked paths using `git update-index --add --cacheinfo <mode> <sha> <path>` for each entry. For mode fidelity, run `git ls-tree -r <runBaseSha>` to get base modes, then instead of the plain `git add -A`, use `git add -A` followed by `git update-index --chmod=+x` for paths whose base entry was `100755`.\n\n**Effect on existing code:** ~15-20 lines added (a helper that iterates ls-tree output and calls update-index). More plumbing but avoids depending on `read-tree`'s interaction with temp indices.\n\n**Trade-off:** More code, more git invocations, and the `ls-tree` \u2192 `update-index` round-trip is fragile if file content changed in ways that make the tree-sha mismatch (you'd need to re-add content first). Also: the `update-index --chmod=+x` approach only fixes the mode after the fact rather than preventing the mode loss at the source.\n\n---\n\n### Solution option C: Pre-fix in `RestoreAsync` (post-cherry-pick repair)\n\nKeep `CaptureAsync` simpler: fix the `.relay/` deletion by using git restore (like option A), but for modes, instead of changing capture at all, repair them in `RestoreAsync` after the cherry-pick: `git diff-tree --name-only -r <snapshotSha> <runBaseSha>` to find files whose mode changed, then `git update-index --chmod=+x` on any that were `100755` at base but `100644` in the snapshot, followed by checking them out again. Also add the belt-and-braces `.relay/config.json` existence check.\n\n**Effect on existing code:** Capture untouched; ~15-20 lines in `RestoreAsync` for the repair loop. Less invasive to the capture path.\n\n**Trade-off:** Fixes the symptom (wrong working-tree modes) but not the root cause (lossy snapshot). A newly captured bundle still has wrong tree modes \u2014 if someone uses the bundle with a different restore tool later, the bug resurfaces. The defect is \"lossy snapshot\" per the task title; fixing it at restore means the snapshot itself is still wrong. Also, post-hoc repair can't fix the `.relay/` deletion problem (cherry-pick already deleted the files); you'd have to `git checkout <runBaseSha> -- .relay/` after restore, which is another bandage.\n\n---\n\n### Recommendation\n\n**Option A** (seed with `read-tree`, restore `.relay/` from base, pass `-c core.fileMode=true` during `add`) is the cleanest, smallest diff, and fixes the snapshot at the source. The snapshot tree becomes faithful to the real working tree \u2014 no deletions where there are none, no mode loss. It also naturally handles the belt-and-braces (if the snapshot is right, restore is right). Implemented as:\n\n```csharp\n// In CaptureAsync, before git add:\n// 1. Seed temp index from run base\ngitInvoker.Execute(\"read-tree\", runBaseSha, env: indexEnv);\n\n// 2. Stage working tree changes (preserves modes from read-tree seed)\ngitInvoker.Execute(\"-c\", \"core.fileMode=true\", \"add\", \"-A\", env: indexEnv);\n\n// 3. Instead of git rm --cached -- .relay/, restore base .relay/ entries\ngitInvoker.Execute(\"restore\", \"--source\", runBaseSha, \"--staged\", \"--\", \".relay/\", env: indexEnv);\n```\n\nThen in `RestoreAsync`, add a guard:\n```csharp\nif (!File.Exists(relayConfigPath))\n    return RestoreResult.Failure(\"...\");\n```\n\n```json\n{\n  \"summary\": \"FlaggedWorkStore.CaptureAsync builds a lossy snapshot: it strips tracked .relay/ files (making them deletions) and loses executable bits (all 100644) under core.fileMode=false. RestoreAsync's cherry-pick then faithfully deletes those files and strips +x, crashing the next run. Fix needs a TDD-first round-trip test + fixing both defects at the capture source so the snapshot/restore is faithful.\",\n  \"options\": [\n    \"Option A (recommended): Seed temp index with `git read-tree <runBaseSha>`, then `git add -A` (with `-c core.fileMode=true`), then replace `git rm --cached -- .relay/` with `git restore --source=<runBaseSha> --staged -- .relay/`. ~3-4 lines changed, snapshot becomes faithful at the source \u2014 tracked .relay/ files and 100755 modes survive. Belt-and-braces: post-restore guard verifying .relay/config.json exists.\",\n    \"Option B: Two-pass staging using `git ls-tree <runBaseSha>` to enumerate base-tracked .relay/ entries and base modes, then re-inject with `git update-index --cacheinfo` after the current `git rm --cached`. ~15-20 lines added, more git invocations, more fragile (tree-sha round-trip can fail on content changes).\",\n    \"Option C: Fix .relay/ deletion via `git restore` in capture (same as A), but fix modes post-hoc in RestoreAsync via `git update-index --chmod=+x` repair loop after cherry-pick. Leaves the snapshot itself lossy \u2014 bandage on the symptom, not the root cause.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 7,
+    "tool_calls_total": 10,
+    "tool_calls_succeeded": 6,
+    "tool_calls_failed": 4,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 0,
+        "failed": 3
+      },
+      "outline": {
+        "succeeded": 0,
+        "failed": 1
+      },
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 5,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 7,
+    "total_llm_time_s": 42.238,
+    "prompt_cache": {
+      "cached_tokens": 48896,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.767,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.984,
+      "prompt_tokens_est": 5476,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 400,
+      "error": "error: Path '/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs' resolves to /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs",
+        "depth": 2
+      },
+      "succeeded": false,
+      "duration_s": 0.009,
+      "result_length": 400,
+      "error": "error: Path '/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs' resolves to /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/fix-lossy-flagged-work-snapshot/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.455,
+      "prompt_tokens_est": 6005,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8106
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/.swival"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 250,
+      "error": "error: Path '/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/.swival' resolves to /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/.swival, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.583,
+      "prompt_tokens_est": 8175,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-la",
+          "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 1.479,
+      "result_length": 217
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/README.md",
+        "limit": 50
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 254,
+      "error": "error: Path '/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/README.md' resolves to /private/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/README.md, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.421,
+      "prompt_tokens_est": 8566,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "-a",
+          "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.087,
+      "result_length": 217
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.66,
+      "prompt_tokens_est": 8850,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "ls",
+          "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.062,
+      "result_length": 121
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 2.79,
+      "prompt_tokens_est": 8981,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "-C",
+          "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/",
+          "log",
+          "--oneline",
+          "-5"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.064,
+      "result_length": 84
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "-C",
+          "/tmp/nix-shell.L5haGz/visual-relay/wt/fbb5c78605a5/plan-20260706214512/",
+          "ls-files",
+          "--",
+          "*.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 84
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 23.345,
+      "prompt_tokens_est": 9180,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

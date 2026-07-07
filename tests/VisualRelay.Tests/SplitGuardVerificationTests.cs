@@ -148,7 +148,10 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 176→180 on 2026-07-01: resilient-auto-include-missing-files added
         // GitCommitterAutoIncludeTests.Resilience.cs (4 [Fact]s) to the
         // GitCommitterAutoIncludeTests oversized family.
-        const int baseline = 180;
+        // Bumped 180→182 on 2026-07-06: fix-lossy-flagged-work-snapshot added
+        // RelayDriverResumeTests.FlaggedWork3.cs (2 [Fact]s) to the
+        // RelayDriverResumeTests oversized family.
+        const int baseline = 182;
 
         string[] prefixes =
         [

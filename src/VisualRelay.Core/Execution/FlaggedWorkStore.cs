@@ -54,15 +54,30 @@ internal static partial class FlaggedWorkStore
                     ["GIT_INDEX_FILE"] = tempIndex
                 };
 
-                // Stage everything (tracked edits + untracked files) into the temp index.
-                var addResult = await gitInvoker.RunAsync(rootPath, ["add", "-A"], ct, environment: env);
+                // Seed the temp index from the run base so tracked files carry
+                // their base modes through the subsequent `git add -A`, preventing
+                // loss of executable bits under core.fileMode=false.
+                var readTreeResult = await gitInvoker.RunAsync(
+                    rootPath, ["read-tree", runBaseSha], ct, environment: env);
+                if (readTreeResult.ExitCode != 0)
+                    return;
+
+                // Stage everything (tracked edits + untracked files) into the temp
+                // index. Force core.fileMode=true so on-disk executable bits are
+                // honored regardless of the repo config.
+                var addResult = await gitInvoker.RunAsync(
+                    rootPath, ["-c", "core.fileMode=true", "add", "-A"], ct, environment: env);
                 if (addResult.ExitCode != 0)
                     return;
 
-                // Unstage .relay/ files so the snapshot does not include the bundle
-                // or any other git-ignored relay metadata (avoids overwrite errors on restore).
+                // Reset .relay/ paths in the temp index back to the run base's
+                // versions.  Tracked-at-base files (config.json, .gitignore) are
+                // preserved exactly; runtime metadata (git-ignored, never in base)
+                // is removed from the index.  This replaces the old `git rm --cached`
+                // which stripped ALL .relay/ entries including tracked ones, recording
+                // them as deletions in the snapshot tree.
                 _ = await gitInvoker.RunAsync(
-                    rootPath, ["rm", "--cached", "-r", "-q", "--ignore-unmatch", "--", ".relay/"], ct, environment: env);
+                    rootPath, ["restore", "--source", runBaseSha, "--staged", "--", ".relay/"], ct, environment: env);
 
                 // Unstage pre-existing untracked files (they were not authored by this task).
                 foreach (var path in preRunUntracked)
@@ -166,11 +181,29 @@ internal static partial class FlaggedWorkStore
                 return RestoreResult.Unrestorable;
             var snapshotSha = revParseResult.Output.Trim();
 
+            // Check whether .relay/config.json is tracked at HEAD so we can
+            // guard against its deletion after the cherry-pick (defense-in-depth
+            // against legacy lossy bundles).
+            var configPath = Path.Combine(rootPath, ".relay", "config.json");
+            var configTrackedAtHead = false;
+            if (File.Exists(configPath))
+            {
+                var lsTreeResult = await gitInvoker.RunAsync(
+                    rootPath, ["ls-tree", "HEAD", "--", ".relay/config.json"], ct);
+                configTrackedAtHead = lsTreeResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(lsTreeResult.Output);
+            }
+
             // 3-way apply via cherry-pick -n.
             var cherryResult = await gitInvoker.RunAsync(
                 rootPath, ["cherry-pick", "-n", snapshotSha], ct);
             // Always clear sequencer state (keep working-tree changes even on conflict).
             _ = await gitInvoker.RunAsync(rootPath, ["cherry-pick", "--quit"], ct);
+
+            // Guard: if .relay/config.json was tracked at HEAD but the
+            // cherry-pick deleted it (a lossy legacy bundle), bail out loudly
+            // instead of proceeding into a broken run.
+            if (configTrackedAtHead && !File.Exists(configPath))
+                return RestoreResult.Unrestorable;
 
             // Treat a successful cherry-pick (exit code 0) as a clean apply.
             if (cherryResult.ExitCode != 0)
