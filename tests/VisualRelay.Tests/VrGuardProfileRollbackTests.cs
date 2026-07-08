@@ -29,10 +29,23 @@ public sealed class VrGuardProfileRollbackTests
             .Select(e => e.GetString())
             .ToHashSet(StringComparer.Ordinal);
 
-        // The big writable caches the profile itself grants write to — none of
-        // these should ever be snapshotted for rollback (regenerable, and they
-        // exceed the budget). Component-name matches.
-        foreach (var required in new[] { ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo", "Unity" })
+        // The big writable roots the profile grants write to (toolchain caches,
+        // IDE/app state, the shared temp root) — none of these should ever be
+        // snapshotted for rollback (regenerable, and they exceed the budget).
+        // Plain names match any path component; slash-anchored fragments match
+        // full-path segments only, so they cannot collide with same-named
+        // workspace dirs (e.g. a repo vendoring the "Unity" C test framework).
+        foreach (var required in new[]
+                 {
+                     ".nuget", ".cache", "Caches", ".bun", ".npm", ".dotnet", ".cargo", ".cloakbrowser",
+                     "/Library/Unity",
+                     "/Library/Application Support/Unity",
+                     "/Library/Application Support/UnityHub",
+                     "/Library/Application Support/JetBrains",
+                     "/.local/share/JetBrains",
+                     "/.local/share/uv",
+                     "/var/folders/",
+                 })
         {
             Assert.Contains(required, patterns);
         }

@@ -163,7 +163,7 @@ public partial class MainWindowViewModel
 
         ApplyRunningTaskToRows();
         SelectedTask = preferredTaskId is null
-            ? Tasks.FirstOrDefault()
+            ? (SelectedTask is not null ? Tasks.FirstOrDefault(task => task.Id == SelectedTask.Id) : null) ?? Tasks.FirstOrDefault()
             : Tasks.FirstOrDefault(task => task.Id == preferredTaskId) ?? Tasks.FirstOrDefault();
         DrainQueueCommand.NotifyCanExecuteChanged();
     }
@@ -213,7 +213,7 @@ public partial class MainWindowViewModel
     private static TraceEntryKind ParseTraceKind(string? kind) =>
         Enum.TryParse<TraceEntryKind>(kind, out var parsed) ? parsed : TraceEntryKind.AssistantText;
 
-    private bool CanRefresh() => !IsBusy && Directory.Exists(RootPath);
+    private bool CanRefresh() => Directory.Exists(RootPath);
     private bool CanToggleArchive() => Directory.Exists(RootPath);
     private bool CanRunSelected() => !IsBusy && !PauseRequested && SelectedTask is not null && !SelectedTask.IsArchived && !_rewritingTaskIds.Contains(SelectedTask.Id);
     private bool CanDrain() => !IsBusy && !PauseRequested && !ShowArchive && Tasks.Count > 0;

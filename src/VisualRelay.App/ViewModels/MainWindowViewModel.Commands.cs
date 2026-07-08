@@ -23,6 +23,19 @@ public partial class MainWindowViewModel
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync()
     {
+        if (IsBusy)
+        {
+            // Mid-drain: reload directly so new task folders appear without
+            // waiting for the drain to finish.  Save/restore the running
+            // status so the status line never shows idle queue counts.
+            var savedStatus = StatusText;
+            StatusText = "Refreshing";
+            await ReloadTaskListAsync();
+            StatusText = savedStatus;
+            await RefreshBackendStatusAsync();
+            return;
+        }
+
         await RunBusyAsync(async () =>
         {
             StatusText = "Refreshing";
@@ -99,17 +112,14 @@ public partial class MainWindowViewModel
     {
         ShowArchive = !ShowArchive;
         await ReloadTaskListAsync();
-        StatusText = PauseRequested ? "Paused: no new task will start" : FormatQueueStatus();
+        // When a drain is active, preserve the running status text instead of
+        // overwriting it with the idle queue count (same bug was in RefreshAsync).
+        if (!IsBusy)
+            StatusText = PauseRequested ? "Paused: no new task will start" : FormatQueueStatus();
     }
 
-    /// <summary>
-    /// Testable reorder seam: moves the task at <paramref name="fromIndex"/> to
-    /// <paramref name="toIndex"/> in the in-memory <see cref="Tasks"/> list,
-    /// keeps the moved row selected, and is a no-op while showing the
-    /// archive (mirroring the old Up/Down gate). The drag gesture in
-    /// <c>QueuePanel</c> routes its mutation through here so the logic stays
-    /// unit-testable without driving pointer input.
-    /// </summary>
+    /// <summary>Testable reorder seam: moves a task, keeps the row selected,
+    /// and is a no-op in the archive. Persists the new order.</summary>
     internal void MoveTask(int fromIndex, int toIndex)
     {
         if (ShowArchive)
@@ -134,15 +144,8 @@ public partial class MainWindowViewModel
         new TaskOrderStore(RootPath).Save(Tasks.Select(task => task.Id));
     }
 
-    /// <summary>
-    /// Captures the in-flight selection-load task so tests can
-    /// <c>await viewModel.LastSelectionLoad</c> instead of polling
-    /// derived properties on a wall-clock budget (which false-fails
-    /// under CPU load).  Set by <see cref="OnSelectedTaskChanged(TaskRowViewModel?)"/>
-    /// (the generated synchronous setter hook for
-    /// <see cref="SelectedTask"/>) and never null after the first
-    /// assignment.
-    /// </summary>
+    /// <summary>Captures the in-flight selection-load task for tests to
+    /// await. Set by <see cref="OnSelectedTaskChanged(TaskRowViewModel?)"/>.</summary>
     internal Task? LastSelectionLoad { get; private set; }
 
     partial void OnSelectedTaskChanged(TaskRowViewModel? value)
@@ -195,15 +198,8 @@ public partial class MainWindowViewModel
         LastSelectionLoad = SelectTaskAsync(value);
     }
 
-    /// <summary>
-    /// Loads the selected task's markdown, context, and run history.
-    /// Awaitable by tests via <see cref="LastSelectionLoad"/>.
-    /// Runtime behavior is unchanged on success; a load fault is
-    /// surfaced to <see cref="MainWindowViewModel.StatusText"/>
-    /// (the VM's established operation-error channel) rather than
-    /// being discarded as an unobserved task exception — a
-    /// previously-swallowed fault is now visible.
-    /// </summary>
+    /// <summary>Loads the selected task's markdown, context, and run history.
+    /// Awaitable by tests via <see cref="LastSelectionLoad"/>.</summary>
     private async Task SelectTaskAsync(TaskRowViewModel? task)
     {
         if (task is null)
