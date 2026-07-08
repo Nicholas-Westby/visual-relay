@@ -3,7 +3,7 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class GitCommitterTests
+public sealed class GitCommitterTests
 {
     // ── Resilience: transient git failure tests (a–d) ───────────────────
 
@@ -11,9 +11,9 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_ProbeFailsTwiceThenSucceeds_CommitsSuccessfully()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
 
         var shim = new TransientGitShim();
@@ -33,9 +33,9 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_ProbeFailsPersistently_ReturnsFailureWithDiagnostics()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
 
         var shim = new TransientGitShim();
@@ -58,9 +58,9 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_AddFailsTransientlyThenSucceeds_CommitsSuccessfully()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
 
         var shim = new TransientGitShim();
@@ -79,9 +79,9 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_PersistentFailure_CompletesWithinReasonableTime()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         var shim = new TransientGitShim();
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
@@ -105,9 +105,9 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_FirstCandidateAccepted_CommitsAndReturnsSha()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Modify a file so there's something to commit.
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
@@ -127,9 +127,9 @@ public sealed partial class GitCommitterTests
 
         Assert.True(result.Success);
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
-        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        var subject = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
         Assert.Equal("feat: add widget", subject.Trim());
-        var fullMessage = RunGit(repo.Root, "log -1 --pretty=%B");
+        var fullMessage = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%B");
         Assert.Contains("Task: my-task", fullMessage);
         Assert.Contains("Relay-Seal: abc123", fullMessage);
     }
@@ -138,15 +138,15 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_FirstCandidateRejectedByCommitMsgHook_UsesSecond()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Modify a file so there's something to commit.
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
 
         // Install a commit-msg hook that rejects subjects containing "*.cs" or ".cs"
-        InstallRejectingCommitMsgHook(repo.Root, "\\.cs");
+        GitCommitterTestHelpers.InstallRejectingCommitMsgHook(repo.Root, "\\.cs");
 
         // First candidate contains a file-name pattern, second avoids it.
         var candidates = new[] { "fix(src): update app.cs logic", "fix: correct update logic" };
@@ -163,7 +163,7 @@ public sealed partial class GitCommitterTests
             CancellationToken.None, new GitInvoker());
 
         Assert.True(result.Success);
-        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        var subject = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
         Assert.Equal("fix: correct update logic", subject.Trim());
     }
 
@@ -171,14 +171,14 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_AllCandidatesRejected_ReturnsFailure()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
 
         // Install a commit-msg hook that rejects everything.
-        InstallRejectAllCommitMsgHook(repo.Root);
+        GitCommitterTestHelpers.InstallRejectAllCommitMsgHook(repo.Root);
 
         var candidates = new[] { "feat: first", "fix: second" };
         var result = await GitCommitter.CommitAsync(
@@ -204,10 +204,10 @@ public sealed partial class GitCommitterTests
     public async Task CommitAsync_WhenManifestContainsGitignoredPath_ReturnsExplicitPathNames()
     {
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Runtime artifact that PrepareAsync regenerates — exists on disk
         // but is gitignored. The manifest must not claim it.
@@ -226,42 +226,5 @@ public sealed partial class GitCommitterTests
         // Must name the offending path explicitly — not bury it in raw git output.
         Assert.Contains("manifest contains gitignored", result.Error, StringComparison.Ordinal);
         Assert.Contains("swival.toml", result.Error, StringComparison.Ordinal);
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────
-
-    // ReSharper disable once AsyncMethodWithoutAwait — async kept so awaiting sites surface sync git failures via the awaited task.
-    private static async Task InitGitRepo(string root)
-    {
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        RunGit(root, "init");
-        RunGit(root, "config user.email test@example.test");
-        RunGit(root, "config user.name \"Test\"");
-    }
-
-    // ReSharper disable once AsyncMethodWithoutAwait — see InitGitRepo above.
-    private static async Task StageAndCommitSeed(string root, string message)
-    {
-        RunGit(root, "add .");
-        RunGit(root, $"commit -m \"{message}\"");
-    }
-
-    private static string RunGit(string rootPath, string arguments)
-    {
-        var startInfo = new ProcessStartInfo("/bin/sh", $"-c \"git -C '{rootPath}' {arguments}\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        // Strip DEVELOPER_DIR/SDKROOT so xcrun shim cannot resurrect a stale nix-store path inherited from the shell.
-        startInfo.Environment.Remove("DEVELOPER_DIR");
-        startInfo.Environment.Remove("SDKROOT");
-        using var process = Process.Start(startInfo)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, stderr);
-        return stdout;
     }
 }

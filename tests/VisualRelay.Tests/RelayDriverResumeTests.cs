@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverResumeTests
+public sealed class RelayDriverResumeTests
 {
     [Fact]
     public async Task RunTaskAsync_Resume_SkipsDoneStagesAndContinuesFromFlaggedStage()
@@ -140,10 +140,10 @@ public sealed partial class RelayDriverResumeTests
         repo.WriteTask("rerun-clean", "# Rerun clean\n");
 
         // Run 1: complete a full run.
-        await RunHappyPath(repo, "rerun-clean");
+        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "rerun-clean");
 
         // Run 2: another full run WITHOUT resume.
-        await RunHappyPath(repo, "rerun-clean");
+        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "rerun-clean");
 
         var taskDir = Path.Combine(repo.Root, ".relay", "rerun-clean");
 

@@ -2,85 +2,15 @@ using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class BackendConfigGeneratorTests
+public sealed class BackendConfigGeneratorTests
 {
-    private static string TemplatePath =>
-        Path.Combine(RepoSetup.Root, "tools", "backend", "litellm-config.yaml");
-
-    // ── Helpers ──────────────────────────────────────────────────────────
-    private static Dictionary<string, string> GeneratedAliases(ISet<string> keys)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath);
-        return ParseAliases(yaml);
-    }
-
-    private static Dictionary<string, List<string>> GeneratedFallbacks(ISet<string> keys)
-    {
-        var (yaml, _) = BackendConfigGenerator.Generate(keys, TemplatePath);
-        return ParseFallbacks(yaml);
-    }
-
-    private static (string Yaml, string Summary) Generate(ISet<string> keys) =>
-        BackendConfigGenerator.Generate(keys, TemplatePath);
-
-    /// Extracts tier→model from the model_group_alias: block.
-    private static Dictionary<string, string> ParseAliases(string yaml)
-    {
-        var result = new Dictionary<string, string>();
-        var inBlock = false;
-        foreach (var raw in yaml.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            if (line == "  model_group_alias:") { inBlock = true; continue; }
-            if (!inBlock) continue;
-            if (line.Length > 0 && !line.StartsWith("    ")) break;
-            var t = line.TrimStart();
-            if (t.Length == 0) continue;
-            var colon = t.IndexOf(':');
-            if (colon < 0) continue;
-            var key = t[..colon].Trim();
-            var value = t[(colon + 1)..].Trim();
-            if (key.Length > 0 && value.Length > 0) result[key] = value;
-        }
-        return result;
-    }
-
-    /// Extracts tier→[models] from the fallbacks: block.
-    private static Dictionary<string, List<string>> ParseFallbacks(string yaml)
-    {
-        var result = new Dictionary<string, List<string>>();
-        var inBlock = false;
-        foreach (var raw in yaml.Split('\n'))
-        {
-            var line = raw.TrimEnd('\r');
-            if (line == "  fallbacks:") { inBlock = true; continue; }
-            if (!inBlock) continue;
-            if (line.Length > 0 && !line.StartsWith("    ") && !line.StartsWith("  ")) break;
-            var t = line.TrimStart();
-            if (t.Length == 0 || !t.StartsWith("- ")) continue;
-            var inner = t[2..];
-            var colon = inner.IndexOf(':');
-            if (colon < 0) continue;
-            var key = inner[..colon].Trim();
-            var rest = inner[(colon + 1)..].Trim();
-            if (rest.StartsWith('[') && rest.EndsWith(']'))
-            {
-                result[key] = rest[1..^1].Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToList();
-            }
-        }
-        return result;
-    }
-
-    private static bool ChainTerminatesInFallback(string tier, Dictionary<string, List<string>> fb)
-        => fb.TryGetValue(tier, out var c) && c.Count > 0 && c[^1] == "fallback";
-
     // ── 1. HF only ───────────────────────────────────────────────────────
     [Fact]
     public void HfOnly_DefaultTiersResolveToFallbackFloor()
     {
         var present = new HashSet<string> { "HF_TOKEN" };
-        var (yaml, summary) = Generate(present);
-        var aliases = ParseAliases(yaml);
+        var (yaml, summary) = BackendConfigGeneratorTestHelpers.Generate(present);
+        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
 
         Assert.Equal("fallback", aliases["cheap"]);
         Assert.Equal("fallback", aliases["balanced"]);
@@ -104,8 +34,8 @@ public sealed partial class BackendConfigGeneratorTests
     public void HfPlusDeepSeek_CheapFlash_BalancedPro_FrontierPro()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var aliases = GeneratedAliases(present);
-        var fallbacks = GeneratedFallbacks(present);
+        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
@@ -118,7 +48,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.DoesNotContain("kimi-k2", aliases.Values);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(ChainTerminatesInFallback(tier, fallbacks),
+            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
 
         // Vision must not fall back to a text model.
@@ -132,8 +62,8 @@ public sealed partial class BackendConfigGeneratorTests
     public void Trio_FrontierKimi_ChainTerminatesInFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY" };
-        var aliases = GeneratedAliases(present);
-        var fallbacks = GeneratedFallbacks(present);
+        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
         Assert.Equal("deepseek-v4-flash", aliases["cheap"]);
         Assert.Equal("deepseek-v4-pro", aliases["balanced"]);
@@ -149,7 +79,7 @@ public sealed partial class BackendConfigGeneratorTests
         Assert.Equal("fallback", chain[^1]);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(ChainTerminatesInFallback(tier, fallbacks));
+            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks));
 
         // Vision must not fall back to a text model.
         Assert.True(fallbacks.ContainsKey("vision"));
@@ -162,8 +92,8 @@ public sealed partial class BackendConfigGeneratorTests
     public void HfPlusAnthropic_ClaudeLit_OtherTiersFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "ANTHROPIC_API_KEY" };
-        var aliases = GeneratedAliases(present);
-        var fallbacks = GeneratedFallbacks(present);
+        var aliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(present);
+        var fallbacks = BackendConfigGeneratorTestHelpers.GeneratedFallbacks(present);
 
         Assert.True(aliases.ContainsKey("claude"));
         Assert.Equal("claude-opus-1m", aliases["claude"]);
@@ -183,9 +113,9 @@ public sealed partial class BackendConfigGeneratorTests
     public void ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var (yaml, _) = Generate(present);
-        var aliases = ParseAliases(yaml);
-        var fallbacks = ParseFallbacks(yaml);
+        var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
+        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
+        var fallbacks = BackendConfigGeneratorTestHelpers.ParseFallbacks(yaml);
 
         Assert.Contains("model_group_alias:", yaml, StringComparison.Ordinal);
         Assert.Contains("fallbacks:", yaml, StringComparison.Ordinal);
@@ -202,7 +132,7 @@ public sealed partial class BackendConfigGeneratorTests
             Assert.True(aliases.ContainsKey(tier), $"tier '{tier}' must have an alias");
             Assert.False(string.IsNullOrWhiteSpace(aliases[tier]),
                 $"alias for '{tier}' must be non-empty");
-            Assert.True(ChainTerminatesInFallback(tier, fallbacks),
+            Assert.True(BackendConfigGeneratorTestHelpers.ChainTerminatesInFallback(tier, fallbacks),
                 $"fallback chain for {tier} should terminate in fallback");
         }
 
@@ -219,7 +149,7 @@ public sealed partial class BackendConfigGeneratorTests
     public void Summary_MentionsDetectedKeysAndResolution()
     {
         var present = new HashSet<string> { "HF_TOKEN", "DEEPSEEK_API_KEY" };
-        var (_, summary) = Generate(present);
+        var (_, summary) = BackendConfigGeneratorTestHelpers.Generate(present);
 
         Assert.Contains("HF_TOKEN", summary, StringComparison.Ordinal);
         Assert.Contains("DEEPSEEK_API_KEY", summary, StringComparison.Ordinal);
@@ -234,8 +164,8 @@ public sealed partial class BackendConfigGeneratorTests
     public void EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias()
     {
         var present = new HashSet<string>();
-        var (yaml, _) = Generate(present);
-        var aliases = ParseAliases(yaml);
+        var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
+        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
 
         foreach (var tier in new[] { "cheap", "balanced", "frontier" })
             Assert.True(aliases.ContainsKey(tier),

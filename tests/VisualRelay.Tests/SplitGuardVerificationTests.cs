@@ -159,22 +159,56 @@ public sealed partial class SplitGuardVerificationTests
         // SwivalSubagentRunnerWatchdogTests to ActivityWatchdogDecisionTests
         // (not in the oversized-families prefix list), so the countable
         // [Fact]s in the SwivalSubagentRunnerWatchdogTests family dropped.
+        // Dropped 173→171 on 2026-07-08: split-slow-test-classes-for-parallelism —
+        // promote companion-file partial classes to independent sealed classes.
+        // The companion files (GitCommitterTests.CommitMsgHooks.cs etc.) are
+        // replaced by standalone classes (GitCommitterCommitMsgHooksTests.cs
+        // etc.) that are tracked here with their own prefixes. The old companion
+        // files are deleted. Three BackendConfigGenerator* companion files
+        // (AliasConsistency, VisionTier, PerModelTimeout) migrated verbatim with
+        // the same [Fact] counts as their predecessors — net zero from the split.
         const int baseline = 171;
 
         string[] prefixes =
         [
+            // ── remaining partial-class families (Watchdog companions, etc.) ──
             "SwivalSubagentRunnerWatchdogTests",
             "Installer5LauncherTests",
+            "SwivalSubagentRunnerTests",
+            // ── split main files ──
             "GitCommitterTests",
             "GitCommitterAutoIncludeTests",
             "RelayDriverResumeTests",
             "BackendConfigGeneratorTests",
             "RelayDriverGitCommitTests",
             "SwivalSubagentRunnerCommandFilterTests",
-            "SwivalSubagentRunnerTests",
             "RelayDriverTests",
             "NoCommitContaminationTests",
             "PlanPhaseRunnerTests",
+            // ── new standalone classes (promoted from companion files) ──
+            "GitCommitterCommitMsgHooksTests",
+            "GitCommitterRunBaseSquashTests",
+            "GitCommitterRunBaseSquashGuardsTests",
+            "GitCommitterAutoIncludeTasksDirTests",
+            "GitCommitterAutoIncludeResilienceTests",
+            "GitCommitterAutoIncludeSnapshotTests",
+            "GitCommitterAutoIncludeFirstInstanceTests",
+            "RelayDriverGitCommitResumeCommitTests",
+            "RelayDriverGitCommitGitignoredBackstopTests",
+            "RelayDriverGitCommitSelfCommitSquashTests",
+            "RelayDriverResumeCommitGateTests",
+            "RelayDriverResumeReAddTests",
+            "RelayDriverResumeReAdd2Tests",
+            "RelayDriverResumeFlaggedWorkTests",
+            "RelayDriverResumeFlaggedWork2Tests",
+            "RelayDriverResumeFlaggedWork3Tests",
+            "BackendConfigGeneratorVisionTierTests",
+            "BackendConfigGeneratorPerModelTimeoutTests",
+            "BackendConfigGeneratorKimiK2_7UpstreamTests",
+            "BackendConfigGeneratorSelectableTests",
+            "BackendConfigGeneratorAliasConsistencyTests",
+            "RelayDriverBaselineVerifyTests",
+            "SwivalSubagentRunnerCommandFilterIntegrationTests",
         ];
 
         int count = 0;

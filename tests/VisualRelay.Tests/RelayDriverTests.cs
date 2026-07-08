@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverTests
+public sealed class RelayDriverTests
 {
     [Fact]
     public async Task RunTaskAsync_WritesLedgerSealsManifestAndStructuredEvents()
@@ -51,7 +51,7 @@ public sealed partial class RelayDriverTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", []);
         repo.WriteTask("repair-status", "# Repair status\n");
-        InitGitRepo(repo.Root);
+        RelayDriverTestHelpers.InitGitRepo(repo.Root);
         var testRunner = new RedGateObservingTestRunner(repo.Root);
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), testRunner, new InMemoryRelayEventSink()),
@@ -112,9 +112,9 @@ public sealed partial class RelayDriverTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("re-run", "# Re-run\n");
 
-        await RunHappyPath(repo, "re-run");
-        await RunHappyPath(repo, "re-run");
-        await RunHappyPath(repo, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
 
         var taskDirectory = Path.Combine(repo.Root, ".relay", "re-run");
         Assert.True(File.Exists(Path.Combine(taskDirectory, "stage1-attempt1.report.json")));
@@ -149,16 +149,6 @@ public sealed partial class RelayDriverTests
         Assert.Equal("3", stage1Done.Data["turns"]);
         var stage12Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 12 });
         Assert.False(stage12Done.Data?.ContainsKey("turns"));
-    }
-
-    private static async Task RunHappyPath(TestRepository repo, string taskId)
-    {
-        var runner = new ArtifactWritingSubagentRunner();
-        runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
-        var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
-            RelayDriverOptions.NoGitCommit);
-        Assert.Equal(RelayTaskOutcomeStatus.Committed, (await driver.RunTaskAsync(repo.Root, taskId)).Status);
     }
 
     [Fact]
@@ -278,16 +268,5 @@ public sealed partial class RelayDriverTests
         {
             TestFileSystem.DeleteDirectoryResilient(dir);
         }
-    }
-
-    private static void InitGitRepo(string root)
-    {
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
     }
 }

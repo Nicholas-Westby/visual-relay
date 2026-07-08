@@ -2,7 +2,7 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class GitCommitterAutoIncludeTests
+public sealed class GitCommitterAutoIncludeTests
 {
     [Fact]
     public async Task CommitAsync_AutoIncludesNewUntrackedFileUnderTests()
@@ -11,11 +11,11 @@ public sealed partial class GitCommitterAutoIncludeTests
         // listed must not be silently dropped. The auto-include pass stages any
         // non-ignored untracked file that appeared after the run started.
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Snapshot before the run: no untracked files exist.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
@@ -54,12 +54,12 @@ public sealed partial class GitCommitterAutoIncludeTests
         // in the snapshot) must NOT be auto-included. Only files authored during the
         // run (delta: current \ snapshot) are staged.
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "scratch"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Pre-existing untracked scratch that must NOT be committed — created
         // after the seed so it is untracked when the snapshot is taken.
@@ -102,11 +102,11 @@ public sealed partial class GitCommitterAutoIncludeTests
         // non-ignored file the run authored anywhere — docs/, lib/, the repo root —
         // must be committed, not silently dropped.
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "docs"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "lib"));
         File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
             repo.Root, CancellationToken.None);
@@ -147,10 +147,10 @@ public sealed partial class GitCommitterAutoIncludeTests
         // never be auto-committed into the user's task commit — only the deliberate
         // proof subset is force-added (via proofFiles), handled separately.
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
             repo.Root, CancellationToken.None);
@@ -191,12 +191,12 @@ public sealed partial class GitCommitterAutoIncludeTests
         // Gitignored paths must stay excluded unless force-added as proof files.
         // The auto-include pass must respect .gitignore (--exclude-standard covers it).
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
         File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "*.log\n");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
             repo.Root, CancellationToken.None);
@@ -233,11 +233,11 @@ public sealed partial class GitCommitterAutoIncludeTests
         // When preRunUntracked is null (backward-compatible path), no auto-include
         // pass runs. A new untracked file absent from the manifest is NOT committed.
         using var repo = TestRepository.Create();
-        await InitGitRepo(repo.Root);
+        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await StageAndCommitSeed(repo.Root, "chore: seed");
+        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
 
         // Agent creates a new test file that is not in the manifest.
         File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
@@ -262,23 +262,5 @@ public sealed partial class GitCommitterAutoIncludeTests
         Assert.Contains("src/app.cs", committed);
         // The new test file is NOT staged — backward-compatible, no auto-include.
         Assert.DoesNotContain("tests/new-test.cs", committed);
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────
-
-    // ReSharper disable once AsyncMethodWithoutAwait — async kept so awaiting sites surface sync git failures via the awaited task.
-    private static async Task InitGitRepo(string root)
-    {
-        Directory.CreateDirectory(root);
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "test@example.test");
-        TestGit.Run(root, "config", "user.name", "Test");
-    }
-
-    // ReSharper disable once AsyncMethodWithoutAwait — see InitGitRepo above.
-    private static async Task StageAndCommitSeed(string root, string message)
-    {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", message);
     }
 }

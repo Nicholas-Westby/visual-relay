@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class SwivalSubagentRunnerCommandFilterTests
+public sealed class SwivalSubagentRunnerCommandFilterTests
 {
     // ── ResolveCommandsOnPath unit tests ──────────────────────────────
 

@@ -3,7 +3,7 @@ using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverGitCommitTests
+public sealed class RelayDriverGitCommitTests
 {
     [Fact]
     public async Task RunTaskAsync_WhenGitCommitEnabled_CreatesARealRelayCommit()
@@ -13,11 +13,11 @@ public sealed partial class RelayDriverGitCommitTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
@@ -28,11 +28,11 @@ public sealed partial class RelayDriverGitCommitTests
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         Assert.False(string.IsNullOrWhiteSpace(outcome.CommitSha));
-        var message = RunGit(repo.Root, "log -1 --pretty=%B");
+        var message = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%B");
         Assert.Contains("fix(sample): ship status", message);
         Assert.Contains("Task: ship-status", message);
         Assert.Contains("Relay-Seal:", message);
-        var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
+        var names = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("src/status.cs", names);
         Assert.DoesNotContain("src/ghost.cs", names);
@@ -55,11 +55,11 @@ public sealed partial class RelayDriverGitCommitTests
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
         File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), ".relay/*\n!.relay/config.json\n");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
@@ -69,7 +69,7 @@ public sealed partial class RelayDriverGitCommitTests
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
+        var names = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("src/status.cs", names);
     }
@@ -84,12 +84,12 @@ public sealed partial class RelayDriverGitCommitTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
-        var seed = RunGit(repo.Root, "rev-parse HEAD").Trim();
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        var seed = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "rev-parse HEAD").Trim();
 
         // Install the project's pre-commit hook so the agent's commit is rejected.
         RepoSetup.InstallPreCommitHook(repo.Root);
@@ -108,12 +108,12 @@ public sealed partial class RelayDriverGitCommitTests
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
 
         // Only the driver's sealed commit should land on top of the seed.
-        Assert.Equal("1", RunGit(repo.Root, $"rev-list --count {seed}..HEAD").Trim());
+        Assert.Equal("1", RelayDriverGitCommitTestHelpers.RunGit(repo.Root, $"rev-list --count {seed}..HEAD").Trim());
 
-        var names = RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
+        var names = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "show --name-only --pretty=format: HEAD");
         Assert.Contains("src/status.cs", names);
         Assert.Contains(".relay/ship-status/manifest.txt", names);
-        Assert.Contains("Relay-Seal:", RunGit(repo.Root, "log -1 --pretty=%B"));
+        Assert.Contains("Relay-Seal:", RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%B"));
     }
 
     [Fact]
@@ -127,11 +127,11 @@ public sealed partial class RelayDriverGitCommitTests
         Directory.CreateDirectory(Path.Combine(repo.Root, "data"));
         File.WriteAllText(Path.Combine(repo.Root, "data", "company.json"), "{}");
         File.WriteAllText(Path.Combine(repo.Root, "data", "http_log.json"), "{}");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed data\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed data\"");
 
         var runner = new DeletingDirectorySubagentRunner();
         var driver = new RelayDriver(
@@ -141,7 +141,7 @@ public sealed partial class RelayDriverGitCommitTests
         var outcome = await driver.RunTaskAsync(repo.Root, "delete-data");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var names = RunGit(repo.Root, "show --name-status --pretty=format: HEAD");
+        var names = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "show --name-status --pretty=format: HEAD");
         Assert.Contains("D\tdata/company.json", names);
         Assert.Contains("D\tdata/http_log.json", names);
     }
@@ -154,14 +154,14 @@ public sealed partial class RelayDriverGitCommitTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
 
         // Install a commit-msg hook that rejects subjects containing "foo.cs".
-        InstallRejectingCommitMsgHook(repo.Root, "foo\\.cs");
+        RelayDriverGitCommitTestHelpers.InstallRejectingCommitMsgHook(repo.Root, "foo\\.cs");
 
         var runner = new FileNameFirstCandidateRunner();
         var driver = new RelayDriver(
@@ -173,7 +173,7 @@ public sealed partial class RelayDriverGitCommitTests
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         // The first candidate ("fix(src): update foo.cs logic") contains foo.cs and
         // should be rejected by the hook.  The second candidate should land.
-        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        var subject = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
         Assert.Equal("fix: correct update logic", subject.Trim());
     }
 
@@ -185,11 +185,11 @@ public sealed partial class RelayDriverGitCommitTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
 
         var runner = new LegacyCommitMessageRunner();
         var driver = new RelayDriver(
@@ -199,7 +199,7 @@ public sealed partial class RelayDriverGitCommitTests
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        var subject = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
         Assert.Equal("fix(legacy): use old field", subject.Trim());
     }
 
@@ -211,11 +211,11 @@ public sealed partial class RelayDriverGitCommitTests
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        RunGit(repo.Root, "init");
-        RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RunGit(repo.Root, "add .");
-        RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
+        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
 
         var runner = new NoCommitMessageRunner();
         var driver = new RelayDriver(
@@ -225,7 +225,7 @@ public sealed partial class RelayDriverGitCommitTests
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var subject = RunGit(repo.Root, "log -1 --pretty=%s");
+        var subject = RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
         Assert.Equal("chore(relay): ship-status", subject.Trim());
     }
 
@@ -257,43 +257,5 @@ public sealed partial class RelayDriverGitCommitTests
         var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
         Assert.Contains("src/app.cs", names);
         Assert.Contains("tests/regression-tests.cs", names);
-    }
-
-    private static void InstallRejectingCommitMsgHook(string repoRoot, string rejectPattern)
-    {
-        var hooksDir = Path.Combine(repoRoot, ".git", "hooks");
-        Directory.CreateDirectory(hooksDir);
-        var hookPath = Path.Combine(hooksDir, "commit-msg");
-        File.WriteAllText(hookPath,
-            $"#!/usr/bin/env bash{Environment.NewLine}" +
-            $"set -euo pipefail{Environment.NewLine}" +
-            $"subject=\"$(head -n 1 \"$1\")\"{Environment.NewLine}" +
-            $"if echo \"$subject\" | grep -qE '{rejectPattern}'; then{Environment.NewLine}" +
-            $"  echo \"hook: subject matches rejected pattern\" >&2{Environment.NewLine}" +
-            $"  exit 1{Environment.NewLine}" +
-            $"fi{Environment.NewLine}" +
-            $"exit 0{Environment.NewLine}");
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(hookPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-    }
-    private static string RunGit(string rootPath, string arguments)
-    {
-        var startInfo = new ProcessStartInfo("/bin/sh", $"-c \"git -C '{rootPath}' {arguments}\"")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
-        // Strip DEVELOPER_DIR/SDKROOT so xcrun cannot resurrect a stale nix-store path.
-        startInfo.Environment.Remove("DEVELOPER_DIR"); startInfo.Environment.Remove("SDKROOT");
-        using var process = Process.Start(startInfo)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        Assert.True(process.ExitCode == 0, stderr);
-        return stdout;
     }
 }
