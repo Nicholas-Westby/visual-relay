@@ -58,7 +58,7 @@ public static class TestRunner
             Console.Error.WriteLine($"visual-relay: test timed out after {timeout.TotalSeconds:F0}s");
             Console.Error.WriteLine("  See TROUBLESHOOTING.md for diagnosing hangs.");
             Console.Error.WriteLine(
-                "  To find which test is stuck: ./visual-relay test --blame-hang --blame-hang-timeout 30s");
+                "  To find which test is stuck: ./visual-relay test --blame-hang --blame-hang-timeout 120s");
             Console.Error.WriteLine(
                 "  Override timeout: VISUAL_RELAY_TEST_TIMEOUT=<seconds> ./visual-relay test");
         }

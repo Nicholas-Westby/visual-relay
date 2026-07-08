@@ -3,6 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
+[Collection("Watchdog")]
 public sealed partial class SwivalSubagentRunnerTests
 {
     // These tests exercise the real runner's swival-output handling, not the

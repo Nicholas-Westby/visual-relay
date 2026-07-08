@@ -10,6 +10,7 @@ namespace VisualRelay.Tests;
 /// supervising a test tree — no real nono needed — and exercise
 /// <see cref="SandboxedTestRunner.RunWatchedAsync"/> directly.
 /// </summary>
+[Collection("Watchdog")]
 public sealed class SandboxedTestRunnerReapTests
 {
     // Reaping (setpgid/kill -pgid) and the perl/ps tooling are POSIX-only.

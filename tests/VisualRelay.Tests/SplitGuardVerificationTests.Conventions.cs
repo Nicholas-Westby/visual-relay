@@ -82,6 +82,8 @@ public sealed partial class SplitGuardVerificationTests
         string[] expected =
         [
             "SwivalSubagentRunnerWatchdogTests.cs",
+            "SwivalSubagentRunnerTests.cs",
+            "SandboxedTestRunnerReapTests.cs",
         ];
 
         foreach (var fileName in expected)
@@ -90,7 +92,9 @@ public sealed partial class SplitGuardVerificationTests
             Assert.True(File.Exists(fullPath), $"Missing: {fileName}");
             var content = File.ReadAllText(fullPath);
             Assert.Contains("[Collection(\"Watchdog\")]", content, StringComparison.Ordinal);
-            Assert.Contains("public sealed partial class", content, StringComparison.Ordinal);
+            Assert.True(content.Contains("public sealed class", StringComparison.Ordinal)
+                      || content.Contains("public sealed partial class", StringComparison.Ordinal),
+                $"{fileName}: must declare public sealed class or public sealed partial class");
         }
     }
 

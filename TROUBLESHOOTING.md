@@ -11,7 +11,7 @@ counter climbing and **no test ever completing**, a test has deadlocked — it's
 Find the culprit — abort after 30s of inactivity and dump which test(s) were running:
 
 ```bash
-./visual-relay test --blame-hang --blame-hang-timeout 30s
+./visual-relay test --blame-hang --blame-hang-timeout 120s
 ```
 
 The output prints `The test running when the crash occurred:`. If **two or more** tests are

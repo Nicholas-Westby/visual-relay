@@ -25,7 +25,7 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
   in `tools/VisualRelay.Guards`, run by `./visual-relay check`).
 - If `./visual-relay test` hangs (sits at `Testing (NNNs)` with nothing completing), it's a
   deadlock, not a slow test. Find the culprit with
-  `./visual-relay test --blame-hang --blame-hang-timeout 30s`. See `TROUBLESHOOTING.md`.
+  `./visual-relay test --blame-hang --blame-hang-timeout 120s`. See `TROUBLESHOOTING.md`.
 - Headless UI tests must use `[AvaloniaFact]`/`[AvaloniaTheory]` (Avalonia.Headless.XUnit);
   `HeadlessUnitTestSession` is banned (BannedApiAnalyzers) — reintroducing it fails the build.
 

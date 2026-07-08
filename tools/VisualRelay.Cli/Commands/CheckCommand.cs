@@ -53,7 +53,7 @@ public static class CheckCommand
         {
             Console.Error.WriteLine($"visual-relay: test timed out after {timeout.TotalSeconds:F0}s");
             Console.Error.WriteLine(
-                "  To find which test is stuck: ./visual-relay test --blame-hang --blame-hang-timeout 30s");
+                "  To find which test is stuck: ./visual-relay test --blame-hang --blame-hang-timeout 120s");
         }
         return rc;
     }
