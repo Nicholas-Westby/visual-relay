@@ -97,4 +97,4 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 - [docs/OPERATIONS.md](docs/OPERATIONS.md) - model backend (LiteLLM proxy lifecycle) and the nono sandbox.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) - diagnosing the dev loop and test hangs.
 - [AGENTS.md](AGENTS.md) - contributing, the control API, and dev-only tooling.
-- [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and the 11-stage mapping.
+- [docs/DESIGN.md](docs/DESIGN.md) for the full architecture and the 12-stage mapping.

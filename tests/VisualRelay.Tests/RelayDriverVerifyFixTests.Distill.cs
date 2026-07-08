@@ -50,9 +50,9 @@ public sealed partial class RelayDriverVerifyFixTests
 
         await driver.RunTaskAsync(repo.Root, "noise-strip");
 
-        var stage10Invocation = runner.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10Invocation);
-        var lastOutput = stage10Invocation!.LastTestOutput ?? "";
+        var fixVerifyInvocation = runner.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerifyInvocation);
+        var lastOutput = fixVerifyInvocation!.LastTestOutput ?? "";
         Assert.DoesNotContain("is blocked by", lastOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("--bypass-protection", lastOutput, StringComparison.Ordinal);
         Assert.DoesNotContain("deny_read_user_home", lastOutput, StringComparison.Ordinal);

@@ -11,7 +11,7 @@ public sealed class StageDetailViewModelTests
     private static StageRowViewModel MakeStage(int n, string name, string tier) =>
         new(new RelayStageDefinition(n, name, tier, "llm", "all", "all",
             $"System prompt for {name}", "Contract line"));
-    private static StageRowViewModel MakeDriverStage() => new(RelayStages.All[10]);
+    private static StageRowViewModel MakeDriverStage() => new(RelayStages.All[11]);
 
     [Fact]
     public void Load_NullStage_AllStatesNoStage()

@@ -39,7 +39,7 @@ public sealed class TestDurationTests
     [Fact]
     public void StageStatusEntry_JsonRoundTrip_IncludesTestDuration()
     {
-        var entry = new StageStatusEntry(9, "Verify", "Done", Check: "green",
+        var entry = new StageStatusEntry(10, "Verify", "Done", Check: "green",
             DurationSeconds: 12.0, CostUsd: 0.05, Turns: 3, Model: "claude",
             TestDurationSeconds: 4.5);
         var json = JsonSerializer.Serialize(entry, CamelCase);
@@ -63,7 +63,7 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_MetricLabel_IncludesTestDuration()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             DurationLabel = "12s",
             CostLabel = "$0.05",
@@ -75,7 +75,7 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_MetricLabel_OmitsWhenTestDurationEmpty()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             DurationLabel = "12s",
             CostLabel = "$0.05",
@@ -87,7 +87,7 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_ClearMetric_ResetsTestDuration()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             TestDurationLabel = "5s",
         };
@@ -98,7 +98,7 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_SetTestDurationSeconds_FormatsCorrectly()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
+        var stage = new StageRowViewModel(RelayStages.All[9]);
         stage.SetTestDurationSeconds(12);
         Assert.Equal("12s", stage.TestDurationLabel);
         stage.SetTestDurationSeconds(90);
@@ -134,9 +134,9 @@ public sealed class TestDurationTests
         Assert.NotNull(stage5.TestDurationSeconds);
         Assert.True(stage5.TestDurationSeconds > 0);
 
-        var stage9 = entries.Single(e => e.Stage == 9);
-        Assert.NotNull(stage9.TestDurationSeconds);
-        Assert.True(stage9.TestDurationSeconds > 0);
+        var verifyStage = entries.Single(e => e.Stage == 10);
+        Assert.NotNull(verifyStage.TestDurationSeconds);
+        Assert.True(verifyStage.TestDurationSeconds > 0);
 
         Assert.Null(entries.Single(e => e.Stage == 1).TestDurationSeconds);
         Assert.Null(entries.Single(e => e.Stage == 4).TestDurationSeconds);
@@ -191,12 +191,12 @@ public sealed class TestDurationTests
         var outcome = await driver.RunTaskAsync(repo.Root, "test-time-event");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        var stage9Done = sink.Events.FirstOrDefault(
-            e => e is { EventName: "stage_done", StageNumber: 9 });
-        Assert.NotNull(stage9Done);
-        Assert.NotNull(stage9Done!.Data);
-        Assert.True(stage9Done.Data!.ContainsKey("testTime"));
-        Assert.NotEmpty(stage9Done.Data["testTime"]);
+        var stage10Done = sink.Events.FirstOrDefault(
+            e => e is { EventName: "stage_done", StageNumber: 10 });
+        Assert.NotNull(stage10Done);
+        Assert.NotNull(stage10Done!.Data);
+        Assert.True(stage10Done.Data!.ContainsKey("testTime"));
+        Assert.NotEmpty(stage10Done.Data["testTime"]);
     }
 
     [Fact]
@@ -228,12 +228,12 @@ public sealed class TestDurationTests
     [Fact]
     public void StageRowViewModel_ApplyMetric_DoesNotSetTestDurationLabel()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             TestDurationLabel = "should-survive",
         };
         var metric = new StageRunMetric(
-            StageNumber: 9, StageName: "Verify", Tier: "cheap", Model: "claude",
+            StageNumber: 10, StageName: "Verify", Tier: "cheap", Model: "claude",
             Timestamp: DateTimeOffset.UtcNow, DurationSeconds: 30.0, CostUsd: 0.10,
             Priced: true, PromptTokens: 1000, CachedTokens: 0, OutputTokens: 500,
             CacheWriteTokens: 0, ReportPath: "/tmp/report.json", TraceDirectory: null, Turns: 3);
@@ -244,7 +244,7 @@ public sealed class TestDurationTests
     [Fact]
     public void SetTestDurationSeconds_Null_ClearsLabel()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             TestDurationLabel = "5s",
         };

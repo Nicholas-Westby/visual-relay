@@ -7,7 +7,7 @@ public sealed partial class RelayDriver
 {
     /// <summary>
     /// On resume, restores the flagged working tree from a flagged-work bundle
-    /// before re-entering the flagged stage. Only for mid-pipeline stages (5–10).
+    /// before re-entering the flagged stage. Only for mid-pipeline stages (5–11).
     /// Returns the (possibly adjusted) firstStageToRun and a non-null flagged
     /// outcome when the restore fails unresolvably.
     /// </summary>
@@ -20,7 +20,12 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         CancellationToken ct)
     {
-        if (!_options.Resume || firstStageToRun is < 5 or > 10)
+        // Redirect: Visual-review (stage 8) must always run as part of the
+        // Review pair; if the flagged stage is 8, re-enter at Review (stage 7).
+        if (_options.Resume && firstStageToRun == 8)
+            return (7, null);
+
+        if (!_options.Resume || firstStageToRun is < 5 or > 11)
             return (firstStageToRun, null);
 
         // Only attempt restore when a bundle exists — resume proceeds normally

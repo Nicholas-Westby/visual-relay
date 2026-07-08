@@ -108,7 +108,7 @@ public sealed partial class PlanPhaseRunnerTests
         foreach (var taskId in new[] { "alpha", "beta", "gamma" })
         {
             var status = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", taskId));
-            Assert.Equal(11, status.Count);
+            Assert.Equal(12, status.Count);
             Assert.Equal("Done", status[0].Status);
             Assert.Equal("Done", status[3].Status);
             Assert.Equal("Waiting", status[4].Status);

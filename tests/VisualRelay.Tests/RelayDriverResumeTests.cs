@@ -24,7 +24,7 @@ public sealed partial class RelayDriverResumeTests
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome1.Status);
         var taskDir = Path.Combine(repo.Root, ".relay", "resume-me");
 
-        // status.json must show stages 1-2 Done, stage 3 Flagged, 4-11 Waiting.
+        // status.json must show stages 1-2 Done, stage 3 Flagged, 4-12 Waiting.
         var statusAfterRun1 = StageStatusRecord.Read(taskDir);
         Assert.NotEmpty(statusAfterRun1);
         Assert.Equal("Done", statusAfterRun1[0].Status);   // stage 1
@@ -71,14 +71,14 @@ public sealed partial class RelayDriverResumeTests
         // Stage 3 onward re-ran: attempt-2 report exists.
         Assert.True(File.Exists(Path.Combine(taskDir, "stage3-attempt2.report.json")));
 
-        // Seals file extended: ≥ 11 entries (2 from run 1 + 9 from run 2).
+        // Seals file extended: ≥ 12 entries (2 from run 1 + 10 from run 2).
         var sealsRun2 = await File.ReadAllLinesAsync(sealsPath);
-        Assert.True(sealsRun2.Length >= 11, $"expected ≥ 11 seal entries, got {sealsRun2.Length}");
-        Assert.Contains("\"n\":11", sealsRun2[^1], StringComparison.Ordinal);
+        Assert.True(sealsRun2.Length >= 12, $"expected ≥ 12 seal entries, got {sealsRun2.Length}");
+        Assert.Contains("\"n\":12", sealsRun2[^1], StringComparison.Ordinal);
 
-        // Ledger contains all 11 stage sections.
+        // Ledger contains all 12 stage sections.
         var ledgerRun2 = await File.ReadAllTextAsync(ledgerPath);
-        for (int n = 1; n <= 11; n++)
+        for (int n = 1; n <= 12; n++)
         {
             Assert.Contains($"Stage {n} -", ledgerRun2, StringComparison.Ordinal);
         }
@@ -117,13 +117,13 @@ public sealed partial class RelayDriverResumeTests
         Assert.True(File.Exists(Path.Combine(taskDir, "stage1-attempt1.report.json")));
         Assert.True(Directory.Exists(Path.Combine(taskDir, "stage1-attempt1")));
 
-        // Seals file has all 11 entries starting from n=1.
+        // Seals file has all 12 entries starting from n=1.
         var sealsPath = Path.Combine(taskDir, "first-time.seals");
         Assert.True(File.Exists(sealsPath));
         var seals = await File.ReadAllLinesAsync(sealsPath);
-        Assert.True(seals.Length >= 11);
+        Assert.True(seals.Length >= 12);
         Assert.Contains("\"n\":1", seals[0], StringComparison.Ordinal);
-        Assert.Contains("\"n\":11", seals[^1], StringComparison.Ordinal);
+        Assert.Contains("\"n\":12", seals[^1], StringComparison.Ordinal);
 
         // Status shows all Done.
         var status = StageStatusRecord.Read(taskDir);
@@ -153,10 +153,10 @@ public sealed partial class RelayDriverResumeTests
         Assert.True(Directory.Exists(Path.Combine(taskDir, "stage1-attempt1")));
         Assert.True(Directory.Exists(Path.Combine(taskDir, "stage1-attempt2")));
 
-        // Seals file has 11 entries from the second run (normal re-runs overwrite,
+        // Seals file has 12 entries from the second run (normal re-runs overwrite,
         // unlike resume runs which extend the chain).
         var sealsPath = Path.Combine(taskDir, "rerun-clean.seals");
         var seals = await File.ReadAllLinesAsync(sealsPath);
-        Assert.Equal(11, seals.Length);
+        Assert.Equal(12, seals.Length);
     }
 }

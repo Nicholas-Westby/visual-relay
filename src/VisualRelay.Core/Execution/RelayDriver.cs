@@ -12,10 +12,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
     private readonly RelayDriverDependencies _dependencies;
     private readonly RelayDriverOptions _options;
 
-    // ReSharper disable once ConvertToPrimaryConstructor — _dependencies is read in
-    // 22 sites across 8 partial files; a primary ctor would trigger
-    // ReplaceWithPrimaryConstructorParameter and force rewriting every reference.
-    // The explicit ctor keeps the field declaration cohesive with the partials.
+    // ReSharper disable once ConvertToPrimaryConstructor — _dependencies is referenced
+    // across 8 partials; an explicit ctor keeps the field cohesive with the partials.
     public RelayDriver(RelayDriverDependencies dependencies, RelayDriverOptions? options = null)
     {
         _dependencies = dependencies;
@@ -33,15 +31,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
-            // Self-heal the VR-owned nono profile once per run (every entry point:
-            // GUI Run All, headless RunTask, resume) before any sandboxed stage, so
-            // the sandbox never loads a stale installed-by-name copy. The sandbox is
-            // always on. A write failure throws here — the run must not silently
-            // proceed unsandboxed/stale.
+            // Self-heal VR's nono profile once per run before any sandboxed stage.
             await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
-            // Publish the command-guard middleware binary so swival can strip
-            // git hook-bypass flags. Fail-open: if publish fails, swival
-            // launches without --command-middleware and the squash is the floor.
+            // Publish command-guard middleware so swival can strip git hook-bypass flags.
+            // Fail-open: if publish fails, swival launches without the middleware.
             _ = await CommandGuardEnsurer.EnsureAsync(rootPath, cancellationToken);
             var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
@@ -54,6 +47,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var taskHash = string.Empty;
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
+            var reviewPairHandled = false;
+            var fixVerifyHandled = false;
+            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
+            var implementationFrontLoaded = false;
             var firstStageToRun = 1;
             if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, config, ledger, seals, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
@@ -67,11 +64,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
             await WarnTestFileCmdAsync(config, runId, rootPath, taskId, cancellationToken);
-            IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken); // pre-run untracked snapshot
+            IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
             var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
-            var stage10Handled = false;
-            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
-            var implementationFrontLoaded = false;
 
             foreach (var stage in RelayStages.All)
             {
@@ -79,7 +73,27 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     continue;
                 if (_options.LastStageToRun is { } last && stage.Number > last)
                     break;
-                if (stage.Number == 10 && stage10Handled)
+                if (stage.Number == 11 && fixVerifyHandled)
+                    continue;
+                if (stage.Number == 8 && reviewPairHandled)
+                    continue;
+                if (stage.Number == 7)
+                {
+                    var pairState = await RunReviewPairAsync(rootPath, runId, taskId, taskDirectory,
+                        config, input, ledger, seals, statusEntries, manifest,
+                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
+                        task?.SiblingPaths ?? [],
+                        pinnedSwivalProfileContent, cancellationToken);
+                    if (pairState.FlaggedOutcome is { } fo)
+                        return fo;
+                    previousSeal = pairState.PreviousSeal;
+                    taskHash = pairState.TaskHash;
+                    sessionCostUsd = pairState.SessionCostUsd;
+                    unknownCostStageCount = pairState.UnknownCostStageCount;
+                    reviewPairHandled = true;
+                    continue;
+                }
+                if (fixVerifyHandled && stage.Number == 11)
                     continue;
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
@@ -96,29 +110,29 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 }
                 else
                 {
-                    // Stage 9: run mechanical tests BEFORE the agent so it receives captured output for summarization.
-                    TestRunResult? stage9TestResult = null;
-                    bool stage9BootstrapFailed = false;
-                    string? stage9BootstrapFailureOutput = null;
-                    string? stage9BootstrapCmd = null;
-                    string? stage9NewGuardOutput = null;
-                    bool stage9GuardFailed = false;
-                    string? stage9GuardOutput = null;
-                    if (stage.Number == 9)
+                    // Stage 10: run mechanical tests BEFORE the agent.
+                    TestRunResult? stage10TestResult = null;
+                    bool stage10BootstrapFailed = false;
+                    string? stage10BootstrapFailureOutput = null;
+                    string? stage10BootstrapCmd = null;
+                    string? stage10NewGuardOutput = null;
+                    bool stage10GuardFailed = false;
+                    string? stage10GuardOutput = null;
+                    if (stage.Number == 10)
                     {
-                        var (pre, errorHint) = await RunStage9PreAgentAsync(rootPath, runId, taskId, taskDirectory, config,
+                        var (pre, errorHint) = await RunStage10PreAgentAsync(rootPath, runId, taskId, taskDirectory, config,
                             manifest, ledger, statusEntries, cancellationToken);
                         if (errorHint is not null)
-                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9,
+                            return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10,
                                 errorHint, null, statusEntries, cancellationToken);
-                        stage9TestResult = pre!.TestResult;
+                        stage10TestResult = pre!.TestResult;
                         testDurationSeconds = pre.TestDurationSeconds;
-                        stage9BootstrapFailed = pre.BootstrapFailed;
-                        stage9BootstrapFailureOutput = pre.BootstrapFailureOutput;
-                        stage9BootstrapCmd = pre.BootstrapCmd;
-                        stage9NewGuardOutput = pre.NewGuardOutput;
-                        stage9GuardFailed = pre.GuardFailed;
-                        stage9GuardOutput = pre.GuardOutput;
+                        stage10BootstrapFailed = pre.BootstrapFailed;
+                        stage10BootstrapFailureOutput = pre.BootstrapFailureOutput;
+                        stage10BootstrapCmd = pre.BootstrapCmd;
+                        stage10NewGuardOutput = pre.NewGuardOutput;
+                        stage10GuardFailed = pre.GuardFailed;
+                        stage10GuardOutput = pre.GuardOutput;
                     }
 
                     if (stage.Number == 5 && config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)
@@ -135,15 +149,13 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         continue;
                     }
 
-                    // Stage 9 (read-only Verify) is NOT handed an imperative full-suite
-                    // Only the coding stages (6/8) get the TARGETED command to self-check.
+                    // Stage 10 Verify gets no imperative test command; only coding stages (6/9) do.
                     var invocation = BuildStageInvocation(rootPath, runId, taskId, taskDirectory,
                         config, stage, input, ledger, manifest, targetedTestCommand,
-                        implementationFrontLoaded, stage9TestResult, pinnedSwivalProfileContent);
+                        implementationFrontLoaded, stage10TestResult, pinnedSwivalProfileContent);
                     var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
-                    // Fold EVERY attempt RunAsync ran for this stage (an in-process escalation
-                    // writes a stage{n}-attempt{k}.report.json per run) so the one stage_done
-                    // card and sessionCostUsd match the archived squash, not just attempt 1.
+                    // Fold every attempt RunAsync ran (escalation writes per-attempt reports), so
+                    // the card and sessionCostUsd match the archived squash, not just attempt 1.
                     cost = EstimateStageCostCumulative(taskDirectory, stage.Number);
                     if (cost is not null) sessionCostUsd += cost.CostUsd; else unknownCostStageCount++;
                     if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
@@ -202,21 +214,16 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             cancellationToken);
                     }
 
-                    if (stage.Number == 9)
+                    if (stage.Number == 10)
                     {
-                        // RED iff the test command failed OR any of bootstrap / guard /
-                        // new-guard-probe failed.
-                        var stage9Red = stage9TestResult!.ExitCode != 0 || stage9BootstrapFailed
-                            || stage9GuardFailed || stage9NewGuardOutput is not null;
-                        // The COMPLETE combined log persisted to the seed artifact: the full
-                        // test output PLUS any guard/bootstrap/new-guard text — the full version
-                        // of the trimmed tail the fix-verify agent receives (built once below as
-                        // failingTestOutput). Null on green so the file keeps the passing output.
-                        var stage9FullOutput = stage9Red
-                            ? BuildFullFailureOutput(stage9TestResult, stage9GuardOutput, stage9BootstrapFailed, stage9BootstrapFailureOutput, stage9NewGuardOutput)
+                        var stage10Red = stage10TestResult!.ExitCode != 0 || stage10BootstrapFailed
+                            || stage10GuardFailed || stage10NewGuardOutput is not null;
+                        // Full output (null on green so file keeps passing output).
+                        var stage10FullOutput = stage10Red
+                            ? BuildFullFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput)
                             : null;
-                        var stage9VerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage9TestResult!, manifest, cancellationToken, overrideCheck: stage9Red ? "red" : "green", combinedFailureOutput: stage9FullOutput);
-                        check = stage9Red ? "red" : "green";
+                        var stage10VerifyOutputPath = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage10TestResult!, manifest, cancellationToken, overrideCheck: stage10Red ? "red" : "green", combinedFailureOutput: stage10FullOutput);
+                        check = stage10Red ? "red" : "green";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
                         {
@@ -229,60 +236,55 @@ public sealed partial class RelayDriver : IRelayTaskRunner
 
                         if (check != "green")
                         {
-                            var failingTestOutput = BuildFailureOutput(stage9TestResult, stage9GuardOutput, stage9BootstrapFailed, stage9BootstrapFailureOutput, stage9NewGuardOutput);
-                            // Skip baseline diff when bootstrap, guard, or new-guard-probe is the source.
-                            // NOTE: GetNewFailuresAsync runs against the LIVE rootPath (stash/restore), while
-                            // testResult came from the isolated snapshot (HEAD + live overlay). These are
-                            // content-equivalent, so the new-vs-baseline failure diff is valid; if the suite
-                            // self-mutates, the snapshot absorbed those writes, leaving the live baseline cleaner.
-                            var newFailures = (config.BaselineVerify && !stage9BootstrapFailed && !stage9GuardFailed && stage9NewGuardOutput is null)
-                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, stage9TestResult, _dependencies.GitInvoker, cancellationToken)
+                            var failingTestOutput = BuildFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput);
+                            // Skip baseline diff when bootstrap/guard/new-guard-probe is the source.
+                            var newFailures = (config.BaselineVerify && !stage10BootstrapFailed && !stage10GuardFailed && stage10NewGuardOutput is null)
+                                ? await GetNewFailuresAsync(rootPath, taskId, runId, _dependencies.TestRunner, config.TestCommand, stage10TestResult, _dependencies.GitInvoker, cancellationToken)
                                 : null;
-                            if (!config.BaselineVerify || newFailures is not null || stage9BootstrapFailed || stage9GuardFailed || stage9NewGuardOutput is not null)
+                            if (!config.BaselineVerify || newFailures is not null || stage10BootstrapFailed || stage10GuardFailed || stage10NewGuardOutput is not null)
                             {
                                 if (!config.EnableFixVerify)
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 9, reason, failingTestOutput, statusEntries, cancellationToken);
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, failingTestOutput, statusEntries, cancellationToken);
                                 }
 
-                                // Genuinely red — record stage 9, then enter fix-verify loop.
+                                // Genuinely red — record stage 10, enter fix-verify loop.
                                 (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
-
-                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage9VerifyOutputPath, stage9BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
+                                var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
                                 previousSeal = prevSeal; taskHash = tHash; sessionCostUsd = costUsd; unknownCostStageCount = unknownCost;
-                                stage10Handled = true;
+                                fixVerifyHandled = true;
                             }
                             else
                             {
                                 check = "green"; // baseline-excluded: all failures pre-existing
                             }
                         }
-                        if (check == "green" && !stage10Handled)
+                        if (check == "green" && !fixVerifyHandled)
                         {
-                            // Record stage 9 green explicitly.
+                            // Record stage 10 green explicitly.
                             (previousSeal, taskHash) = await RecordStageAsync(
                                 rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                                 stopwatch, ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                                 cancellationToken, testDurationSeconds);
-                            // Skip stage 10: nothing to fix.
-                            var stage10 = RelayStages.All[9];
+                            // Skip stage 11: nothing to fix.
+                            var fixVerifyStage = RelayStages.All[10];
                             (previousSeal, taskHash) = await RecordStageAsync(
-                                rootPath, runId, taskId, taskDirectory, stage10,
+                                rootPath, runId, taskId, taskDirectory, fixVerifyStage,
                                 "_Skipped: Verify passed; nothing to fix._",
                                 "green", null, Stopwatch.StartNew(),
                                 ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                                 cancellationToken);
-                            stage10Handled = true;
+                            fixVerifyHandled = true;
                         }
                     }
                 }
 
-                if ((stage.Number != 9 || !stage10Handled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
+                if ((stage.Number != 10 || !fixVerifyHandled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                         stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);

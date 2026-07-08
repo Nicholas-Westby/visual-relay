@@ -58,14 +58,14 @@ public sealed partial class RelayDriver
         RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
         StringBuilder ledger, IReadOnlyList<string> manifest,
         string targetedTestCommand, bool implementationFrontLoaded,
-        TestRunResult? stage9TestResult, string pinnedSwivalProfileContent)
+        TestRunResult? verifyTestResult, string pinnedSwivalProfileContent)
     {
         var effectiveStage = implementationFrontLoaded && stage.Number == 6
             ? stage with { Tier = "cheap", SystemPrompt = RelayStages.ConfirmImplementationSystemPrompt } : stage;
         return BuildInvocation(rootPath, runId, taskId, taskDirectory, config, effectiveStage, input, ledger, manifest,
-            testCommand: stage.Number is 6 or 8 ? targetedTestCommand : null,
-            fullTestCommand: stage.Number is 6 or 8 ? config.TestCommand : null,
-            lastTestOutput: stage9TestResult?.Output,
+            testCommand: stage.Number is 6 or 9 ? targetedTestCommand : null,
+            fullTestCommand: stage.Number is 6 or 9 ? config.TestCommand : null,
+            lastTestOutput: verifyTestResult?.Output,
             pinnedSwivalProfileContent: pinnedSwivalProfileContent);
     }
 

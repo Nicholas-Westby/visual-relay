@@ -10,7 +10,7 @@ public sealed partial class RelayDriver
     /// <see cref="RelayConfig.BoostTurnsTaskIds"/>.</summary>
     private const int TurnBoostMultiplier = 10;
     /// <summary>
-    /// Runs the fix-verify loop for stage 10. Each iteration is an ESCALATION RUN: it
+    /// Runs the fix-verify loop for stage 11. Each iteration is an ESCALATION RUN: it
     /// bumps the tier (cheap→balanced→frontier, capped) and doubles the turn + ceiling
     /// budget (flat under the 10× boost) via <see cref="StageEscalation"/>, re-verifies,
     /// and on red escalates again — up to <see cref="RelayConfig.MaxStageFailures"/> runs,
@@ -38,7 +38,7 @@ public sealed partial class RelayDriver
         int unknownCostStageCount,
         string failingTestOutput,
         // Absolute path to the persisted FULL output behind failingTestOutput (from the
-        // stage-9 gate for the first iteration, then each red stage-10 attempt). Surfaced
+        // stage-10 gate for the first iteration, then each red stage-11 attempt). Surfaced
         // in the agent prompt so it can read the complete log. Null when persistence failed.
         string? failingVerifyOutputPath,
         string? bootstrapCheckCmd,
@@ -46,7 +46,7 @@ public sealed partial class RelayDriver
         string pinnedSwivalProfileContent,
         CancellationToken cancellationToken)
     {
-        var stage = RelayStages.All[9]; // Stage 10 — Fix-verify
+        var stage = RelayStages.All[10]; // Stage 11 — Fix-verify
         // The run cap is MaxStageFailures (the 3-run escalation model). The effective
         // run-1 turn/ceiling base is the (already-boost-applied) config budget; the
         // per-run doubling is suppressed in flat 10× mode while the tier escalates.
@@ -150,7 +150,7 @@ public sealed partial class RelayDriver
             }
 
             var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
-                rootPath, config, stageNumber: 10, attempt: run, runId, taskId, cancellationToken);
+                rootPath, config, stageNumber: 11, attempt: run, runId, taskId, cancellationToken);
             await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage, verifyMutations, cancellationToken);
             var testDurationSeconds = (double?)testResult.Elapsed.TotalSeconds;
             if (testResult.TimedOut)

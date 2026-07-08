@@ -153,10 +153,11 @@ public sealed partial class RunAllModesTests
     [InlineData(5, "Author-tests", "balanced", "all")]
     [InlineData(6, "Implement", "balanced", "all")]
     [InlineData(7, "Review", "frontier", "some")]
-    [InlineData(8, "Fix", "balanced", "all")]
-    [InlineData(9, "Verify", "cheap", "some")]
-    [InlineData(10, "Fix-verify", "balanced", "all")]
-    [InlineData(11, "Commit", "cheap", "none")]
+    [InlineData(8, "Visual-review", "vision", "some")]
+    [InlineData(9, "Fix", "balanced", "all")]
+    [InlineData(10, "Verify", "cheap", "some")]
+    [InlineData(11, "Fix-verify", "balanced", "all")]
+    [InlineData(12, "Commit", "cheap", "none")]
     public void AllRelayStages_HaveCorrectMetadata(
         int number, string name, string tier, string files)
     {
@@ -168,9 +169,9 @@ public sealed partial class RunAllModesTests
         Assert.NotNull(stage.SystemPrompt);
         Assert.NotNull(stage.OutputContract);
 
-        // Stage 11 (Commit) is a driver stage — it has empty SystemPrompt
+        // Stage 12 (Commit) is a driver stage — it has empty SystemPrompt
         // and OutputContract by design.
-        if (number != 11)
+        if (number != 12)
         {
             Assert.NotEmpty(stage.SystemPrompt);
             Assert.NotEmpty(stage.OutputContract);
@@ -178,9 +179,9 @@ public sealed partial class RunAllModesTests
     }
 
     [Fact]
-    public void Stages_CountIsEleven()
+    public void Stages_CountIsTwelve()
     {
-        Assert.Equal(11, RelayStages.All.Count);
+        Assert.Equal(12, RelayStages.All.Count);
     }
 
     // ── Check gate step enumeration ──────────────────────────────────────

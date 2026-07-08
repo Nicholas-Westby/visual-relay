@@ -117,7 +117,7 @@ public sealed class RelayDriverManifestPrefixTests
         // The clean path should be present (unless the test command doesn't
         // include it because it's an impl file, not a test file — but the
         // + prefix definitely must be absent).
-        var s8 = runner.Invocations.FirstOrDefault(i => i.Stage.Number == 8);
+        var s8 = runner.Invocations.FirstOrDefault(i => i.Stage.Number == 9);
         Assert.NotNull(s8);
         Assert.DoesNotContain("+src/New.cs", s8!.TestCommand ?? "", StringComparison.Ordinal);
 

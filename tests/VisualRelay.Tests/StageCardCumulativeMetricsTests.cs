@@ -24,7 +24,7 @@ public sealed class StageCardCumulativeMetricsTests
         ApplyStageEventMetricMethod.Invoke(null, [stage, relayEvent]);
 
     private static RelayEvent StageDone(int turns, double costUsd, double seconds) =>
-        new(DateTimeOffset.UtcNow, "info", "stage_done", "run", "/root", "task", 10, "balanced",
+        new(DateTimeOffset.UtcNow, "info", "stage_done", "run", "/root", "task", 11, "balanced",
             Data: new Dictionary<string, string>
             {
                 ["name"] = "Fix-verify",
@@ -38,7 +38,7 @@ public sealed class StageCardCumulativeMetricsTests
     [AvaloniaFact]
     public void Turns_AreSummedAcrossAttempts_NotClobberedToLatest()
     {
-        var stage = new StageRowViewModel(RelayStages.All[9]);
+        var stage = new StageRowViewModel(RelayStages.All[10]);
 
         ApplyEvent(stage, StageDone(turns: 4, costUsd: 0.01, seconds: 5));
         ApplyEvent(stage, StageDone(turns: 7, costUsd: 0.02, seconds: 10));
@@ -49,7 +49,7 @@ public sealed class StageCardCumulativeMetricsTests
     [AvaloniaFact]
     public void Cost_IsSummedAcrossAttempts_NotClobberedToLatest()
     {
-        var stage = new StageRowViewModel(RelayStages.All[9]);
+        var stage = new StageRowViewModel(RelayStages.All[10]);
 
         ApplyEvent(stage, StageDone(turns: 4, costUsd: 0.01, seconds: 5));
         ApplyEvent(stage, StageDone(turns: 7, costUsd: 0.02, seconds: 10));
@@ -62,13 +62,13 @@ public sealed class StageCardCumulativeMetricsTests
     {
         // The archived squash sums per-attempt CostUsd + Turns + DurationSeconds.
         var squash = new StageRunMetric(
-            StageNumber: 10, StageName: "Fix-verify", Tier: "balanced", Model: "claude",
+            StageNumber: 11, StageName: "Fix-verify", Tier: "balanced", Model: "claude",
             Timestamp: DateTimeOffset.UtcNow, DurationSeconds: 15, CostUsd: 0.03, Priced: true,
             PromptTokens: 0, CachedTokens: 0, OutputTokens: 0, CacheWriteTokens: 0,
             ReportPath: "/tmp/r.json", TraceDirectory: null, Turns: 11);
 
         // (a) The card built from the archived squash directly.
-        var archived = new StageRowViewModel(RelayStages.All[9]);
+        var archived = new StageRowViewModel(RelayStages.All[10]);
         archived.ClearMetric();
         archived.ApplyMetric(squash);
 
@@ -76,7 +76,7 @@ public sealed class StageCardCumulativeMetricsTests
         //     task-switch path that used to CLOBBER turns/cost). Each attempt opens a
         //     segment (stage_start → MarkRunning) then banks on stage_done, exactly as
         //     ApplyStageEventToBoard drives it live.
-        var replayed = new StageRowViewModel(RelayStages.All[9]);
+        var replayed = new StageRowViewModel(RelayStages.All[10]);
         replayed.ClearMetric();
         replayed.MarkRunning(DateTimeOffset.UtcNow);
         ApplyEvent(replayed, StageDone(turns: 4, costUsd: 0.01, seconds: 5));
@@ -94,7 +94,7 @@ public sealed class StageCardCumulativeMetricsTests
     [AvaloniaFact]
     public void ClearMetric_ResetsCumulativeTurnsAndCost()
     {
-        var stage = new StageRowViewModel(RelayStages.All[9]);
+        var stage = new StageRowViewModel(RelayStages.All[10]);
         ApplyEvent(stage, StageDone(turns: 4, costUsd: 0.01, seconds: 5));
 
         stage.ClearMetric();

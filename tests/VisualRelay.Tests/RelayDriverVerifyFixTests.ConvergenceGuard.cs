@@ -21,8 +21,8 @@ public sealed partial class RelayDriverVerifyFixTests
         // WorkingTreeHash is identical every attempt (tree "unchanged").
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),        // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed TestX"),        // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),        // stage 10 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),        // stage 10 verify — retry also fails
             new TestRunResult(1, "Failed TestX"),        // fix-verify run 1 gate — red
             new TestRunResult(1, "Failed TestX"),        // fix-verify run 1 retry — red
             new TestRunResult(1, "Failed TestX"),        // fix-verify run 2 gate — red
@@ -43,7 +43,7 @@ public sealed partial class RelayDriverVerifyFixTests
         Assert.Contains("after 3 fix-verify", outcome.Reason!, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("non-convergent", outcome.Reason!, StringComparison.OrdinalIgnoreCase);
         // All 3 fix-verify runs ran (no early bail at run 2).
-        var fixVerifyStarts = sink.Events.Where(e => e is { EventName: "stage_start", StageNumber: 10 }).ToList();
+        var fixVerifyStarts = sink.Events.Where(e => e is { EventName: "stage_start", StageNumber: 11 }).ToList();
         Assert.Equal(3, fixVerifyStarts.Count);
         var flagged = sink.Events.Single(e => e.EventName == "flagged");
         Assert.Contains("after 3 fix-verify", flagged.Data?["reason"] ?? "", StringComparison.OrdinalIgnoreCase);
@@ -61,14 +61,14 @@ public sealed partial class RelayDriverVerifyFixTests
         repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("convergent", "# Convergent\n");
 
-        // Writes a manifest file on the first stage-10 invocation so the tree hash
+        // Writes a manifest file on the first stage-11 invocation so the tree hash
         // changes between attempt 1 and attempt 2.
         var writeOnce = new WriteOnAttemptSubagentRunner(repo.Root, "src/app.cs", "// v1");
         writeOnce.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),      // stage 10 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 10 verify — retry also fails
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 gate — red (tree will change)
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 retry — red
             new TestRunResult(0, "green"));            // fix-verify attempt 2 gate — green
@@ -80,7 +80,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var outcome = await driver.RunTaskAsync(repo.Root, "convergent");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var fixVerifyStarts = sink.Events.Where(e => e is { EventName: "stage_start", StageNumber: 10 }).ToList();
+        var fixVerifyStarts = sink.Events.Where(e => e is { EventName: "stage_start", StageNumber: 11 }).ToList();
         Assert.Equal(2, fixVerifyStarts.Count);
         Assert.DoesNotContain(sink.Events, e => e.EventName == "flagged");
     }
@@ -100,8 +100,8 @@ public sealed partial class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),      // stage 10 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),      // stage 10 verify — retry also fails
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 gate — red
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 1 retry — red
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 gate — red
@@ -117,14 +117,14 @@ public sealed partial class RelayDriverVerifyFixTests
         var review = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "unfixable", "NEEDS-REVIEW"));
         Assert.Contains("verify failed after 2 fix-verify attempts", review, StringComparison.Ordinal);
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "unfixable", "unfixable.seals"));
-        Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
         Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+        Assert.Contains(seals, line => line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
     }
 }
 
 /// <summary>
 /// Wraps <see cref="ScriptedSubagentRunner"/> and writes a manifest file to
-/// rootPath exactly once (on the first stage-10 invocation) so the working-tree
+/// rootPath exactly once (on the first stage-11 invocation) so the working-tree
 /// hash changes between fix-verify attempt 1 and attempt 2.
 /// </summary>
 internal sealed class WriteOnAttemptSubagentRunner(string rootPath, string relativePath, string content) : ISubagentRunner
@@ -137,7 +137,7 @@ internal sealed class WriteOnAttemptSubagentRunner(string rootPath, string relat
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        if (invocation.Stage.Number == 10 && !_written)
+        if (invocation.Stage.Number == 11 && !_written)
         {
             _written = true;
             var fullPath = Path.Combine(rootPath, relativePath);
@@ -163,7 +163,7 @@ internal sealed class WriteEachAttemptSubagentRunner(string rootPath, string rel
 
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        if (invocation.Stage.Number == 10)
+        if (invocation.Stage.Number == 11)
         {
             var fullPath = Path.Combine(rootPath, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);

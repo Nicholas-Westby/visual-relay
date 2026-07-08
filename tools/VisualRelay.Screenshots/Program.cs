@@ -90,7 +90,7 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
     {
         RootPath = root,
         StatusText = "Pause armed: finishing add-multiply-helper before stopping",
-        SelectedTaskMetricLabel = "11 stages  2m 18s  $0.07",
+        SelectedTaskMetricLabel = "12 stages  2m 18s  $0.07",
         LogScopeLabel = "full",
         IsBusy = true,
         PauseRequested = true,
@@ -100,11 +100,11 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
         ActivityColumnWidth = 360
     };
     var task = new TaskRowViewModel(
-        new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0731, DurationSeconds: 138, CompletedStageCount: 11));
+        new RelayTaskItem("add-multiply-helper", taskPath, Path.GetDirectoryName(taskPath)!, false, [], CostUsd: 0.0731, DurationSeconds: 138, CompletedStageCount: 12));
     viewModel.Tasks.Add(task);
-    viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 11));
-    viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 11));
-    viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 11));
+    viewModel.Tasks.Add(DemoTask(root, "fix-csv-export-encoding", costUsd: 0.0018, seconds: 64, stages: 12));
+    viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 12));
+    viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "swival exit 2", costUsd: 0.0009, seconds: 31, stages: 2));
     viewModel.RestoreRunningTaskState(task.Id, 3, "Diagnose");
     // Setting SelectedTask kicks off an async load that resets the stage board and
@@ -166,7 +166,7 @@ static void SeedActivity(MainWindowViewModel viewModel, string demoTaskMarkdown)
     var root = viewModel.RootPath;
     var taskId = viewModel.SelectedTask?.Id ?? "add-multiply-helper";
 
-    viewModel.SelectedTaskMetricLabel = "11 stages  2m 18s  $0.07";
+    viewModel.SelectedTaskMetricLabel = "12 stages  2m 18s  $0.07";
     viewModel.SelectedTaskMarkdown = demoTaskMarkdown;
     viewModel.SelectedTaskContext = "### logs/app.log\n12:04:41 [plan] 3 edits planned across 3 files\n13:08:54 [implement] stage complete in 28s";
     SeedStages(viewModel);

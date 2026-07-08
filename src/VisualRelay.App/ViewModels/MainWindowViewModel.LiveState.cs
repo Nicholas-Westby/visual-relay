@@ -110,7 +110,7 @@ public partial class MainWindowViewModel
         _runningTaskIds.Clear();
         _runningTaskIds.Add(taskId);
         _runningTaskId = taskId;
-        _runningStageNumbers[taskId] = stageNumber;
+        _runningStageNumbers[taskId] = stageNumber is { } s ? new HashSet<int> { s } : new HashSet<int>();
         _runningStageNames[taskId] = stageName;
         _taskElapsed.TryAdd(taskId, new CumulativeElapsed());
         ApplyRunningTaskToRows();
@@ -121,7 +121,7 @@ public partial class MainWindowViewModel
     {
         _runningTaskIds.Add(task.Id);
         _runningTaskId = task.Id;
-        _runningStageNumbers[task.Id] = null;
+        _runningStageNumbers[task.Id] = new HashSet<int>();
         _runningStageNames[task.Id] = null;
         // TryAdd preserves a planning-phase accumulator seeded by OnPlanningStarted
         // (so the overall keeps the planning-stage active time across the
@@ -154,7 +154,7 @@ public partial class MainWindowViewModel
         if (!_runningTaskIds.Contains(taskId))
             return;
 
-        _runningStageNumbers[taskId] = stageNumber;
+        _runningStageNumbers[taskId].Add(stageNumber);
         _runningStageNames[taskId] = stageName;
 
         // Update the task row directly — ApplyRunningTaskToRows refreshes all
@@ -162,7 +162,7 @@ public partial class MainWindowViewModel
         var task = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (task is not null)
         {
-            task.MarkRunning(stageNumber, stageName);
+            task.MarkRunning(stageNumber, stageName, _runningStageNumbers.GetValueOrDefault(taskId));
         }
 
         // If this is the followed task, update detail pane context too.
@@ -245,9 +245,10 @@ public partial class MainWindowViewModel
         {
             if (_runningTaskIds.Contains(task.Id))
             {
-                _runningStageNumbers.TryGetValue(task.Id, out var stageNum);
+                _runningStageNumbers.TryGetValue(task.Id, out var stageNums);
                 _runningStageNames.TryGetValue(task.Id, out var stageName);
-                task.MarkRunning(stageNum, stageName);
+                var stageNum = stageNums is { Count: > 0 } ? stageNums.Max() : (int?)null;
+                task.MarkRunning(stageNum, stageName, stageNums);
             }
             // Do NOT mark other running tasks idle — during Phase 1 multiple
             // tasks plan concurrently, each owned by its own _runningTaskIds

@@ -32,11 +32,11 @@ public sealed partial class RelayDriverTests
 
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "add-status", "add-status.seals"));
         Assert.Contains(seals, line => line.Contains("\"n\":5", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
-        Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+        Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
         Assert.Contains(sink.Events, e => e is { EventName: "stage_start", StageNumber: 1 });
-        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 11 });
-        var stage11Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 11 });
-        Assert.False(stage11Done.Data?.ContainsKey("turns"));
+        Assert.Contains(sink.Events, e => e is { EventName: "stage_done", StageNumber: 12 });
+        var stage12Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 12 });
+        Assert.False(stage12Done.Data?.ContainsKey("turns"));
         Assert.Contains(sink.Events, e => e is { EventName: "run_start", Data: not null } && e.Data["base_url"] == ModelBackend.BaseUrl);
     }
 
@@ -60,7 +60,7 @@ public sealed partial class RelayDriverTests
         var outcome = await driver.RunTaskAsync(repo.Root, "repair-status");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         // Stage 5 snapshot: red-gate reads reverted production file = "old" → red.
-        // Stage 9 snapshot: after stage 6 implements, status = "new" → green.
+        // Stage 10 snapshot: after stage 6 implements, status = "new" → green.
         Assert.Equal(["old", "new"], testRunner.StatusSnapshots);
         // Production file was implemented correctly at stage 6.
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.cs")));
@@ -147,8 +147,8 @@ public sealed partial class RelayDriverTests
         Assert.NotNull(stage1Done.Data);
         Assert.True(stage1Done.Data!.ContainsKey("turns"));
         Assert.Equal("3", stage1Done.Data["turns"]);
-        var stage11Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 11 });
-        Assert.False(stage11Done.Data?.ContainsKey("turns"));
+        var stage12Done = sink.Events.Single(e => e is { EventName: "stage_done", StageNumber: 12 });
+        Assert.False(stage12Done.Data?.ContainsKey("turns"));
     }
 
     private static async Task RunHappyPath(TestRepository repo, string taskId)

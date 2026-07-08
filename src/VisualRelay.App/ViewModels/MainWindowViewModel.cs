@@ -27,7 +27,7 @@ public partial class MainWindowViewModel : ViewModelBase
     // Multi-task running state: _runningTaskIds tracks every concurrently-running
     // task; _runningTaskId is the "followed" task in the detail pane.
     private readonly HashSet<string> _runningTaskIds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, int?> _runningStageNumbers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<int>> _runningStageNumbers = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string?> _runningStageNames = new(StringComparer.Ordinal);
     private string? _runningTaskId;
 

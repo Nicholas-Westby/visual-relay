@@ -60,7 +60,8 @@ internal sealed class TestRepository : IDisposable
               "baselineVerify": {{baselineVerify.ToString().ToLowerInvariant()}},
               "enableFixVerify": {{enableFixVerify.ToString().ToLowerInvariant()}},
               "maxStageFailures": {{maxStageFailures}},
-              "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}}{{formatCmdLine}}
+              "archiveOnDone": {{archiveOnDone.ToString().ToLowerInvariant()}},
+              "tierProfiles": { "vision": "vision" }{{formatCmdLine}}
             }
             """);
     }

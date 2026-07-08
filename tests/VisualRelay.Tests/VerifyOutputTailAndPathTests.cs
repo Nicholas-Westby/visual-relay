@@ -94,7 +94,7 @@ public sealed class VerifyOutputTailAndPathTests
             Assert.False(Path.IsPathFullyQualified(relativeDir),
                 "precondition: the task directory under test must be relative");
 
-            var path = RelayDriver.TryPersistVerifyOutput(relativeDir, 9, 1, "red", "some output");
+            var path = RelayDriver.TryPersistVerifyOutput(relativeDir, 10, 1, "red", "some output");
 
             Assert.NotNull(path);
             Assert.True(Path.IsPathFullyQualified(path!), $"expected an absolute path, got: {path}");
@@ -109,7 +109,7 @@ public sealed class VerifyOutputTailAndPathTests
 
     private static StageInvocation MakeVerifyInvocation(string? lastTestOutput, string? verifyOutputPath) =>
         new(
-            Stage: RelayStages.All[9], // Stage 10 — Fix-verify
+            Stage: RelayStages.All[10], // Stage 11 — Fix-verify
             Tier: "balanced",
             RunId: "run-1",
             TargetRoot: "/repo",

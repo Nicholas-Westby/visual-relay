@@ -6,7 +6,7 @@
 
 ## Problem & goal
 
-Visual Relay runs an 11-stage LLM pipeline (Ideate → Research → … → Commit). Today the only window into what each stage was told and produced is the streaming **RUN LOG** and **LLM COMMANDS** panels — effectively long logs that humans rarely read end-to-end. The **system prompt** and the full **assembled prompt** are not surfaced in the UI at all.
+Visual Relay runs a 12-stage LLM pipeline (Ideate → Research → … → Commit). Today the only window into what each stage was told and produced is the streaming **RUN LOG** and **LLM COMMANDS** panels — effectively long logs that humans rarely read end-to-end. The **system prompt** and the full **assembled prompt** are not surfaced in the UI at all.
 
 **Goal:** make each stage's **System Prompt**, **Input Prompt** (the assembled prompt actually sent), and **Output** (the stage's structured result) first-class and readable on a per-stage basis, **before / during / after** a run — for at-a-glance understanding, transparency, and faster troubleshooting.
 

@@ -24,6 +24,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     private bool _planned;
     private int? _runningStageNumber;
     private string? _runningStageName;
+    private HashSet<int>? _allRunningStageNumbers;
     private string? _planningLabel;
     private string _runningElapsedLabel = string.Empty;
     private string _rewriteElapsedLabel = string.Empty;
@@ -62,9 +63,11 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         : !string.IsNullOrEmpty(_rewriteElapsedLabel)
             ? $"Rewriting · {_rewriteElapsedLabel}"
             : Task.MetricsLine;
-    public string RunningStepLabel => _runningStageNumber is { } number
-        ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
-        : "Starting task";
+    public string RunningStepLabel => _allRunningStageNumbers is { Count: > 1 } all
+        ? string.Join(" & ", all.OrderBy(n => n).Select(n => $"Stage {n:00}"))
+        : _runningStageNumber is { } number
+            ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
+            : "Starting task";
     public string RunningElapsedLabel
     {
         get => _runningElapsedLabel;
@@ -97,7 +100,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public IBrush CardBorderBrush => IsRunning ? RunningBorderBrush : WaitingBorderBrush;
     public Thickness CardBorderThickness => IsRunning ? new Thickness(2) : new Thickness(1);
     public BoxShadows CardShadow => IsSelected ? NoShadow : IsRunning ? RunningShadow : NoShadow;
-    public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 11.0, 0, 1);
+    public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 12.0, 0, 1);
 
     public bool IsSelected
     {
@@ -125,10 +128,11 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         }
     }
 
-    public void MarkRunning(int? stageNumber = null, string? stageName = null)
+    public void MarkRunning(int? stageNumber = null, string? stageName = null, HashSet<int>? allRunningStageNumbers = null)
     {
         _runningStageNumber = stageNumber;
         _runningStageName = stageName;
+        _allRunningStageNumbers = allRunningStageNumbers;
         _planningLabel = null;
         IsRunning = true;
         OnPropertyChanged(nameof(RunningStepLabel));

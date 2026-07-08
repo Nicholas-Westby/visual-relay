@@ -17,10 +17,11 @@ public static class RelayStages
         Stage(5, "Author-tests", "balanced", "all", "all", """{ "testFiles": string[], "rationale": string }"""),
         Stage(6, "Implement", "balanced", "all", "all", """{ "summary": string }"""),
         Stage(7, "Review", "frontier", "some", "all", """{ "verdict": "pass"|"changes", "issues": [] }"""),
-        Stage(8, "Fix", "balanced", "all", "all", """{ "summary": string }"""),
-        Stage(9, "Verify", "cheap", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "summary": string, "commitMessages": string[] }"""),
-        Stage(10, "Fix-verify", "balanced", "all", "all", """{ "summary": string, "amendManifest"?: string[] }"""),
-        new(11, "Commit", "cheap", "driver", "none", "git", string.Empty, string.Empty)
+        Stage(8, "Visual-review", "vision", "some", "git,ls,cat", """{ "verdict": "pass"|"changes", "issues": [] }"""),
+        Stage(9, "Fix", "balanced", "all", "all", """{ "summary": string }"""),
+        Stage(10, "Verify", "cheap", "some", "git,ls,cat,grep,find,head,tail,wc,sort,uniq,cut,tr,awk,sed", """{ "summary": string, "commitMessages": string[] }"""),
+        Stage(11, "Fix-verify", "balanced", "all", "all", """{ "summary": string, "amendManifest"?: string[] }"""),
+        new(12, "Commit", "cheap", "driver", "none", "git", string.Empty, string.Empty)
     ];
 
     private static RelayStageDefinition Stage(
@@ -76,8 +77,18 @@ public static class RelayStages
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule + " " +
             "Do not edit files.",
+        "Visual-review" =>
+            "You are reviewing rendered screenshots of the application built from the current " +
+            "working tree, plus the task's own attached images. Read the PNG files listed in your " +
+            "input to view them (use view_image). Identify concrete visual defects relevant to the " +
+            "task: geometry, corner radii, clipping, overlap, alignment, spacing, color/contrast, " +
+            "missing or wrong states. **If the task's changes are not visual, or the renders " +
+            "show nothing wrong relevant to the task's intent, return " +
+            "`{\"verdict\":\"pass\",\"issues\":[]}` immediately — a fast clean exit is the " +
+            "expected common case; never manufacture findings.** Do not review code style or " +
+            "correctness — the parallel text Review covers that. Do not edit files.",
         "Fix" =>
-            "Resolve every blocker and warning from review. " +
+            "Resolve every blocker and warning from review and visual review. " +
             "Verify your changes using the targeted test command shown in the " +
             "## Verify command section of the prompt — iterate with it until it passes. " +
             "Treat a nonzero exit as a real, unfinished failure even when the summary " +

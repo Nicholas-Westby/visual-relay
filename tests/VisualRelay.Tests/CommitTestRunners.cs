@@ -31,8 +31,9 @@ internal sealed class EditingSubagentRunner : ISubagentRunner
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status endpoint","chore(sample): update status module"]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status endpoint","chore(sample): update status module"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -59,7 +60,7 @@ internal sealed class MidRunCommittingSubagentRunner(string root) : ISubagentRun
         {
             File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "new");
         }
-        else if (invocation.Stage.Number == 8)
+        else if (invocation.Stage.Number == 9)
         {
             var exitCode = Git("add -A");
             if (exitCode == 0)
@@ -81,8 +82,9 @@ internal sealed class MidRunCommittingSubagentRunner(string root) : ISubagentRun
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status","chore(sample): update status module"]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status","chore(sample): update status module"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -141,8 +143,9 @@ internal sealed class DeletingDirectorySubagentRunner : ISubagentRunner
             5 => """{"testFiles":["tests/data.test"],"rationale":"red first"}""",
             6 => """{"summary":"deleted stale data"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["fix(sample): remove stale data","chore: clean stale data files","docs: document data cleanup"]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["fix(sample): remove stale data","chore: clean stale data files","docs: document data cleanup"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -176,8 +179,9 @@ internal sealed class FileNameFirstCandidateRunner : ISubagentRunner
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["fix(src): update foo.cs logic","fix: correct update logic","refactor: improve control flow"]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["fix(src): update foo.cs logic","fix: correct update logic","refactor: improve control flow"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -212,8 +216,9 @@ internal sealed class LegacyCommitMessageRunner : ISubagentRunner
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessage":"fix(legacy): use old field"}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessage":"fix(legacy): use old field"}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -249,8 +254,9 @@ internal sealed class NewTestFileNotInManifestRunner : ISubagentRunner
             5 => """{"testFiles":["tests/regression-tests.cs"],"rationale":"regression test for new behavior"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["test: add regression coverage for new behavior","test: cover edge case in regression suite","chore: update test infrastructure"]}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["test: add regression coverage for new behavior","test: cover edge case in regression suite","chore: update test infrastructure"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));
@@ -284,8 +290,9 @@ internal sealed class NoCommitMessageRunner : ISubagentRunner
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified"}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified"}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));

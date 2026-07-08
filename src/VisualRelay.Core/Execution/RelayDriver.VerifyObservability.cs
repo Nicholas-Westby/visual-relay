@@ -9,9 +9,9 @@ public sealed partial class RelayDriver
     /// structured <c>verify_result</c> event carrying the command, exit code, verdict,
     /// distilled reason, working-tree hash, and a POINTER to that artifact — never the
     /// full output inline. Mirrors <c>TryPersistKilledOutput</c>'s file convention so the
-    /// autopsy trail is uniform. Called at BOTH authoritative gate runs (stage 9 and the
-    /// stage-10 loop) so every red is observable after the fact (R5).
-    /// NOTE: the event reports the RAW authoritative-gate verdict; at stage 9 a task can
+    /// autopsy trail is uniform. Called at BOTH authoritative gate runs (stage 10 and the
+    /// stage-11 loop) so every red is observable after the fact (R5).
+    /// NOTE: the event reports the RAW authoritative-gate verdict; at stage 10 a task can
     /// still go green via baseline-exclusion of pre-existing failures, so a green task
     /// legitimately having a <c>check:"red"</c> stage-9 <c>verify_result</c> is not a contradiction.
     /// Returns the persisted full-output artifact PATH (or null when the write failed) so the

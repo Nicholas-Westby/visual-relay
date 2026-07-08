@@ -12,10 +12,10 @@ public sealed partial class RelayDriverResumeTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("partial-task", "# v1 — original\n");
 
-        // Run 1: flag at stage 8 (leaves stages 1-7 Done, 8 Flagged)
-        var flagAt8 = new FlagAtStageSubagentRunner(flagAtStage: 8);
+        // Run 1: flag at stage 9 (leaves stages 1-8 Done, 9 Flagged)
+        var flagAt9 = new FlagAtStageSubagentRunner(flagAtStage: 9);
         var driver1 = new RelayDriver(
-            RelayDriverDependencies.ForTests(flagAt8, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(flagAt9, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "partial-task");
@@ -23,19 +23,19 @@ public sealed partial class RelayDriverResumeTests
 
         var taskDir = Path.Combine(repo.Root, ".relay", "partial-task");
         var statusAfterRun1 = StageStatusRecord.Read(taskDir);
-        Assert.All(statusAfterRun1.Take(7), e => Assert.Equal("Done", e.Status));
-        Assert.Equal("Flagged", statusAfterRun1[7].Status);
-        Assert.All(statusAfterRun1.Skip(8), e => Assert.Equal("Waiting", e.Status));
+        Assert.All(statusAfterRun1.Take(8), e => Assert.Equal("Done", e.Status));
+        Assert.Equal("Flagged", statusAfterRun1[8].Status);
+        Assert.All(statusAfterRun1.Skip(9), e => Assert.Equal("Waiting", e.Status));
 
         var sealsPath = Path.Combine(taskDir, "partial-task.seals");
         var sealCountAfterRun1 = (await File.ReadAllLinesAsync(sealsPath)).Length;
-        Assert.Equal(7, sealCountAfterRun1);
+        Assert.Equal(8, sealCountAfterRun1);
 
         // Modify task .md
         repo.WriteTask("partial-task", "# v2 — re-added while mid-run\n\nNew content.\n");
 
-        // Run 2: Resume:true — must resume from stage 8, NOT archive
-        // Single green result suffices (no stage-5 author gate on resume from stage 8).
+        // Run 2: Resume:true — must resume from stage 9, NOT archive
+        // Single green result suffices (no stage-5 author gate on resume from stage 9).
         var sink2 = new InMemoryRelayEventSink();
         var happyRunner = new ArtifactWritingSubagentRunner();
         happyRunner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
@@ -54,8 +54,8 @@ public sealed partial class RelayDriverResumeTests
         Assert.NotNull(runStartEvent);
         Assert.False(runStartEvent!.Data?.ContainsKey("fresh") == true);
 
-        // Stage 8 re-executed on resume
-        Assert.True(File.Exists(Path.Combine(taskDir, "stage8-attempt2.report.json")));
+        // Stage 9 re-executed on resume
+        Assert.True(File.Exists(Path.Combine(taskDir, "stage9-attempt2.report.json")));
 
         // Seal chain extended
         var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;

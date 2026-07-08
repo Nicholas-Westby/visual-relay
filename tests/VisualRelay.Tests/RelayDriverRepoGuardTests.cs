@@ -61,17 +61,17 @@ public sealed class RelayDriverRepoGuardTests
         var outcome = await driver.RunTaskAsync(repo.Root, "big-file");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.NotNull(stage10!.LastTestOutput);
-        Assert.Contains("new-file.cs", stage10.LastTestOutput, StringComparison.Ordinal);
+        var fixVerify = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerify);
+        Assert.NotNull(fixVerify!.LastTestOutput);
+        Assert.Contains("new-file.cs", fixVerify.LastTestOutput, StringComparison.Ordinal);
 
         var seals = await File.ReadAllLinesAsync(
             Path.Combine(repo.Root, ".relay", "big-file", "big-file.seals"));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+            line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -204,17 +204,17 @@ public sealed class RelayDriverRepoGuardTests
         var outcome = await driver.RunTaskAsync(repo.Root, "fix-guard");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.NotNull(stage10!.LastTestOutput);
-        Assert.Contains("oversized.cs", stage10.LastTestOutput, StringComparison.Ordinal);
+        var fixVerify = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerify);
+        Assert.NotNull(fixVerify!.LastTestOutput);
+        Assert.Contains("oversized.cs", fixVerify.LastTestOutput, StringComparison.Ordinal);
 
         var seals = await File.ReadAllLinesAsync(
             Path.Combine(repo.Root, ".relay", "fix-guard", "fix-guard.seals"));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+            line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

@@ -23,10 +23,11 @@ The original Relay pipeline is represented as stage definitions:
 5. Author-tests
 6. Implement
 7. Review
-8. Fix
-9. Verify
-10. Fix-verify
-11. Commit
+8. Visual-review
+9. Fix
+10. Verify
+11. Fix-verify
+12. Commit
 
 Each stage carries its tier, file access scope, command scope, prompt, and JSON contract. The UI shows stage progress and the runner uses those definitions to build prompts for real Swival calls or mocked tests.
 

@@ -37,8 +37,8 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         // Fail→pass flip event must exist.
         Assert.Contains(sink.Events, e => e is { EventName: "verify_retry_pass", Level: "info" });
 
-        // No stage-10 LLM invocation (green verify skips the fix-verify loop).
-        Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 10);
+        // No stage-11 LLM invocation (green verify skips the fix-verify loop).
+        Assert.DoesNotContain(runner.Invocations, i => i.Stage.Number == 11);
     }
 
     /// <summary>
@@ -117,8 +117,8 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),              // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),      // stage 9 verify — first run fails
-            new TestRunResult(0, "green"));            // stage 9 verify — retry flips green
+            new TestRunResult(1, "Failed TestX"),      // stage 10 verify — first run fails
+            new TestRunResult(0, "green"));            // stage 10 verify — retry flips green
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, sink),
@@ -158,7 +158,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new RecordingTestRunner(
             new TestRunResult(1, "red"),         // stage 5 author gate
-            new TestRunResult(1, "Failed TestX")); // stage 9 verify — fail, no retry
+            new TestRunResult(1, "Failed TestX")); // stage 10 verify — fail, no retry
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, sink),

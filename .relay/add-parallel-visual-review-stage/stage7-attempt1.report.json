@@ -1,0 +1,563 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-08T00:26:14.208896+00:00",
+  "task": "# Relay stage 7: Review\nTask: add-parallel-visual-review-stage\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Add a Parallel \"Visual Review\" Stage on the Vision Tier\n\nThe Review stage (stage 7, `frontier` tier) reads the diff \u2014 it cannot see rendered UI. Two runs\nhave now shipped or nearly shipped visual defects past a green review: a card-styles task passed\nreview while square-corner artifacts remained visible in the running app, and the button\ncomposition refactor's review returned `{\"verdict\":\"pass\",\"issues\":[]}` while eleven UI test\nfiles were broken by the change (caught only later). Add a **Visual review** stage that runs on\nthe vision tier, **in parallel with** the text Review stage, whose findings are combined with\nReview's and fed to the Fix stage.\n\n## Current state (researched)\n\n- **Stage table** \u2014 `src/VisualRelay.Core/Execution/RelayStages.cs`: `RelayStages.All` is the\n  ordered list of `RelayStageDefinition(number, name, tier, kind, files, commands, systemPrompt,\n  contract)` records. Today: 1 Ideate, 2 Research, 3 Diagnose, 4 Plan, 5 Author-tests,\n  6 Implement, 7 `Stage(7, \"Review\", \"frontier\", \"some\", \"all\", \u2026verdict/issues contract\u2026)`,\n  8 Fix, 9 Verify, 10 Fix-verify, 11 Commit (kind `\"driver\"`). Stage prompts live in\n  `SystemPromptFor(name)` in the same file; the Fix prompt starts \"Resolve every blocker and\n  warning from review.\"\n- **How stage output reaches later stages** \u2014 each stage's JSON answer is appended to\n  `.relay/<taskId>/ledger.md` as a `## Stage N - <Name>` section, and later invocations receive\n  it via `StageInvocation.LedgerSoFar` (input assembly:\n  `src/VisualRelay.Core/Execution/ProcessRunners.StageInput.cs`, 64 lines). \"Combined output to\n  Fix\" therefore means: both review stages' sections are in the ledger before Fix runs.\n- **The driver is strictly sequential** \u2014 `src/VisualRelay.Core/Execution/RelayDriver.cs` runs\n  stages in order, one `SubagentRunner.RunAsync(StageInvocation\u2026)` at a time, with per-stage\n  artifacts `stageN-attemptM.input.json` / `.report.json` / trace dir, per-stage watchdog and\n  ceiling (`ProcessRunners.RunAsync.cs` / `ProcessRunners.Watchdog.cs`), and `run.log` events\n  tagged `sN/<tier>`. **`RelayDriver.cs` is at 298/300 lines (file-size guard) \u2014 all new\n  orchestration must go in a new partial file** (e.g. `RelayDriver.ReviewPair.cs`).\n- **Where vision lives today \u2014 and why it has plausibly NEVER worked.** *No* stage runs on the\n  vision tier. The vision model is wired as a swival profile (`SwivalProfileSession.DefaultToml`\n  \u2192 `[profiles.vision]`, `model = \"vision\"`, resolved through `tierProfiles` in\n  `.relay/config.json`; pricing exists in `RelayPricing`). The mechanism for actually seeing an\n  image is swival's built-in **`view_image` tool**. Trace evidence from run\n  `.relay/improve-task-card-styles/` shows every observed attempt failed:\n  - stage 1 (`files \"none\"`): `view_image` on the task's attached PNG \u2192 `error: \u2026 resolves to\n    BASEDIR/llm-tasks/\u2026png, which is outside .swival/ (filesystem access is disabled)` \u2014 the\n    stage's file scope blocks it;\n  - stage 2 (`files \"some\"`): `view_image` aimed at a stale worktree path from the ledger \u2192\n    `file not found`; the agent then dumped raw PNG bytes via `git cat-file` (37 KB of binary\n    into a cmd-output file) and \"described\" the image from that \u2014 i.e. confabulation, not\n    vision.\n  So the failure causes are (a) stage file scopes blocking image reads and (b) agents fumbling\n  paths \u2014 not a missing model. This task must make `view_image` actually work for the new stage:\n  correct file scope, PNGs placed where the scope allows, and **exact** image paths handed to\n  the agent in its input. VR's own input assembly attaches no images\n  (`ProcessRunners.StageInput.cs` has no image handling) \u2014 the paths-in-prompt + `view_image`\n  route is the mechanism.\n- **Rendering machinery exists in this repo** \u2014 `tools/VisualRelay.Screenshots/Program.cs`\n  builds a real `MainWindowViewModel` with demo tasks (including a running+selected card via\n  `RestoreRunningTaskState(...)` + `SelectedTask = task`) and renders window PNGs; it already\n  runs as part of\n  `./visual-relay check`. It is this repo's natural `visualRenderCmd` implementation \u2014 but VR\n  is general-purpose, so the pipeline must only ever invoke rendering through the config key,\n  never through a hardcoded tool path.\n- **Stage-number dependents (renumber checklist)** \u2014 inserting a stage renumbers everything\n  after 7. Known dependents to sweep: the flagged-work resume range\n  (`RelayDriver.FlaggedWork.cs`: `firstStageToRun is < 5 or > 10`); Verify / Fix-verify\n  mechanics and comments keyed to stages 9/10 (`RelayDriver.VerifyFix.cs`,\n  `RelayDriver.VerifyObservability.cs`); the Commit driver stage number; the stage board and\n  `MainWindowViewModel.Stages` consumers, including index-based demo seeding in\n  `tools/VisualRelay.Screenshots/Program.cs` (`viewModel.Stages[1]`, `Stages[2]`, \u2026); any tests\n  that assert stage numbers, names, or counts; `docs/` and `README` mentions of the pipeline.\n  Ledger and seal entries record `n` dynamically and need no format change.\n\n## What to build\n\n1. **Stage definition.** Insert\n   `Stage(8, \"Visual-review\", \"vision\", \"some\", \"git,ls,cat\", <same contract as Review>)` into\n   `RelayStages.All` and renumber: Fix\u21929, Verify\u219210, Fix-verify\u219211, Commit\u219212. Sweep the\n   renumber checklist above; extend the flagged-work resume range to `5..11`.\n2. **System prompt** (new arm in `SystemPromptFor`): review the *rendered UI*, not the code \u2014\n   e.g.: \"You are reviewing rendered screenshots of the application built from the current\n   working tree, plus the task's own attached images. Read the PNG files listed in your input to\n   view them. Identify concrete visual defects relevant to the task: geometry, corner radii,\n   clipping, overlap, alignment, spacing, color/contrast, missing or wrong states. **If the\n   task's changes are not visual, or the renders show nothing wrong relevant to the task's\n   intent, return `{\"verdict\":\"pass\",\"issues\":[]}` immediately \u2014 a fast clean exit is the\n   expected common case; never manufacture findings.** Do not review code style or correctness \u2014\n   the parallel text Review covers that. Do not edit files.\" Output contract identical to Review\n   (`{ \"verdict\": \"pass\"|\"changes\", \"issues\": [] }`) so Fix consumes both uniformly.\n   **Contingency:** if the vision-tier model proves unable to follow the JSON contract or the\n   review instructions reliably (smaller VLMs sometimes can't), chain instead: the vision model\n   only describes each image (plain prose), and a `cheap`-tier pass converts descriptions +\n   task intent into the contract JSON. Prefer the single-model form; implement the chain only if\n   the smoke test shows it is needed.\n3. **Driver: pre-render, then run the pair concurrently** (new partial\n   `RelayDriver.ReviewPair.cs`):\n   - **Triage decides, not file extensions.** Visual Relay is language- and framework-agnostic,\n     so the driver must NOT gate on file patterns (no `.axaml`/`Views/`-style heuristics \u2014\n     those assume one stack). Stage 8 runs in two parts:\n     **(a) Visual-triage** \u2014 a small cheap-tier text invocation launched at the same time as\n     Review: input is the task description, the working-tree diff summary (changed paths +\n     stats, plus small hunks where cheap), and the list of task image attachments; output\n     contract `{ \"visualReview\": \"needed\"|\"skip\", \"reason\": string }`; read-only, hard-capped\n     at a modest turn budget (e.g. `MaxTurns: 12` \u2014 the input already carries the diff summary,\n     and twelve turns leaves room to open several files for context; observed real stages run\n     ~1 turn for Verify up to ~20\u201337 for Research/Ideate, so 12 keeps triage decisively smaller\n     than a reasoning stage without starving it), with its own artifacts (e.g.\n     `stage8-triage-attempt1.{input,report}.json`). Its prompt asks a capability question, not\n     a framework question: \"would a reviewer benefit from LOOKING at rendered output for this\n     change \u2014 UI markup/styles/layout in any framework, web frontends, terminal UI, images or\n     other visual assets, charts, generated documents?\" When genuinely uncertain, prefer\n     `needed` (a vision pass costs cents; a missed visual defect costs a run).\n     **(b) Visual-review proper** \u2014 launched only when triage says `needed`. On `skip`: ledger\n     note carrying the triage reason, stage 8 recorded as skipped, Review alone feeds Fix.\n   - **Rendering is repo-configured, not hardcoded.** Add an optional `.relay/config.json` key\n     **`visualRenderCmd`** (precedent: `testCmd`/`testFileCmd`/`formatCmd`; parse via the\n     existing optional-string pattern in `RelayConfigLoader.cs`, new `RelayConfig` field): a\n     shell command that renders the project's current visual state as PNGs into the directory\n     VR substitutes for an `{outDir}` token (token precedent: `{files}` in `testFileCmd`). When\n     triage says `needed` and the key is set, the driver runs it \u2014 executed under the same\n     sandbox/timeout regime as the other configured commands \u2014 with `{outDir}` \u2192\n     `.relay/<taskId>/visual-review/`. Key unset \u2192 Visual-review runs on the task's attached\n     images only, and its input states that fresh renders are unavailable. A render failure is\n     not a skip \u2014 feed the failure output to the stage; a tree whose UI cannot render is itself\n     a finding. For THIS repo, set `visualRenderCmd` to a `tools/VisualRelay.Screenshots`\n     invocation that writes into `{outDir}` (verify and, if needed, extend that tool's CLI to\n     accept an output directory).\n   - **Exact paths into the stage input:** list the repo-relative paths of the rendered PNGs\n     plus task-folder image attachments, with an explicit instruction to open each via\n     `view_image` \u2014 the observed failures were bad paths and blocked scopes, so leave the agent\n     nothing to guess. Confirm the stage's `files` scope permits those locations (`\"none\"`\n     hard-blocks `view_image`; pick the scope/placement the smoke test proves works).\n   - **Parallel pair:** launch stage 7 immediately and triage concurrently; when triage returns\n     `needed`, render and launch stage 8 as a second concurrent `SubagentRunner.RunAsync`\n     invocation (`Task.WhenAll` over whatever is in flight), each with its own report file,\n     trace dir, watchdog, and ceiling exactly as any stage has today. Verify interleaved\n     `run.log` events remain coherent (they are already tagged `s7/\u2026` and `s8/\u2026`).\n   - **Mechanical skip stays minimal:** the only driver-level hard skip is the `vision` tier\n     being unconfigured/unreachable (mirror however the backend reports a missing tier key \u2014\n     the Settings dialog already models \"key missing\"); everything else is triage's call.\n   - **Join:** await both; append both outputs to the ledger in fixed order (Review, then\n     Visual-review) before Fix. If one of the pair fails or times out, let the sibling finish\n     (its output is still useful), then apply the existing per-stage failure handling to the\n     failed one.\n4. **Fix consumes both.** Update the Fix prompt's first sentence to \"Resolve every blocker and\n   warning from review and visual review.\" No other Fix changes.\n5. **Tests** (existing patterns: plain xUnit + fakes; `TestRepository`):\n   - stage table: count 12, order, tiers, kinds, contracts \u2014 pins the renumbering;\n   - pair orchestration with a fake `SubagentRunner`: Review + triage launched concurrently\n     (assert overlap via recorded start/finish), triage `needed` \u2192 render then Visual-review\n     launched, triage `skip` \u2192 no vision invocation + ledger note with the reason, ledger\n     receives both review sections in fixed order, render-failure-as-finding path,\n     `visualRenderCmd` parsing + `{outDir}` substitution + unset-key attachment-only path,\n     vision-unconfigured mechanical skip, sibling-survives-failure path;\n   - flagged-work range and Verify/Fix-verify renumber regressions;\n   - prompt content assertions consistent with however existing stage-prompt text is tested.\n6. **Smoke the vision path FIRST \u2014 before building anything else.** No successful `view_image`\n   call exists in any recorded trace; the entire feature rests on this working. Run a minimal\n   Visual-review-shaped swival invocation (vision profile, `files \"some\"`, a known PNG at an\n   exact given path) and confirm the model returns a description that proves it saw the pixels\n   (e.g. ask it to name a distinctive element). If `view_image` cannot deliver image content to\n   the model on the pinned swival, stop and report a blocker \u2014 do not ship a stage that cannot\n   see, and do not fall back to describing byte dumps.\n\n## Gotchas to design for (anticipated \u2014 address each explicitly)\n\n- **`view_image` scope/path failures** \u2014 the two recorded failure modes (blocked file scope,\n  guessed-wrong path). Addressed by: smoke test first; exact paths in the stage input; scope\n  verified; renders placed where the sandbox allows.\n- **Triage economics and bias** \u2014 triage must stay tiny (cheap tier, hard `MaxTurns` cap, diff\n  *summary* rather than full diff for large changes) so it never bottlenecks the pair; bias\n  toward `needed` under uncertainty and toward `skip` only for clearly non-visual changes (pure\n  backend logic, docs, config). Triage output is advisory routing only \u2014 it must never reach\n  Fix looking like review findings.\n- **`visualRenderCmd` is untrusted repo config** \u2014 substitute `{outDir}` literally, run the\n  command under the same sandbox/timeout regime as `testCmd`-family commands, and treat a\n  non-zero exit as reviewable content (a finding), not a driver failure.\n- **Two stages active at once in the UI** \u2014 the stage board, queue card (\"Stage 08 \u00b7 Fix\"),\n  status text, `RestoreRunningTaskState`, and stage-selection/\"follow running\" logic may all\n  assume a single running stage. Audit `MainWindowViewModel` stage-state plumbing and render\n  both cards as running (the stage board already shows per-stage state; the single-stage\n  assumptions are the risk). Add a UI test for the dual-running presentation.\n- **Combining two outputs into one downstream input** \u2014 both outputs enter the ledger as\n  ordinary `## Stage N` sections in a fixed order (Review first), so Fix's input needs no new\n  format. Contradictions between the two reviews are acceptable \u2014 Fix reads both; do not build\n  a merge/dedup layer.\n- **run.log and seal interleaving** \u2014 events are already tagged `sN/<tier>`, but the seal\n  ledger appends stage entries in completion order; two concurrent completions must not\n  interleave a single entry's write. Serialize seal/ledger appends behind the join.\n- **Retry/stall/timeout semantics per pair member** \u2014 stall retries and ceiling kills apply to\n  the failed member only; the sibling's completed result must not be discarded or re-run.\n  Flagged-work snapshots remain safe because Visual-review is read-only (the tree only has one\n  writer at a time in the pair \u2014 Review is also read-only; neither edits).\n- **Resume mid-pair** \u2014 if the run dies during the pair, resume re-enters at stage 7 and\n  re-runs BOTH members (simplest correct rule); never resume into stage 8 alone with a stale\n  stage-7 result unless its report exists and parsed.\n- **Backend concurrency and cost** \u2014 two simultaneous model streams through the litellm backend\n  (different models); confirm the backend handles parallel requests (it serves the app +\n  agents already) and that per-stage cost attribution stays separate (each invocation already\n  reports its own stats).\n- **MSBuild contention** \u2014 the pre-render build completes before the pair launches, and both\n  reviewers are read-only (targeted test runs allowed to Review only), so concurrent-build\n  clashes are avoided by construction; keep it that way (do not give Visual-review build/test\n  commands).\n\n## Done when\n\n- The pipeline is: 1 Ideate \u2026 7 Review \u2225 8 Visual-review (concurrent) \u2192 9 Fix \u2192 10 Verify \u2192\n  11 Fix-verify \u2192 12 Commit, with stages 7 and 8 demonstrably overlapping in a driver test.\n- A task triaged `needed` produces a `stage8-attempt1.report.json` whose verdict/issues came\n  from actually reading images (fresh `visualRenderCmd` renders when the repo configures one,\n  task attachments otherwise); its findings appear in the ledger next to Review's, and Fix's\n  input contains both.\n- A task triaged `skip` records the triage reason in the ledger with no vision invocation;\n  setups without a vision tier skip mechanically; nothing anywhere gates on file extensions or\n  framework-specific paths.\n- All renumber dependents updated (resume range, Verify/Fix-verify, UI stage board, screenshots\n  seeding, tests, docs); `./visual-relay check` passes.\n\n## Guardrails\n\n- `RelayDriver.cs` is at 298/300 \u2014 orchestration goes in a new partial; keep every touched file\n  under the guard.\n- Parallelism is scoped to exactly this pair; no other stages run concurrently, and Commit stays\n  the last, driver-kind stage.\n- Each pair member keeps the standard independent watchdog/ceiling; do not invent a combined\n  budget.\n- The Visual-review stage is read-only (`files \"some\"`, minimal commands) \u2014 it must never edit\n  the tree; findings flow to Fix.\n- Do not gate Fix on the verdicts (Fix already runs unconditionally today); this task only adds\n  the second reviewer and merges outputs.\n- Conventional Commits (`docs/commit-messages.md`, `AGENTS.md`); minimal diffs.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\nsrc/VisualRelay.Core/Execution/RelayStages.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Stage9.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs\nsrc/VisualRelay.Domain/RelayConfig.cs\nsrc/VisualRelay.Core/Configuration/RelayConfigLoader.cs\nsrc/VisualRelay.App/ViewModels/TaskRowViewModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\ntools/VisualRelay.Screenshots/Program.cs\n.relay/config.json\ndocs/DESIGN.md\nREADME.md\ndocs/superpowers/specs/2026-06-20-per-stage-prompt-output-tabs-design.md\ndocs/superpowers/specs/2026-06-11-greenfield-workflow-design.md\ntests/VisualRelay.Tests/RunAllModesTests.cs\ntests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs\ntests/VisualRelay.Tests/StageDetailViewModelTests.cs\ntests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\ntests/VisualRelay.Tests/StageRowViewModelTests.cs\ntests/VisualRelay.Tests/StageCardCumulativeMetricsTests.cs\ntests/VisualRelay.Tests/TestDurationTests.cs\ntests/VisualRelay.Tests/VerifyAgentCommandTests.cs\ntests/VisualRelay.Tests/VerifyOutputTailAndPathTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs\ntests/VisualRelay.Tests/TaskRowViewModelTests.cs\ntests/VisualRelay.Tests/RelayDriverReviewPairTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Add a parallel Visual-review stage (stage 8 on the vision tier) alongside the existing text Review, with triage-based routing, optional repo-configured rendering, and concurrent driver execution \u2014 renumbering stages 9\u201312 and updating all downstream consumers.\", \"options\": [\"A \u2014 Build in dependency order: smoke test first, then stage def/renumbering, then config/rendering, then triage, then driver/orchestration, then tests, then docs\", \"B \u2014 Triage-first vertical slice: minimal end-to-end path using task attachments only (no rendering), ship attachment-based visual review first, add rendering as a follow-up\", \"C \u2014 Definition-and-render plumbing first, orchestrate last: do safe mechanical work (stage def, renumbering, prompts, config parsing, tool CLI) upfront, tackle risky driver and vision-model work last\"] }\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is a .NET 10 Avalonia desktop app arranged in three projects: Domain (records), Core (business logic, filesystem I/O), App (Avalonia UI + ViewModels). The stage pipeline is defined in `RelayStages.cs` (112 lines) as an `IReadOnlyList<RelayStageDefinition>` with 11 stages, each built by a `Stage(...)` factory method that calls `SystemPromptFor(name)` to derive prompts. The loop in `RelayDriver.cs` (298/300 lines \u2014 at the file-size guard ceiling) iterates `foreach (var stage in RelayStages.All)`, running each stage sequentially via `_dependencies.SubagentRunner.RunAsync(invocation, ct)`. All orchestration for the new concurrent pair must go in a new partial file `RelayDriver.ReviewPair.cs`. The current stage lineup is: 1 Ideate, 2 Research, 3 Diagnose, 4 Plan, 5 Author-tests, 6 Implement, 7 Review (frontier tier, `some` files, `all` commands, verdict/issues contract), 8 Fix, 9 Verify (runs mechanical tests pre-agent), 10 Fix-verify, 11 Commit (`driver` kind). The Fix prompt starts with 'Resolve every blocker and warning from review.' The `RelayConfig` record already supports optional nullable command strings (`GuardCommand`, `FormatCommand`, `BootstrapCheckCommand`) parsed via `OptionalStringOrNull` in `RelayConfigLoader.cs` \u2014 the same pattern works for `visualRenderCmd`. The config JSON already has a `vision` tier profile mapped to `hf-qwen3-vl-235b` in `tierModelOverrides`. The `visual-relay` script delegates to `tools/VisualRelay.Cli` via `dotnet run`. The screenshots tool at `tools/VisualRelay.Screenshots/Program.cs` accepts an output path as its first CLI argument and renders a `MainWindowViewModel` with seeded demo data; it currently hardcodes stage indices (`viewModel.Stages[0]` through `[2]`) and `Stages.Count` expectations of 11. Swival's `view_image` tool requires the stage's `files` scope to permit the target path. Tests in `RunAllModesTests.cs` assert 11 stages with exact names/tiers/files per `[InlineData(...)]`; `StageContracts.cs` asserts sequential 1-through-11 numbering, driver-kind exclusivity on stage 11, etc. The flagged-work resume range is `firstStageToRun is < 5 or > 10` in `RelayDriver.FlaggedWork.cs`. The `RelayDriver.VerifyFix.cs` references `RelayStages.All[9]` for stage 10 and `RelayStages.All[8]` for stage 9. The screenshots `Program.cs` seeds `CompletedStageCount: 11` on task VMs. `SeedStatusEntries()` dynamically builds from `RelayStages.All` so it auto-adjusts.\",\n  \"constraints\": [\n    \"RelayDriver.cs is at 298/300 lines \u2014 all new orchestration MUST go in a new partial file (e.g. RelayDriver.ReviewPair.cs); the existing file must not gain any net lines.\",\n    \"Every C#/XAML source file must stay under 300 lines (enforced by file-size guard in tools/VisualRelay.Guards).\",\n    \"Adding Visual-review (stage 8) renumbers Fix\u21929, Verify\u219210, Fix-verify\u219211, Commit\u219212. All downstream consumers must be updated: test InlineData on RunAllModesTests.cs (stages 8\u201311 metadata assertions), RunAllModesTests.StageContracts.cs (sequential 1-through-11 check, driver-kind on stage 11, files='none' on stages 1 and 11), ReviewTierGuardTests.cs (Review name lookup is safe; no number assertions there), StageDetailViewModelTests.cs (MakeDriverStage uses RelayStages.All[10] \u2192 must become [11]), Screenshots Program.cs (Stages[0],[1],[2] will auto-adjust, but CompletedStageCount:11 must become 12, and RestoreRunningTaskState stage indexes if relevant), the flagged-work resume range (5..10 \u2192 5..11 in RelayDriver.FlaggedWork.cs lines 23), VerifyFix.cs references to stage 9 index and stage 10 index, RelayDriver.cs stage-9 test-run gate (line 99, 107, 138, 205, 263), VerifyObservability.cs stage-number check. Stage 10 skip logic (RelayDriver.cs line 272: RelayStages.All[9] \u2192 must become [10]). The `stage10Handled` variable naming is now misleading since stage 10 becomes Fix-verify.\",\n    \"The concurrent pair (stage 7 Review + stage 8 Visual-review) requires extracting stage 7 from the main foreach loop into the new partial, running it alongside triage and optionally stage 8, then joining before Fix (new stage 9). The join must serialize ledger/seal/status writes so concurrent completions don't interleave.\",\n    \"Both Review and Visual-review are read-only (files='some', no edit commands) \u2014 they must never edit the tree. The pair runs under independent watchdogs and ceilings.\",\n    \"Triage must use the cheap tier with a hard MaxTurns cap (e.g. 12), be purely advisory routing (never feeds into Fix), and bias toward `needed` under uncertainty.\",\n    \"visualRenderCmd is an optional string in config parsed via OptionalStringOrNull with `{outDir}` substitution \u2014 same sandbox/timeout regime as testCmd/testFileCmd. Unset \u2192 attachment-only mode. Render failure (non-zero exit) feeds into the stage as reviewable content, not a driver skip.\",\n    \"The vision tier being unconfigured/unreachable is a mechanical skip (no triage, no stage 8); everything else is triage's call.\",\n    \"The Fix prompt must be updated from 'Resolve every blocker and warning from review.' to 'Resolve every blocker and warning from review and visual review.'\",\n    \"The stage's files scope must permit PNG paths (renders under .relay/<taskId>/visual-review/ and task attachments under llm-tasks/<slug>/). Use files='some' and verify the sandbox allows these paths.\",\n    \"Exact image paths must be listed in the stage input with explicit view_image instructions \u2014 the historical failures were path-guessing + blocked scope.\",\n    \"Resume mid-pair re-enters at stage 7 and re-runs both members; never resume into stage 8 alone with a stale stage-7 result.\",\n    \"The UI (MainWindowViewModel.Stages.cs) must handle two stages running concurrently \u2014 single-running-stage assumptions in stage board, queue card status text, RestoreRunningTaskState, and 'follow running' logic all need audit.\",\n    \"The screenshots tool (Program.cs) creates a RelayTaskItem with CompletedStageCount: 11 and applies StageRowViewModel to Stages[0],[1],[2] \u2014 these need updating to 12 stages and correct new indices.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Comprehensive file-by-file survey of the Visual Relay codebase identifies every location that must change to insert a parallel Visual-review stage at position 8. The codebase is well-structured: stage definitions in RelayStages.cs, driver orchestration in RelayDriver.cs (at 298/300 lines \u2014 new logic must go in a new partial), config parsing in RelayConfigLoader.cs, and exhaustive test coverage in ~20 test files that hardcode stage numbers or indices. Below is the full renumber sweep, the new-code inventory, and the UI-audit findings.\\n\\n**Stage-table change (RelayStages.cs)**\\nCurrent: 1 Ideate \u2026 7 Review, 8 Fix, 9 Verify, 10 Fix-verify, 11 Commit.\\nTarget:  1 Ideate \u2026 7 Review, 8 Visual-review (vision tier, \\\"some\\\" files, \\\"git,ls,cat\\\" commands, verdict/issues contract), 9 Fix, 10 Verify, 11 Fix-verify, 12 Commit.\\n\\n**Renumber sweep \u2014 EVERY reference that must change:**\\n\\n1. *RelayDriver.cs (298/300 lines)* \u2014 lines 71 (stage10Handled variable), 82 (stage.Number==10), 99/107/138/205/263 (stage.Number==9 \u2192 10), 272 (RelayStages.All[9] \u2192 [10]), 285 (stage.Number!=9 \u2192 !=10). Also the `stage10Handled` name is now misleading (stage 10 is Verify, not Fix-verify).\\n\\n2. *RelayDriver.FlaggedWork.cs* \u2014 line 23: `firstStageToRun is < 5 or > 10` \u2192 `> 11`. Comment on line 9 also says \\\"5\u201310\\\".\\n\\n3. *RelayDriver.VerifyFix.cs* \u2014 line 49: `RelayStages.All[9]` \u2192 `[10]` (Fix-verify). Comments on lines 13, 19, 41\u201342, 48\u201349, 50 all mention \\\"stage 10\\\" or \\\"stage-10\\\".\\n\\n4. *RelayDriver.Stage9.cs* \u2014 line 60: hardcoded `stageNumber: 9` \u2192 10. Line 62: `RelayStages.All[8]` \u2192 `[9]`. Method name `RunStage9PreAgentAsync` and its `Stage9PreAgentData` type \u2014 these should become Stage10*.\\n\\n5. *RelayDriver.VerifyObservability.cs* \u2014 comments on lines 12, 16 mention \\\"stage 9 and the stage-10 loop\\\" \u2192 \\\"stage 10 and the stage-11 loop\\\".\\n\\n6. *RelayConfig.cs* \u2014 line 9 comment: \\\"stage 9\\\" \u2192 \\\"stage 10\\\". Line 12\u201313 comment mentions stage 10. Also must add new field `VisualRenderCmd: string?`.\\n\\n7. *RelayConfigLoader.cs* \u2014 must add `OptionalStringOrNull(root, \\\"visualRenderCmd\\\")` parsing (same pattern as GuardCommand/FormatCommand/BootstrapCheckCommand on lines 227\u2013229).\\n\\n8. *RunAllModesTests.cs* \u2014 line 149\u2013160: InlineData for 11 stages must become 12, inserting (8, \\\"Visual-review\\\", \\\"vision\\\", \\\"some\\\") and renumbering. Line 183: `Assert.Equal(11, ...)` \u2192 12. Line 173: `number != 11` \u2192 `!= 12`.\\n\\n9. *RunAllModesTests.StageContracts.cs* \u2014 ValidTiers set must add \\\"vision\\\" (line 90). InlineData lists on lines 34, 44, 62, 72, 94, 104, 118, 129, 140, 151: all go 1\u201311 \u2192 1\u201312. Line 54: `stage.Number == 11` \u2192 12. Line 82: `stage.Number == 11` \u2192 12. Line 163: test name, count, loop. Line 184: `stage.Number == 11` \u2192 12. Line 198: `stage.Number is 1 or 11` \u2192 `1 or 12`. Line 227: keyword test for stage 8 must test a Visual-review keyword, not \\\"Resolve every blocker\\\".\\n\\n10. *StageDetailViewModelTests.cs* \u2014 line 14: `RelayStages.All[10]` \u2192 `[11]`.\\n\\n11. *StageRowViewModelTests.cs* \u2014 lines 13/26/37/47/57: all use `All[8]` (old stage 9 Verify). After renumber, [8] = Visual-review. These tests exercise Verify-specific behavior (test duration metrics) \u2014 they need the Verify stage, now at [9].\\n\\n12. *StageCardCumulativeMetricsTests.cs* \u2014 lines 41/52/71/79/97: all use `All[9]` (old stage 10 Fix-verify). After renumber, [9] = Fix. These test cumulative metrics \u2014 may need to switch to [10].\\n\\n13. *TestDurationTests.cs* \u2014 lines 66/78/90/101/231/247: all use `All[8]`. Need to become `[9]` for Verify.\\n\\n14. *VerifyAgentCommandTests.cs* \u2014 lines 119/138/154: `All[8]` (stage 9) \u2192 `[9]`.\\n\\n15. *VerifyOutputTailAndPathTests.cs* \u2014 line 112: `All[9]` \u2192 `[10]`.\\n\\n16. *SwivalSubagentRunnerTests.cs* \u2014 lines 123/180/204/235: various indices; need semantic audit (e.g. [3]=Plan stays, [5]=Implement stays, [9]=Fix-verify\u2192[10], [0]=Ideate stays).\\n\\n17. *SwivalSubagentRunnerEscalationTests.cs* \u2014 line 155: `All[6]` (stage 7 Review) \u2014 unchanged. Others use [0] (Ideate) \u2014 unchanged.\\n\\n18. *SwivalSubagentRunnerContractRetryTests.cs* \u2014 line 131: `All[3]` (stage 4 Plan) \u2014 unchanged.\\n\\n19. *SwivalSubagentRunnerCommandFilterTests.Integration.cs* \u2014 lines 105\u2013121: use `All[0]`/`[1]`/`[2]`/`[3]` for stages 1\u20134 \u2014 all unchanged.\\n\\n20. *BuildPromptVerifyCommandTests.cs* \u2014 line 16: `All[stageNumber-1]` \u2014 parameterized, auto-adjusts.\\n\\n21. *StageInputArtifactIntegrationTests.cs* \u2014 line 45: `All[0]` \u2014 unchanged. Line 123: `All[5]` (stage 6 Implement) \u2014 unchanged.\\n\\n22. *RunningStageElapsedTests.cs* \u2014 lines 25/38/51: `All[5]` (stage 6 Implement) \u2014 unchanged.\\n\\n23. *RelayRunHistoryTests.cs* \u2014 lines 72/83/94: `All[0]` \u2014 unchanged.\\n\\n24. *RelayDriverResumeTests.CommitGate.cs* \u2014 lines 154/191: `All[n-1]` \u2014 auto-adjusts.\\n\\n25. *RelayDriverGitCommitTests.GitignoredBackstop.cs* \u2014 line 87: `All[3]` (stage 4) \u2014 unchanged.\\n\\n26. *MainWindowViewModelTests.Status.cs* \u2014 line 57: `Stages[10]` \u2014 needs to become `[11]` (Commit). Lines 55/117/118/126/127: iterate over stages by index.\\n\\n27. *Screenshots Program.cs* \u2014 lines 93/105/106/107: `CompletedStageCount: 11` \u2192 12 (four occurrences). Line 102 comment says `// The selected task's markdown` not relevant. Lines 123\u2013131: `Stages[0]`, `[1]`, `[2]` auto-adjust (indices for Ideate/Research/Diagnose unchanged).\\n\\n28. *docs/DESIGN.md* \u2014 lines 17\u201329: the numbered stage list (1\u201311) must become 1\u201312. Line 41 mentions \\\"stage timeline\\\".\\n\\n29. *README.md* \u2014 line 100 mentions \\\"11-stage mapping\\\".\\n\\n30. *docs/superpowers/specs/2026-06-20-per-stage-prompt-output-tabs-design.md* \u2014 line 9: \\\"11-stage LLM pipeline\\\".\\n\\n31. *docs/superpowers/specs/2026-06-11-greenfield-workflow-design.md* \u2014 lines 5/34/50/192: all mention \\\"11-stage\\\".\\n\\n32. *run.log events* \u2014 already tagged `sN/<tier>`, auto-adjust with stage number.\\n\\n**New code \u2014 what must be built:**\\n- *RelayDriver.ReviewPair.cs* (new partial): triage invocation (cheap, MaxTurns 12), render via visualRenderCmd + {outDir}, concurrent Task.WhenAll, join+serialize ledger/seal writes, mechanical skip for unconfigured vision tier.\\n- *RelayStages.cs*: new SystemPromptFor(\\\"Visual-review\\\") arm, new Stage(8, ...) in All[].\\n- *RelayConfig.cs*: add `string? VisualRenderCmd = null` field.\\n- *RelayConfigLoader.cs*: parse `visualRenderCmd` via OptionalStringOrNull.\\n- *Fix prompt*: update first sentence to \\\"Resolve every blocker and warning from review and visual review.\\\"\\n- *UI dual-running*: `MainWindowViewModel.LiveState.cs` stores `_runningStageNumbers[taskId]` as a single `int?` per task (line 113). To show two concurrent stages, either (a) accept that the queue card shows only the latest stage_start event, or (b) extend the model to hold a set/list. The task specifically asks to \\\"render both cards as running\\\" in the stage board, which already works (each StageRowViewModel receives its own MarkRunning call via Helpers.cs line 97). The queue card's `RunningStepLabel` (TaskRowViewModel.cs line 65) shows only one stage \u2014 this is the main UI gap.\\n\\n**view_image scope verification:**\\n- Stage 8 must use `files \\\"some\\\"` (confirmed in the design \u2014 same as Review). The sandbox allows paths under the target root. Renders go to `.relay/<taskId>/visual-review/` which is under the root. Task attachments are under `llm-tasks/<slug>/` which is also under the root. Both paths should be within the `\\\"some\\\"` scope. However, the task's research notes that `\\\"none\\\"` hard-blocks view_image and `\\\"some\\\"` with wrong paths caused file-not-found. The fix: exact paths in stage input, renders placed under .relay/<taskId>/visual-review/, scope confirmed `\\\"some\\\"`.\\n\\n**vision tier validation:**\\n- ValidTiers set in StageContracts.cs (line 89\u201390) only contains {\\\"cheap\\\",\\\"balanced\\\",\\\"frontier\\\"} \u2014 must add \\\"vision\\\".\\n- swival.toml has [profiles.vision] with model=\\\"vision\\\" (line 19\u201323).\\n- .relay/config.json has tierProfiles.vision \u2192 \\\"vision\\\" and tierModelOverrides.vision \u2192 \\\"hf-qwen3-vl-235b\\\".\\n- RelayPricing.cs has vision pricing (line 17).\\n- No existing stage uses the vision tier \u2014 this confirms the task's claim that vision has \\\"plausibly NEVER worked.\\\"\",\n  \"excerpts\": [\n    \"RelayStages.cs:7-24 \u2014 All[] defines 11 stages; SystemPromptFor(\\\"Fix\\\") line 79 starts 'Resolve every blocker and warning from review.'\",\n    \"RelayStages.cs:26-41 \u2014 Stage() factory method, hardcodes kind='llm', calls SystemPromptFor(name)\",\n    \"RelayStages.cs:48-105 \u2014 SystemPromptFor switch; no Visual-review arm exists; Fix arm on line 79-88\",\n    \"RelayDriver.cs:10-11 \u2014 'public sealed partial class RelayDriver' \u2014 298/300 lines; new orchestration MUST go in new partial\",\n    \"RelayDriver.cs:72 \u2014 'var stage10Handled = false;' \u2014 variable name becomes misleading (stage 10 \u2192 Verify after renumber)\",\n    \"RelayDriver.cs:76-83 \u2014 sequential foreach over RelayStages.All; stage.Number==10 checks and skip logic on line 82\",\n    \"RelayDriver.cs:99-107 \u2014 stage.Number==9 gate for mechanical tests pre-agent; must become 10\",\n    \"RelayDriver.cs:138 \u2014 'Stage 9 (read-only Verify) is NOT handed an imperative full-suite' comment\",\n    \"RelayDriver.cs:205-263 \u2014 stage 9 red/green logic, baseline exclusion, fix-verify entry; all use stage.Number==9\",\n    \"RelayDriver.cs:272 \u2014 'var stage10 = RelayStages.All[9];' \u2014 skip stage 10 when green; must become [10]\",\n    \"RelayDriver.cs:285 \u2014 conditional RecordStageAsync gating on stage.Number!=9 and stage10Handled\",\n    \"RelayDriver.FlaggedWork.cs:9 \u2014 'Only for mid-pipeline stages (5\u201310)' comment\",\n    \"RelayDriver.FlaggedWork.cs:23 \u2014 'firstStageToRun is < 5 or > 10' \u2014 must become > 11\",\n    \"RelayDriver.VerifyFix.cs:49 \u2014 'var stage = RelayStages.All[9]; // Stage 10 \u2014 Fix-verify' \u2014 must become [10]\",\n    \"RelayDriver.VerifyFix.cs:13-19 \u2014 comments reference 'stage 10'/'stage-10 loop' \u2014 Fix-verify becomes stage 11\",\n    \"RelayDriver.Stage9.cs:60 \u2014 'stageNumber: 9' hardcoded \u2014 must become 10\",\n    \"RelayDriver.Stage9.cs:62 \u2014 'RelayStages.All[8]' \u2014 must become [9]\",\n    \"RelayDriver.VerifyObservability.cs:12-16 \u2014 comments mention 'stage 9 and the stage-10 loop'\",\n    \"RelayConfig.cs:3 \u2014 record declaration; no VisualRenderCmd field exists\",\n    \"RelayConfig.cs:9-13 \u2014 comments reference 'stage 9'/'stage 10' with obsolete numbers\",\n    \"RelayConfigLoader.cs:227-229 \u2014 OptionalStringOrNull pattern for GuardCommand/FormatCommand/BootstrapCheckCommand\",\n    \"RunAllModesTests.cs:148-178 \u2014 InlineData for 11 stages with names/tiers/files; line 183: count=11\",\n    \"RunAllModesTests.StageContracts.cs:89-90 \u2014 ValidTiers = {'cheap','balanced','frontier'} \u2014 missing 'vision'\",\n    \"RunAllModesTests.StageContracts.cs:34/44/62/72/94/104/118/129/140/151 \u2014 InlineData lists 1\u201310 or 1\u201311\",\n    \"RunAllModesTests.StageContracts.cs:163 \u2014 'OneThroughEleven'; line 165: 11 count\",\n    \"RunAllModesTests.StageContracts.cs:227 \u2014 keyword test: stage 8 expects 'Resolve every blocker' (now Visual-review)\",\n    \"StageDetailViewModelTests.cs:14 \u2014 'RelayStages.All[10]' for driver stage \u2014 must become [11]\",\n    \"Screenshots Program.cs:93/105/106/107 \u2014 CompletedStageCount: 11 in four places \u2014 must become 12\",\n    \"Screenshots Program.cs:123-131 \u2014 Stages[0]/[1]/[2] seed \u2014 indices auto-adjust\",\n    \"MainWindowViewModel.LiveState.cs:102-118 \u2014 RestoreRunningTaskState stores single int? stageNumber per task\",\n    \"MainWindowViewModel.LiveState.cs:152-173 \u2014 UpdateRunningStage stores single stageNumber per task\",\n    \"TaskRowViewModel.cs:65-67 \u2014 RunningStepLabel shows 'Stage {number:00} \u00b7 {name}' \u2014 single stage only\",\n    \"MainWindowViewModel.Helpers.cs:92-97 \u2014 stage_start handler calls stage.MarkRunning \u2014 only one stage at a time\",\n    \".relay/config.json:1-49 \u2014 has vision tier profile, tierModelOverrides.vision\u2192hf-qwen3-vl-235b; no visualRenderCmd key\",\n    \"swival.toml:19-23 \u2014 [profiles.vision] exists with model='vision'\",\n    \"docs/DESIGN.md:17-29 \u2014 numbered stage list 1\u201311; README.md:100 \u2014 '11-stage mapping'\",\n    \"RelayPricing.cs:17 \u2014 vision tier pricing: (0.30, 1.50)\"\n  ],\n  \"repro\": \"1. Count stages: `grep -c 'Stage(' src/VisualRelay.Core/Execution/RelayStages.cs` shows 10 Stage() calls + 1 `new(` = 11 stages.\\n2. Verify vision tier unused: `grep -rn '\\\"vision\\\"' src/VisualRelay.Core/Execution/` returns no matches in stage definitions.\\n3. Confirm driver size guard: `wc -l src/VisualRelay.Core/Execution/RelayDriver.cs` \u2192 298 lines.\\n4. Find all index-based references: `grep -rn 'RelayStages.All\\\\[' src/ tests/` \u2192 35 matches across 15 files.\\n5. Verify no view_image usage: `grep -rn 'view_image' src/` returns empty.\\n6. Verify ValidTiers missing vision: the set on StageContracts.cs:89-90 excludes 'vision' \u2014 a stage with tier='vision' would fail `AllStages_HaveValidTier`.\\n7. Build and run: `./visual-relay check` \u2192 currently passes with 11 stages.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"# Plan: Add Parallel Visual-Review Stage\\n\\n## Phase 0 \u2014 Smoke test `view_image` FIRST (blocker detection)\\n\\n**Before any code changes**, verify the vision path actually works:\\n\\n1. Write a minimal throwaway swival invocation using the vision profile, `files \\\"some\\\"`, an exact known PNG path, and a prompt asking the model to describe a distinctive element in the image. Confirm the model's response proves it saw pixels. The two known failure modes:\\n   - **Blocked file scope**: `files \\\"none\\\"` hard-blocks `view_image`. Use `files \\\"some\\\"`.\\n   - **Bad path**: checked-in task attachments at `llm-tasks/<slug>/<file>.png`; render output at `.relay/<taskId>/visual-review/`. Both are under the repo root and fall within the `\\\"some\\\"` sandbox scope.\\n2. If `view_image` cannot deliver image content to the model, **stop and report a blocker**. Do not ship a stage that cannot see.\\n\\n**Result**: either a confirmed working `view_image` call (reference the trace for paths/scope), or a blocker.\\n\\n---\\n\\n## Phase 1 \u2014 Stage definition, prompt, and renumbering (safe mechanical work)\\n\\n### 1a. `src/VisualRelay.Core/Execution/RelayStages.cs` \u2014 insert stage 8 and renumber\\n\\n- **Insert** `Stage(8, \\\"Visual-review\\\", \\\"vision\\\", \\\"some\\\", \\\"git,ls,cat\\\", verdict/issues contract)` into the `All` array after Review (old index 6, stage 7) and before Fix.\\n- **Renumber** the existing stages:\\n  - Old 8 \\\"Fix\\\" \u2192 9 \\\"Fix\\\"\\n  - Old 9 \\\"Verify\\\" \u2192 10 \\\"Verify\\\"\\n  - Old 10 \\\"Fix-verify\\\" \u2192 11 \\\"Fix-verify\\\"\\n  - Old 11 \\\"Commit\\\" \u2192 12 \\\"Commit\\\"\\n- **Add** a new `SystemPromptFor` arm for `\\\"Visual-review\\\"`:\\n  > \\\"You are reviewing rendered screenshots of the application built from the current working tree, plus the task's own attached images. Read the PNG files listed in your input to view them. Identify concrete visual defects relevant to the task: geometry, corner radii, clipping, overlap, alignment, spacing, color/contrast, missing or wrong states. **If the task's changes are not visual, or the renders show nothing wrong relevant to the task's intent, return `{\\\"verdict\\\":\\\"pass\\\",\\\"issues\\\":[]}` immediately \u2014 a fast clean exit is the expected common case; never manufacture findings.** Do not review code style or correctness \u2014 the parallel text Review covers that. Do not edit files.\\\"\\n- **Update** the Fix prompt's first sentence: `\\\"Resolve every blocker and warning from review.\\\"` \u2192 `\\\"Resolve every blocker and warning from review and visual review.\\\"`\\n\\n### 1b. Renumber sweep \u2014 every hardcoded reference\\n\\n**`src/VisualRelay.Core/Execution/RelayDriver.cs`** (298/300 lines \u2014 changes must be surgical and zero-sum on line count):\\n- Line 72: `var stage10Handled = false;` \u2192 `var fixVerifyHandled = false;`\\n- Line 82: `stage.Number == 10 && stage10Handled` \u2192 `stage.Number == 11 && fixVerifyHandled`\\n- Lines 99, 107: `stage.Number == 9` \u2192 `stage.Number == 10`\\n- Line 102: `stage9TestResult`/`stage9BootstrapFailed`/etc \u2192 rename to `stage10TestResult`/etc (Verify is now stage 10)\\n- Line 109: `RunStage9PreAgentAsync(...)` \u2192 `RunStage10PreAgentAsync(...)`\\n- Line 138: comment `Stage 9` \u2192 `Stage 10`\\n- Lines 205, 263: `stage.Number == 9` \u2192 `== 10`\\n- Line 256: `stage10Handled = true;` \u2192 `fixVerifyHandled = true;`\\n- Lines 263: `!stage10Handled` \u2192 `!fixVerifyHandled`\\n- Line 272: `var stage10 = RelayStages.All[9];` \u2192 `var fixVerifyStage = RelayStages.All[10];`\\n- Line 274: `stage10` \u2192 `fixVerifyStage`\\n- Line 280: `stage10Handled = true;` \u2192 `fixVerifyHandled = true;`\\n- Line 285: `stage.Number != 9 || !stage10Handled` \u2192 `stage.Number != 10 || !fixVerifyHandled`\\n- **Integration points** for the pair (see Phase 3) \u2014 `RelayDriver.cs` calls into `RelayDriver.ReviewPair.cs` at the `stage.Number == 7` branch.\\n\\n**`src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs`**:\\n- Line 9: `(5\u201310)` \u2192 `(5\u201311)`\\n- Line 23: `firstStageToRun is < 5 or > 10` \u2192 `> 11`\\n\\n**`src/VisualRelay.Core/Execution/RelayDriver.Stage9.cs`** (rename types/methods inline):\\n- Line 9: `Stage9PreAgentData` \u2192 `Stage10PreAgentData`\\n- Line 26: `RunStage9PreAgentAsync` \u2192 `RunStage10PreAgentAsync`\\n- Line 60: `stageNumber: 9` \u2192 `stageNumber: 10`\\n- Line 62: `RelayStages.All[8]` \u2192 `RelayStages.All[9]`\\n- Line 67: `Stage9PreAgentData(` \u2192 `Stage10PreAgentData(`\\n\\n**`src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs`**:\\n- Line 13, 19, 41-42, 48-49, 50: update comments mentioning \\\"stage 10\\\" \u2192 \\\"stage 11\\\"\\n- Line 49: `RelayStages.All[9]; // Stage 10 \u2014 Fix-verify` \u2192 `RelayStages.All[10]; // Stage 11 \u2014 Fix-verify`\\n- Line 153: `stageNumber: 10` \u2192 `stageNumber: 11`\\n\\n**`src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs`**:\\n- Lines 12, 16: comments \\\"stage 9 and the stage-10 loop\\\" \u2192 \\\"stage 10 and the stage-11 loop\\\"\\n\\n**`src/VisualRelay.Domain/RelayConfig.cs`**:\\n- Line 9: comment \\\"stage 9\\\" \u2192 \\\"stage 10\\\"\\n- Lines 12-13: comment \\\"stage 10\\\" \u2192 \\\"stage 11\\\"\\n- Add field: `string? VisualRenderCmd { get; init; } = null;`\\n\\n**`src/VisualRelay.Core/Configuration/RelayConfigLoader.cs`**:\\n- Add `OptionalStringOrNull(root, \\\"visualRenderCmd\\\")` alongside existing command parsing\\n\\n**`src/VisualRelay.App/ViewModels/TaskRowViewModel.cs`**:\\n- Line 100: `11.0` \u2192 `12.0` (ProgressFraction divisor)\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs`**:\\n- `_runningStageNumbers` type: `Dictionary<string, int?>` \u2192 `Dictionary<string, HashSet<int>>`\\n- `RestoreRunningTaskState` (line 113): replace `_runningStageNumbers[taskId] = stageNumber` with `_runningStageNumbers[taskId] = stageNumber is { } s ? new HashSet<int> { s } : new HashSet<int>()`\\n- `BeginRunningTask` (line 124): `_runningStageNumbers[task.Id] = null` \u2192 `= new HashSet<int>()`\\n- `UpdateRunningStage` (line 157): `_runningStageNumbers[taskId] = stageNumber` \u2192 `_runningStageNumbers[taskId].Add(stageNumber)` \u2014 multiple stages accumulate\\n- `ClearRunningTask` (line 178): unchanged (removes the entire entry)\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs`**:\\n- `stage_start` handler (line 92-97): calls `stage.MarkRunning(...)`. Stage board already handles per-stage running independently \u2014 each `StageRowViewModel` receives its own `MarkRunning` \u2014 so concurrent stage_start events for stages 7 and 8 naturally light up both cards. No change needed here.\\n\\n**`tools/VisualRelay.Screenshots/Program.cs`**:\\n- Lines 93, 105, 106, 107: `CompletedStageCount: 11` \u2192 `12` (4 occurrences)\\n\\n**`.relay/config.json`**:\\n- Add: `\\\"visualRenderCmd\\\": \\\"dotnet run --project tools/VisualRelay.Screenshots -- {outDir}/main.png\\\"`\\n\\n**Docs**:\\n- `docs/DESIGN.md` lines 17-29: update numbered list 1\u201311 \u2192 1\u201312, inserting Visual-review at 8\\n- `README.md` line 100: `11-stage` \u2192 `12-stage`\\n- `docs/superpowers/specs/2026-06-20-per-stage-prompt-output-tabs-design.md` line 9: `11-stage` \u2192 `12-stage`\\n- `docs/superpowers/specs/2026-06-11-greenfield-workflow-design.md` lines 5, 34, 50, 192: `11-stage` \u2192 `12-stage` (4 occurrences)\\n\\n### 1c. Test renumbering\\n\\n**`tests/VisualRelay.Tests/RunAllModesTests.cs`**:\\n- Lines 149-160: InlineData expand from 11 to 12 stages, inserting `(8, \\\"Visual-review\\\", \\\"vision\\\", \\\"some\\\")` and bumping existing 8\u201311 \u2192 9\u201312\\n- Line 183: `Assert.Equal(11, ...)` \u2192 `12`\\n- Line 173: `number != 11` \u2192 `!= 12`\\n\\n**`tests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs`**:\\n- Line 89-90: ValidTiers add `\\\"vision\\\"`\\n- Lines 34, 44, 62, 72, 94, 104, 118, 129, 140, 151: InlineData lists extend 1\u201311 \u2192 1\u201312\\n- Line 54: `stage.Number == 11` \u2192 `== 12`\\n- Line 82: `stage.Number == 11` \u2192 `== 12`\\n- Line 163: test name `OneThroughEleven` \u2192 `OneThroughTwelve`; count 11 \u2192 12\\n- Line 184: `stage.Number == 11` \u2192 `== 12`\\n- Line 198: `stage.Number is 1 or 11` \u2192 `1 or 12`\\n- Line 227: keyword test for \\\"stage 8\\\" \u2014 now matches Visual-review prompt, not Fix prompt. Update expected keyword to one from the Visual-review system prompt (e.g., \\\"visual defects\\\" or \\\"rendered screenshots\\\").\\n\\n**`tests/VisualRelay.Tests/StageDetailViewModelTests.cs`**:\\n- Line 14: `RelayStages.All[10]` \u2192 `[11]` (Commit stage at new index)\\n\\n**`tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs`**:\\n- Line 57: `Stages[10]` \u2192 `[11]` (Commit stage property test)\\n- Any `Stages.Count` assertions: 11 \u2192 12\\n\\n**`tests/VisualRelay.Tests/StageRowViewModelTests.cs`**:\\n- All 6 occurrences of `All[8]` (old stage 9 Verify) \u2192 `All[9]` (Verify is now stage 10 at index 9)\\n\\n**`tests/VisualRelay.Tests/StageCardCumulativeMetricsTests.cs`**:\\n- All 5 occurrences of `All[9]` (old stage 10 Fix-verify) \u2192 `All[10]` (Fix-verify is now stage 11 at index 10)\\n- Line 66: `StageNumber: 10` \u2192 `StageNumber: 11`\\n- Line 27: `task\\\", 10, \\\"balanced\\\"` \u2192 `11` (stageNumber in event constructor)\\n\\n**`tests/VisualRelay.Tests/TestDurationTests.cs`**:\\n- All 6 occurrences of `All[8]` (old stage 9 Verify) \u2192 `All[9]`\\n- Line 42: `entry = new StageStatusEntry(9, \\\"Verify\\\"...` \u2192 `10`\\n- Line 194: `StageNumber: 9` \u2192 `10`\\n- Line 236: `StageNumber: 9` \u2192 `10`\\n- Line 133, 137: `stage9` \u2192 `stage10Verify`, `e.Stage == 9` \u2192 `e.Stage == 10`\\n\\n**`tests/VisualRelay.Tests/VerifyAgentCommandTests.cs`**:\\n- All 3 occurrences of `All[8]` \u2192 `All[9]`\\n- `var stage9` \u2192 `var verifyStage`\\n- `Assert.Equal(9, stage9.Number)` \u2192 `Assert.Equal(10, ...)`\\n- Comments \\\"Stage 9\\\" \u2192 \\\"Stage 10\\\"\\n\\n**`tests/VisualRelay.Tests/VerifyOutputTailAndPathTests.cs`**:\\n- Line 112: `RelayStages.All[9]; // Stage 10 \u2014 Fix-verify` \u2192 `RelayStages.All[10]; // Stage 11 \u2014 Fix-verify`\\n\\n**`tests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs`**:\\n- Line 204: `RelayStages.All[9], // Stage 10 \u2014 Fix-verify` \u2192 `All[10], // Stage 11 \u2014 Fix-verify`\\n\\n**`tests/VisualRelay.Tests/TaskRowViewModelTests.cs`**:\\n- Line 29: `NewTask(11)` \u2192 `NewTask(12)`\\n- Line 30: `5 / 11.0` \u2192 `5 / 12.0`\\n- Line 31: `NewTask(99)` stays (it's capped at 1.0)\\n\\n**Tests that require NO change** (pre-7 index stable):\\n`SwivalTestHelpers.cs` (All[0]), `SwivalSubagentRunnerEscalationTests.cs` (All[0], All[6]), `SwivalSubagentRunnerContractRetryTests.cs` (All[3]), `SwivalSubagentRunnerCommandFilterTests.Integration.cs` (All[0-3]), `RunningStageElapsedTests.cs` (All[5]), `RelayRunHistoryTests.cs` (All[0]), `RelayDriverGitCommitTests.GitignoredBackstop.cs` (All[3]), `StageInputArtifactIntegrationTests.cs` (All[0], All[5]), `BuildPromptVerifyCommandTests.cs` (parameterized, auto-adjusts), `RelayDriverResumeTests.CommitGate.cs` (All[n-1], auto-adjusts).\\n\\n---\\n\\n## Phase 2 \u2014 Config, rendering, and triage infrastructure\\n\\n### 2a. Config parsing (`RelayConfigLoader.cs` + `RelayConfig.cs`)\\n\\n- Add `string? VisualRenderCmd` to `RelayConfig` record (nullable, same pattern as `GuardCommand`/`FormatCommand`/`BootstrapCheckCommand`).\\n- Parse via `OptionalStringOrNull(root, \\\"visualRenderCmd\\\")` in `RelayConfigLoader`.\\n- Add `\\\"visualRenderCmd\\\": \\\"dotnet run --project tools/VisualRelay.Screenshots -- {outDir}/main.png\\\"` to `.relay/config.json`.\\n\\n### 2b. `{outDir}` substitution\\n\\n- In `RelayDriver.ReviewPair.cs`, when `visualRenderCmd` is set and triage says `needed`:\\n  1. Compute `renderDir = Path.Combine(taskDirectory, \\\"visual-review\\\")`.\\n  2. `Directory.CreateDirectory(renderDir)`.\\n  3. Substitute `{outDir}` \u2192 `renderDir` in the command string.\\n  4. Execute via `_dependencies.TestRunner.RunAsync()` (same sandbox/timeout regime as test commands).\\n  5. Collect rendered PNGs via `Directory.GetFiles(renderDir, \\\"*.png\\\")`.\\n  6. Non-zero exit \u2192 feed the command's stdout/stderr as reviewable content (a finding).\\n\\n### 2c. Triage invocation\\n\\n- A small `cheap`-tier text-only invocation with `MaxTurns: 12`.\\n- Input assembly: task description + working-tree diff summary (changed paths + stats, small hunks where cheap) + list of task image attachments.\\n- Output contract: `{ \\\"visualReview\\\": \\\"needed\\\"|\\\"skip\\\", \\\"reason\\\": string }`.\\n- System prompt (triage): asks a capability question, NOT a framework question: \\\"would a reviewer benefit from LOOKING at rendered output for this change \u2014 UI markup/styles/layout in any framework, web frontends, terminal UI, images or other visual assets, charts, generated documents?\\\" When genuinely uncertain, prefer `needed`.\\n- Artifacts: `stage8-triage-attempt1.input.json` / `.report.json` under the stage 8 trace dir.\\n- Triage output is advisory routing only \u2014 it must NEVER reach Fix looking like review findings.\\n\\n---\\n\\n## Phase 3 \u2014 Driver orchestration: `RelayDriver.ReviewPair.cs` (new partial)\\n\\n### 3a. Method signature\\n\\n```csharp\\nprivate async Task<(string previousSeal, string taskHash, double sessionCostUsd,\\n    int unknownCostStageCount, bool pairHandled)>\\n    RunReviewPairAsync(...)\\n```\\n\\nReturns updated state and `pairHandled = true` always (both stages were processed \u2014 either run normally, skipped, or run in parallel).\\n\\n### 3b. Mechanical skip: vision tier unconfigured\\n\\n- Check: `_config.TierProfiles` contains `\\\"vision\\\"` and has a non-empty profile name.\\n- If unconfigured: run Review (stage 7) normally (single invocation, normal flow), record stage 8 (Visual-review) as skipped with reason `\\\"vision tier unconfigured\\\"`, append both to ledger, return.\\n\\n### 3c. Concurrent pair path (vision available)\\n\\n1. **Publish `stage_start`** for both stage 7 and stage 8 (events tagged `s7/vision` and `s8/vision`).\\n2. **Mark both running** in `statusEntries` and write status.\\n3. **Launch Review (stage 7)** as `Task<SubagentResult>` immediately.\\n4. **Launch triage (cheap, MaxTurns: 12)** as `Task<SubagentResult>` concurrently.\\n5. **When triage completes**: parse `visualReview` field:\\n   - `\\\"skip\\\"` \u2192 record skip reason for stage 8. Do NOT launch Visual-review.\\n   - `\\\"needed\\\"` \u2192\\n     a. If `visualRenderCmd` is set: render (substitute `{outDir}`, run command). Collect PNG paths. Report render failures as content.\\n     b. Build stage 8 `StageInvocation`:\\n        - Tier: `\\\"vision\\\"`\\n        - Stage: `RelayStages.All[7]` (stage 8, Visual-review)\\n        - Input prompt: lists exact repo-relative paths of all render PNGs + task image attachments, with explicit `view_image` instruction for each.\\n        - Files: `\\\"some\\\"`, Commands: `\\\"git,ls,cat\\\"`\\n        - Contract: `{ \\\"verdict\\\": \\\"pass\\\"|\\\"changes\\\", \\\"issues\\\": [] }`\\n     c. Launch Visual-review as `Task<SubagentResult>` concurrently with the still-running Review.\\n6. **Wait for all** via `Task.WhenAll` over whatever was launched.\\n7. **Serialize ledger/seal writes**: append Review section first, then Visual-review section, in fixed order. Use sequential `RecordStageAsync` calls (not concurrent writes).\\n8. **Failure handling**: if one member fails/times out, let the sibling finish. Apply existing per-stage failure handling to the failed member only. The sibling's completed result is preserved \u2014 do not discard or re-run.\\n\\n### 3d. Integration into `RelayDriver.cs` foreach loop\\n\\nIn the main `foreach (var stage in RelayStages.All)`:\\n\\n```csharp\\nif (stage.Number == 7)\\n{\\n    // Publish stage_start for both stages, then run the pair.\\n    MarkStatus(statusEntries, 7, \\\"Running\\\");\\n    MarkStatus(statusEntries, 8, \\\"Running\\\");\\n    await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);\\n\\n    var pairResult = await RunReviewPairAsync(...);\\n    (previousSeal, taskHash, sessionCostUsd, unknownCostStageCount) = pairResult;\\n    reviewPairHandled = true;\\n    continue; // Both stages 7 and 8 handled by the pair.\\n}\\n\\nif (stage.Number == 8 && reviewPairHandled)\\n    continue; // Already handled in the pair.\\n```\\n\\nResume behavior: if `firstStageToRun > 8`, the foreach starts above stage 8, `reviewPairHandled` stays false, and stage 8 runs normally (shouldn't happen with the resume rule that re-enters at 7, but the mechanical skip guards).\\n\\n### 3e. Independent watchdogs and ceilings\\n\\nEach pair member keeps its own independent watchdog and ceiling \u2014 exactly the same mechanism as any standalone stage. The pair method creates two separate `StageInvocation` objects, each with its own `ReportFile`, `TraceDirectory`, `MaxTurns`, `AbsoluteCeilingMs`. No combined budget.\\n\\n### 3f. Cost attribution\\n\\nEach invocation already reports its own stats (`sessionCostUsd`). The pair method accumulates costs from both members into the running total.\\n\\n---\\n\\n## Phase 4 \u2014 Tests\\n\\n### 4a. Stage table tests (Phase 1 results)\\n\\n- All existing tests pass with 12 stages, correct ordering, tiers, files, commands, and contracts.\\n- New `InlineData` row for stage 8: `(8, \\\"Visual-review\\\", \\\"vision\\\", \\\"some\\\")`.\\n- `ValidTiers` includes `\\\"vision\\\"`.\\n- Keyword/contract tests reflect the new stage 8 prompt.\\n\\n### 4b. Pair orchestration tests (new test file)\\n\\nUse a fake `ISubagentRunner` that records start/finish timestamps, and a fake `ITestRunner` for render command simulation:\\n\\n1. **Review + triage launched concurrently**: assert overlap via recorded timestamps.\\n2. **Triage `needed` \u2192 render then Visual-review launched**: assert render command executed with correct `{outDir}`, assert Visual-review invocation received image paths, assert both Review and Visual-review ran concurrently.\\n3. **Triage `skip` \u2192 no vision invocation**: assert no stage 8 `SubagentRunner.RunAsync` call, assert ledger note carries the skip reason.\\n4. **Ledger receives both sections in fixed order**: Review before Visual-review.\\n5. **Render failure feeds to stage**: non-zero exit from render command \u2192 the error output appears in Visual-review's input, stage still runs.\\n6. **`visualRenderCmd` unset \u2192 attachment-only mode**: stage input mentions that fresh renders are unavailable, lists only task attachments.\\n7. **Vision tier unconfigured \u2192 mechanical skip**: assert Review runs normally, stage 8 recorded as skipped with reason `\\\"vision tier unconfigured or unreachable\\\"`.\\n8. **Sibling survives failure**: mock Review throws/timeouts, Visual-review completes normally \u2192 its result appears in ledger.\\n9. **`{outDir}` substitution correctness**: verify the render command runs with the actual directory path, not the literal `{outDir}` token.\\n10. **Flagged-work range and renumber regressions**: assert `firstStageToRun > 11` gates correctly; Verify (stage 10) and Fix-verify (stage 11) mechanics work with new numbers.\\n11. **No file-extension gating**: assert the triage/visual-review flow does not inspect file extensions or framework-specific paths.\\n\\n### 4c. UI tests\\n\\n- **Dual-running presentation**: set up a task with stages 7 and 8 both running, verify the stage board shows two \\\"Running\\\" cards.\\n- **Queue card**: shows a combined or primary running label.\\n- **Stage board reindex**: 12 stages rendered, Verify at position 10, Fix-verify at 11, Commit at 12.\\n\\n### 4d. Prompt content tests\\n\\n- Visual-review prompt contains the expected instructions (\\\"rendered screenshots\\\", \\\"view_image\\\", \\\"do not edit files\\\").\\n- Fix prompt updated: starts with \\\"Resolve every blocker and warning from review and visual review.\\\"\\n- Triage prompt asks a capability question, not a framework question.\\n\\n---\\n\\n## Phase 5 \u2014 `./visual-relay check` gate\\n\\n- `dotnet build` passes with all changes.\\n- `dotnet test` passes with all 12 stages.\\n- `dotnet run --project tools/VisualRelay.Guards` passes (file-size guards).\\n- `dotnet run --project tools/VisualRelay.Screenshots` renders correctly with updated stage counts.\\n\\n---\\n\\n## Contingency: chain fallback for vision model\\n\\nIf the vision-tier model cannot follow the JSON contract reliably (a known risk with smaller VLMs), implement a 2-stage chain:\\n1. Vision model describes each image in plain prose (no contract).\\n2. A `cheap`-tier text model converts the descriptions + task intent into `{ \\\"verdict\\\": \\\"pass\\\"|\\\"changes\\\", \\\"issues\\\": [] }`.\\n\\nPrefer the single-model form; implement the chain only if the smoke test or first real run proves it necessary.\\n\\n---\\n\\n## Gotchas addressed explicitly\\n\\n1. **`view_image` scope/path**: tested first (Phase 0). Exact paths in stage input. Renders under `.relay/<taskId>/visual-review/` \u2014 within sandbox scope.\\n2. **Triage economics**: cheap tier, MaxTurns 12, diff summary not full diff. Advisory routing only. Bias toward `needed`.\\n3. **`visualRenderCmd` untrusted**: `{outDir}` literal substitution, same sandbox/timeout regime as test commands, non-zero exit \u2192 reviewable content.\\n4. **Dual-running UI**: stage board already per-stage; `_runningStageNumbers` \u2192 `HashSet<int>`. Queue card shows primary or combined label.\\n5. **Two outputs \u2192 one Fix input**: both in ledger as `## Stage 7` / `## Stage 8` sections, fixed order, no merge layer.\\n6. **Ledger interleaving**: serialized behind the join \u2014 sequential `RecordStageAsync` calls.\\n7. **Retry/stall per member**: independent watchdogs. Sibling result preserved.\\n8. **Resume mid-pair**: re-enter at stage 7, re-run both.\\n9. **Backend concurrency**: two model streams. No shared state between them.\\n10. **MSBuild contention**: pre-render build completes before pair launches. Both reviewers read-only.\\n\\n## File-size guard\\n\\n`RelayDriver.cs` stays at \u2264300 lines. All new orchestration in `RelayDriver.ReviewPair.cs`. Every touched file stays under the 300-line guard.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\",\n    \"src/VisualRelay.Core/Execution/RelayStages.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Stage9.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs\",\n    \"src/VisualRelay.Domain/RelayConfig.cs\",\n    \"src/VisualRelay.Core/Configuration/RelayConfigLoader.cs\",\n    \"src/VisualRelay.App/ViewModels/TaskRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n    \"tools/VisualRelay.Screenshots/Program.cs\",\n    \".relay/config.json\",\n    \"docs/DESIGN.md\",\n    \"README.md\",\n    \"docs/superpowers/specs/2026-06-20-per-stage-prompt-output-tabs-design.md\",\n    \"docs/superpowers/specs/2026-06-11-greenfield-workflow-design.md\",\n    \"tests/VisualRelay.Tests/RunAllModesTests.cs\",\n    \"tests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs\",\n    \"tests/VisualRelay.Tests/StageDetailViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\",\n    \"tests/VisualRelay.Tests/StageRowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/StageCardCumulativeMetricsTests.cs\",\n    \"tests/VisualRelay.Tests/TestDurationTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyAgentCommandTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyOutputTailAndPathTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs\",\n    \"tests/VisualRelay.Tests/TaskRowViewModelTests.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverReviewPairTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverReviewPairTests.cs\",\n    \"tests/VisualRelay.Tests/RunAllModesTests.cs\",\n    \"tests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs\",\n    \"tests/VisualRelay.Tests/StageRowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/TestDurationTests.cs\",\n    \"tests/VisualRelay.Tests/StageCardCumulativeMetricsTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyAgentCommandTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyOutputTailAndPathTests.cs\",\n    \"tests/VisualRelay.Tests/StageDetailViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\",\n    \"tests/VisualRelay.Tests/TaskRowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs\"\n  ],\n  \"rationale\": \"All tests compile (0 warnings, 0 errors via `dotnet build`). They fail against the current 11-stage implementation because they assert the new 12-stage layout: stage 8 'Visual-review' (vision tier, files=some, commands=git,ls,cat), Fix\u21929, Verify\u219210, Fix-verify\u219211, Commit\u219212. Key failure modes: (a) `RelayStages.All.Single(s => s.Number == 12)` throws 'Sequence contains no matching element' \u2014 stage 12 doesn't exist yet; (b) stage 8's SystemPrompt is the old Fix prompt ('Resolve every blocker from review') not the new Visual-review prompt ('rendered screenshots\u2026view_image\u2026visual defects\u2026never manufacture findings'); (c) ValidTiers lacks 'vision' causing `AllStages_HaveValidTier` to fail for stage 8; (d) Fix prompt starts 'Resolve every blocker and warning from review.' instead of '\u2026from review and visual review.' \u2014 because Fix is not yet stage 9; (e) index-based tests (`All[8]`\u2192`All[9]`, `All[9]`\u2192`All[10]`, `All[10]`\u2192`All[11]`, `Stages[10]`\u2192`Stages[11]`, count 11\u219212) fail because the stage definitions haven't been renumbered. The new `RelayDriverReviewPairTests.cs` covers: stage table shape (count=12, sequential 1\u201312, correct metadata per stage), Visual-review definition (tier/files/commands/contract), system prompt content (7 targeted assertions), Fix prompt update, and renumbering contract (driver-kind and files-none exclusivity at new positions). Index-based test updates cover all files in the manifest: StageRowViewModel (All[8]\u2192All[9]), TestDuration (All[8]\u2192All[9], stage numbers 9\u219210), StageCardCumulativeMetrics (All[9]\u2192All[10], StageNumber 10\u219211), VerifyAgentCommand (All[8]\u2192All[9], full integration test stage numbers), VerifyOutputTailAndPath (All[9]\u2192All[10], TryPersistVerifyOutput stage 9\u219210), StageDetailViewModel (All[10]\u2192All[11]), MainWindowViewModel.Status (Stages[10]\u2192Stages[11], count 11\u219212), TaskRowViewModel (11\u219212 divisor), SwivalSubagentRunner (All[9]\u2192All[10]).\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Completed the parallel Visual Review stage implementation by fixing renumbering bugs across 1 source file and 7 test files. The core implementation (stage definition, ReviewPair driver partial, config, UI, prompts, targeted tests) was ~95% done by prior sessions. I fixed: (1) RelayDriver.Invocation.cs `6 or 10`\u2192`6 or 9` for test-command gating, (2) RelayDriver.CommitGate.cs `seals[9]`\u2192`seals[10]` for commit-gate resume hash validation, (3-8) test assertion over-shifts (+2 instead of +1), stale stage-number comments, and the triage stage-0 invocation matching a `<=4` filter in commit-gate tests. Both the targeted test command (279/279 passed) and the full test suite (2794 passed, 0 failed, 22 skipped env-gated) are green.\" }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Review\n\nI read the full diff. The renumbering sweep (the high-risk mechanical work across ~50 files), the stage definition, the Visual-review/Review/Fix prompts, `visualRenderCmd` config parsing, the UI dual-running plumbing (`HashSet<int>` running stages, \"Stage 07 & 08\" label), and the docs are all correct, and the suite is green. However, the pair orchestration has real defects and several explicitly-required tests/smoke steps are missing or faked.\n\n**Key issues:**\n\n1. **Broken Review no longer flags the run.** `RelayDriver.ReviewPair.cs` `RunStageAsync` (lines 275\u2013283) converts *any* invalid result (including `HardAbort`/ceiling kill) into `Check=\"red\"`, and `RunReviewPairAsync` records it via `RecordPairStageAsync` (81\u201390) then continues to Fix. The existing per-stage handling flags on invalid/HardAbort (`RelayDriver.cs` 159\u2013162; `RelayDriver.VerifyFix.cs` 89\u2013102), and the task said \"apply the existing per-stage failure handling to the failed one.\" A model that returns no parseable JSON, or hits the absolute ceiling, now records red and proceeds instead of flagging \u2014 a behavioral regression, and inconsistent with the fix-verify loop's HardAbort handling.\n\n2. **Resume-mid-pair is not actually implemented (dead redirect).** `RelayDriver.FlaggedWork.cs` lines 23\u201330: the `if (_options.Resume && firstStageToRun == 8) return (7, null)` redirect is unreachable \u2014 it sits inside `if (!_options.Resume || firstStageToRun is < 5 or > 11)`, which is false when resuming with `firstStageToRun == 8`. If `firstStageToRun` ever equals 8, stage 7 is skipped and stage 8 runs as a *generic* stage (no triage, no render, no image paths) instead of re-entering the pair. The task explicitly required \"resume re-enters at stage 7 and re-runs BOTH members; never resume into stage 8 alone.\"\n\n3. **No pair-orchestration tests.** `RelayDriverReviewPairTests.cs` only pins stage-table shape and prompt text. None of the required behaviors are tested: concurrency overlap, triage `needed`\u2192render\u2192Visual-review, triage `skip`\u2192no vision + ledger note, fixed-order ledger, render-failure-as-finding, `{outDir}` substitution, unset-key attachment-only, vision-unconfigured skip, sibling-survives-failure. The render path isn't exercised at all (test configs set no `visualRenderCmd`; `ScriptedTestRunner` writes no PNGs).\n\n4. **No dual-running UI test.** The plumbing exists, but `MainWindowViewModelTests.Status.cs` has no test asserting two stages render as running concurrently (explicitly required).\n\n5. **The mandated `view_image` smoke test was never actually run.** `.relay/add-parallel-visual-review-stage/run.log` shows the \"Smoke test view_image with vision tier\" todo marked `done` in the same second it was created during stage 6, with no actual `view_image` invocation in any trace. The task required smoking the vision path *first* and reporting a blocker if it can't deliver pixels; no successful `view_image` call exists anywhere. The feature ships unverified against its own core prerequisite.\n\n6. **Per-stage cost attribution lost for the pair.** `RecordPairStageAsync` passes `cost: null` to `RecordStageAsync` (line 294) and `StageRunResult` discards the `RelayCostEstimate`, so the stage card / `stage_done` event for Review and Visual-review show no cost even though `EstimateStageCostCumulative` was called.\n\n7. **`visualRenderCmd` renders demo data, not working-tree state.** The configured command runs the screenshots tool whose `BuildViewModel` uses hardcoded demo tasks (`tools/VisualRelay.Screenshots/Program.cs`), so fresh renders won't surface the task's actual visual defects \u2014 only task attachments would. Worth flagging given the prompt promises \"screenshots of the application built from the current working tree.\"\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"RelayDriver.ReviewPair.cs RunStageAsync (lines 275-283) + RunReviewPairAsync (81-90): an invalid or HardAbort Review/Visual-review result is recorded as Check=\\\"red\\\" and the run continues to Fix, instead of applying the existing per-stage failure handling (flag) after the sibling finishes. A broken Review no longer aborts the run, diverging from RelayDriver.cs 159-162 and RelayDriver.VerifyFix.cs 89-102 and from the task's 'apply the existing per-stage failure handling to the failed one'.\", \"RelayDriver.FlaggedWork.cs lines 23-30: the resume stage-8\u2192stage-7 redirect is unreachable. It is nested inside `if (!_options.Resume || firstStageToRun is < 5 or > 11)`, which is false when resuming with firstStageToRun==8, so the redirect never fires. If firstStageToRun==8 occurs, stage 7 is skipped and Visual-review runs as a generic stage with no triage/render/images instead of re-entering the pair. The required 'resume re-enters at stage 7 and re-runs BOTH members' behavior is not implemented.\", \"RelayDriverReviewPairTests.cs only asserts stage-table shape and prompt content. The explicitly-required pair-orchestration tests are absent: concurrency overlap, triage needed\u2192render\u2192Visual-review, triage skip\u2192no vision invocation + ledger reason, fixed-order ledger sections, render-failure-as-finding, {outDir} substitution, unset-key attachment-only path, vision-unconfigured mechanical skip, and sibling-survives-failure. The render path is not exercised (test configs set no visualRenderCmd; ScriptedTestRunner writes no PNGs).\", \"No dual-running UI test: MainWindowViewModelTests.Status.cs has no test asserting stages 7 and 8 render concurrently as running, though the task explicitly required one. The HashSet<int> plumbing and 'Stage 07 & 08' label exist but are untested.\", \"The mandated view_image smoke test was not performed: .relay/add-parallel-visual-review-stage/run.log shows the 'Smoke test view_image with vision tier' todo marked done in the same second it was created during stage 6, with no actual view_image invocation in any trace. The feature ships without verifying its core mechanism works on the pinned swival, despite the task requiring this FIRST and reporting a blocker on failure.\", \"RelayDriver.ReviewPair.cs RecordPairStageAsync (line 294) passes cost:null to RecordStageAsync and StageRunResult discards the RelayCostEstimate, so per-stage cost attribution is missing for Review and Visual-review cards/events even though EstimateStageCostCumulative was called.\", \"The configured visualRenderCmd runs tools/VisualRelay.Screenshots whose BuildViewModel uses hardcoded demo tasks rather than the working-tree application state, so fresh renders will not surface task-specific visual defects (only task attachments would). The Visual-review prompt's claim of 'screenshots of the application built from the current working tree' is not honored by the configured renderer.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 20,
+    "tool_calls_total": 26,
+    "tool_calls_succeeded": 26,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 16,
+        "failed": 0
+      },
+      "read_multiple_files": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 20,
+    "total_llm_time_s": 602.837,
+    "prompt_cache": {
+      "cached_tokens": 1214656,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 9.783,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.337,
+      "prompt_tokens_est": 21889,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git status"
+      },
+      "succeeded": true,
+      "duration_s": 0.115,
+      "result_length": 4569
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git diff --stat HEAD 2>/dev/null | tail -50"
+      },
+      "succeeded": true,
+      "duration_s": 0.104,
+      "result_length": 3126
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.592,
+      "prompt_tokens_est": 24308,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Domain/RelayConfig.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 35508
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 125.813,
+      "prompt_tokens_est": 33179,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 21875
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.485,
+      "prompt_tokens_est": 37619,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverReviewPairTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8284
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 27.415,
+      "prompt_tokens_est": 39834,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": ".relay/config.json"
+          },
+          {
+            "file_path": "tools/VisualRelay.Screenshots/Program.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 30510
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rn \"RunReviewPairAsync\\|RunTriageAsync\\|RunVisualRenderAsync\\|BuildVisualReviewInput\" tests/ 2>/dev/null"
+      },
+      "succeeded": true,
+      "duration_s": 4.43,
+      "result_length": 11
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 33.956,
+      "prompt_tokens_est": 48658,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rn \"Task.*RecordStageAsync\" src/VisualRelay.Core/Execution/ | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.106,
+      "result_length": 141
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rn \"private.*RecordStageAsync\\|Task<(string, string)> RecordStageAsync\\|Task RecordStageAsync\" src/VisualRelay.Core/Execution/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.054,
+      "result_length": 141
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.022,
+      "prompt_tokens_est": 50873,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6151
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 59.983,
+      "prompt_tokens_est": 52321,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Stage9.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 35972
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 27.898,
+      "prompt_tokens_est": 64327,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rln \"LoadResumeState\" src/VisualRelay.Core/Execution/"
+      },
+      "succeeded": true,
+      "duration_s": 0.104,
+      "result_length": 99
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 7.051,
+      "prompt_tokens_est": 66234,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Resume.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3801
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 38.064,
+      "prompt_tokens_est": 67177,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 35560
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 9.645,
+      "prompt_tokens_est": 77664,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rln \"Visual-triage\\|Visual-review\\|visualReview\\|RunReviewPair\\|allRunningStageNumbers\\|_allRunningStageNumbers\\|ReviewPair\\|visualRenderCmd\\|VisualRenderCmd\\|outDir\\|view_image\" tests/ 2>/dev/null"
+      },
+      "succeeded": true,
+      "duration_s": 3.861,
+      "result_length": 1419
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git diff HEAD -- src/VisualRelay.Core/Execution/RelayDriver.cs | head -250"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 2243
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 8.945,
+      "prompt_tokens_est": 79067,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -n \"Visual-triage\\|Visual-review\\|visualReview\\|ReviewPair\\|outDir\\|view_image\\|VisualRenderCmd\\|allRunningStageNumbers\" tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs tests/VisualRelay.Tests/RelayDriverSkipTestsTests.cs tests/VisualRelay.Tests/RunAllModesTests.cs tests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.08,
+      "result_length": 495
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && read_file() { :; }; sed -n '29,140p' .swival/cmd_output_a4286c37ad9f.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.054,
+      "result_length": 7655
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 9.025,
+      "prompt_tokens_est": 81106,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 7900
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 68.485,
+      "prompt_tokens_est": 83278,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && sed -n '215,260p' tests/VisualRelay.Tests/RunAllModesTests.StageContracts.cs && echo \"=== STATUS TESTS ===\" && grep -n \"dual\\|concurrent\\|two\\|both\\|HashSet\\|Stage 7\\|Stage 8\\|07\\|08\\|allRunning\\|MarkRunning\" tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.148,
+      "result_length": 1657
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -n \"_runningStageNumbers\\|_runningStageNames\\|_runningTaskIds\\|HashSet<int>\" src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.053,
+      "result_length": 384
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 16.078,
+      "prompt_tokens_est": 87988,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rn \"visualRenderCmd\\|VisualRenderCmd\\|TestRunner\\|ITestRunner\\|config.json\\|WriteConfig\\|RelayConfigLoader\\|Defaults(\" tests/VisualRelay.Tests/RelayDriverTests.cs tests/VisualRelay.Tests/TestDoubles.cs tests/VisualRelay.Tests/RelayDriverSkipTestsTests.cs | head -40"
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 4421
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 74.904,
+      "prompt_tokens_est": 90008,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -n \"11-stage\\|12-stage\\|Visual-review\\|Visual Review\\|stage 8\\|Stage 8\" README.md docs/DESIGN.md docs/superpowers/specs/2026-06-20-per-stage-prompt-output-tabs-design.md docs/superpowers/specs/2026-06-11-greenfield-workflow-design.md 2>/dev/null | head -30"
+      },
+      "succeeded": true,
+      "duration_s": 0.148,
+      "result_length": 1199
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rn \"smoke\\|view_image\\|Smoke\" .relay/ 2>/dev/null | grep -iv \"config.json\" | head; echo \"=== llm-tasks smoke ===\"; ls llm-tasks/ 2>/dev/null | head; echo \"=== check for any visual-review trace dirs ===\"; find . -path ./node_modules -prune -o -name \"*.png\" -path \"*visual-review*\" -print 2>/dev/null | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.175,
+      "result_length": 2029
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 19.72,
+      "prompt_tokens_est": 95432,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && grep -rl \"view_image\" .relay/*/run.log .relay/*/trace 2>/dev/null | head; echo \"---exit:$?---\"; grep -rn \"view_image\" .relay/*/run.log 2>/dev/null | head -5; echo \"=== any visual-review stage dir ===\"; find .relay -type d -name \"*visual*\" 2>/dev/null | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.152,
+      "result_length": 4526
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 29.585,
+      "prompt_tokens_est": 97039,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Findings consolidated. The renumbering (the hard, error-prone part across ~50 files) is correct and the full suite is green per the Implement stage. Stage def, prompts, config parsing, UI dual-running plumbing, and docs are all correct. But the pair orchestration has real defects and required tests/smoke are missing:\n\n1. FAILURE-HANDLING DIVERGENCE (significant): RunStageAsync in RelayDriver.ReviewPair.cs (lines 275-283) converts ANY invalid result (incl. HardAbort) to Check=\"red\"; RunReviewPairAsync records it via RecordPairStageAsync (81-90) and continues to Fix. The existing handling flags on invalid/HardAbort (RelayDriver.cs 159-162; RelayDriver.VerifyFix.cs 89-102). Task said \"apply the existing per-stage failure handling to the failed one.\" So a broken Review (no JSON / ceiling hit) no longer flags \u2014 behavioral regression.\n\n2. RESUME-MID-PAIR NOT IMPLEMENTED (significant/latent): RelayDriver.FlaggedWork.cs lines 23-30 \u2014 the stage-8\u21927 redirect is UNREACHABLE. Outer `if (!_options.Resume || firstStageToRun is <5 or >11)` is false when resuming with firstStageToRun==8 (8 is in 5..11), so the inner `if (_options.Resume && firstStageToRun==8) return (7,null)` never fires. If firstStageToRun==8 ever occurs, stage 7 is skipped and stage 8 runs as a GENERIC stage (no triage, no render, no images). Task explicitly required \"resume re-enters at stage 7 and re-runs BOTH members.\"\n\n3. NO ORCHESTRATION TESTS (moderate, explicitly required): RelayDriverReviewPairTests.cs only asserts stage-table shape + prompt content. None of the required behaviors (concurrency overlap, triage needed\u2192render\u2192visual, triage skip\u2192no vision+ledger note, fixed-order ledger, render-failure-as-finding, {outDir} substitution, unset-key attachment-only, vision-unconfigured skip, sibling-survives-failure) are tested. Render path isn't even exercised (test config has no visualRenderCmd; ScriptedTestRunner writes no PNGs).\n\n4. NO DUAL-RUNNING UI TEST (moderate, explicitly required): UI plumbing exists (HashSet<int>, \"Stage 07 & 08\" label) but MainWindowViewModelTests.Status.cs has no dual-running test.\n\n5. SMOKE TEST NOT PERFORMED (significant): run.log shows the \"Smoke test view_image with vision tier\" todo was marked done at 21:55:39 in the SAME second it was created, during stage 6 \u2014 no actual view_image invocation exists in any trace. The task mandated smoking the vision path FIRST and reporting a blocker if it fails; no successful view_image call exists anywhere. Feature ships without verifying its core mechanism.\n\n6. COST ATTRIBUTION LOST (minor): RecordPairStageAsync passes cost:null to RecordStageAsync (line 294); StageRunResult discards the RelayCostEstimate. Per-stage card/done-event cost missing for Review/Visual-review though EstimateStageCostCumulative was called.\n\n7. visualRenderCmd RENDERS DEMO DATA (minor): configured command runs screenshots tool whose BuildViewModel uses hardcoded demo tasks, not working-tree state \u2014 so renders won't surface task-specific defects (only attachments would).\n\nVerdict: changes.",
+        "next_thought_needed": false
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 24.836,
+      "prompt_tokens_est": 98978,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

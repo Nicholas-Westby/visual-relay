@@ -163,7 +163,7 @@ public sealed class TargetedTestInvocationTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
-            new TestRunResult(0, "green")); // stage 9 verify — green
+            new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -177,10 +177,10 @@ public sealed class TargetedTestInvocationTests
         Assert.Equal("bun test tests/app.tests.cs", stage6.TestCommand);
         Assert.Equal("dotnet test", stage6.FullTestCommand);
 
-        // Stage 8 (Fix) receives targeted command
-        var stage8 = runner.Invocations.Single(i => i.Stage.Number == 8);
-        Assert.Equal("bun test tests/app.tests.cs", stage8.TestCommand);
-        Assert.Equal("dotnet test", stage8.FullTestCommand);
+        // Stage 9 (Fix) receives targeted command
+        var fixStage = runner.Invocations.Single(i => i.Stage.Number == 9);
+        Assert.Equal("bun test tests/app.tests.cs", fixStage.TestCommand);
+        Assert.Equal("dotnet test", fixStage.FullTestCommand);
     }
 
     [Fact]
@@ -205,7 +205,7 @@ public sealed class TargetedTestInvocationTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
-            new TestRunResult(0, "green")); // stage 9 verify — green
+            new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -214,20 +214,20 @@ public sealed class TargetedTestInvocationTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        // Stages 6 and 8 receive config.TestCommand as fallback
+        // Stages 6 and 9 receive config.TestCommand as fallback
         var stage6 = runner.Invocations.Single(i => i.Stage.Number == 6);
         Assert.Equal("dotnet test", stage6.TestCommand);
         Assert.Equal("dotnet test", stage6.FullTestCommand);
 
-        var stage8 = runner.Invocations.Single(i => i.Stage.Number == 8);
-        Assert.Equal("dotnet test", stage8.TestCommand);
-        Assert.Equal("dotnet test", stage8.FullTestCommand);
+        var fixStage = runner.Invocations.Single(i => i.Stage.Number == 9);
+        Assert.Equal("dotnet test", fixStage.TestCommand);
+        Assert.Equal("dotnet test", fixStage.FullTestCommand);
     }
 
     [Fact]
-    public async Task RunTaskAsync_Stage9HarnessStillUsesFullTestCommand()
+    public async Task RunTaskAsync_Stage10HarnessStillUsesFullTestCommand()
     {
-        // Even with {files} token, the harness TestRunner.RunAsync at stage 9 uses config.TestCommand
+        // Even with {files} token, the harness TestRunner.RunAsync at stage 10 uses config.TestCommand
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
@@ -246,7 +246,7 @@ public sealed class TargetedTestInvocationTests
         runner.SeedHappyPath("src/app.cs", "config.json");
         var recordingTests = new RecordingTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
-            new TestRunResult(0, "green")); // stage 9 verify — green
+            new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, recordingTests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -254,15 +254,15 @@ public sealed class TargetedTestInvocationTests
         var outcome = await driver.RunTaskAsync(repo.Root, "verify-harness");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // Harness stage-9 TestRunner call must use the full config.TestCommand (not targeted)
+        // Harness stage-10 TestRunner call must use the full config.TestCommand (not targeted)
         Assert.Contains(recordingTests.Calls, call => call.Command == "dotnet test");
         Assert.DoesNotContain(recordingTests.Calls, call => call.Command.Contains("{files}"));
     }
 
     [Fact]
-    public async Task RunTaskAsync_FixVerifyLoop_Stage10ReceivesFullGateCommandInPrompt()
+    public async Task RunTaskAsync_FixVerifyLoop_Stage11ReceivesFullGateCommandInPrompt()
     {
-        // Stage 9 red → fix-verify loop → stage 10 agent prompt uses full gate cmd (not targeted)
+        // Stage 10 red → fix-verify loop → stage 11 agent prompt uses full gate cmd (not targeted)
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
@@ -281,8 +281,8 @@ public sealed class TargetedTestInvocationTests
         runner.SeedHappyPath("src/app.cs", "config.json");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),           // stage 5 author gate
-            new TestRunResult(1, "Failed TestX"),  // stage 9 verify — first run fails
-            new TestRunResult(1, "Failed TestX"),  // stage 9 verify — retry also fails
+            new TestRunResult(1, "Failed TestX"),  // stage 10 verify — first run fails
+            new TestRunResult(1, "Failed TestX"),  // stage 10 verify — retry also fails
             new TestRunResult(1, "Failed TestX"),  // fix-verify attempt 1 first run — red
             new TestRunResult(0, "green"));         // fix-verify attempt 1 retry — green
         var driver = new RelayDriver(
@@ -292,8 +292,8 @@ public sealed class TargetedTestInvocationTests
         var outcome = await driver.RunTaskAsync(repo.Root, "fix-verify-targeted");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage10 = runner.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Equal("dotnet test", stage10.TestCommand);  // full gate, not the targeted subset
-        Assert.Null(stage10.FullTestCommand);
+        var fixVerifyStage = runner.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Equal("dotnet test", fixVerifyStage.TestCommand);  // full gate, not the targeted subset
+        Assert.Null(fixVerifyStage.FullTestCommand);
     }
 }

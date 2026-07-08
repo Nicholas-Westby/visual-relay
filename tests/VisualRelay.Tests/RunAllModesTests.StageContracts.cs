@@ -41,6 +41,7 @@ public sealed partial class RunAllModesTests
     [InlineData(8)]
     [InlineData(9)]
     [InlineData(10)]
+    [InlineData(11)]
     public void AllStages_HaveNonEmptySystemPrompt(int number)
     {
         var stage = RelayStages.All.Single(s => s.Number == number);
@@ -51,8 +52,8 @@ public sealed partial class RunAllModesTests
     [Fact]
     public void CommitStage_HasEmptySystemPrompt()
     {
-        var commit = RelayStages.All.Single(s => s.Number == 11);
-        // Stage 11 (Commit) is a driver stage with no LLM — its prompt is empty.
+        var commit = RelayStages.All.Single(s => s.Number == 12);
+        // Stage 12 (Commit) is a driver stage with no LLM — its prompt is empty.
         Assert.Equal(string.Empty, commit.SystemPrompt);
     }
 
@@ -69,6 +70,7 @@ public sealed partial class RunAllModesTests
     [InlineData(8)]
     [InlineData(9)]
     [InlineData(10)]
+    [InlineData(11)]
     public void AllLlmStages_HaveNonEmptyOutputContract(int number)
     {
         var stage = RelayStages.All.Single(s => s.Number == number);
@@ -79,15 +81,15 @@ public sealed partial class RunAllModesTests
     [Fact]
     public void CommitStage_HasEmptyOutputContract()
     {
-        var commit = RelayStages.All.Single(s => s.Number == 11);
-        // Stage 11 (Commit) is a driver stage — no LLM output contract.
+        var commit = RelayStages.All.Single(s => s.Number == 12);
+        // Stage 12 (Commit) is a driver stage — no LLM output contract.
         Assert.Equal(string.Empty, commit.OutputContract);
     }
 
     // ── Tier invariants ──────────────────────────────────────────────────
 
     private static readonly HashSet<string> ValidTiers =
-        new(StringComparer.Ordinal) { "cheap", "balanced", "frontier" };
+        new(StringComparer.Ordinal) { "cheap", "balanced", "frontier", "vision" };
 
     [Theory]
     [InlineData(1)]
@@ -101,6 +103,7 @@ public sealed partial class RunAllModesTests
     [InlineData(9)]
     [InlineData(10)]
     [InlineData(11)]
+    [InlineData(12)]
     public void AllStages_HaveValidTier(int number)
     {
         var stage = RelayStages.All.Single(s => s.Number == number);
@@ -126,6 +129,7 @@ public sealed partial class RunAllModesTests
     [InlineData(9)]
     [InlineData(10)]
     [InlineData(11)]
+    [InlineData(12)]
     public void AllStages_HaveValidFilesScope(int number)
     {
         var stage = RelayStages.All.Single(s => s.Number == number);
@@ -148,6 +152,7 @@ public sealed partial class RunAllModesTests
     [InlineData(9)]
     [InlineData(10)]
     [InlineData(11)]
+    [InlineData(12)]
     public void AllStages_HaveNonEmptyCommands(int number)
     {
         var stage = RelayStages.All.Single(s => s.Number == number);
@@ -158,12 +163,12 @@ public sealed partial class RunAllModesTests
     // ── Sequential numbering ─────────────────────────────────────────────
 
     [Fact]
-    public void Stages_AreSequential_OneThroughEleven()
+    public void Stages_AreSequential_OneThroughTwelve()
     {
         var numbers = RelayStages.All.Select(s => s.Number).OrderBy(n => n).ToList();
 
-        Assert.Equal(11, numbers.Count);
-        for (var i = 0; i < 11; i++)
+        Assert.Equal(12, numbers.Count);
+        for (var i = 0; i < 12; i++)
             Assert.Equal(i + 1, numbers[i]);
     }
 
@@ -181,7 +186,7 @@ public sealed partial class RunAllModesTests
     {
         foreach (var stage in RelayStages.All)
         {
-            Assert.Equal(stage.Number == 11 ? "driver" : "llm", stage.Kind);
+            Assert.Equal(stage.Number == 12 ? "driver" : "llm", stage.Kind);
         }
     }
 
@@ -191,11 +196,11 @@ public sealed partial class RunAllModesTests
     public void OnlyIdeateAndCommitStages_HaveNoneFilesScope()
     {
         // Stage 1 (Ideate) has files="none" because it ideates purely from
-        // training knowledge. Stage 11 (Commit) also has files="none" — it is a
+        // training knowledge. Stage 12 (Commit) also has files="none" — it is a
         // driver stage that only runs git commit, no file access needed.
         foreach (var stage in RelayStages.All)
         {
-            if (stage.Number is 1 or 11)
+            if (stage.Number is 1 or 12)
                 Assert.Equal("none", stage.Files);
             else
                 Assert.NotEqual("none", stage.Files);
@@ -221,9 +226,10 @@ public sealed partial class RunAllModesTests
     [InlineData(5, "Author-tests", "tests")]
     [InlineData(6, "Implement", "Implement the change")]
     [InlineData(7, "Review", "Review")]
-    [InlineData(8, "Fix", "Resolve every blocker")]
-    [InlineData(9, "Verify", "Summarize")]
-    [InlineData(10, "Fix-verify", "Fix all failures")]
+    [InlineData(8, "Visual-review", "rendered")]
+    [InlineData(9, "Fix", "Resolve every blocker")]
+    [InlineData(10, "Verify", "Summarize")]
+    [InlineData(11, "Fix-verify", "Fix all failures")]
     public void StageSystemPrompt_ContainsExpectedKeywords(
         int number, string name, string keyword)
     {

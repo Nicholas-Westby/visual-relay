@@ -49,7 +49,7 @@ public sealed class RelayDriverNewGuardProbeTests
     }
 
     [Fact]
-    public async Task Stage9_NewGuardPassesProbe_VerifySucceeds()
+    public async Task Stage10_NewGuardPassesProbe_VerifySucceeds()
     {
         using var repo = await Setup("guard-ok", "# Guard passes probe\n", createGuardScript: true);
         var subagent = new CapturingGuardedManifestSubagentRunner();
@@ -62,12 +62,12 @@ public sealed class RelayDriverNewGuardProbeTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-ok");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 10);
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
         Assert.Single(testRunner.Calls, c => c.Command.Contains("tools/guards/new.sh"));
     }
 
     [Fact]
-    public async Task Stage9_NewGuardFailsProbe_EntersFixVerifyLoop()
+    public async Task Stage10_NewGuardFailsProbe_EntersFixVerifyLoop()
     {
         using var repo = await Setup("guard-fail", "# Guard fails probe\n", enableFixVerify: true, createGuardScript: true);
         var subagent = new CapturingGuardedManifestSubagentRunner();
@@ -81,16 +81,16 @@ public sealed class RelayDriverNewGuardProbeTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-fail");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.NotNull(stage10!.LastTestOutput);
-        Assert.Contains("301 lines", stage10.LastTestOutput, StringComparison.Ordinal);
+        var fixVerifyStage = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerifyStage);
+        Assert.NotNull(fixVerifyStage!.LastTestOutput);
+        Assert.Contains("301 lines", fixVerifyStage.LastTestOutput, StringComparison.Ordinal);
         var seals = await File.ReadAllLinesAsync(
             Path.Combine(repo.Root, ".relay", "guard-fail", "guard-fail.seals"));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
         Assert.Contains(seals, line =>
-            line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+            line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     [Fact]

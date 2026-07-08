@@ -40,12 +40,12 @@ public sealed partial class RelayDriverVerifyFixTests
         var outcome = await driver.RunTaskAsync(repo.Root, "fv-ladder");
 
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
-        var stage10 = runner.Invocations.Where(i => i.Stage.Number == 10).ToList();
-        Assert.Equal(3, stage10.Count);
-        // Stage 10 default tier is balanced → balanced/frontier/frontier (capped).
-        Assert.Equal(["balanced", "frontier", "frontier"], stage10.Select(i => i.Tier));
+        var stage11 = runner.Invocations.Where(i => i.Stage.Number == 11).ToList();
+        Assert.Equal(3, stage11.Count);
+        // Stage 11 default tier is balanced → balanced/frontier/frontier (capped).
+        Assert.Equal(["balanced", "frontier", "frontier"], stage11.Select(i => i.Tier));
         // Turns double per run: 200/400/800.
-        Assert.Equal([200, 400, 800], stage10.Select(i => i.MaxTurns));
+        Assert.Equal([200, 400, 800], stage11.Select(i => i.MaxTurns));
     }
 
     [Fact]
@@ -64,15 +64,15 @@ public sealed partial class RelayDriverVerifyFixTests
         await driver.RunTaskAsync(repo.Root, "fv-log");
 
         var escalations = sink.Events
-            .Where(e => e is { EventName: "stage_escalated", StageNumber: 10 })
+            .Where(e => e is { EventName: "stage_escalated", StageNumber: 11 })
             .Select(e => e.Data!["message"])
             .ToList();
         Assert.Equal(2, escalations.Count); // one per transition into runs 2 and 3
         Assert.Equal(
-            "Stage 10 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400",
+            "Stage 11 Fix-verify escalated (run 2/3): tier balanced→frontier, max-turns 200→400",
             escalations[0]);
         Assert.Equal(
-            "Stage 10 Fix-verify escalated (run 3/3): tier frontier→frontier, max-turns 400→800",
+            "Stage 11 Fix-verify escalated (run 3/3): tier frontier→frontier, max-turns 400→800",
             escalations[1]);
     }
 
@@ -102,11 +102,11 @@ public sealed partial class RelayDriverVerifyFixTests
 
         await driver.RunTaskAsync(repo.Root, "fv-boost");
 
-        var stage10 = runner.Invocations.Where(i => i.Stage.Number == 10).ToList();
-        Assert.Equal(3, stage10.Count);
+        var stage11 = runner.Invocations.Where(i => i.Stage.Number == 11).ToList();
+        Assert.Equal(3, stage11.Count);
         // Tier still escalates under the boost.
-        Assert.Equal(["balanced", "frontier", "frontier"], stage10.Select(i => i.Tier));
+        Assert.Equal(["balanced", "frontier", "frontier"], stage11.Select(i => i.Tier));
         // Turns stay flat at 10× base (200 × 10 = 2000) — no per-run doubling.
-        Assert.Equal([2000, 2000, 2000], stage10.Select(i => i.MaxTurns));
+        Assert.Equal([2000, 2000, 2000], stage11.Select(i => i.MaxTurns));
     }
 }

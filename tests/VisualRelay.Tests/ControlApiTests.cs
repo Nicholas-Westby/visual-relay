@@ -57,7 +57,7 @@ public sealed partial class ControlApiTests
         Assert.Equal(JsonValueKind.Array, root.GetProperty("tasks").ValueKind);
         var stages = root.GetProperty("stages");
         Assert.Equal(JsonValueKind.Array, stages.ValueKind);
-        Assert.Equal(11, stages.GetArrayLength());
+        Assert.Equal(12, stages.GetArrayLength());
         var firstStage = stages[0];
         Assert.Equal(1, firstStage.GetProperty("number").GetInt32());
         Assert.False(string.IsNullOrEmpty(firstStage.GetProperty("name").GetString()));

@@ -61,15 +61,15 @@ public sealed class RelayDriverFormatBeforeVerifyTests
         Assert.True(guardIdx >= 0, "guard was never called");
         Assert.True(fmtIdx < guardIdx, "formatter must run before guard");
 
-        // Verify was green on the first try, so the Fix-verify (stage 10) LLM
-        // call is skipped entirely — there must be no stage-10 subagent invocation.
-        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 10);
+        // Verify was green on the first try, so the Fix-verify (stage 11) LLM
+        // call is skipped entirely — there must be no stage-11 subagent invocation.
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
     }
 
     /// <summary>
-    /// (a.2) Guard returns red on the first call (stage 9), then green on the
-    /// fix-verify re-verify (stage 10).  The formatter fires before every guard
-    /// call — twice total.  Stage 10 commits.
+    /// (a.2) Guard returns red on the first call (stage 10), then green on the
+    /// fix-verify re-verify (stage 11).  The formatter fires before every guard
+    /// call — twice total.  Stage 11 commits.
     /// </summary>
     [Fact]
     public async Task FormatCmd_Set_RunsBeforeGuardInFixVerifyIteration()
@@ -136,11 +136,11 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             }
         }
 
-        // Stage 10 was entered and committed.
-        var stage10 = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.NotNull(stage10!.LastTestOutput);
-        Assert.Contains("big.cs", stage10.LastTestOutput, StringComparison.Ordinal);
+        // Stage 11 was entered and committed.
+        var fixVerify = subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(fixVerify);
+        Assert.NotNull(fixVerify!.LastTestOutput);
+        Assert.Contains("big.cs", fixVerify.LastTestOutput, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -194,9 +194,9 @@ public sealed class RelayDriverFormatBeforeVerifyTests
         Assert.Contains(testRunner.Calls,
             c => c.Command.Contains("my-guard", StringComparison.Ordinal));
 
-        // Verify was green on the first try, so the Fix-verify (stage 10) LLM
-        // call is skipped entirely — there must be no stage-10 subagent invocation.
-        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 10);
+        // Verify was green on the first try, so the Fix-verify (stage 11) LLM
+        // call is skipped entirely — there must be no stage-11 subagent invocation.
+        Assert.DoesNotContain(subagent.Invocations, i => i.Stage.Number == 11);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

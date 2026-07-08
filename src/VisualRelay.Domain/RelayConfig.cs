@@ -6,8 +6,8 @@ public sealed record RelayConfig(
     string TestFileCommand,
     IReadOnlyList<string> LogSources,
     IReadOnlyDictionary<string, string> TierProfiles,
-    // When true (default), a red Verify (stage 9) enters the bounded Fix-verify
-    // escalation loop (stage 10) — which re-runs up to MaxStageFailures times,
+    // When true (default), a red Verify (stage 10) enters the bounded Fix-verify
+    // escalation loop (stage 11) — which re-runs up to MaxStageFailures times,
     // escalating tier + turns each run — before flagging. When false, a red Verify
     // flags immediately with no fix-verify. (This replaces the misleading
     // MaxVerifyLoops *count*: the run count is MaxStageFailures, so the old field
@@ -52,8 +52,14 @@ public sealed record RelayConfig(
     // in the manifest) get "nix develop --command true"; other repos skip.
     string? BootstrapCheckCommand = null,
     // Command that runs repo policy guards (file-size, format, etc.) alongside
-    // the test command in the stage-9 gate. Absent → skipped with zero overhead.
+    // the test command in the stage-10 gate. Absent → skipped with zero overhead.
     string? GuardCommand = null,
+    // Optional shell command that renders the project's current visual state as
+    // PNGs into the directory substituted for the {outDir} token.  The driver
+    // runs it before the Visual-review stage (stage 8) when triage says "needed".
+    // Example: "dotnet run --project tools/VisualRelay.Screenshots -- {outDir}/main.png"
+    // Unset → the Visual-review stage runs on task image attachments only.
+    string? VisualRenderCmd = null,
     // Optional whole-project formatter run unconditionally before each guard
     // check. When set, the harness auto-formats the working tree so format-only
     // guard failures never trigger a Fix-verify loop. Absent (null) → no-op;

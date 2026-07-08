@@ -30,17 +30,17 @@ internal sealed class MidRunSelfCommittingRunner(string root) : ISubagentRunner
         {
             File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "status.cs"), "implemented");
         }
-        else if (invocation.Stage.Number == 8)
+        else if (invocation.Stage.Number == 9)
         {
             // Single-token message so the naive space-split below keeps it intact.
             if (Git("add -A") == 0 && Git("commit -m agent-wip-bare") == 0)
                 AgentCommitLanded = true;
         }
-        else if (invocation.Stage.Number == 9)
+        else if (invocation.Stage.Number == 10)
         {
             // A further working-tree change made AFTER the bare commit, left
-            // uncommitted — must still land in the single sealed commit. Stage 9
-            // always runs (unlike stage 10, which is skipped when verify is green).
+            // uncommitted — must still land in the single sealed commit. Stage 10
+            // always runs (unlike stage 11, which is skipped when verify is green).
             File.WriteAllText(Path.Combine(invocation.TargetRoot, "src", "extra.cs"), "post-commit edit");
         }
 
@@ -53,9 +53,9 @@ internal sealed class MidRunSelfCommittingRunner(string root) : ISubagentRunner
             5 => """{"testFiles":["tests/status.test"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed"}""",
-            9 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status endpoint","chore(sample): update status module"]}""",
-            10 => """{"summary":"reviewed"}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed"}""",
+            10 => """{"summary":"verified","commitMessages":["fix(sample): ship status","fix: include shipping status endpoint","chore(sample): update status module"]}""",
             _ => """{"summary":"ok"}"""
         };
         return Task.FromResult(new SubagentResult(json, json, true, null));

@@ -201,7 +201,7 @@ public sealed partial class SwivalSubagentRunnerTests
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with
         {
-            Stage = RelayStages.All[9], // Stage 10 — Fix-verify
+            Stage = RelayStages.All[10], // Stage 11 — Fix-verify
             LastTestOutput = "biome parse error: unexpected token at line 42",
             TestCommand = "bunx biome format && bun test"
         };

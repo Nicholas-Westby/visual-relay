@@ -5,8 +5,8 @@ namespace VisualRelay.Core.Execution;
 
 public sealed partial class RelayDriver
 {
-    // Combined result from the stage-9 pre-agent mechanical test gate.
-    private sealed record Stage9PreAgentData(
+    // Combined result from the stage-10 pre-agent mechanical test gate.
+    private sealed record Stage10PreAgentData(
         TestRunResult TestResult,
         double TestDurationSeconds,
         bool BootstrapFailed,
@@ -23,7 +23,7 @@ public sealed partial class RelayDriver
     /// or (data, null) on success. Caller passes errorHint to FlagAsync.
     /// </summary>
     // ReSharper disable UnusedParameter.Local — kept for future use in pre-agent logic
-    private async Task<(Stage9PreAgentData? Data, string? ErrorHint)> RunStage9PreAgentAsync(
+    private async Task<(Stage10PreAgentData? Data, string? ErrorHint)> RunStage10PreAgentAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayConfig config, IReadOnlyList<string> manifest, StringBuilder ledger,
         List<StageStatusEntry> statusEntries, CancellationToken cancellationToken)
@@ -57,14 +57,14 @@ public sealed partial class RelayDriver
             return (null, ErrorHintClassifier.WithHint(guardOutput ?? "guard timed out"));
 
         var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
-            rootPath, config, stageNumber: 9, attempt: 1, runId, taskId, cancellationToken);
+            rootPath, config, stageNumber: 10, attempt: 1, runId, taskId, cancellationToken);
         await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId,
-            RelayStages.All[8], verifyMutations, cancellationToken);
+            RelayStages.All[9], verifyMutations, cancellationToken);
 
         if (testResult.TimedOut)
             return (null, ErrorHintClassifier.WithHint(testResult.Output));
 
-        return (new Stage9PreAgentData(
+        return (new Stage10PreAgentData(
             testResult, testResult.Elapsed.TotalSeconds,
             bootstrapFailed, bootstrapFailureOutput, bootstrapCmdStr,
             newGuardOutput, guardFailed, guardOutput), null);

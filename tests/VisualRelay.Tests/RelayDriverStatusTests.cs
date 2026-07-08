@@ -24,7 +24,7 @@ public sealed class RelayDriverStatusTests
         Assert.True(File.Exists(statusPath));
 
         var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "status-test"));
-        Assert.Equal(11, entries.Count);
+        Assert.Equal(12, entries.Count);
         Assert.All(entries, e => Assert.Equal("Done", e.Status));
     }
 
@@ -44,7 +44,7 @@ public sealed class RelayDriverStatusTests
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
         var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "commit-zero"));
-        var commitEntry = entries.Single(e => e.Stage == 11);
+        var commitEntry = entries.Single(e => e.Stage == 12);
         Assert.Equal("Commit", commitEntry.Name);
         Assert.Equal("Done", commitEntry.Status);
         Assert.Equal(0, commitEntry.CostUsd);
@@ -53,7 +53,7 @@ public sealed class RelayDriverStatusTests
     }
 
     [Fact]
-    public async Task RunTaskAsync_StatusJson_Stages5And9HaveCheck()
+    public async Task RunTaskAsync_StatusJson_Stages5And10HaveCheck()
     {
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -70,8 +70,8 @@ public sealed class RelayDriverStatusTests
         var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "checks-test"));
         var stage5 = entries.Single(e => e.Stage == 5);
         Assert.Equal("red", stage5.Check);
-        var stage9 = entries.Single(e => e.Stage == 9);
-        Assert.Equal("green", stage9.Check);
+        var stage10 = entries.Single(e => e.Stage == 10);
+        Assert.Equal("green", stage10.Check);
     }
 
     [Fact]
@@ -116,7 +116,7 @@ public sealed class RelayDriverStatusTests
         Assert.NotNull(stage4.Error);
         // Stages 1-3 should be done
         Assert.All(entries.Where(e => e.Stage < 4), e => Assert.Equal("Done", e.Status));
-        // Stages 5-11 should be waiting
+        // Stages 5-12 should be waiting
         Assert.All(entries.Where(e => e.Stage > 4), e => Assert.Equal("Waiting", e.Status));
     }
 

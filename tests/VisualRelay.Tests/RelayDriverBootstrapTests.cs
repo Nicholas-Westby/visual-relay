@@ -84,7 +84,7 @@ public sealed class RelayDriverBootstrapTests
     /// Test (c): When the bootstrap smoke check fails but the normal test
     /// suite passes, the overall stage-9 check must be "red" (the bootstrap
     /// failure is not ignored) and the fix-verify loop must be entered.
-    /// The bootstrap failure output must be fed into the stage-10 subagent
+    /// The bootstrap failure output must be fed into the stage-11 subagent
     /// invocation as <c>LastTestOutput</c> so the agent can remediate.
     ///
     /// Key invariant: a red bootstrap check is treated like a red test run
@@ -116,17 +116,17 @@ public sealed class RelayDriverBootstrapTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
 
-        // The stage-10 fix-verify invocation must carry the bootstrap failure.
-        var stage10 = capturingSubagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10);
-        Assert.NotNull(stage10);
-        Assert.NotNull(stage10!.LastTestOutput);
-        Assert.Contains("nix build of nono failed", stage10.LastTestOutput, StringComparison.Ordinal);
+        // The stage-11 fix-verify invocation must carry the bootstrap failure.
+        var stage11 = capturingSubagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11);
+        Assert.NotNull(stage11);
+        Assert.NotNull(stage11!.LastTestOutput);
+        Assert.Contains("nix build of nono failed", stage11.LastTestOutput, StringComparison.Ordinal);
 
-        // Stage 9 must be recorded as red (bootstrap failed).
+        // Stage 10 must be recorded as red (bootstrap failed).
         var seals = await File.ReadAllLinesAsync(Path.Combine(repo.Root, ".relay", "break-flake", "break-flake.seals"));
-        Assert.Contains(seals, line => line.Contains("\"n\":9", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
-        // Stage 10 must be green (fix succeeded).
-        Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
+        Assert.Contains(seals, line => line.Contains("\"n\":10", StringComparison.Ordinal) && line.Contains("\"check\":\"red\"", StringComparison.Ordinal));
+        // Stage 11 must be green (fix succeeded).
+        Assert.Contains(seals, line => line.Contains("\"n\":11", StringComparison.Ordinal) && line.Contains("\"check\":\"green\"", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -153,17 +153,17 @@ public sealed class RelayDriverBootstrapTests
         var outcome = await driver.RunTaskAsync(repo.Root, "bootstrap-complete-log");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        // The stage-9 seed gate went red on the bootstrap failure even though the test passed.
-        var stage9 = sink.Events.Single(e => e is { EventName: "verify_result", StageNumber: 9 });
-        Assert.Equal("red", stage9.Data?["check"]);
-        var outputFile = stage9.Data?["outputFile"];
+        // The stage-10 seed gate went red on the bootstrap failure even though the test passed.
+        var stage10 = sink.Events.Single(e => e is { EventName: "verify_result", StageNumber: 10 });
+        Assert.Equal("red", stage10.Data?["check"]);
+        var outputFile = stage10.Data?["outputFile"];
         Assert.False(string.IsNullOrEmpty(outputFile));
         var persisted = await File.ReadAllTextAsync(outputFile!);
         // The complete log MUST carry the bootstrap failure text.
         Assert.Contains("nix build of nono failed", persisted, StringComparison.Ordinal);
         // And the file must match the SOURCE of the tail the agent actually received.
-        var stage10 = runner.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Contains("nix build of nono failed", stage10.LastTestOutput!, StringComparison.Ordinal);
+        var stage11 = runner.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("nix build of nono failed", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 
     /// <summary>

@@ -227,6 +227,7 @@ public static partial class RelayConfigLoader
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
                 GuardCommand = OptionalStringOrNull(root, "guardCmd"),
                 FormatCommand = OptionalStringOrNull(root, "formatCmd"),
+                VisualRenderCmd = OptionalStringOrNull(root, "visualRenderCmd"),
                 BoostTurnsTaskIds = OptionalStringArray(root, "boostTurnsTaskIds", []),
                 SkipTestsTaskIds = OptionalStringArray(root, "skipTestsTaskIds", []),
                 NewGuardPatterns = OptionalStringArray(root, "newGuardPatterns", defaults.NewGuardPatterns),

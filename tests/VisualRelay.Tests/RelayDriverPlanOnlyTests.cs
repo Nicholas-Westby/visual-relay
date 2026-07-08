@@ -9,7 +9,7 @@ public sealed class RelayDriverPlanOnlyTests
     public async Task RunTaskAsync_WithLastStageToRun4_StopsAfterStage4_ReturnsPlanned()
     {
         // A plan-only run must execute stages 1–4, persist manifest + status
-        // (1–4 Done, 5–11 Waiting), create no git commit, and return Planned.
+        // (1–4 Done, 5–12 Waiting), create no git commit, and return Planned.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("plan-me", "# Plan me\n");
@@ -35,12 +35,12 @@ public sealed class RelayDriverPlanOnlyTests
         Assert.Contains("src/status.cs", manifestContent, StringComparison.Ordinal);
         Assert.Contains("tests/status.tests.cs", manifestContent, StringComparison.Ordinal);
 
-        // Status must show 1–4 Done, 5–11 Waiting.
+        // Status must show 1–4 Done, 5–12 Waiting.
         var status = StageStatusRecord.Read(taskDir);
-        Assert.Equal(11, status.Count);
+        Assert.Equal(12, status.Count);
         for (int i = 0; i < 4; i++)
             Assert.Equal("Done", status[i].Status);
-        for (int i = 4; i < 11; i++)
+        for (int i = 4; i < 12; i++)
             Assert.Equal("Waiting", status[i].Status);
 
         // Stage 5 must NOT have been invoked (no test runner call).
@@ -100,7 +100,7 @@ public sealed class RelayDriverPlanOnlyTests
         var planOutcome = await planDriver.RunTaskAsync(repo.Root, "two-phase");
         Assert.Equal(RelayTaskOutcomeStatus.Planned, planOutcome.Status);
 
-        // Verify status: 1–4 Done, 5–11 Waiting.
+        // Verify status: 1–4 Done, 5–12 Waiting.
         var taskDir = Path.Combine(repo.Root, ".relay", "two-phase");
         var statusAfterPlan = StageStatusRecord.Read(taskDir);
         Assert.Equal("Done", statusAfterPlan[0].Status);   // stage 1
@@ -131,12 +131,12 @@ public sealed class RelayDriverPlanOnlyTests
         var statusAfterResume = StageStatusRecord.Read(taskDir);
         Assert.All(statusAfterResume, e => Assert.Equal("Done", e.Status));
 
-        // Seals file covers all 11 stages.
+        // Seals file covers all 12 stages.
         var sealsPath = Path.Combine(taskDir, "two-phase.seals");
         Assert.True(File.Exists(sealsPath));
         var seals = await File.ReadAllLinesAsync(sealsPath);
-        Assert.True(seals.Length >= 11, $"expected ≥11 seals, got {seals.Length}");
-        Assert.Contains("\"n\":11", seals[^1], StringComparison.Ordinal);
+        Assert.True(seals.Length >= 12, $"expected ≥12 seals, got {seals.Length}");
+        Assert.Contains("\"n\":12", seals[^1], StringComparison.Ordinal);
     }
 
     [Fact]

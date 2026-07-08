@@ -48,6 +48,7 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
     {
         var json = invocation.Stage.Number switch
         {
+            0 => """{"visualReview":"needed","reason":"change includes UI files"}""",
             1 => """{"summary":"framed","options":["small"]}""",
             2 => """{"findings":"found","constraints":[]}""",
             3 => """{"evidence":"no remnants","excerpts":[],"repro":"none"}""",
@@ -61,9 +62,10 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
             5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
             7 => """{"verdict":"pass","issues":[]}""",
-            8 => """{"summary":"fixed review notes"}""",
-            9 => """{"summary":"verified","commitMessages":["feat: implement feature","fix: address edge case","chore: update project files"]}""",
-            10 => """{"summary":"fixed verify"}""",
+            8 => """{"verdict":"pass","issues":[]}""",
+            9 => """{"summary":"fixed review notes"}""",
+            10 => """{"summary":"verified","commitMessages":["feat: implement feature","fix: address edge case","chore: update project files"]}""",
+            11 => """{"summary":"fixed verify"}""",
             _ => """{"summary":"ok"}"""
         };
 

@@ -10,7 +10,7 @@ public sealed class StageRowViewModelTests
     public void StatusLabel_DoneWithDuration_ReadsCompletedInDuration()
     {
         // DurationLabel is set before Status so the "Done" setter sees a duration.
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             DurationLabel = "17s",
             Status = "Done",
@@ -23,7 +23,7 @@ public sealed class StageRowViewModelTests
     public void StatusLabel_DoneWithoutDuration_StaysComplete()
     {
         // No duration recorded — DurationLabel is still the "No run yet" sentinel.
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             Status = "Done",
         };
@@ -34,7 +34,7 @@ public sealed class StageRowViewModelTests
     [Fact]
     public void StatusLabel_NonDoneStatuses_AreUnchanged()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
+        var stage = new StageRowViewModel(RelayStages.All[9]);
         Assert.Equal("Waiting", stage.StatusLabel);
 
         stage.Status = "Flagged";
@@ -44,7 +44,7 @@ public sealed class StageRowViewModelTests
     [Fact]
     public void StatusLabel_Running_ShowsLiveElapsed()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8]);
+        var stage = new StageRowViewModel(RelayStages.All[9]);
         stage.MarkRunning(DateTimeOffset.UtcNow - TimeSpan.FromSeconds(145));
         stage.RefreshElapsed(DateTimeOffset.UtcNow);
 
@@ -54,7 +54,7 @@ public sealed class StageRowViewModelTests
     [Fact]
     public void MetricLabel_DoneStage_OmitsLeadingDurationKeepsCostTurnsTest()
     {
-        var stage = new StageRowViewModel(RelayStages.All[8])
+        var stage = new StageRowViewModel(RelayStages.All[9])
         {
             DurationLabel = "17s",
             CostLabel = "$0.0029",

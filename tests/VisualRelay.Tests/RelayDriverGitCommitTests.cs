@@ -46,7 +46,7 @@ public sealed partial class RelayDriverGitCommitTests
         // The self-hosting repo gitignores .relay/* (run scratch — report.json,
         // run.log — is bulky), keeping only config.json. The commit's proof files
         // (ledger/seals/manifest) live under .relay/<task>/ and so are ignored too,
-        // which made stage 11 die with "paths are ignored by .gitignore" — no task
+        // which made stage 12 die with "paths are ignored by .gitignore" — no task
         // could ever commit. The committer must force the small proof files in so
         // the Relay-Seal stays verifiable while bulky scratch stays ignored.
         using var repo = TestRepository.Create();
@@ -78,7 +78,7 @@ public sealed partial class RelayDriverGitCommitTests
     public async Task RunTaskAsync_WhenAnAgentCommitsMidRun_AgentCommitIsRejectedByHook()
     {
         // The pre-commit hook rejects commits lacking the RELAY_COMMIT_TOKEN during
-        // an active run. The driver's stage-11 commit sets the token and gets through.
+        // an active run. The driver's stage-12 commit sets the token and gets through.
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
@@ -101,7 +101,7 @@ public sealed partial class RelayDriverGitCommitTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
-        // The agent's attempt to commit at stage 8 should be rejected by the hook
+        // The agent's attempt to commit at stage 9 should be rejected by the hook
         // (no RELAY_COMMIT_TOKEN). The agent ignores the failure and continues.
         Assert.True(runner.AgentCommitRejected,
             "agent's git commit should have been rejected by the pre-commit hook");

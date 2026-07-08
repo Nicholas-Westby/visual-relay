@@ -9,7 +9,7 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class RelayDriver
 {
     /// <summary>
-    /// Commit-gate resume validation: when stages 1–10 are Done and only stage 11
+    /// Commit-gate resume validation: when stages 1–11 are Done and only stage 12
     /// (Commit) failed, re-validate the gate test suite and the recorded tree hash.
     /// Extracted from RunTaskAsync to keep the main file under the 300-line guard.
     /// </summary>
@@ -25,9 +25,9 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         CancellationToken cancellationToken)
     {
-        if (_options.Resume && firstStageToRun == 11
-            && statusEntries.Count >= 10
-            && statusEntries.Take(10).All(e => e.Status == "Done"))
+        if (_options.Resume && firstStageToRun == 12
+            && statusEntries.Count >= 11
+            && statusEntries.Take(11).All(e => e.Status == "Done"))
         {
             var manifestPath = Path.Combine(taskDirectory, "manifest.txt");
             var currentManifest = File.Exists(manifestPath)
@@ -48,13 +48,13 @@ public sealed partial class RelayDriver
                 // Test runner failure → treat as gate failure.
             }
 
-            // Re-validate the recorded stage-10 tree hash against the current worktree.
+            // Re-validate the recorded stage-11 tree hash against the current worktree.
             var recordedTreeHash = string.Empty;
-            if (seals.Count >= 10)
+            if (seals.Count >= 11)
             {
                 try
                 {
-                    using var doc = JsonDocument.Parse(seals[9]);
+                    using var doc = JsonDocument.Parse(seals[10]);
                     if (doc.RootElement.TryGetProperty("treeHash", out var th))
                         recordedTreeHash = th.GetString() ?? string.Empty;
                 }
@@ -111,7 +111,7 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Executes the final commit step (stage 11) including task retirement,
+    /// Executes the final commit step (stage 12) including task retirement,
     /// git commit, post-commit invariant checks, and event publication.
     /// Extracted from RunTaskAsync.
     /// </summary>
@@ -192,7 +192,7 @@ public sealed partial class RelayDriver
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();
-                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
+                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 12, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
             }
 
             commitSha = commit.CommitSha ?? "unknown";
@@ -204,7 +204,7 @@ public sealed partial class RelayDriver
                 if (missed.Count > 0)
                 {
                     retirement?.Rollback?.Invoke();
-                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 11,
+                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 12,
                         $"sealed commit is missing authored files: {string.Join(", ", missed.Order(StringComparer.Ordinal).Select(f => $"`{f}`"))}",
                         null, statusEntries, cancellationToken);
                 }
@@ -220,11 +220,11 @@ public sealed partial class RelayDriver
                     runId,
                     rootPath,
                     taskId,
-                    11,
+                    12,
                     Data: new Dictionary<string, string> { ["path"] = retirement.DestinationPath }), cancellationToken);
             }
         }
-        MarkStatus(statusEntries, 11, "Done");
+        MarkStatus(statusEntries, 12, "Done");
         await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
         FlaggedWorkStore.Delete(taskDirectory);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);

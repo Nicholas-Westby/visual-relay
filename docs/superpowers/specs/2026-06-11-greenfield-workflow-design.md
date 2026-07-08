@@ -2,7 +2,7 @@
 
 - **Date:** 2026-06-11
 - **Status:** Draft (proposal) — not yet approved; captured for future consideration. No implementation planned.
-- **Audience:** Maintainer evaluating whether/how Visual Relay should grow a second workflow alongside the existing 11-stage Relay pipeline.
+- **Audience:** Maintainer evaluating whether/how Visual Relay should grow a second workflow alongside the existing 12-stage Relay pipeline.
 
 ## Problem
 
@@ -31,7 +31,7 @@ project — and Visual Relay already owns a machine that is good at brownfield.
 So the greenfield workflow should not replace the implement loop. Its job is to
 take an idea from empty directory to *"a repo where the existing workflow can
 run"*, and end by **generating ordered task files into `llm-tasks/`** that the
-existing 11-stage pipeline then executes one sealed commit at a time, with all
+existing 12-stage pipeline then executes one sealed commit at a time, with all
 its red/green gates intact. The greenfield workflow manufactures the
 preconditions; the brownfield workflow does the building.
 
@@ -47,7 +47,7 @@ preconditions; the brownfield workflow does the building.
 
 ## Non-goals
 
-- No changes to the existing 11-stage workflow's semantics (one possible
+- No changes to the existing 12-stage workflow's semantics (one possible
   adjacent tweak — skipping Diagnose for non-bug tasks — is noted but out of
   scope).
 - No project-template library; the Scaffold stage generates from the chosen
@@ -189,7 +189,7 @@ back to the bootstrap task (trailer/ledger), so the driver can tell when the
 child queue has drained.
 
 The greenfield task then parks in a **delegated** state rather than archiving:
-the existing 11-stage workflow takes over the queue, one increment per sealed
+the existing 12-stage workflow takes over the queue, one increment per sealed
 commit.
 
 ### 10. Audit — epilogue (balanced, writes: `llm-tasks/` only)

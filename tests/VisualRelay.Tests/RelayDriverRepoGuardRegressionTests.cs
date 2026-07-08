@@ -47,7 +47,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "count-drift");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        Assert.Null(subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 10));
+        Assert.Null(subagent.Invocations.SingleOrDefault(i => i.Stage.Number == 11));
         var ledger = await File.ReadAllTextAsync(
             Path.Combine(repo.Root, ".relay", "count-drift", "ledger.md"));
         Assert.Contains("pre-existing", ledger, StringComparison.OrdinalIgnoreCase);
@@ -89,8 +89,8 @@ public sealed class RelayDriverRepoGuardRegressionTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-oversize");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage10 = subagent.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Contains("touched.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("touched.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 
     /// <summary>(g) Mixed: pre-existing excluded, new surfaces.</summary>
@@ -129,9 +129,9 @@ public sealed class RelayDriverRepoGuardRegressionTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mixed");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage10 = subagent.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Contains("brand-new.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
-        Assert.DoesNotContain("big.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("brand-new.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.DoesNotContain("big.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 
     /// <summary>(h) Numbered sibling pre-existing, new numbered sibling still blocks.</summary>
@@ -171,8 +171,8 @@ public sealed class RelayDriverRepoGuardRegressionTests
 
         var outcome = await driver.RunTaskAsync(repo.Root, "numbered-sibling");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var stage10 = subagent.Invocations.Single(i => i.Stage.Number == 10);
-        Assert.Contains("Page2.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
-        Assert.DoesNotContain("Page1.cs", stage10.LastTestOutput!, StringComparison.Ordinal);
+        var stage11 = subagent.Invocations.Single(i => i.Stage.Number == 11);
+        Assert.Contains("Page2.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
+        Assert.DoesNotContain("Page1.cs", stage11.LastTestOutput!, StringComparison.Ordinal);
     }
 }
