@@ -154,7 +154,12 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 182→189 on 2026-07-07: fix-vision-tier-backend-routing added
         // BackendConfigGeneratorTests.VisionTier.cs (7 [Fact]s) to the
         // BackendConfigGeneratorTests oversized family.
-        const int baseline = 189;
+        // Dropped 185→171 on 2026-07-07: Part B review fix —
+        // decision-seam and virtualized WaitAsync tests moved from
+        // SwivalSubagentRunnerWatchdogTests to ActivityWatchdogDecisionTests
+        // (not in the oversized-families prefix list), so the countable
+        // [Fact]s in the SwivalSubagentRunnerWatchdogTests family dropped.
+        const int baseline = 171;
 
         string[] prefixes =
         [

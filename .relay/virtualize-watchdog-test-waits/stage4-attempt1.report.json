@@ -1,0 +1,422 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-08T02:55:43.308578+00:00",
+  "task": "# Relay stage 4: Plan\nTask: virtualize-watchdog-test-waits\nWorking directory: /tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits\n\n## Task input\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Virtualize the real-time waits (`time.sleep`, `time.monotonic`) used in watchdog tests so they become fast, deterministic, and flake-free. The three options range from zero production code change (monkey-patching) to clean interface injection (TimeProvider) to targeted extraction of the timer concern (WatchdogTimer).\",\n  \"options\": [\n    \"Abstract TimeProvider with DI \u2014 introduce a TimeProvider protocol/class wrapping sleep/monotonic; production uses RealTimeProvider, tests use VirtualTimeProvider that advances on demand.\",\n    \"Monkey-patch time/threading in test fixtures \u2014 use unittest.mock.patch or pytest-mock to replace time.monotonic, time.sleep, etc. with a FakeClock; no production code changes.\",\n    \"Extract a WatchdogTimer class \u2014 encapsulate all time operations into a WatchdogTimer that the watchdog delegates to; swap in VirtualWatchdogTimer for tests with an advance() method.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Production `ActivityWatchdog` already injects `TimeProvider` via its constructor (defaults to `TimeProvider.System`); uses `GetTimestamp()` and `Task.Delay(..., _timeProvider, ct)` \u2014 no raw `time.monotonic`/`time.sleep`. Pure decision functions (`DecideOutcome`, `TryDecideSocketWedge`) are already extracted as static methods and tested with simulated time values (synchronous, no real clock). The remaining real-time tests are: (a) `WaitAsync` loop tests that use `Task.Delay`-based pulse pumps and real `Stopwatch` measurements, and (b) integration tests that spawn real child processes via `ProcessCapture.RunAsync` (these involve OS processes and cannot be fully virtualized). No virtual time provider exists yet. A `ManualTimeProvider` must be written or `Microsoft.Extensions.Time.Testing` (providing `FakeTimeProvider`) added as a NuGet dependency. The `Task.Delay` calls in pump helpers are short (<50ms) and carry a real `CancellationToken`, so they already pass the `RealSleepGuard`. The `ActivityWatchdog`'s polling-loop `Task.Delay` (capped at 200ms) already uses the injected `_timeProvider`, so a virtual `TimeProvider.Advance()` would make it return instantly.\",\n  \"constraints\": [\n    \"The `RealSleepGuard` gate (`AllTestProjectCsFiles_AreSleepFree`) bans shell `sleep`, argv-form `(\\\"sleep\\\",\\\"30\\\")`, and uncancellable `Task.Delay`/`Thread.Sleep` \u2265 1000ms in tests; new code must not introduce real sleeps.\",\n    \"Production `ActivityWatchdog` constructor signature must remain backward-compatible \u2014 existing production callers pass no `TimeProvider` and rely on the `TimeProvider.System` default.\",\n    \"Tests that spawn real child processes (`ProcessCapture.RunAsync` with `exec tail -f /dev/null`) exercise real OS process lifecycle and kill signals; those integration tests cannot be fully virtualized \u2014 only the watchdog's time dimension can be made fast.\",\n    \"The `ActivityWatchdog` is `internal` and the test project uses `InternalsVisibleTo` \u2014 only the test project can access it; a `ManualTimeProvider` helper belongs in the test project.\",\n    \"Pulse pumps (`StartCpuPulsePump`, `StartBurstyWedgePump`, `StartIdleWedgePump`) run as background tasks; a virtual `TimeProvider.Advance()` must coordinate between the pump's `Task.Delay` and the watchdog's polling `Task.Delay` \u2014 both use the same `TimeProvider` instance.\",\n    \"`TimeProvider.GetTimestamp()` returns `long` ticks with a `TimestampFrequency`, not raw milliseconds; a virtual provider must return consistent ticks that convert correctly to milliseconds via `TicksToMs`.\",\n    \"The project targets `net10.0`; `System.TimeProvider` is available natively \u2014 no external package needed for the base class, but `Microsoft.Extensions.Time.Testing.FakeTimeProvider` (if used) requires adding a NuGet package reference.\",\n    \"The `CliWatchdogTests` (`TimeoutWatchdog`) is a separate tool with its own process-based timeout; it does NOT use `ActivityWatchdog` or `TimeProvider` and is out of scope for this task.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The `ActivityWatchdog` already injects `TimeProvider?` via its constructor (ProcessRunners.Watchdog.cs:78, defaults to `TimeProvider.System` at line 85). Its polling loop uses `Task.Delay(TimeSpan.FromMilliseconds(delay), _timeProvider, ct)` at line 284 \u2014 the overload that accepts a `TimeProvider`. Pure decision functions `DecideOutcome` (line 162) and `TryDecideSocketWedge` (line 143) are already static and tested synchronously with simulated time values. No `ManualTimeProvider`, `FakeTimeProvider`, or `Microsoft.Extensions.Time.Testing` package exists in the codebase (confirmed by grep across all .cs and .csproj files and `find` on disk).\\n\\nFour test methods still run the real `WaitAsync` polling loop against real wall-clock time, each creating `ActivityWatchdog` with the default `TimeProvider.System`:\\n\\n1. `ActivityWatchdogSocketWedgeTests.WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires` (line 79\u2013116): Creates watchdog with `inactivityTimeoutMs=1_500`, runs `StartCpuPulsePump` (a background `Task.Run` loop calling `Task.Delay(50, stop)` and `watchdog.Pulse(\\\"cpu\\\")`), then calls `await watchdog.WaitAsync(CancellationToken.None)` and measures elapsed with `Stopwatch`. Asserts `sw.ElapsedMilliseconds < inactivityMs + 3_000`. Total real wait: ~1.5 s.\\n\\n2. `ActivityWatchdogSocketWedgeTests.WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence` (line 126\u2013151): Same pattern with `inactivityMs=800` and `stopCts = new CancellationTokenSource(inactivityMs * 4)`. Total real wait: ~3.2 s.\\n\\n3. `ActivityWatchdogSocketWedgeTests.SustainedIdle.WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled` (line 64\u201388): Runs both `StartCpuPulsePump` and `StartBurstyWedgePump` (which calls `Task.Delay(windowMs / 8, stop)` inside a loop). Observes for `inactivityMs * 5` via `CancellationTokenSource`. Total real wait: ~5 s.\\n\\n4. `ActivityWatchdogSocketWedgeTests.SustainedIdle.WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge` (line 98\u2013127): `inactivityMs=1_200`, runs both pumps. Total real wait: ~1.2 s.\\n\\n5. `SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` (line 140\u2013174): Contains `await Task.Delay(50)` at line 155 WITHOUT a `CancellationToken` (the only uncancellable `Task.Delay` in watchdog tests, though at 50 ms it's under the RealSleepGuard's 1000 ms threshold). Then waits ~2 s for the watchdog loop. Total real wait: ~2 s.\\n\\nThe pump helpers (`StartCpuPulsePump`, `StartBurstyWedgePump`, `StartIdleWedgePump`) all use `Task.Delay(int, CancellationToken)` \u2014 the overload that does NOT accept a `TimeProvider`. To virtualize, these pumps must switch to `Task.Delay(TimeSpan, TimeProvider, CancellationToken)` and receive the same `ManualTimeProvider` instance as the watchdog. The watchdog's own `WaitAsync` already uses the `TimeProvider`-aware `Task.Delay` overload (line 284), so virtualizing it requires only injecting a `ManualTimeProvider`.\\n\\nThe `Stopwatch` assertions (e.g., `sw.ElapsedMilliseconds < inactivityMs + 3_000`) measure real wall-clock time and will report ~0 ms when time is virtualized; they must be replaced with assertions on the watchdog's reported `SilenceMs`/`SubtreeIdleForMs` or virtual-clock derived values.\\n\\nIntegration tests that spawn real child processes via `ProcessCapture.RunAsync` or `SwivalSubagentRunner.RunAsync` (e.g., `RunAsync_TotallySilentProcess_KilledAtFirstOutputDeadline`, `RunAsync_SilentThenActive_KilledNoResurrection`, `RunAsync_EarlyBurstThenTotalSilence_KilledAtInactivityDeadline`) involve real OS processes and `ProcessCapture`'s own `SampleTreeCpuLoopAsync` (ProcessCapture.cs:221) which also uses `Task.Delay(intervalMs, ct)` without a `TimeProvider`. These cannot be fully virtualized \u2014 only the watchdog's time dimension can be made fast.\\n\\nThe `RealSleepGuard` gate (`AllTestProjectCsFiles_AreSleepFree`) is currently passing (line 149 is `[Fact]`, not `[Fact(Skip)]`) \u2014 the existing tests comply because all `Task.Delay` calls either carry a real `CancellationToken` or are under 1000 ms. A `ManualTimeProvider` must not introduce any new real sleeps.\",\n  \"excerpts\": [\n    \"ProcessRunners.Watchdog.cs:72-85 \u2014 Constructor already accepts `TimeProvider? timeProvider = null`, defaults to `TimeProvider.System`, stores as `_timeProvider`\",\n    \"ProcessRunners.Watchdog.cs:284 \u2014 `Task.Delay(TimeSpan.FromMilliseconds(delay), _timeProvider, ct)` \u2014 the polling loop already uses the TimeProvider-aware overload\",\n    \"ProcessRunners.Watchdog.cs:162-191 \u2014 `DecideOutcome` and `TryDecideSocketWedge` (line 143-152) are static pure functions, already tested with simulated values\",\n    \"ActivityWatchdogSocketWedgeTests.cs:25-34 \u2014 `StartCpuPulsePump` uses `Task.Delay(50, stop)` \u2014 the 2-arg overload without TimeProvider\",\n    \"ActivityWatchdogSocketWedgeTests.cs:79-116 \u2014 `WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires` creates watchdog with default TimeProvider, measures real `Stopwatch`\",\n    \"ActivityWatchdogSocketWedgeTests.SustainedIdle.cs:20-38 \u2014 `StartBurstyWedgePump` uses `Task.Delay(windowMs / 8, stop)` \u2014 int+CT overload, no TimeProvider\",\n    \"SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs:155 \u2014 `await Task.Delay(50)` \u2014 uncancellable delay (no CT), the only one in watchdog tests\",\n    \"ProcessCapture.cs:221-234 \u2014 `SampleTreeCpuLoopAsync` uses `await Task.Delay(intervalMs, ct)` \u2014 int+CT overload, would also need TimeProvider for full virtualization\",\n    \"VisualRelay.Tests.csproj:1-55 \u2014 No `Microsoft.Extensions.Time.Testing` PackageReference; only standard xunit/coverlet/Avalonia references\",\n    \"RealSleepGuardTests.cs:148-163 \u2014 `AllTestProjectCsFiles_AreSleepFree` is an active `[Fact]` (not skipped), currently passing\"\n  ],\n  \"repro\": \"Run the five tests that exercise `WaitAsync` against real wall-clock time:\\n\\n```bash\\ndotnet test tests/VisualRelay.Tests \\\\\\n  --filter \\\"FullyQualifiedName~ActivityWatchdogSocketWedgeTests.WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires|\\n           FullyQualifiedName~ActivityWatchdogSocketWedgeTests.WaitAsync_BusySubtree_NotKilled|\\n           FullyQualifiedName~WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled|\\n           FullyQualifiedName~WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge|\\n           FullyQualifiedName~WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline\\\"\\n```\\n\\nObserve that each test takes real wall-clock seconds to complete (1.5\u20135 s each), and that none of them pass a `TimeProvider` to the `ActivityWatchdog` constructor \u2014 they all rely on `TimeProvider.System` (the default). Note that the `Stopwatch`-based assertions (`sw.ElapsedMilliseconds < inactivityMs + N`) tie the tests to real clock progression; after virtualization these assertions will need to reference virtual-time-derived values instead.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Plan\n\n### Overview\n\nCreate a `ManualTimeProvider` \u2014 a virtual clock extending `System.TimeProvider` \u2014 and inject it into the five `WaitAsync` watchdog tests that currently run against real wall-clock time. The provider lets tests advance time on demand via `Advance(TimeSpan)`, making the watchdog polling loop and pump `Task.Delay` calls return instantly. Replace real-time `Stopwatch` assertions and `CancellationTokenSource` timeouts with virtual-time-driven equivalents. Modify the three background-pump helpers (`StartCpuPulsePump`, `StartBurstyWedgePump`, `StartIdleWedgePump`) to accept a `TimeProvider` parameter so their internal `Task.Delay` calls also use the virtual clock. Replace the uncancellable `await Task.Delay(50)` in `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` with a direct `timeProvider.Advance(50ms)` call.\n\nIntegration tests that spawn real child processes via `ProcessCapture.RunAsync` / `SwivalSubagentRunner.RunAsync` are out of scope \u2014 they involve real OS processes and cannot be fully virtualized.\n\n### File-by-file changes\n\n**1. NEW: `tests/VisualRelay.Tests/ManualTimeProvider.cs`**\n\n`internal sealed class ManualTimeProvider : TimeProvider` with:\n- `long _timestamp` (Interlocked read/write), `List<TimerEntry> _timers` (lock-protected)\n- `TimestampFrequency => TimeSpan.TicksPerSecond` (10_000_000 \u2014 so ticks convert cleanly to ms via the existing `TicksToMs` formula)\n- `GetTimestamp()` returns current `_timestamp`\n- `GetUtcNow()` returns `new DateTimeOffset(_timestamp, TimeSpan.Zero)`\n- `CreateTimer(TimerCallback, object?, TimeSpan dueTime, TimeSpan period)` records a `TimerEntry` with `Due = _timestamp + dueTime.Ticks` and returns it as `ITimer`\n- `Advance(TimeSpan delta)` increments `_timestamp` by `delta.Ticks`, collects due timers under lock, marks them fired, then invokes each callback synchronously (outside the lock, to avoid re-entrancy)\n- Inner `TimerEntry : ITimer` holds callback/state/due/fired; `Change` and `Dispose` are no-ops\n\n**2. MODIFY: `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs`**\n\n- **`StartCpuPulsePump`**: Add `TimeProvider timeProvider` parameter after `CancellationToken stop`. Change `Task.Delay(50, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(50), timeProvider, stop)`. Update callers.\n\n- **`WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires`** (line 79\u2013116):\n  - Create `var time = new ManualTimeProvider()` before watchdog\n  - Pass `timeProvider: time` to `new ActivityWatchdog(...)`\n  - Pass `time` to `StartCpuPulsePump`\n  - Remove `Stopwatch` (`var sw = Stopwatch.StartNew()`, `sw.Stop()`, `sw.ElapsedMilliseconds` assertions)\n  - Remove `Stopwatch`-based assertion (line 107\u2013108); the fact that the watchdog fires already proves virtual time advanced far enough\n  - Start `watchdog.WaitAsync(CancellationToken.None)` as a background `Task<Result>`\n  - Drive virtual time in 50ms steps, calling `time.Advance(50ms)` then `await Task.Yield()` in a loop, until the watchdog task completes\n  - Keep `FiredSocketWedge`, `kill.IsCancellationRequested`, `SilenceMs`, and `SubtreeIdleForMs` assertions\n\n- **`WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence`** (line 126\u2013151):\n  - Create ManualTimeProvider, inject into watchdog and pump\n  - Replace `new CancellationTokenSource(inactivityMs * 4)` (real-time timeout) with plain `new CancellationTokenSource()`\n  - Start watchdog task, drive virtual time past `inactivityMs * 4` in 50ms steps (yielding between), verify task is NOT completed\n  - Cancel observation CTS, `await watchdogTask`, assert `Disarmed`\n\n**3. MODIFY: `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.SustainedIdle.cs`**\n\n- **`StartBurstyWedgePump`**: Add `TimeProvider timeProvider` parameter. Change `Task.Delay(windowMs / 8, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(windowMs / 8), timeProvider, stop)`. Update callers.\n\n- **`StartIdleWedgePump`**: Add `TimeProvider timeProvider` parameter. Change `Task.Delay(50, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(50), timeProvider, stop)`. Update callers.\n\n- **`WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled`** (line 64\u201388):\n  - Create ManualTimeProvider, inject into watchdog, pass to both pumps\n  - Replace `new CancellationTokenSource(inactivityMs * 5)` with plain CTS\n  - Drive virtual time past `inactivityMs * 5`, verify watchdog task not completed, cancel, assert `Disarmed`\n\n- **`WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge`** (line 98\u2013127):\n  - Create ManualTimeProvider, inject into watchdog, pass to both pumps\n  - Remove `Stopwatch` and replace its assertions:\n    - Lower bound: advance just under `inactivityMs` (e.g. `inactivityMs - 50`), verify watchdog task NOT completed \u2192 proves the detector doesn't fire prematurely\n    - Upper bound: advance past `inactivityMs + 500`, verify watchdog task completes with `FiredSocketWedge`\n  - Keep `FiredSocketWedge` and `kill.IsCancellationRequested` assertions\n\n**4. MODIFY: `tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs`**\n\n- **`WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline`** (line 140\u2013174):\n  - Create `var time = new ManualTimeProvider()`, pass `timeProvider: time` to watchdog constructor\n  - Replace `await Task.Delay(50)` with `time.Advance(TimeSpan.FromMilliseconds(50))` (instantaneous, no cancellation token needed)\n  - Remove `// ReSharper disable once MethodSupportsCancellation` comment (no longer applicable)\n  - Remove `Stopwatch` and `sw.ElapsedMilliseconds < inactivityTimeoutMs + 2_000` assertion\n  - Start watchdog task, drive virtual time past inactivity window, assert task completes with `FiredStall`\n  - Keep `LastPulseSource`, `SilenceMs`, and `kill.IsCancellationRequested` assertions\n\n```json\n{\n  \"plan\": \"Create a `ManualTimeProvider` \u2014 a virtual clock extending `System.TimeProvider` \u2014 and inject it into the five `WaitAsync` watchdog tests that currently run against real wall-clock time. The provider lets tests advance time on demand via `Advance(TimeSpan)`, making the watchdog polling loop and pump `Task.Delay` calls return instantly. Replace real-time `Stopwatch` assertions and `CancellationTokenSource` timeouts with virtual-time-driven equivalents. Modify the three background-pump helpers (`StartCpuPulsePump`, `StartBurstyWedgePump`, `StartIdleWedgePump`) to accept a `TimeProvider` parameter so their internal `Task.Delay` calls also use the virtual clock. Replace the uncancellable `await Task.Delay(50)` in `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` with a direct `timeProvider.Advance(50ms)` call. Integration tests that spawn real child processes via `ProcessCapture.RunAsync` / `SwivalSubagentRunner.RunAsync` are out of scope \u2014 they involve real OS processes and cannot be fully virtualized.\\n\\n**NEW: `ManualTimeProvider.cs`** \u2014 `internal sealed class ManualTimeProvider : TimeProvider` with `long _timestamp`, `List<TimerEntry> _timers`, `TimestampFrequency = TimeSpan.TicksPerSecond`, `GetTimestamp()`, `GetUtcNow()`, `CreateTimer(...)` returning an `ITimer`, and `Advance(TimeSpan)` that increments the clock and fires due timer callbacks synchronously.\\n\\n**MODIFY: `ActivityWatchdogSocketWedgeTests.cs`** \u2014 Add `TimeProvider` parameter to `StartCpuPulsePump`; `WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires` injects `ManualTimeProvider`, removes `Stopwatch`, drives virtual time in 50ms steps with yields; `WaitAsync_BusySubtree_NotKilled` injects `ManualTimeProvider`, replaces real-time `CancellationTokenSource(...)` timeout with virtual-time-driven cancellation.\\n\\n**MODIFY: `ActivityWatchdogSocketWedgeTests.SustainedIdle.cs`** \u2014 Add `TimeProvider` parameter to `StartBurstyWedgePump` and `StartIdleWedgePump`; both `WaitAsync_*` tests inject `ManualTimeProvider`, replace `Stopwatch` / real-time CTS with virtual-time-driven loop and assertions.\\n\\n**MODIFY: `SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs`** \u2014 `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` injects `ManualTimeProvider`, replaces `await Task.Delay(50)` with `time.Advance(50ms)`, removes `Stopwatch` and ReSharper comment.\\n\\nAll five tests become fast (<50ms each) and deterministic. The `RealSleepGuard` gate stays green \u2014 no new real sleeps introduced.\",\n  \"manifest\": [\n    \"+tests/VisualRelay.Tests/ManualTimeProvider.cs\",\n    \"tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs\",\n    \"tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.SustainedIdle.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 11,
+    "tool_calls_total": 21,
+    "tool_calls_succeeded": 20,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 11,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 11,
+    "total_llm_time_s": 512.467,
+    "prompt_cache": {
+      "cached_tokens": 304640,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.593,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.092,
+      "prompt_tokens_est": 6624,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 380
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.948,
+      "prompt_tokens_est": 6846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15353
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.SustainedIdle.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6843
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14210
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/src/VisualRelay/ProcessRunners.Watchdog.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 174,
+      "error": "error: path does not exist: \"/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/src/VisualRelay/ProcessRunners.Watchdog.cs\""
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 70.752,
+      "prompt_tokens_est": 16423,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class ActivityWatchdog",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.212,
+      "result_length": 407
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.csproj",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 48
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*Watchdog*",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 57
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.347,
+      "prompt_tokens_est": 16718,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15592
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2470
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 5.14,
+      "prompt_tokens_est": 21357,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 9122
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/RealSleepGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8083
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ManualTimeProvider|FakeTimeProvider|VirtualTime",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.15,
+      "result_length": 17
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 313.412,
+      "prompt_tokens_est": 26122,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/src/VisualRelay.Core/Execution/ProcessCapture.cs",
+        "offset": 215,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1658
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Task\\.Delay\\(",
+        "include": "*.cs",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.104,
+      "result_length": 2146
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 5.132,
+      "prompt_tokens_est": 41854,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class.*Helper|class.*Util|class.*Fake|class.*Stub|class.*Mock",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.076,
+      "result_length": 1117
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests",
+        "pattern": "**/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.027,
+      "result_length": 5741
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.654,
+      "prompt_tokens_est": 43816,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/SwivalTestHelpers.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1126
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260708024217/virtualize-watchdog-test-waits/tests/VisualRelay.Tests/TestDoubles.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1170
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 22.487,
+      "prompt_tokens_est": 44577,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me consolidate my analysis into the final plan and manifest.\n\n## Files to create:\n\n1. `+tests/VisualRelay.Tests/ManualTimeProvider.cs` \u2014 Virtual TimeProvider that extends System.TimeProvider, with Advance() method.\n\n## Files to modify:\n\n2. `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs` \u2014 Modify `StartCpuPulsePump` to accept TimeProvider; modify `WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires` and `WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence` to inject ManualTimeProvider and replace Stopwatch assertions.\n\n3. `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.SustainedIdle.cs` \u2014 Modify `StartBurstyWedgePump` and `StartIdleWedgePump` to accept TimeProvider; modify both WaitAsync tests to inject ManualTimeProvider.\n\n4. `tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs` \u2014 Modify `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` to inject ManualTimeProvider and replace `await Task.Delay(50)`.\n\nLet me now detail each change:\n\n### ManualTimeProvider.cs (new file)\n- internal sealed class ManualTimeProvider : TimeProvider\n- Internal timestamp counter (long, volatile/Interlocked)\n- TimestampFrequency = TimeSpan.TicksPerSecond (10M)\n- GetTimestamp() returns current ticks\n- GetUtcNow() derived from timestamp\n- CreateTimer() stores entries; Advance() fires due entries and invokes callbacks\n- Internal ITimer implementation (ManualTimer : ITimer)\n\n### ActivityWatchdogSocketWedgeTests.cs changes:\n1. `StartCpuPulsePump` \u2014 add `TimeProvider timeProvider` parameter; change `Task.Delay(50, stop)` to `Task.Delay(TimeSpan.FromMilliseconds(50), timeProvider, stop)`\n2. `WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires`:\n   - Create ManualTimeProvider\n   - Pass to watchdog constructor\n   - Pass to StartCpuPulsePump\n   - Replace Stopwatch with virtual-time-driven loop\n   - Remove sw.ElapsedMilliseconds assertions; keep SilenceMs/SubtreeIdleForMs assertions\n3. `WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence`:\n   - Create ManualTimeProvider\n   - Pass to watchdog and pump\n   - Replace CancellationTokenSource(inactivityMs * 4) with virtual-time-driven cancellation (advance past 4\u00d7 inactivityMs then cancel)\n\n### ActivityWatchdogSocketWedgeTests.SustainedIdle.cs changes:\n1. `StartBurstyWedgePump` \u2014 add TimeProvider parameter; change `Task.Delay(windowMs / 8, stop)` to TimeProvider-aware overload\n2. `StartIdleWedgePump` \u2014 add TimeProvider parameter\n3. `WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled` \u2014 inject ManualTimeProvider, replace timed CTS with virtual-time-driven cancellation\n4. `WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge` \u2014 inject ManualTimeProvider, replace Stopwatch assertions\n\n### SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs changes:\n1. `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline`:\n   - Create ManualTimeProvider, pass to watchdog\n   - Replace `await Task.Delay(50)` with `timeProvider.Advance(TimeSpan.FromMilliseconds(50))`\n   - Remove Stopwatch and related assertion\n\nThat's 4 files (1 new, 3 modified). Let me verify nothing else needs changing.\n\nThe ProcessCapture integration tests (`ProcessCapture_SyntheticWedge_IdleChildPlusSocket_IsKilled`, `ProcessCapture_BusyChildPlusSocket_NotKilled`) spawn real child processes via `ProcessCapture.RunAsync`. These are \"integration tests that involve real OS processes and ProcessCapture's own SampleTreeCpuLoopAsync\" \u2014 they cannot be fully virtualized. The diagnosis confirms this. They are OUT OF SCOPE for this task.\n\nThe SwivalSubagentRunner integration tests (`RunAsync_TotallySilentProcess_KilledAtFirstOutputDeadline`, `RunAsync_SilentThenActive_KilledNoResurrection`, etc.) also spawn real child processes via `SwivalSubagentRunner.RunAsync`. Also out of scope.\n\nSo the manifest is: 1 new file, 3 modified files. Correct."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 40.587,
+      "prompt_tokens_est": 45719,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me now carefully draft the plan text and manifest.\n\nThe plan needs to:\n1. Describe the new ManualTimeProvider file\n2. Describe changes to each test file\n3. Show the exact code changes for each file\n\nLet me structure the plan:\n\n## Plan\n\n### Overview\nCreate a `ManualTimeProvider` (virtual clock extending `System.TimeProvider`) and inject it into the five `WaitAsync`-based watchdog tests. Replace real-time `Stopwatch` assertions and `CancellationTokenSource` timeouts with virtual-time-driven equivalents. Modify the three background-pump helpers to accept `TimeProvider` so their `Task.Delay` calls also use the virtual clock. The `await Task.Delay(50)` without cancellation in `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline` becomes a direct `Advance(50ms)` call.\n\n### Files\n\n1. **NEW: `tests/VisualRelay.Tests/ManualTimeProvider.cs`**\n   - `internal sealed class ManualTimeProvider : TimeProvider`\n   - Fields: `long _timestamp`, `List<TimerEntry> _timers`, `object _lock`\n   - `TimestampFrequency => TimeSpan.TicksPerSecond`\n   - `GetTimestamp() => Interlocked.Read(ref _timestamp)`\n   - `GetUtcNow() => new DateTimeOffset(_timestamp, TimeSpan.Zero)`\n   - `CreateTimer(...)` records timer with `due = _timestamp + dueTime.Ticks` and returns an `ITimer`\n   - `Advance(TimeSpan delta)` increments `_timestamp` by `delta.Ticks`, collects due timers, marks them fired, invokes callbacks synchronously\n   - Inner `TimerEntry : ITimer` holds callback/state/due/fired; `Change` no-ops; `Dispose` no-ops\n\n2. **MODIFY: `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs`**\n   - `StartCpuPulsePump`: add `TimeProvider timeProvider` parameter after `CancellationToken stop`; change `Task.Delay(50, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(50), timeProvider, stop)`\n   - `WaitAsync_CpuPulseMasksDeadline_SocketWedgeStillFires`:\n     * Create `var time = new ManualTimeProvider()` before watchdog\n     * Pass `timeProvider: time` to watchdog constructor\n     * Pass `time` to `StartCpuPulsePump`\n     * Replace `var sw = Stopwatch.StartNew()` / `sw.Stop()` / `sw.ElapsedMilliseconds` assertions with virtual-time drive loop (advance 50ms steps, yield, check watchdogTask completion)\n     * Keep `SilenceMs` and `SubtreeIdleForMs` assertions\n   - `WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence`:\n     * Create ManualTimeProvider, inject into watchdog and pump\n     * Replace `new CancellationTokenSource(inactivityMs * 4)` with plain `new CancellationTokenSource()`\n     * After watchdog starts, drive virtual time past `inactivityMs * 4`, then cancel observation cts, assert Disarmed\n\n3. **MODIFY: `tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.SustainedIdle.cs`**\n   - `StartBurstyWedgePump`: add `TimeProvider timeProvider` parameter; change `Task.Delay(windowMs / 8, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(windowMs / 8), timeProvider, stop)`\n   - `StartIdleWedgePump`: add `TimeProvider timeProvider` parameter; change `Task.Delay(50, stop)` \u2192 `Task.Delay(TimeSpan.FromMilliseconds(50), timeProvider, stop)`\n   - `WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled`:\n     * Inject ManualTimeProvider, pass to both pumps\n     * Replace `new CancellationTokenSource(inactivityMs * 5)` timeout with virtual-time-driven loop then cancel\n   - `WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge`:\n     * Inject ManualTimeProvider, pass to both pumps\n     * Replace `Stopwatch` lower-bound assertion (`sw.ElapsedMilliseconds >= inactivityMs - 300`) with check that advancing just under the window leaves watchdog undisarmed\n     * Replace upper-bound assertion (`sw.ElapsedMilliseconds < inactivityMs + 3_000`) with check that watchdog fires after advancing past window\n     * Keep `FiredSocketWedge` and `kill.IsCancellationRequested` assertions\n\n4. **MODIFY: `tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs`**\n   - Remove `using System.Diagnostics` (no longer needed for Stopwatch)\n   - `WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline`:\n     * Create ManualTimeProvider, pass to watchdog\n     * Replace `await Task.Delay(50)` with `time.Advance(TimeSpan.FromMilliseconds(50))`\n     * Replace `Stopwatch` + `sw.ElapsedMilliseconds` assertion with virtual-time-driven loop; assert watchdog fires\n     * Keep `FiredStall`, `LastPulseSource`, `SilenceMs` assertions\n     * Remove ReSharper disable comment (no longer needed since no real Task.Delay without cancellation)\n\nNow let me double-check: the `WaitAsync_BusySubtree_NotKilled_EvenWithSocketAndSilence` test currently uses `new CancellationTokenSource(inactivityMs * 4)` (3200ms real time) as the token passed to `watchdog.WaitAsync(stopCts.Token)`. The watchdog returns `Disarmed` when the token is cancelled. With virtual time, I'll:\n- Start watchdog.WaitAsync(obsCts.Token) as a task\n- Advance virtual time past 4\u00d7 inactivityMs (3200ms) in 50ms steps, yielding between\n- Verify watchdogTask is NOT completed (since subtree is busy, no fire should happen)\n- Cancel obsCts\n- Await watchdogTask \u2192 should return Disarmed\n\nThis works because the watchdog loop checks `ct.IsCancellationRequested` at the top of each iteration.\n\nSimilarly for `WaitAsync_BurstyAgent_IdleSampleButRecentCpuBurst_NotKilled` with `inactivityMs * 5`.\n\nFor the Stopwatch assertions in `WaitAsync_SustainedIdlePlusSocket_StillFiresSocketWedge`:\n- Lower bound: verify the watchdog does NOT fire before the sustained-idle window has elapsed. We can do this by advancing just under the window and checking watchdogTask is not completed.\n- Upper bound: verify the watchdog DOES fire after advancing past the window. We advance further and check the task completes with FiredSocketWedge.\n\nOK, I'm confident in the plan. Let me write it up.",
+        "next_thought_needed": false
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 36.917,
+      "prompt_tokens_est": 47317,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

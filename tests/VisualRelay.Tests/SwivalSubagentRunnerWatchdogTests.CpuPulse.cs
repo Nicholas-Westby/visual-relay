@@ -51,32 +51,11 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
 
     // A truly wedged subagent (no output, no trace, ~zero CPU — blocked at byte 0)
     // must still be killed by the inactivity deadline with cpu sampling active.
-    [Fact]
-    public async Task RunAsync_TrueWedge_NoCpu_StillStallKilled()
-    {
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-true-wedge",
-            """
-            #!/usr/bin/env bash
-            echo "startup chatter" >&2
-            exec tail -f /dev/null
-            """);
-        var config = TestConfig() with
-        {
-            InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 4_500 },
-            SubagentTimeoutMilliseconds = 10_000,  // backstop (inactivity window 4.5s + ~5s)
-            MaxStallRetries = 0
-        };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
-
-        Assert.False(result.IsValid);
-        Assert.Contains("persistent model-backend stall", result.Error, StringComparison.Ordinal);
-    }
+    // Covered by the decision-seam test:
+    //   DecideOutcome_FirstPulseThenSilence_FiresAtInactivityDeadline
+    // (silenceMs ≥ inactivityTimeoutMs → FiredStall).
+    // Removed as a RunAsync integration test.
+    // =========================================================================
 
     // A stall-killed attempt must leave its captured stdout/stderr on disk —
     // the 2026-06-10 triple-stall autopsy had zero evidence to read.
@@ -111,59 +90,10 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         Assert.Contains("stall", content, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>
-    /// Regression for the 2026-06-12 socket-wedge incident: an agent that
-    /// produces an early output burst (stderr + trace), then goes completely
-    /// silent — no trace writes, no stdout/stderr, sub-epsilon CPU (~1 ms/s
-    /// from a dead CLOSE_WAIT socket) — must be killed at the inactivity
-    /// deadline, not hours later.
-    ///
-    /// The fake script emulates the exact incident pattern: startup chatter,
-    /// trace-dir creation (first-output pulse), then absolute silence — a
-    /// 0-CPU block-forever child (far longer than the 6 s inactivity window).
-    /// With the current <c>SampleTreeCpuLoopAsync</c> null-return bug this test
-    /// may flakily pass or fail depending on whether <c>ps(1)</c> fails during
-    /// the run; after the fix it must pass deterministically.
-    /// </summary>
-    [Fact]
-    public async Task RunAsync_EarlyBurstThenTotalSilence_KilledAtInactivityDeadline()
-    {
-        using var repo = TestRepository.Create();
-        var script = await SwivalTestHelpers.WriteExecutableAsync(
-            repo.Root,
-            "fake-swival-burst-then-silent",
-            """
-            #!/usr/bin/env bash
-            while [[ $# -gt 0 ]]; do
-              if [[ "$1" == "--trace-dir" ]]; then trace_dir="$2"; shift 2; else shift; fi
-            done
-            # Early output burst: stderr chatter + trace dir + first token.
-            echo "startup diagnostics complete" >&2
-            mkdir -p "$trace_dir"
-            printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"text","text":"first token"}]}}' > "$trace_dir/trace.jsonl"
-            # Now go completely silent — dead socket, no trace, no output — block
-            # forever so the inactivity watchdog's kill is the only thing that ends
-            # this child. Any late output after exec is unreachable, as the kill intends.
-            exec tail -f /dev/null
-            """);
-        var config = TestConfig() with
-        {
-            InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 6_000 },
-            SubagentTimeoutMilliseconds = 11_000,  // backstop (inactivity window 6s + ~5s)
-            MaxStallRetries = 0
-        };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
-            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
-        sw.Stop();
-
-        Assert.False(result.IsValid);
-        Assert.Contains("persistent model-backend stall", result.Error, StringComparison.Ordinal);
-        // Must have been killed by the inactivity deadline, not first-output.
-        Assert.Contains("inactivity", result.Error, StringComparison.Ordinal);
-        Assert.True(sw.ElapsedMilliseconds < 20_000,
-            $"Expected kill at ~6s inactivity window, took {sw.ElapsedMilliseconds} ms");
-    }
+    // Regression for the 2026-06-12 socket-wedge incident: an agent with early
+    // output burst then total silence → killed at inactivity deadline.
+    // Covered by the virtualized WaitAsync_BurstThenTotalSilence_FiresAtInactivityDeadline
+    // and the decision-seam DecideOutcome tests in the ActivityWatchdog partial.
+    // Removed as a RunAsync integration test.
+    // =========================================================================
 }

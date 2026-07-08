@@ -11,11 +11,10 @@ namespace VisualRelay.Tests;
 /// <c>Thread.Sleep</c>/<c>Task.Delay</c> calls — while string-literal-token scoping
 /// makes doc-comment / identifier false positives impossible by construction.
 ///
-/// For now this file carries only the matcher's behavioural facts plus the live
-/// enumeration gate, which is <c>[Fact(Skip)]</c> until Part B of
-/// harness-no-real-sleeps-in-tests makes the suite sleep-free (the real watchdog
-/// tests still embed real shell sleeps today, so the live gate is RED). Part B
-/// un-skips it.
+/// This file carries the matcher's behavioural facts plus the live enumeration
+/// gate. Part B of harness-no-real-sleeps-in-tests made the suite sleep-free —
+/// the timing-sensitive watchdog tests were rewritten to use a ManualTimeProvider
+/// or pure decision-seam assertions, so the live gate is GREEN and stays that way.
 ///
 /// This file is self-exempt by filename in <see cref="RealSleepGuard"/> because it
 /// contains sleep fixtures; that exemption is exactly why the live gate can scan
@@ -144,6 +143,38 @@ public sealed class RealSleepGuardTests
     /// decision driven by simulated time values (Class B), so no test embeds a real
     /// shell sleep as a "won't-stop-on-its-own" stand-in. This fact keeps the suite that
     /// way: any reintroduced real sleep flips the guard to a build failure.
+    ///
+    /// ALLOWLIST — legitimate real-process waits that remain by design (each entry
+    /// carries a one-line justification; new entries must be reviewed):
+    ///
+    /// 1. SwivalSubagentRunnerWatchdogTests.RunAsync_TotallySilentProcess_*
+    ///    — real-process smoke: spawns a blocking child and waits for the watchdog
+    ///    to deliver SIGKILL; the kill path cannot be exercised via decision seam.
+    ///
+    /// 2. SwivalSubagentRunnerWatchdogTests.RunAsync_SilentCpuBurn_*
+    ///    — real-process smoke: verifies CPU-pulse detection on a live child;
+    ///    CPU sampling against a real OS process tree is seam-exempt.
+    ///
+    /// 3. ActivityWatchdogSocketWedgeTests.ProcessCapture_SyntheticWedge_*
+    ///    — real-process smoke: socket-wedge scenario with ProcessCapture
+    ///    integration; real pipeline from child spawn through watchdog to kill.
+    ///
+    /// 4. CliWatchdogTests.Returns124_* — end-to-end TimeoutWatchdog tests that
+    ///    verify real SIGKILL escalation; the CliWatchdog is a separate
+    ///    process-based tool, not ActivityWatchdog.
+    ///
+    /// 5. SwivalSubagentRunnerWatchdogTests retry/output-capture/NonzeroExit facts
+    ///    — test retry, output capture, and nonzero-exit handling through the
+    ///    full SwivalSubagentRunner pipeline; these behaviors live above the
+    ///    watchdog's decision seam and cannot be tested in isolation.
+    ///
+    /// 6. SandboxedTestRunnerReapTests / SwivalSubagentRunnerTests
+    ///    — real process lifecycle (reap, stdout/stdin pumps) through sandbox
+    ///    and swival runners; pipeline-integration tests, not watchdog-decision.
+    ///
+    /// 7. Virtualized watchdog tests use Task.Delay(1) in advance-yield loops
+    ///    to cooperatively yield to thread-pool pump continuations; each delay
+    ///    is 1 ms (&lt; the 1 000 ms gate threshold) and is harmless.
     /// </summary>
     [Fact]
     public void AllTestProjectCsFiles_AreSleepFree()

@@ -81,6 +81,7 @@ public sealed partial class SplitGuardVerificationTests
     {
         string[] expected =
         [
+            "ActivityWatchdogSocketWedgeTests.cs",
             "SwivalSubagentRunnerWatchdogTests.cs",
             "SwivalSubagentRunnerTests.cs",
             "SandboxedTestRunnerReapTests.cs",
