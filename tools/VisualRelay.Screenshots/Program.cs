@@ -106,12 +106,21 @@ static MainWindowViewModel BuildViewModel(string root, string demoTaskMarkdown)
     viewModel.Tasks.Add(DemoTask(root, "rate-limit-middleware", costUsd: 0.0121, seconds: 284, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "stabilise-flaky-retry-test", costUsd: 0.0032, seconds: 95, stages: 12));
     viewModel.Tasks.Add(DemoTask(root, "extract-theme-tokens", "swival exit 2", costUsd: 0.0009, seconds: 31, stages: 2));
+    // Give one demo card a DayHeader so the screenshot exercises the day-header
+    // row (archive view shows grouped day headers like "Today ($1.04)").
+    viewModel.Tasks[1].DayHeader = "Today ($1.04)";
     viewModel.RestoreRunningTaskState(task.Id, 3, "Diagnose");
     // Setting SelectedTask kicks off an async load that resets the stage board and
     // reads markdown/context/run-history from the (empty) scratch project. The
     // dynamic display state is therefore applied AFTER Show()+settle in SeedActivity,
     // so it wins over that load instead of racing it.
     viewModel.SelectedTask = task;
+    // Render all four card states (pending, selected, running, running+selected)
+    // plus a day-header row for human review.  The ring is VM-driven (IsSelected),
+    // and the green border is VM-driven (MarkRunning), so we can set them directly
+    // without involving the ListBox selection model.
+    viewModel.Tasks[2].MarkRunning();                     // state 3: running-not-selected
+    viewModel.Tasks[1].IsSelected = true;                 // state 2: selected-not-running (+ day header)
     return viewModel;
 }
 

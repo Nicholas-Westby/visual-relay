@@ -1,0 +1,409 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-07T19:59:25.830343+00:00",
+  "task": "# Relay stage 4: Plan\nTask: round-task-cards-in-every-state\nWorking directory: /tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state\n\n## Task input\n# Round Task Cards in Every State \u2014 Remove the Square ListBoxItem Chrome Behind Them\n\nA previous change (commit `d9baad5`, \"fix: show combined active+in-progress state with blue outer\nborder\") added the blue-outside-green combined state and put `CornerRadius=\"8\"` on the card\nlayers. Square-corner artifacts still remain, because the biggest offender was never touched:\n**Avalonia Fluent's own `ListBoxItem` template chrome paints square, full-item highlight\nrectangles behind the rounded cards**. This task removes every remaining square artifact and\nfixes two smaller geometry bugs, gated by machine-checkable render tests of every card state\n(headless visual-tree assertions \u2014 image inspection is NOT required at any implementation stage;\nthe pipeline only has vision early, so screenshots cannot be a gate).\n\nEvidence in this folder \u2014 for the early planning stages (which can see attached images) and for\nthe human reviewer; the enforcement gate is the render-test suite in step 4:\n\n- `user-archive-quirks.png` / `user-queue-quirks.png` \u2014 the reported quirks (archive and queue).\n- `archive-now.png` \u2014 live capture: the selected archive item shows a **square blue band spanning\n  the whole item, including the \"Today ($1.04)\" day-header row**, behind the correctly rounded\n  blue ring of the card itself.\n- `queue-now.png` \u2014 live capture: the running+selected card's blue outer ring visibly pinches at\n  the corners (radius math, defect D3 below).\n\n## The defects, precisely\n\n- **D1 \u2014 square selection band.** Selecting a card paints a square highlight over the entire\n  `ListBoxItem` \u2014 most obvious in Archive, where the day header (`\"Today ($1.04)\"`) is part of\n  the item template and gets swallowed by the band.\n- **D2 \u2014 square hover/press tint.** Hovering (and pressing) a card adds a square full-item tint\n  behind the rounded card.\n- **D3 \u2014 pinched outer ring.** In the selected (and running+selected) state, the outer blue ring\n  (`CornerRadius=\"8\"`, `BorderThickness` 2) wraps the inner card (`CornerRadius=\"8\"`) \u2014 for a\n  uniform ring, the **outer radius must equal inner radius + outer border thickness**, i.e. 10.\n  At 8/8 the gap pinches to zero at the corners, which reads as \"squarish\".\n- **D4 \u2014 impossible rail radius.** The `selectionRail` is a 4px-wide stripe (`Grid`\n  `ColumnDefinitions=\"4,*\"`, column 0) carrying `CornerRadius=\"8\"` on *all* corners \u2014 a radius\n  larger than the element's width. It should be rounded on the left corners only, matched to the\n  card's inner curvature.\n- **D5 \u2014 day header participates in selection.** Consequence of D1: after the fix, the header\n  row must show **no** tint or band in any state; card visuals must be the only painted state.\n\n## Current state (researched)\n\n- **Card template** \u2014 `src/VisualRelay.App/Views/Controls/QueuePanel.axaml`, the\n  `DataTemplate DataType=\"{x:Type vm:TaskRowViewModel}\"` inside the `ListBox`\n  `x:Name=\"TaskQueueList\"`. Structure today (both queue and archive render through this same\n  list \u2014 the archive toggle just swaps `ItemsSource` content):\n\n  ```xaml\n  <Grid RowDefinitions=\"Auto,*\">\n    <TextBlock Grid.Row=\"0\" Text=\"{Binding DayHeader}\" .../>          <!-- day header, same item -->\n    <Border Grid.Row=\"1\" CornerRadius=\"8\"                              <!-- outer highlight ring -->\n            BorderBrush=\"{Binding SelectedHighlightBorderBrush}\"\n            BorderThickness=\"{Binding SelectedHighlightBorderThickness}\"\n            BoxShadow=\"{Binding SelectedHighlightShadow}\">\n      <Border Padding=\"0\" Classes=\"queueCard\" MinHeight=\"76\"           <!-- the card -->\n              Background=\"{Binding CardBackgroundBrush}\" BorderBrush=\"{Binding CardBorderBrush}\"\n              BorderThickness=\"{Binding CardBorderThickness}\" BoxShadow=\"{Binding CardShadow}\"\n              CornerRadius=\"8\">\n        <Grid ColumnDefinitions=\"4,*\">\n          <Border Classes=\"selectionRail\" Background=\"{Binding RailBrush}\" CornerRadius=\"8\"/>\n          ...content, ProgressBar CornerRadius=\"3\"...\n  ```\n\n- **State brushes** \u2014 `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs` (`RailBrush`,\n  `CardBackgroundBrush`, `SelectedHighlightBorderBrush/Thickness/Shadow`, `CardBorderBrush`,\n  `CardBorderThickness`, `CardShadow`). The selected ring is transparent/0 when not selected \u2014\n  this layered model is correct and should not be redesigned. Matrix tests live in\n  `tests/VisualRelay.Tests/TaskRowViewModelTests.cs`.\n- **Theme styles** \u2014 `src/VisualRelay.App/Styles/VisualRelayTheme.axaml` (188 lines): `ListBox`\n  transparent; `ListBoxItem` Padding 0 / Margin `0,0,0,8` / Background Transparent / MinHeight 0;\n  `ListBoxItem:selected` Background Transparent; drag-reorder affordances\n  `ListBoxItem.drop-above` / `.drop-below` (BorderBrush `#3191FF`, top/bottom `BorderThickness`);\n  `Border.queueCard` defaults; `ListBoxItem:pointerover Border.queueCard` hover recolor.\n- **Why the previous fix missed D1/D2**: those `ListBoxItem` styles set the *control's*\n  `Background` property, but Fluent's `ListBoxItem` control theme applies its\n  pointerover/pressed/selected fills to the **template's `ContentPresenter`** directly \u2014 a layer\n  that app-level property setters on the control do not override. No amount of styling\n  `Border.queueCard` can remove it; the item's template itself must stop painting state.\n- **Screenshot tooling** \u2014 `tools/VisualRelay.Screenshots/Program.cs` builds a real\n  `MainWindowViewModel` with demo tasks (`DemoTask(...)`), marks one running\n  (`RestoreRunningTaskState(task.Id, 3, \"Diagnose\")`) and selects it (`viewModel.SelectedTask =\n  task`), then renders PNGs. This is the vehicle for the mandatory visual verification below.\n\n## What to build (in this order)\n\n1. **Neutralize the item chrome with a scoped `ControlTheme` (fixes D1, D2, D5).** Add a keyed\n   `ControlTheme` for `ListBoxItem` (put it in `VisualRelayTheme.axaml`'s resources \u2014 the\n   `.axaml` files are near the 300-line guard: `QueuePanel.axaml` is at 276, so keep additions\n   there to the one attribute) and reference it from the task list:\n   `<ListBox x:Name=\"TaskQueueList\" ItemContainerTheme=\"{StaticResource TaskCardItemTheme}\" ...>`.\n   The theme's template renders **only**:\n\n   ```xaml\n   <Border Background=\"{TemplateBinding Background}\"\n           BorderBrush=\"{TemplateBinding BorderBrush}\"\n           BorderThickness=\"{TemplateBinding BorderThickness}\">\n     <ContentPresenter Name=\"PART_ContentPresenter\"\n                       Content=\"{TemplateBinding Content}\"\n                       ContentTemplate=\"{TemplateBinding ContentTemplate}\"\n                       Padding=\"{TemplateBinding Padding}\"/>\n   </Border>\n   ```\n\n   with NO pseudo-class setters for `:pointerover`/`:pressed`/`:selected` \u2014 state visuals belong\n   exclusively to the card's bound properties. The `Border` with `TemplateBinding` is required so\n   the existing `.drop-above`/`.drop-below` drag-reorder line affordances (which set the *item's*\n   `BorderBrush`/`BorderThickness`) keep rendering. Scope it to this list via the keyed theme \u2014\n   do NOT re-template `ListBoxItem` globally; other lists in the app keep their behavior.\n2. **Fix the ring radius (D3).** Outer highlight `Border`: `CornerRadius=\"8\"` \u2192 `\"10\"`, with a\n   comment stating the invariant (`outer = inner 8 + ring thickness 2`). If the ring thickness\n   ever changes, the radius must change with it.\n3. **Fix the rail (D4).** `selectionRail` `CornerRadius=\"8\"` \u2192 `\"7,0,0,7\"` (left corners only;\n   7 \u2248 inner radius 8 minus the 1px card border) so the stripe nests into the card's rounded\n   left edge with no notch and no bleed. Check it against both the 1px (idle) and 2px (running)\n   card border and adjust the left radii if a border overlap shows.\n4. **Tests \u2014 the enforcement gate.** The implementing stages cannot look at images (the\n   pipeline only has vision early), so every visual claim must be encoded as a machine-checkable\n   assertion:\n   - **View-model matrix** (`tests/VisualRelay.Tests/TaskRowViewModelTests.cs`): pin the full\n     4-state matrix (default / selected / running / running+selected) across\n     `SelectedHighlightBorderBrush`, `SelectedHighlightBorderThickness`, `CardBorderBrush`,\n     `CardBorderThickness`, `RailBrush`, `CardBackgroundBrush` \u2014 selected always produces the\n     blue ring, running the green card border, and both together, both.\n   - **Headless render/tree tests** (new test class; pattern:\n     `tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs` \u2014 `[AvaloniaFact]` +\n     `[Collection(\"Headless\")]`, builds real controls and walks the visual tree). Materialize the\n     task `ListBox` with items covering all four states plus one item with a `DayHeader`, wait\n     for layout, then assert structurally what an eye would check:\n       - no element between each `ListBoxItem`'s root and its `Border.queueCard` paints a\n         non-transparent `Background` \u2014 in the default state AND with pseudo-states forced via\n         `((IPseudoClasses)item.Classes).Set(\":pointerover\", true)` / `\":pressed\"` and with the\n         item genuinely selected (this is D1/D2, the Fluent chrome, expressed as an assertion);\n       - when an item with a `DayHeader` is selected, the header `TextBlock`'s ancestors up to\n         the item root still paint no background (D5);\n       - `CornerRadius` invariants on the realized borders: outer ring `10`, card `8`, rail\n         `7,0,0,7` \u2014 and assert outer == card radius + ring thickness so the *relationship* is\n         pinned, not just the literals (D3, D4).\n   - **Structural guard** (pattern: `ButtonsCentralizationTests.cs` scans source text): assert\n     `QueuePanel.axaml`'s `TaskQueueList` declares `ItemContainerTheme` and that the\n     `TaskCardItemTheme` in the theme file contains no `:pointerover`/`:pressed`/`:selected`\n     setters \u2014 so the square chrome cannot silently return.\n5. **Demo screenshot refresh (artifact for the human, not a gate).** Extend the demo seeding in\n   `tools/VisualRelay.Screenshots/Program.cs` so the rendered queue shows all four card states\n   at once (it already stages running+selected via `RestoreRunningTaskState` + `SelectedTask`;\n   add a plain pending card, a selected-not-running card, and one visible `DayHeader`). Run the\n   screenshot render (it is part of `./visual-relay check` anyway) so the human can compare the\n   result against `archive-now.png` / `queue-now.png` after the task lands. Do NOT attempt to\n   inspect the PNGs yourself \u2014 the render tests in step 4 are the gate.\n6. **Full gate.** `./visual-relay check` (guards, format, build, tests, screenshot render).\n\n## Done when\n\n- All five defects (D1\u2013D5) are pinned by the step-4 tests (chrome-free item templates under\n  forced pseudo-states and real selection, radius invariants including the outer = card + ring\n  relationship, header untouched by selection), and the demo screenshot scene covers pending,\n  selected, running, running+selected, and a day header for human review after landing.\n- The 4-state view-model matrix and the structural guard test pass; drag-reorder insertion lines\n  and keyboard/click selection still work (selection state remains visible via the blue ring).\n- No global `ListBoxItem` behavior changed outside the task list.\n- `./visual-relay check` passes; every touched file stays under the 300-line guard\n  (`QueuePanel.axaml` is at 276 \u2014 only the `ItemContainerTheme` attribute goes there).\n\n## Guardrails\n\n- Do not redesign the card layout, palette, or the layered ring model \u2014 this task is corners and\n  chrome only. Minimal, diff-scoped edits.\n- Do not \"fix\" square corners by hiding the highlight states; selected/hover feedback must remain\n  visible, just rounded and card-scoped.\n- The screenshots the verification produces are throwaway artifacts \u2014 do not overwrite README\n  assets unless the existing README screenshot flow regenerates them anyway.\n- Conventional Commits (`docs/commit-messages.md`, `AGENTS.md`).\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### archive-now.png (269907 bytes, not inlined)\n\n### queue-now.png (248960 bytes, not inlined)\n\n### user-archive-quirks.png (60907 bytes, not inlined)\n\n### user-queue-quirks.png (38639 bytes, not inlined)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Remove square ListBoxItem chrome behind rounded task cards by scoping a minimal ControlTheme (TaskCardItemTheme) that strips highlight pseudoclass painting, correcting outer-ring CornerRadius from 8\u219210 and selection rail from 8\u21927,0,0,7, and encoding every visual claim \u2014 chrome-free items under forced pseudo-states, radius invariants (outer = card + ring), day-header isolation \u2014 in machine-checkable render-tree assertions, plus a structural guard test, all gated by ./visual-relay check.\",\n  \"options\": [\n    \"Option A \u2014 Keyed ControlTheme + radius literal fixes (recommended, closest to spec)\",\n    \"Option B \u2014 Style-only approach (no ControlTheme, override via styles)\",\n    \"Option C \u2014 Extract card content into a separate UserControl + wrap in Border at item level\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Codebase investigation complete. The relevant files are: (1) QueuePanel.axaml (276 lines) \u2014 the ListBox DataTemplate nests an outer highlight Border (CornerRadius=8), inner queueCard Border (CornerRadius=8), selectionRail (CornerRadius=8). The ListBox has no ItemContainerTheme attribute. (2) VisualRelayTheme.axaml (188 lines) \u2014 sets ListBoxItem Background/Transparent at lines 60-68, but this only affects the control's own Background, not the Fluent theme's internal ContentPresenter pseudo-class fills. Also sets drop-above/drop-below BorderBrush/BorderThickness on the ListBoxItem (lines 71-78) and :pointerover recolor on Border.queueCard (lines 86-89). (3) TaskRowViewModel.cs \u2014 4-state matrix (default/selected/running/running+selected) via computed brush properties; the outer ring is SelectedHighlightBorderBrush/Thickness/Shadow, inner card is CardBorderBrush/Thickness/Background/Shadow, rail is RailBrush. (4) ButtonControlThemes.axaml shows the Template setter pattern for ControlThemes (Style with ControlTemplate). (5) Tests: TaskRowViewModelTests.cs covers the 4-state brush matrix; ChevronAffordanceRenderTests.cs shows the headless render pattern (MainWindow + window.Show() + Dispatcher.UIThread.RunJobs() + visual tree walking via GetVisualDescendants); ButtonsCentralizationTests.cs shows structural guard pattern (regex source text scanning). (6) The DragDrop code-behind in QueuePanel.axaml.cs sets drop-above/drop-below CSS classes on the ListBoxItem itself, relying on those style selectors to render insertion lines via the item's BorderBrush/BorderThickness \u2014 the new ControlTheme must pass these through TemplateBinding. (7) No existing ItemContainerTheme or ControlTheme for ListBoxItem exists in the codebase. (8) Screenshot tooling at tools/VisualRelay.Screenshots/Program.cs seeds 5 demo tasks but only marks one running+selected; needs a plain pending card, a selected-not-running card, and a visible DayHeader added (step 5).\",\n  \"constraints\": [\n    \"QueuePanel.axaml must stay under 300 lines; currently at 276, so only the ItemContainerTheme attribute may be added to the <ListBox> declaration\",\n    \"No global ListBoxItem behavior change \u2014 the scoped ControlTheme must be keyed and referenced only from this list via ItemContainerTheme\",\n    \"Drag-reorder insertion lines (drop-above/drop-below) set BorderBrush/BorderThickness on the ListBoxItem itself; the new template must bind these via TemplateBinding to continue working\",\n    \"The layered ring model must not be redesigned \u2014 selected/hover feedback must remain visible via the card's bound properties, not removed\",\n    \"All files must pass ./visual-relay check (structural guards, format, build, tests, screenshot render)\",\n    \"Conventional Commits format per docs/commit-messages.md\",\n    \"The ControlTheme template must contain NO :pointerover/:pressed/:selected pseudo-class setters \u2014 state visuals belong exclusively to the card layer\",\n    \"Headless render tests require [Collection(\\\"Headless\\\")] on the class and [AvaloniaFact] on each test method (enforced by SplitGuardVerificationTests)\",\n    \"The ControlTheme must be placed in VisualRelayTheme.axaml's resources (which is 188 lines, well under any limit)\",\n    \"Do not overwrite README screenshot assets unless the existing flow regenerates them; the verification screenshots are throwaway artifacts\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Five defects confirmed by reading the actual source files. D1/D2/D5: Fluent's ListBoxItem control theme (loaded via App.axaml line 12 <FluentTheme/>) paints square :pointerover/:pressed/:selected background fills on an internal ContentPresenter that no app-level style on ListBoxItem.Background or Border.queueCard can reach \u2014 verified by QueuePanel.axaml having no ItemContainerTheme (line 43) and VisualRelayTheme.axaml lines 60-68 only setting the control's own Background=Transparent. D3: QueuePanel.axaml line 56 outer Border CornerRadius='8' + SelectedHighlightBorderThickness=2, inner line 63 CornerRadius='8' \u2014 uniform ring needs outer=inner+thickness=10. D4: QueuePanel.axaml line 67 selectionRail CornerRadius='8' on all corners in 4px-wide column (line 64 ColumnDefinitions='4,*') \u2014 radius exceeds element width on right side. D5: DayHeader TextBlock (line 53) in Grid.Row='0' of same DataTemplate Grid; Fluent selection chrome spans the whole ContentPresenter including that row. Drag-reorder in QueuePanel.axaml.cs lines 167-169 sets drop-above/drop-below classes on ListBoxItem; styles at VisualRelayTheme.axaml lines 71-78 rely on BorderBrush/BorderThickness property propagation \u2014 new ControlTheme must TemplateBind these. No existing ControlTheme in the codebase (grep found zero).\",\n  \"excerpts\": [\n    \"QueuePanel.axaml:43-49 \u2014 ListBox x:Name='TaskQueueList' has no ItemContainerTheme attribute; gets default Fluent ListBoxItem chrome\",\n    \"QueuePanel.axaml:56-67 \u2014 outer Border CornerRadius='8' (line 56), inner CornerRadius='8' (line 63), selectionRail CornerRadius='8' (line 67) in 4px column (line 64)\",\n    \"VisualRelayTheme.axaml:60-68 \u2014 ListBoxItem Background=Transparent sets control property only; Fluent template paints its own ContentPresenter fills\",\n    \"VisualRelayTheme.axaml:71-78 \u2014 drop-above/drop-below style selectors on ListBoxItem set BorderBrush/BorderThickness; new template must TemplateBind these\",\n    \"VisualRelayTheme.axaml:86-89 \u2014 ListBoxItem:pointerover Border.queueCard recolor is correct per-card styling but can't remove Fluent's internal square :pointerover fill\",\n    \"QueuePanel.axaml.cs:167-169 \u2014 drop-above/drop-below classes toggled directly on ListBoxItem control, relying on style property propagation\",\n    \"App.axaml:12 \u2014 <FluentTheme/> loaded before app styles; its ListBoxItem template is the source of all square pseudo-class painting\",\n    \"TaskRowViewModel.cs:94-98 \u2014 SelectedHighlightBorderBrush/BorderThickness/Shadow layered model is correct; SelectedHighlightBorderThickness=2 when selected\",\n    \"ChevronAffordanceRenderTests.cs:16-24,203-215 \u2014 headless render test pattern: [Collection('Headless')], [AvaloniaFact], MainWindow+Show()+RunJobs(), visual tree walk via GetVisualDescendants()\",\n    \"ButtonsCentralizationTests.cs:74-98 \u2014 structural guard pattern: regex source-text scanning for forbidden patterns\"\n  ],\n  \"repro\": \"1. Build and launch the app with demo tasks. 2. Select a task in the queue: observe a square blue selection band spanning the full ListBoxItem including the day header row, behind the correctly rounded blue ring of the card. 3. Hover over a card: observe a square full-item tint behind the rounded card. 4. Observe the selected card's blue outer ring appears pinched/squarish at corners (outer radius 8, inner 8, ring thickness 2 \u2014 should be outer=10). 5. Observe the 4px-wide selection rail stripe has CornerRadius='8' on all corners. 6. In archive view, selecting an item highlights the entire row including the 'Today ($1.04)' header.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have all the information needed. Let me write the concrete plan and exact manifest.\n\n```json\n{\n  \"plan\": \"## Concrete implementation plan for \\\"round-task-cards-in-every-state\\\"\\n\\n### 1. Neutralize ListBoxItem chrome \u2014 add keyed ControlTheme (fixes D1, D2, D5)\\n\\n**File: `src/VisualRelay.App/Styles/VisualRelayTheme.axaml`** (line ~68, after existing ListBoxItem:selected style)\\n\\nInsert a keyed `ControlTheme` named `TaskCardItemTheme` targeting `ListBoxItem`. It overrides Fluent's internal ContentPresenter fills that paint square pointerover/pressed/selected backgrounds. The template renders only:\\n\\n```xml\\n<ControlTheme x:Key=\\\"TaskCardItemTheme\\\" TargetType=\\\"ListBoxItem\\\">\\n  <Setter Property=\\\"Template\\\">\\n    <ControlTemplate>\\n      <Border Background=\\\"{TemplateBinding Background}\\\"\\n              BorderBrush=\\\"{TemplateBinding BorderBrush}\\\"\\n              BorderThickness=\\\"{TemplateBinding BorderThickness}\\\">\\n        <ContentPresenter Name=\\\"PART_ContentPresenter\\\"\\n                          Content=\\\"{TemplateBinding Content}\\\"\\n                          ContentTemplate=\\\"{TemplateBinding ContentTemplate}\\\"\\n                          Padding=\\\"{TemplateBinding Padding}\\\"/>\\n      </Border>\\n    </ControlTemplate>\\n  </Setter>\\n</ControlTheme>\\n```\\n\\n- No `:pointerover`/`:pressed`/`:selected` pseudo-class setters \u2014 state is card-layer only.\\n- TemplateBinding on BorderBrush/BorderThickness preserves the existing `.drop-above`/`.drop-below` drag-reorder insertion lines that set those properties on `ListBoxItem` control from `QueuePanel.axaml.cs:167-169`.\\n\\n**File: `src/VisualRelay.App/Views/Controls/QueuePanel.axaml`** (line 43)\\n\\nAdd `ItemContainerTheme=\\\"{StaticResource TaskCardItemTheme}\\\"` to the `<ListBox>` opening tag:\\n\\n```xaml\\n<ListBox Grid.Row=\\\"1\\\"\\n         x:Name=\\\"TaskQueueList\\\"\\n         ItemContainerTheme=\\\"{StaticResource TaskCardItemTheme}\\\"\\n         Margin=\\\"10,0,10,8\\\"\\n         ...>\\n```\\n\\n### 2. Fix outer ring radius (D3)\\n\\n**File: `src/VisualRelay.App/Views/Controls/QueuePanel.axaml`** (line 56)\\n\\nChange outer highlight Border `CornerRadius=\\\"8\\\"` \u2192 `CornerRadius=\\\"10\\\"` with comment:\\n```xaml\\n<Border Grid.Row=\\\"1\\\" CornerRadius=\\\"10\\\"  <!-- outer = inner 8 + ring thickness 2 -->\\n```\\n\\n### 3. Fix selection rail radius (D4)\\n\\n**File: `src/VisualRelay.App/Views/Controls/QueuePanel.axaml`** (line 67)\\n\\nChange `selectionRail` `CornerRadius=\\\"8\\\"` \u2192 `CornerRadius=\\\"7,0,0,7\\\"` (left corners only; 7 \u2248 inner radius 8 minus the 1px card idle border):\\n```xaml\\n<Border Classes=\\\"selectionRail\\\"\\n        Background=\\\"{Binding RailBrush}\\\"\\n        CornerRadius=\\\"7,0,0,7\\\"/>\\n```\\n\\n### 4. View-model matrix tests (4-state pinning)\\n\\n**File: `tests/VisualRelay.Tests/TaskRowViewModelTests.cs`**\\n\\nExisting tests cover default/selected/running/combined states individually. Add explicit matrix-table tests that assert all six visual properties (`SelectedHighlightBorderBrush`, `SelectedHighlightBorderThickness`, `SelectedHighlightShadow`, `CardBorderBrush`, `CardBorderThickness`, `CardShadow`) in all four states in a single parametrized sweep, plus `RailBrush` and `CardBackgroundBrush`. This pins the exact 4-state contract so no future change can drift a single property without the test catching it.\\n\\n### 5. Headless render/tree tests (chrome, radius, day-header isolation)\\n\\n**New file: `+tests/VisualRelay.Tests/TaskCardRenderTests.cs`**\\n\\nPattern follows `ChevronAffordanceRenderTests.cs`:\\n- `[Collection(\\\"Headless\\\")]` on class, `[AvaloniaFact]` on each test method.\\n- `CreateWindowWithTasks()` helper: builds `MainWindowViewModel`, adds tasks covering all four states (default, selected, running, running+selected) plus one with `DayHeader=\\\"Today ($1.04)\\\"`, shows window, runs dispatcher jobs, returns window.\\n\\nTests:\\n1. **`ListBoxItems_HaveNoChromeBackground_InDefaultState`** \u2014 walk visual tree from each `ListBoxItem`'s root to the `Border.queueCard`; assert no element between paints a non-transparent `Background`.\\n2. **`ListBoxItems_HaveNoChromeBackground_UnderForcedPseudoStates`** \u2014 force `:pointerover` and `:pressed` via `((IPseudoClasses)item.Classes).Set(\\\":pointerover\\\", true)`; assert no chrome background appears.\\n3. **`ListBoxItems_HaveNoChromeBackground_WhenSelected`** \u2014 set `viewModel.SelectedTask` to genuinely select an item; assert no chrome background appears on the selected item.\\n4. **`DayHeader_IsUntinted_WhenSelected`** \u2014 select the item with `DayHeader`; assert the header `TextBlock`'s ancestors up to the item root have transparent/no background (D5).\\n5. **`CornerRadius_OuterRingEqualsCardPlusRingThickness`** \u2014 locate the outer highlight `Border` and inner `Border.queueCard`; assert `outer.CornerRadius == inner.CornerRadius + outer.BorderThickness.Left` (or equivalent). Pins the relationship, not just the literals.\\n6. **`CornersRadius_LiteralsMatchSpec`** \u2014 assert outer ring `CornerRadius` literal is `10`, inner card is `8`, rail is `7,0,0,7`.\\n\\n### 6. Structural guard tests\\n\\n**New file: `+tests/VisualRelay.Tests/TaskCardThemeGuardTests.cs`**\\n\\nPattern follows `ButtonsCentralizationTests.cs`:\\n1. **Assert `QueuePanel.axaml`'s `TaskQueueList` declares `ItemContainerTheme`** \u2014 scan the file text for the attribute on the `<ListBox>`.\\n2. **Assert `TaskCardItemTheme` in `VisualRelayTheme.axaml` contains no `:pointerover`/`:pressed`/`:selected` pseudo-class setters** \u2014 regex scan of the theme file for forbidden patterns within the ControlTheme block.\\n\\n### 7. Demo screenshot refresh\\n\\n**File: `tools/VisualRelay.Screenshots/Program.cs`**\\n\\nExtend `BuildViewModel`:\\n- Add a plain pending card (no selection, no running) \u2014 already present as the 2nd-5th tasks.\\n- Add a selected-not-running card: set `viewModel.Tasks[1].IsSelected = true` after the initial selected (currently only `task` is selected). Actually, since only one task can be selected via `SelectedTask`, add a visible `DayHeader` to one of the existing demo tasks: `viewModel.Tasks[1].DayHeader = \\\"Yesterday\\\"`.\\n- Ensure one card with `DayHeader` set renders in the scene.\\n\\n### 8. Full gate\\n\\nRun `./visual-relay check` to pass guards, format, build, tests, and screenshot render.\\n\\n---\\n\\n**Order of work**: Edit `VisualRelayTheme.axaml` \u2192 edit `QueuePanel.axaml` \u2192 extend `TaskRowViewModelTests.cs` \u2192 create `TaskCardRenderTests.cs` \u2192 create `TaskCardThemeGuardTests.cs` \u2192 extend `Program.cs` \u2192 run `./visual-relay check`.\",\n  \"manifest\": [\n    \"src/VisualRelay.App/Styles/VisualRelayTheme.axaml\",\n    \"src/VisualRelay.App/Views/Controls/QueuePanel.axaml\",\n    \"tests/VisualRelay.Tests/TaskRowViewModelTests.cs\",\n    \"+tests/VisualRelay.Tests/TaskCardRenderTests.cs\",\n    \"+tests/VisualRelay.Tests/TaskCardThemeGuardTests.cs\",\n    \"tools/VisualRelay.Screenshots/Program.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 11,
+    "tool_calls_total": 20,
+    "tool_calls_succeeded": 20,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 14,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 11,
+    "total_llm_time_s": 98.742,
+    "prompt_cache": {
+      "cached_tokens": 335104,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.528,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.836,
+      "prompt_tokens_est": 8642,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/Views/Controls/QueuePanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14845
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/Styles/VisualRelayTheme.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9279
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8482
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.94,
+      "prompt_tokens_est": 16625,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/TaskRowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7725
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/ChevronAffordanceRenderTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13288
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/ButtonsCentralizationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12861
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.171,
+      "prompt_tokens_est": 25385,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tools/VisualRelay.Screenshots/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10914
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/Views/Controls/QueuePanel.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8644
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.359,
+      "prompt_tokens_est": 30559,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1627
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "SplitGuardVerificationTests",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.082,
+      "result_length": 1565
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.203,
+      "prompt_tokens_est": 31458,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/SplitGuardVerificationTests.Headless.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5310
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/SplitGuardVerificationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11333
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.842,
+      "prompt_tokens_est": 35900,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ControlTheme",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src",
+        "include": "*.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.028,
+      "result_length": 163
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/App.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 708
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.821,
+      "prompt_tokens_est": 36308,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/src/VisualRelay.App/Views/Controls/Buttons/ButtonControlThemes.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1323
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.471,
+      "prompt_tokens_est": 36745,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "DictionaryEnvironmentAccessor",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.14,
+      "result_length": 12823
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GetVisualDescendants",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 9684
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.69,
+      "prompt_tokens_est": 42185,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state/tests/VisualRelay.Tests/TestDoubles.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2228
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "IPseudoClasses",
+        "path": "/tmp/nix-shell.cuqrH4/visual-relay/wt/fbb5c78605a5/plan-20260707195401/round-task-cards-in-every-state"
+      },
+      "succeeded": true,
+      "duration_s": 0.217,
+      "result_length": 28266
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 13.064,
+      "prompt_tokens_est": 50476,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "research-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 76
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 43.345,
+      "prompt_tokens_est": 51147,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

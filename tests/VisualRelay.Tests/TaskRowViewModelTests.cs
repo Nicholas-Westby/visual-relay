@@ -187,6 +187,90 @@ public sealed class TaskRowViewModelTests
         AssertBrushColor(RunningBorder, row.RailBrush);
     }
 
+    // ── 4-state matrix sweep ──────────────────────────────────────────────
+
+    /// <summary>
+    /// Pins the full visual-property matrix across all four card states
+    /// in a single parametrized sweep so no future change can drift a single
+    /// property without the test catching it.
+    /// </summary>
+    public static TheoryData<string, bool, bool, object> MatrixData =>
+        new()
+        {
+            // (label, isSelected, isRunning, expected)
+            // ── Default ──
+            { "default-RailBrush",              false, false, "Transparent" },
+            { "default-CardBackgroundBrush",    false, false, "#171A20" },
+            { "default-SelectedHighlightBorderBrush", false, false, "Transparent" },
+            { "default-SelectedHighlightBorderThickness", false, false, new Thickness(0) },
+            { "default-SelectedHighlightShadow", false, false, NoShadow },
+            { "default-CardBorderBrush",        false, false, "#2A303A" },
+            { "default-CardBorderThickness",    false, false, new Thickness(1) },
+            { "default-CardShadow",             false, false, NoShadow },
+
+            // ── Selected ──
+            { "selected-RailBrush",              true, false, "#3191FF" },
+            { "selected-CardBackgroundBrush",    true, false, "#16233D" },
+            { "selected-SelectedHighlightBorderBrush", true, false, "#3191FF" },
+            { "selected-SelectedHighlightBorderThickness", true, false, new Thickness(2) },
+            { "selected-SelectedHighlightShadow", true, false, SelectedShadow },
+            { "selected-CardBorderBrush",        true, false, "#2A303A" },
+            { "selected-CardBorderThickness",    true, false, new Thickness(1) },
+            { "selected-CardShadow",             true, false, NoShadow },
+
+            // ── Running ──
+            { "running-RailBrush",              false, true, "#5AD47D" },
+            { "running-CardBackgroundBrush",    false, true, "#14231B" },
+            { "running-SelectedHighlightBorderBrush", false, true, "Transparent" },
+            { "running-SelectedHighlightBorderThickness", false, true, new Thickness(0) },
+            { "running-SelectedHighlightShadow", false, true, NoShadow },
+            { "running-CardBorderBrush",        false, true, "#5AD47D" },
+            { "running-CardBorderThickness",    false, true, new Thickness(2) },
+            { "running-CardShadow",             false, true, RunningShadow },
+
+            // ── Running+Selected (combined) ──
+            { "combined-RailBrush",              true, true, "#5AD47D" },
+            { "combined-CardBackgroundBrush",    true, true, "#14231B" },
+            { "combined-SelectedHighlightBorderBrush", true, true, "#3191FF" },
+            { "combined-SelectedHighlightBorderThickness", true, true, new Thickness(2) },
+            { "combined-SelectedHighlightShadow", true, true, SelectedShadow },
+            { "combined-CardBorderBrush",        true, true, "#5AD47D" },
+            { "combined-CardBorderThickness",    true, true, new Thickness(2) },
+            { "combined-CardShadow",             true, true, NoShadow },
+        };
+
+    [Theory]
+    [MemberData(nameof(MatrixData))]
+    public void VisualState_Matrix_PropertyIsCorrect(
+        string label, bool isSelected, bool isRunning, object expected)
+    {
+        var row = new TaskRowViewModel(NewTask()) { IsSelected = isSelected };
+        if (isRunning) row.MarkRunning();
+
+        var prop = label[(label.IndexOf('-') + 1)..];
+        var actual = typeof(TaskRowViewModel).GetProperty(prop)!.GetValue(row);
+
+        if (expected is string hex)
+        {
+            var expectedBrush = hex == "Transparent"
+                ? Brushes.Transparent
+                : Brush.Parse(hex);
+            AssertBrushColor((IBrush)expectedBrush, (IBrush)actual!);
+        }
+        else if (expected is Thickness t)
+        {
+            Assert.Equal(t, (Thickness)actual!);
+        }
+        else if (expected is BoxShadows s)
+        {
+            Assert.Equal(s, (BoxShadows)actual!);
+        }
+        else
+        {
+            Assert.Equal(expected, actual);
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────
 
     private static void AssertBrushColor(IBrush expected, IBrush actual)
