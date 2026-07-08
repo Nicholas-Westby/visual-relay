@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace VisualRelay.Core.Costs;
@@ -58,8 +59,18 @@ public static class RelayCostEstimator
     ///   ceil(answer.Length / 4) + turns × <see cref="OutputTokensPerTurn"/>
     /// where the constant 50 tokens/turn accounts for reasoning overhead in tool-use
     /// responses that precede the final answer.
+    ///
+    /// Schedule evaluation uses the report's stage-end <c>timestamp</c>. Individual
+    /// <c>llm_call</c> entries carry no timestamps, and stages are bounded by the
+    /// stage ceiling, so at most one rate-window boundary crossing can occur per
+    /// stage — this approximation is acceptable.
     /// </summary>
-    public static RelayCostEstimate EstimateReport(JsonElement report)
+    /// <param name="evaluationInstant">
+    /// Optional UTC instant for rate-schedule evaluation (e.g. time-of-day windows).
+    /// When <c>null</c>, the report's top-level <c>timestamp</c> field is used.
+    /// When absent or unparseable, no windows match (multiplier 1×).
+    /// </param>
+    public static RelayCostEstimate EstimateReport(JsonElement report, DateTime? evaluationInstant = null)
     {
         var model = ReadString(report, "model");
         var llmCalls = report.TryGetProperty("timeline", out var timeline) && timeline.ValueKind == JsonValueKind.Array
@@ -85,6 +96,9 @@ public static class RelayCostEstimator
             return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
         }
 
+        var instant = evaluationInstant ?? ReadTimestamp(report);
+        var multiplier = GetScheduleMultiplier(pricing, instant);
+
         var cachedRate = pricing.CachedInput ?? pricing.Input;
         var cacheWriteRate = pricing.CacheWrite ?? pricing.Input;
         var usd = (
@@ -92,8 +106,63 @@ public static class RelayCostEstimator
             cachedTokens * cachedRate +
             cacheWriteTokens * cacheWriteRate +
             outputTokens * pricing.Output
-        ) / 1_000_000d;
+        ) * multiplier / 1_000_000d;
         return new RelayCostEstimate(model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
+    }
+
+    /// <summary>
+    /// Compute the rate multiplier from time-of-day windows attached to a pricing entry.
+    /// Returns 1.0 when no windows match (or no windows are configured, or the instant
+    /// is <see cref="DateTime.MinValue"/> indicating no timestamp was available).
+    /// </summary>
+    private static double GetScheduleMultiplier(ModelPricing pricing, DateTime utcInstant)
+    {
+        if (pricing.Windows is null or { Count: 0 })
+        {
+            return 1.0;
+        }
+
+        if (utcInstant == DateTime.MinValue)
+        {
+            return 1.0; // no timestamp available — default to base rates
+        }
+
+        foreach (var window in pricing.Windows)
+        {
+            try
+            {
+                var tz = TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId);
+                var local = TimeZoneInfo.ConvertTimeFromUtc(utcInstant, tz);
+                var localTime = TimeOnly.FromDateTime(local);
+                if (localTime >= window.StartLocal && localTime < window.EndLocal)
+                {
+                    return window.Multiplier;
+                }
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                // Unknown timezone — skip this window (should not happen in production).
+            }
+        }
+
+        return 1.0;
+    }
+
+    /// <summary>
+    /// Read the report's top-level <c>timestamp</c> as a UTC <see cref="DateTime"/>.
+    /// Returns <see cref="DateTime.MinValue"/> when the field is absent or unparseable,
+    /// which causes all rate windows to miss (multiplier 1×).
+    /// </summary>
+    private static DateTime ReadTimestamp(JsonElement report)
+    {
+        if (report.TryGetProperty("timestamp", out var ts) &&
+            ts.ValueKind == JsonValueKind.String &&
+            DateTime.TryParse(ts.GetString(), null, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var parsed))
+        {
+            return parsed;
+        }
+
+        return DateTime.MinValue;
     }
 
     private static bool IsLlmCall(JsonElement item) =>
