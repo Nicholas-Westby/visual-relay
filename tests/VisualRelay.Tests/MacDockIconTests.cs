@@ -6,7 +6,7 @@ namespace VisualRelay.Tests;
 
 // Runtime macOS Dock-icon helper coverage.
 //
-// House style mirrors AppIconTests: assert file existence / load behaviour /
+// House style: assert file existence / load behaviour /
 // Assert.Skip(...) for platform-specific paths. The helper is verified as a safe
 // no-op off macOS; the actually-calls-AppKit path is only exercised behind
 // OperatingSystem.IsMacOS() and never forced (no Dock may be attached in CI).

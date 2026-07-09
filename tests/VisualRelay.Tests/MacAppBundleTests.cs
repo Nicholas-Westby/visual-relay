@@ -7,7 +7,6 @@ namespace VisualRelay.Tests;
 // build-time output produced by the tools/VisualRelay.Packaging C# tool.
 // We assert on the committed C# source files (existence / content references)
 // and the committed source iconset rather than on an opaque .icns blob.
-// House style mirrors AppIconTests.
 public sealed class MacAppBundleTests
 {
     private static string RepoRoot => RepoSetup.Root;
@@ -212,8 +211,7 @@ public sealed class MacAppBundleTests
     // ── csproj ships the brand PNG as an AvaloniaResource ────────────────
 
     // Assets\** is already globbed as AvaloniaResource; assert that glob remains
-    // so the new PNG is embedded. (Windows .ico wiring is asserted in
-    // AppIconTests and must remain untouched.)
+    // so the new PNG is embedded.
     [Fact]
     public void Csproj_IncludesAssetsAsAvaloniaResource()
     {
