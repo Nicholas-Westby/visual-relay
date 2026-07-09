@@ -18,6 +18,15 @@ public partial class MainWindowViewModel
     /// </summary>
     internal Func<RelayConfig, ISubagentRunner>? RewriteRunnerFactory { get; set; }
 
+    /// <summary>
+    /// Test seam: the <see cref="IGitInvoker"/> the rewrite path drives its worktree
+    /// operations through. Production leaves it <c>null</c> so
+    /// <see cref="TaskRewriteRunner.RunAsync"/> uses the real <see cref="GitInvoker"/>;
+    /// headless tests inject an in-memory git so the rewrite exercises worktree
+    /// add/remove without spawning real <c>git worktree</c> processes.
+    /// </summary>
+    internal IGitInvoker? RewriteGitInvokerForTests { get; set; }
+
     [RelayCommand(CanExecute = nameof(CanRewriteSelected))]
     private async Task RewriteSelectedTaskAsync()
     {
@@ -59,7 +68,7 @@ public partial class MainWindowViewModel
             try
             {
                 outcome = await TaskRewriteRunner.RunAsync(
-                    RootPath, task, config, runner, ct, environment: EnvironmentAccessor);
+                    RootPath, task, config, runner, ct, git: RewriteGitInvokerForTests, environment: EnvironmentAccessor);
             }
             catch (Exception ex)
             {

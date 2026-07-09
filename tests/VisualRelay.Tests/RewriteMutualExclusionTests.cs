@@ -2,6 +2,7 @@ using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -23,7 +24,22 @@ public sealed class RewriteMutualExclusionTests
         {
             RootPath = repo.Root,
             ShowConfirmationAsync = null,
+            // In-memory git for the rewrite worktree add/remove. Without it the real
+            // GitInvoker's `git worktree` calls fail against the non-repo test root and
+            // PlanningWorktree's 3x retry (250ms + 1s) burns ~2.5s per rewriting fact.
+            RewriteGitInvokerForTests = SeededSim(repo),
         };
+
+    /// <summary>A GitSim registered at <paramref name="repo"/>'s root with one commit, so
+    /// the rewrite path's <c>worktree add --detach HEAD</c> resolves and succeeds.</summary>
+    private static GitSimEngine SeededSim(TestRepository repo)
+    {
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "seed.txt", "seed");
+        sim.Commit(repo.Root, "chore: seed");
+        return sim;
+    }
 
     private static TaskRowViewModel Row(MainWindowViewModel vm, string id) =>
         vm.Tasks.First(t => t.Id == id);

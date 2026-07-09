@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -22,10 +23,18 @@ public sealed class ControlApiConfirmGatedTests
     {
         // Route ui-state persistence (and the rewrite path's XDG writes) to a
         // throwaway dir under the repo so tests never touch the real ~/.config.
+        // In-memory git for the rewrite worktree add/remove (rewrite-selected facts):
+        // without it PlanningWorktree's 3x retry over failing `git worktree` against
+        // the non-repo test root burns ~2.5s per fact.
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "seed.txt", "seed");
+        sim.Commit(repo.Root, "chore: seed");
         var vm = new MainWindowViewModel(
             new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.Combine(repo.Root, ".xdg") })
         {
             RootPath = repo.Root,
+            RewriteGitInvokerForTests = sim,
         };
         await vm.LoadInitialAsync();
         var window = new MainWindow { DataContext = vm };
