@@ -131,6 +131,25 @@ public sealed class TaskDetailScrollBottomReachabilityTests
 
     // ── Structural: Markdown read-only ──────────────────────────────────
 
+    /// <summary>
+    /// Regression pin: the read-only Markdown tab's text element must be a
+    /// <see cref="SelectableTextBlock"/> (not a plain <see cref="TextBlock"/>)
+    /// so users can select and copy text with the standard blue highlight and
+    /// Cmd+C — same behaviour as the Input pane.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task MarkdownReadOnly_TextElement_IsSelectableTextBlock_WithCorrectBinding()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        const string markdown = "# Selectable Test\n\nBody content here.";
+        repo.WriteTask("selectable-test", markdown);
+        var panel = await LoadPanelAsync(repo, "selectable-test", 0);
+        var (_, tb) = FindTextBlockScroller(panel, 21);
+        var selectable = Assert.IsType<SelectableTextBlock>(tb);
+        Assert.Equal(markdown, selectable.Text);
+    }
+
     /// <summary>Markdown read-only TextBlock.Margin.Bottom must be ≥ 16 px.</summary>
     [AvaloniaFact]
     public async Task MarkdownReadOnly_TextBlock_MarginBottom_IsSixteenOrMore()
