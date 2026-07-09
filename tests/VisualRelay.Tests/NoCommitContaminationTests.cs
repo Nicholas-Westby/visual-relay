@@ -14,24 +14,17 @@ public sealed partial class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_PlanThenExecute_EachCommitContainsOnlyItsOwnFiles()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam), and phase 2's commits must stay coherent with phase
-        // 1's on-disk history — this fact is irreducibly bound to real git.
-        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("task-a", "# Task A\n");
         repo.WriteTask("task-b", "# Task B\n");
 
-        // Seed a git repo so we can verify commit contents.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.cs"), "baseline");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@test.example");
-        TestGit.Run(repo.Root, "config", "user.name", "VR Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-        var seedHash = TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim();
+        // Seed a GitSim repo so we can verify commit contents. The same in-memory
+        // engine backs Phase 1's worktree creation and Phase 2's commits, so the
+        // whole plan → serial-execute history stays coherent without the real binary.
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/shared.cs", "baseline");
+        var seedHash = sim.Commit(repo.Root, "chore: seed repo");
 
         // ── Phase 1: plan both tasks in parallel ──
         var runnerA = new DualTaskSubagentRunner("task-a", "src/a.cs", "tests/a.tests.cs");
@@ -62,7 +55,8 @@ public sealed partial class NoCommitContaminationTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Equal(2, planResults.Count);
         Assert.All(planResults, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
@@ -73,7 +67,7 @@ public sealed partial class NoCommitContaminationTests
         var driverA = new RelayDriver(
             RelayDriverDependencies.ForTests(runnerA,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             executeOptions);
         var outcomeA = await driverA.RunTaskAsync(repo.Root, "task-a");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcomeA.Status);
@@ -83,7 +77,7 @@ public sealed partial class NoCommitContaminationTests
         var driverB = new RelayDriver(
             RelayDriverDependencies.ForTests(runnerB,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             executeOptions);
         var outcomeB = await driverB.RunTaskAsync(repo.Root, "task-b");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcomeB.Status);
@@ -91,32 +85,33 @@ public sealed partial class NoCommitContaminationTests
         // ── Verify each commit contains ONLY its own files ──
 
         // There should be exactly 2 commits on top of the seed (one per task).
-        var commitCount = TestGit.Run(repo.Root, "rev-list", "--count", $"{seedHash}..HEAD").Trim();
-        Assert.Equal("2", commitCount);
+        var head = sim.Head(repo.Root)!;
+        Assert.Equal(2, sim.CommitsBetween(repo.Root, seedHash, head).Count);
 
         // Task B's commit (HEAD) must contain only task-b files.
-        var headFiles = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
-        Assert.Contains("src/b.cs", headFiles, StringComparison.Ordinal);
-        Assert.Contains("tests/b.tests.cs", headFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-b/manifest.txt", headFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-b/ledger.md", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("src/a.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("tests/a.tests.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain(".relay/task-a/", headFiles, StringComparison.Ordinal);
+        var headFiles = sim.FilesChangedInCommit(repo.Root, head);
+        Assert.Contains("src/b.cs", headFiles);
+        Assert.Contains("tests/b.tests.cs", headFiles);
+        Assert.Contains(".relay/task-b/manifest.txt", headFiles);
+        Assert.Contains(".relay/task-b/ledger.md", headFiles);
+        Assert.DoesNotContain("src/a.cs", headFiles);
+        Assert.DoesNotContain("tests/a.tests.cs", headFiles);
+        Assert.DoesNotContain(headFiles, p => p.StartsWith(".relay/task-a/", StringComparison.Ordinal));
 
         // Task A's commit (HEAD~1) must contain only task-a files.
-        var parentFiles = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD~1");
-        Assert.Contains("src/a.cs", parentFiles, StringComparison.Ordinal);
-        Assert.Contains("tests/a.tests.cs", parentFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-a/manifest.txt", parentFiles, StringComparison.Ordinal);
-        Assert.Contains(".relay/task-a/ledger.md", parentFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("src/b.cs", parentFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("tests/b.tests.cs", parentFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain(".relay/task-b/", parentFiles, StringComparison.Ordinal);
+        var parent = sim.CommitInfo(repo.Root, head)!.Parents[0];
+        var parentFiles = sim.FilesChangedInCommit(repo.Root, parent);
+        Assert.Contains("src/a.cs", parentFiles);
+        Assert.Contains("tests/a.tests.cs", parentFiles);
+        Assert.Contains(".relay/task-a/manifest.txt", parentFiles);
+        Assert.Contains(".relay/task-a/ledger.md", parentFiles);
+        Assert.DoesNotContain("src/b.cs", parentFiles);
+        Assert.DoesNotContain("tests/b.tests.cs", parentFiles);
+        Assert.DoesNotContain(parentFiles, p => p.StartsWith(".relay/task-b/", StringComparison.Ordinal));
 
         // Shared file must NOT appear in either commit (it was not modified).
-        Assert.DoesNotContain("src/shared.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("src/shared.cs", parentFiles, StringComparison.Ordinal);
+        Assert.DoesNotContain("src/shared.cs", headFiles);
+        Assert.DoesNotContain("src/shared.cs", parentFiles);
     }
 
     /// <summary>
@@ -128,23 +123,15 @@ public sealed partial class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_FirstCommitDoesNotIncludeSecondTasksUntrackedFiles()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam), and phase 2's commits must stay coherent with phase
-        // 1's on-disk history — this fact is irreducibly bound to real git.
-        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("first", "# First\n");
         repo.WriteTask("second", "# Second\n");
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.cs"), "baseline");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@test.example");
-        TestGit.Run(repo.Root, "config", "user.name", "VR Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed");
-        var seedHash = TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim();
+        // One GitSim engine backs Phase 1 worktree creation and Phase 2 commits.
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/shared.cs", "baseline");
+        var seedHash = sim.Commit(repo.Root, "chore: seed");
 
         // Both tasks use DualTaskSubagentRunner which creates test files at
         // stage 5 and impl files at stage 6.
@@ -177,7 +164,8 @@ public sealed partial class NoCommitContaminationTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
         Assert.Equal(2, planResults.Count);
 
         // Execute "second" first, then "first" — reversed order to expose any
@@ -186,7 +174,7 @@ public sealed partial class NoCommitContaminationTests
         var driverSecond = new RelayDriver(
             RelayDriverDependencies.ForTests(runnerSecond,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             execOptions);
         var outcomeSecond = await driverSecond.RunTaskAsync(repo.Root, "second");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcomeSecond.Status);
@@ -194,25 +182,26 @@ public sealed partial class NoCommitContaminationTests
         var driverFirst = new RelayDriver(
             RelayDriverDependencies.ForTests(runnerFirst,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             execOptions);
         var outcomeFirst = await driverFirst.RunTaskAsync(repo.Root, "first");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcomeFirst.Status);
 
         // Two commits on top of seed.
-        Assert.Equal("2", TestGit.Run(repo.Root, "rev-list", "--count", $"{seedHash}..HEAD").Trim());
+        var head = sim.Head(repo.Root)!;
+        Assert.Equal(2, sim.CommitsBetween(repo.Root, seedHash, head).Count);
 
         // HEAD (first) must NOT contain second's files.
-        var headFiles = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
-        Assert.Contains("src/first.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("src/second.cs", headFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("tests/second.tests.cs", headFiles, StringComparison.Ordinal);
+        var headFiles = sim.FilesChangedInCommit(repo.Root, head);
+        Assert.Contains("src/first.cs", headFiles);
+        Assert.DoesNotContain("src/second.cs", headFiles);
+        Assert.DoesNotContain("tests/second.tests.cs", headFiles);
 
         // HEAD~1 (second) must NOT contain first's files.
-        var parentFiles = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD~1");
-        Assert.Contains("src/second.cs", parentFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("src/first.cs", parentFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("tests/first.tests.cs", parentFiles, StringComparison.Ordinal);
+        var parentFiles = sim.FilesChangedInCommit(repo.Root, sim.CommitInfo(repo.Root, head)!.Parents[0]);
+        Assert.Contains("src/second.cs", parentFiles);
+        Assert.DoesNotContain("src/first.cs", parentFiles);
+        Assert.DoesNotContain("tests/first.tests.cs", parentFiles);
     }
 
     // ── Manifest authority ──────────────────────────────────────────

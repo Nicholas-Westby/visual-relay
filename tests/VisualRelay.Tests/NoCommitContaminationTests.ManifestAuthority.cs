@@ -8,22 +8,15 @@ public sealed partial class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_ManifestAuthority_EnforcedAcrossPlanExecuteSplit()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam), and phase 2's commits must stay coherent with phase
-        // 1's on-disk history — this fact is irreducibly bound to real git.
-        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("clean", "# Clean\n");
         repo.WriteTask("mixed", "# Mixed manifest\n");
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.cs"), "baseline");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        // One GitSim engine backs Phase 1 worktree creation and Phase 2 commits.
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/shared.cs", "baseline");
+        sim.Commit(repo.Root, "seed");
 
         var cleanInner = new ScriptedSubagentRunner();
         cleanInner.SeedHappyPath("src/clean.cs", "tests/clean.tests.cs");
@@ -57,7 +50,8 @@ public sealed partial class NoCommitContaminationTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
         Assert.Equal(2, planResults.Count);
 
         var execOptions = new RelayDriverOptions(CreateGitCommit: true, Resume: true);
@@ -65,7 +59,7 @@ public sealed partial class NoCommitContaminationTests
         var mixedDriver = new RelayDriver(
             RelayDriverDependencies.ForTests(mixedRunner,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             execOptions);
         var mixedOutcome = await mixedDriver.RunTaskAsync(repo.Root, "mixed");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, mixedOutcome.Status);
@@ -78,13 +72,13 @@ public sealed partial class NoCommitContaminationTests
         var cleanDriver = new RelayDriver(
             RelayDriverDependencies.ForTests(cleanRunner,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             execOptions);
         var cleanOutcome = await cleanDriver.RunTaskAsync(repo.Root, "clean");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, cleanOutcome.Status);
 
-        var cleanCommitFiles = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
-        Assert.DoesNotContain("src/real.cs", cleanCommitFiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("llm-tasks/extra.md", cleanCommitFiles, StringComparison.Ordinal);
+        var cleanCommitFiles = sim.FilesChangedInCommit(repo.Root, sim.Head(repo.Root)!);
+        Assert.DoesNotContain("src/real.cs", cleanCommitFiles);
+        Assert.DoesNotContain("llm-tasks/extra.md", cleanCommitFiles);
     }
 }
