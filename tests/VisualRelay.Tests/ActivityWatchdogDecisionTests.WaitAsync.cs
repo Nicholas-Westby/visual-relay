@@ -3,47 +3,15 @@ using VisualRelay.Core.Execution;
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Virtualized <see cref="ActivityWatchdog.WaitAsync"/> loop tests.
-/// A <see cref="ManualTimeProvider"/> drives the watchdog polling loop and
-/// background-pump <c>Task.Delay</c> calls instantly — no real waiting,
-/// no wall-clock sensitivity. These tests do NOT need serialization and
+/// Virtualized <see cref="ActivityWatchdog.WaitAsync"/> loop tests. A
+/// <see cref="ManualTimeProvider"/> drives the watchdog polling loop; each scenario's
+/// pulses and wedge samples are driven INLINE (once per sub-window step, in lockstep
+/// with the clock advance) rather than by a background task — fully deterministic, no
+/// real waiting, no <c>Task.Run</c> race. These tests do NOT need serialization and
 /// run in parallel with all other non-Watchdog tests.
 /// </summary>
 public sealed partial class ActivityWatchdogDecisionTests
 {
-    // A background "cpu" pulse pump: keeps resetting the ordinary inactivity
-    // deadline (exactly what masked the wedge in production) until cancelled. The
-    // token is a parameter (not a captured `using` local) so the pump owns no
-    // disposable it could outlive.
-    private static Task StartCpuPulsePump(
-        ActivityWatchdog watchdog, CancellationToken stop, TimeProvider? timeProvider = null) =>
-        Task.Run(async () =>
-        {
-            var tp = timeProvider ?? TimeProvider.System;
-            while (!stop.IsCancellationRequested)
-            {
-                watchdog.Pulse("cpu");
-                try { await Task.Delay(TimeSpan.FromMilliseconds(50), tp, stop); }
-                catch (OperationCanceledException) { return; }
-            }
-        }, stop);
-
-    // Wedge-sample pump emulating a SUSTAINED-idle wedge: only idle samples (socket
-    // up), refreshed so the verdict never goes stale. Token is a parameter, as above.
-    private static Task StartIdleWedgePump(
-        ActivityWatchdog watchdog, CancellationToken stop, TimeProvider? timeProvider = null) =>
-        Task.Run(async () =>
-        {
-            var tp = timeProvider ?? TimeProvider.System;
-            while (!stop.IsCancellationRequested)
-            {
-                watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
-                    SubtreeIdle: true, BackendSocketEstablished: true));
-                try { await Task.Delay(TimeSpan.FromMilliseconds(50), tp, stop); }
-                catch (OperationCanceledException) { return; }
-            }
-        }, stop);
-
     // ── (B) Watchdog loop — cpu pulses mask the deadline, wedge still fires ─────
 
     /// <summary>
@@ -68,18 +36,21 @@ public sealed partial class ActivityWatchdogDecisionTests
         watchdog.Pulse("trace");
         watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: true, BackendSocketEstablished: true));
 
-        using var pumpCts = new CancellationTokenSource();
-        var pump = StartCpuPulsePump(watchdog, pumpCts.Token, time);
-
         var watchdogTask = watchdog.WaitAsync(CancellationToken.None);
-        for (var i = 0; i < 200 && !watchdogTask.IsCompleted; i++)
+        // Inline: a "cpu" pulse each step keeps the ORDINARY inactivity deadline masked
+        // (cpu never resets the real-output clock), while the wedge sample stays idle +
+        // socket-established. Real-output silence and sustained-idleness both grow with
+        // the clock, so the additive socket-wedge gate fires while the ordinary path
+        // stays masked — the exact production incident, deterministic and pump-free.
+        const int step = inactivityMs / 4;
+        for (var i = 0; i < 60 && !watchdogTask.IsCompleted; i++)
         {
-            time.Advance(TimeSpan.FromMilliseconds(50));
+            watchdog.Pulse("cpu");
+            watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: true, BackendSocketEstablished: true));
+            time.Advance(TimeSpan.FromMilliseconds(step));
             await Task.Yield();
         }
         var result = await watchdogTask;
-        await pumpCts.CancelAsync();
-        await pump;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredSocketWedge, result.Outcome);
         Assert.True(kill.IsCancellationRequested);
@@ -201,21 +172,19 @@ public sealed partial class ActivityWatchdogDecisionTests
 
         watchdog.Pulse("trace");
 
-        using var pumpCts = new CancellationTokenSource();
-        var cpuPump = StartCpuPulsePump(watchdog, pumpCts.Token, time);
-        var samplePump = StartIdleWedgePump(watchdog, pumpCts.Token, time);
-
         var watchdogTask = watchdog.WaitAsync(CancellationToken.None);
-        for (var i = 0; i < 200 && !watchdogTask.IsCompleted; i++)
+        // Inline: cpu pulses mask the ordinary deadline while every wedge sample is idle
+        // + socket-established (a recv()-blocked dead-socket agent). Sustained idleness
+        // and real-output silence both reach the window, so the socket-wedge gate fires.
+        const int step = inactivityMs / 4;
+        for (var i = 0; i < 60 && !watchdogTask.IsCompleted; i++)
         {
-            time.Advance(TimeSpan.FromMilliseconds(50));
+            watchdog.Pulse("cpu");
+            watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: true, BackendSocketEstablished: true));
+            time.Advance(TimeSpan.FromMilliseconds(step));
             await Task.Yield();
         }
         var result = await watchdogTask;
-
-        await pumpCts.CancelAsync();
-        await cpuPump;
-        await samplePump;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredSocketWedge, result.Outcome);
         Assert.True(kill.IsCancellationRequested);
