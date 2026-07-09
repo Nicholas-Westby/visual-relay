@@ -104,6 +104,31 @@ public sealed partial class GitSim
         return TreeBuilder.FlattenTree(wt.Repo.Objects, c.TreeSha).Keys.OrderBy(p => p, StringComparer.Ordinal).ToList();
     }
 
+    /// <summary>
+    /// The paths a commit CHANGED relative to its first parent — added, modified, or
+    /// deleted — sorted. This is the file list <c>git show --name-only</c> /
+    /// <c>git diff-tree --no-commit-id --name-only -r &lt;sha&gt;</c> reports, NOT the
+    /// commit's whole tree (contrast <see cref="FilesInCommit"/>). A root commit reports
+    /// every path as added. Used to assert a commit contains only ITS OWN task's files
+    /// across a parallel-plan / serial-execute split, where the whole-tree view would
+    /// also surface files an earlier commit already landed.
+    /// </summary>
+    public IReadOnlyList<string> FilesChangedInCommit(string root, string sha)
+    {
+        var wt = Require(root);
+        var store = wt.Repo.Objects;
+        var resolved = GitSimCommands.ResolveRevision(wt, sha);
+        if (resolved is null || !store.TryGetCommit(resolved, out var commit))
+            return [];
+        var parent = commit.Parents.Count > 0 ? commit.Parents[0] : null;
+        return GitSimCommands.Diff(
+                GitSimCommands.TreeSnapshot(store, parent),
+                GitSimCommands.TreeSnapshot(store, resolved))
+            .Select(c => c.Path)
+            .OrderBy(p => p, StringComparer.Ordinal)
+            .ToList();
+    }
+
     /// <summary>The stage-0 paths currently in the index.</summary>
     public IReadOnlyList<string> StagedPaths(string root) =>
         Require(root).Index.Stage0.Select(e => e.Path).OrderBy(p => p, StringComparer.Ordinal).ToList();

@@ -59,6 +59,30 @@ public sealed class GitSimTests
     }
 
     [Fact]
+    public async Task FilesChangedInCommit_ReportsThisCommitsDiff_NotTheWholeTree()
+    {
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        // Seed two files, then a second commit that only touches one of them.
+        sim.Seed(repo.Root, "src/a.cs", "a0");
+        sim.Seed(repo.Root, "src/b.cs", "b0");
+        sim.Commit(repo.Root, "seed");
+        sim.Seed(repo.Root, "src/b.cs", "b1");
+        var head = sim.Commit(repo.Root, "edit b");
+
+        // FilesChangedInCommit is the per-commit diff (git show --name-only): only b.
+        var changed = sim.FilesChangedInCommit(repo.Root, head);
+        Assert.Equal(new[] { "src/b.cs" }, changed);
+        // FilesInCommit is the whole tree: still carries the untouched a.cs.
+        Assert.Contains("src/a.cs", sim.FilesInCommit(repo.Root, head));
+
+        // Parity with `diff-tree --no-commit-id --name-only -r <sha>`.
+        var (exit, output) = await sim.Git(repo.Root, "diff-tree", "--no-commit-id", "--name-only", "-r", head);
+        Assert.Equal(0, exit);
+        Assert.Equal(changed, output.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    [Fact]
     public async Task Commit_PreCommitHookRejects_NonZeroExitWithMessageInOutput()
     {
         var (sim, repo) = NewRepo();
