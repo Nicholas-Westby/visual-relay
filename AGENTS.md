@@ -28,6 +28,15 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
   `./visual-relay test --blame-hang --blame-hang-timeout 120s`. See `TROUBLESHOOTING.md`.
 - Headless UI tests must use `[AvaloniaFact]`/`[AvaloniaTheory]` (Avalonia.Headless.XUnit);
   `HeadlessUnitTestSession` is banned (BannedApiAnalyzers) — reintroducing it fails the build.
+- New UI tests instantiate the specific panel/control under test, not the whole app,
+  unless the test is explicitly about whole-app wiring (cog→dialog plumbing, the live
+  control server, cross-panel interaction). Booting a full `MainWindow` +
+  `LoadInitialAsync` to assert on one panel is slow and races the shared headless
+  dispatcher under load. Scope down: construct the panel + the minimal view-model slice
+  it binds to (patterns: `SettingsTestHelpers.ShowScopedSettings`,
+  `ActivityColumnTabsUiTests.ShowActivityColumn`, `ChevronAffordanceRenderTests`). A
+  guard (`SplitGuardVerificationTests.NoTestFile_BootsWholeAppOutsideAllowlist`) flags
+  `new MainWindow` outside an allowlist of justified whole-app classes.
 
 See `README.md` for the full project overview and `TROUBLESHOOTING.md` for diagnosing the
 dev loop.
