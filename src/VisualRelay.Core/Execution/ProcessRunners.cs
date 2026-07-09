@@ -34,6 +34,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     // nono's full diagnostics are shown. A plain bool — the engine never reads where
     // it comes from (no app-settings coupling). See BuildNonoPrefix.
     private readonly bool _verboseDiagnostics;
+    // Clock for the supervision stack (watchdog deadlines, cpu-sample cadence, trace
+    // poll). Defaults to system time — a virtual provider lets tests drive every
+    // deadline without real waiting. Additive: production behavior is unchanged.
+    private readonly TimeProvider _timeProvider;
     public SwivalSubagentRunner(
         RelayConfig config,
         string swivalBinary = "swival",
@@ -53,7 +57,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         Func<string?>? proxyLogReader = null,
         // OUTPUT-ONLY verbosity for nono's own diagnostics (see _verboseDiagnostics /
         // BuildNonoPrefix). Default false = quiet (--silent). Never weakens the sandbox.
-        bool verboseDiagnostics = false)
+        bool verboseDiagnostics = false,
+        // Supervision clock (see _timeProvider). Null → TimeProvider.System; a virtual
+        // provider drives every watchdog/cpu/trace deadline in tests without real waits.
+        TimeProvider? timeProvider = null)
     {
         _config = config;
         _swivalBinary = swivalBinary;
@@ -63,6 +70,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         _gitInvoker = gitInvoker;
         _proxyLogReader = proxyLogReader ?? ReadProxyLogBestEffort;
         _verboseDiagnostics = verboseDiagnostics;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     // Default proxy-log reader: best-effort read of the per-machine litellm log.

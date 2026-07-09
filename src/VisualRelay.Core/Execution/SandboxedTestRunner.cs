@@ -12,9 +12,11 @@ namespace VisualRelay.Core.Execution;
 /// in the rollback flag pair.  The sandbox is always on — there is no opt-out.
 /// </summary>
 public sealed partial class SandboxedTestRunner(
-    ITestRunner inner, RelayConfig config, bool verboseDiagnostics = false) : ITestRunner
+    ITestRunner inner, RelayConfig config, bool verboseDiagnostics = false,
+    TimeProvider? timeProvider = null) : ITestRunner
 {
     private readonly TimeSpan _timeout = TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds);
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
 
     public async Task<TestRunResult> RunAsync(
         string rootPath, string command, CancellationToken cancellationToken = default)
@@ -34,7 +36,7 @@ public sealed partial class SandboxedTestRunner(
             idleGraceMs: config.TestIdleGraceMilliseconds,
             hardCap: _timeout,
             cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
-            cancellationToken);
+            cancellationToken, _timeProvider);
     }
 
     /// <summary>

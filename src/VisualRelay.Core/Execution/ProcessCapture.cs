@@ -52,10 +52,10 @@ internal static partial class ProcessCapture
         IReadOnlySet<string>? envRemove = null,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
     {
         var startInfo = new ProcessStartInfo(fileName, arguments);
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
     }
 
     public static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -70,7 +70,7 @@ internal static partial class ProcessCapture
         IReadOnlySet<string>? envRemove = null,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
     {
         var startInfo = new ProcessStartInfo(fileName);
         foreach (var argument in arguments)
@@ -78,7 +78,7 @@ internal static partial class ProcessCapture
             startInfo.ArgumentList.Add(argument);
         }
 
-        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe);
+        return await RunAsync(startInfo, workingDirectory, timeout, cancellationToken, environment, killToken, onActivity, envRemove, cpuSampleIntervalMs, onWedgeSample, socketProbe, timeProvider);
     }
 
     private static async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
@@ -92,8 +92,9 @@ internal static partial class ProcessCapture
         IReadOnlySet<string>? envRemove = null,
         int cpuSampleIntervalMs = 0,
         Action<ActivityWatchdog.WedgeSample>? onWedgeSample = null,
-        Func<bool>? socketProbe = null)
+        Func<bool>? socketProbe = null, TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         using var process = new Process();
         process.StartInfo = startInfo;
         process.StartInfo.WorkingDirectory = workingDirectory;
@@ -146,7 +147,7 @@ internal static partial class ProcessCapture
 
         using var cpuCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var cpuTask = cpuSampleIntervalMs > 0 && onActivity is not null
-            ? SampleTreeCpuLoopAsync(process.Id, cpuSampleIntervalMs, onActivity, onWedgeSample, socketProbe, cpuCts.Token)
+            ? SampleTreeCpuLoopAsync(process.Id, cpuSampleIntervalMs, onActivity, onWedgeSample, socketProbe, tp, cpuCts.Token)
             : Task.CompletedTask;
 
         try
@@ -163,15 +164,15 @@ internal static partial class ProcessCapture
             // blocks until any running Kill callback finishes (the guarantee above);
             // DisposeAsync() does not provide that synchronous wait.
             using var killRegistration = killToken.CanBeCanceled
-                ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId); })
+                ? killToken.Register(() => { _ = GracefulStopThenKillAsync(process, stageGroupId, tp); })
                 : default;
 
             // Propagate cancellation, mirroring the old WaitForExitAsync(cancellationToken).
             await using var ctReg = cancellationToken.Register(() => exitedTcs.TrySetCanceled(cancellationToken));
 
-            if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, cancellationToken)) != exitedTcs.Task)
+            if (timeout != Timeout.InfiniteTimeSpan && await Task.WhenAny(exitedTcs.Task, Task.Delay(timeout, tp, cancellationToken)) != exitedTcs.Task)
             {
-                await GracefulStopThenKillAsync(process, stageGroupId);
+                await GracefulStopThenKillAsync(process, stageGroupId, tp);
                 lock (outputLock) { return (-1, output.ToString(), true); }
             }
 
@@ -182,7 +183,7 @@ internal static partial class ProcessCapture
             if (stageGroupId.HasValue)
                 try { KillProcessGroup(stageGroupId.Value); } catch { /* best-effort */ }
             try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
-            await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(DrainGraceMs, CancellationToken.None));
+            await Task.WhenAny(process.WaitForExitAsync(CancellationToken.None), Task.Delay(TimeSpan.FromMilliseconds(DrainGraceMs), tp, CancellationToken.None));
             lock (outputLock) { return (process.ExitCode, output.ToString(), false); }
         }
         finally
@@ -220,7 +221,7 @@ internal static partial class ProcessCapture
     /// </summary>
     private static async Task SampleTreeCpuLoopAsync(
         int rootPid, int intervalMs, Action<string> onActivity,
-        Action<ActivityWatchdog.WedgeSample>? onWedgeSample, Func<bool>? socketProbe, CancellationToken ct)
+        Action<ActivityWatchdog.WedgeSample>? onWedgeSample, Func<bool>? socketProbe, TimeProvider tp, CancellationToken ct)
     {
         // A process starts with zero accrued CPU, so 0 is a correct first
         // baseline — the first sample can already pulse. (A null-seeded
@@ -231,7 +232,7 @@ internal static partial class ProcessCapture
         {
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(intervalMs, ct);
+                await Task.Delay(TimeSpan.FromMilliseconds(intervalMs), tp, ct);
                 var sample = ProcessTreeCpuSampler.TrySampleTreeCpuMs(rootPid);
                 if (sample is null)
                 {

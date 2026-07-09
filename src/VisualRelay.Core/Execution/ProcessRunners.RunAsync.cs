@@ -104,6 +104,7 @@ public sealed partial class SwivalSubagentRunner
             // closure per iteration, fully drained (Cancel + await) before 'attempt' is
             // incremented, so the capture always sees this iteration's attempt value.
             var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts,
+                timeProvider: _timeProvider,
                 onHeartbeat: _eventSink is null ? null : msg => _ = _eventSink.PublishAsync(new RelayEvent(
                     DateTimeOffset.UtcNow, "debug", "watchdog_heartbeat",
                     attemptInvocation.RunId, attemptInvocation.TargetRoot,
@@ -114,7 +115,7 @@ public sealed partial class SwivalSubagentRunner
 
             await using var activeTraceTailer = RelayTraceTailer.Start(traceDir,
                 _eventSink is null ? null : (entry, token) => PublishTraceAsync(attemptInvocation, entry, token),
-                onActivity: () => watchdog.Pulse("trace"));
+                onActivity: () => watchdog.Pulse("trace"), timeProvider: _timeProvider);
 
             var arguments = BuildPromptArguments(attemptInvocation, resolvedCommands, correctivePriorOutput, correctiveShapeError, attempt, reportFile);
 
@@ -128,7 +129,7 @@ public sealed partial class SwivalSubagentRunner
                 processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,
                 onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
                 onWedgeSample: watchdog.RecordWedgeSample,
-                socketProbe: BackendSocketProbe.HasEstablishedBackendConnection);
+                socketProbe: BackendSocketProbe.HasEstablishedBackendConnection, timeProvider: _timeProvider);
             var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
             SubagentResult? stallResult = null;
             // WhenAny may return processTask when watchdog kill triggers near-simultaneous

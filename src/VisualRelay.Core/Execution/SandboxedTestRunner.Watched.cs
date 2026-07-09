@@ -84,8 +84,9 @@ public sealed partial class SandboxedTestRunner
         string fileName, IReadOnlyList<string> args, string rootPath,
         IReadOnlyDictionary<string, string>? environment,
         int firstOutputTimeoutMs, int idleGraceMs, TimeSpan hardCap,
-        int cpuSampleIntervalMs, CancellationToken cancellationToken)
+        int cpuSampleIntervalMs, CancellationToken cancellationToken, TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         var sw = Stopwatch.StartNew();
 
         using var watchdogCts = new CancellationTokenSource();
@@ -96,12 +97,12 @@ public sealed partial class SandboxedTestRunner
         // (the only guard against a busy-forever hang the CPU pulse keeps alive);
         // the watchdog itself only reaps on first-output / inactivity (idle).
         var watchdog = new ActivityWatchdog(
-            firstOutputTimeoutMs, idleGraceMs, absoluteCeilingMs: 0, watchdogCts);
+            firstOutputTimeoutMs, idleGraceMs, absoluteCeilingMs: 0, watchdogCts, timeProvider: tp);
 
         var processTask = ProcessCapture.RunAsync(
             fileName, args, rootPath, hardCap, cancellationToken,
             environment: environment, killToken: watchdogCts.Token,
-            onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs);
+            onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs, timeProvider: tp);
         var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
 
         var reapedOnIdle = false;

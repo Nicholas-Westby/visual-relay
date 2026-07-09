@@ -10,18 +10,20 @@ public sealed class RelayTraceTailer : IAsyncDisposable
     private readonly string _traceDirectory;
     private readonly Func<TraceEntry, CancellationToken, Task>? _onEntry;
     private readonly Action? _onActivity;
+    private readonly TimeProvider _timeProvider;
     private readonly Task _loop;
 
-    private RelayTraceTailer(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry, Action? onActivity = null)
+    private RelayTraceTailer(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry, Action? onActivity = null, TimeProvider? timeProvider = null)
     {
         _traceDirectory = traceDirectory;
         _onEntry = onEntry;
         _onActivity = onActivity;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _loop = Task.Run(() => LoopAsync(_stop.Token));
     }
 
-    public static RelayTraceTailer Start(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry = null, Action? onActivity = null) =>
-        new(traceDirectory, onEntry, onActivity);
+    public static RelayTraceTailer Start(string traceDirectory, Func<TraceEntry, CancellationToken, Task>? onEntry = null, Action? onActivity = null, TimeProvider? timeProvider = null) =>
+        new(traceDirectory, onEntry, onActivity, timeProvider);
 
     public async ValueTask DisposeAsync()
     {
@@ -43,7 +45,7 @@ public sealed class RelayTraceTailer : IAsyncDisposable
         while (!cancellationToken.IsCancellationRequested)
         {
             await PollAsync(cancellationToken);
-            await Task.Delay(200, cancellationToken);
+            await Task.Delay(TimeSpan.FromMilliseconds(200), _timeProvider, cancellationToken);
         }
     }
 

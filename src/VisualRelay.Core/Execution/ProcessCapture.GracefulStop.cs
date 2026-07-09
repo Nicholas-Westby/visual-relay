@@ -28,7 +28,7 @@ internal static partial class ProcessCapture
     /// race. The direct send covers the common case where the child is already
     /// exec'd; the group send reaches descendants through the nono wrapper.
     /// </remarks>
-    private static async Task GracefulStopThenKillAsync(Process process, int? stageGroupId)
+    private static async Task GracefulStopThenKillAsync(Process process, int? stageGroupId, TimeProvider tp)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -48,10 +48,10 @@ internal static partial class ProcessCapture
         // Every process.HasExited access is guarded: when called from the
         // killToken.Register fire-and-forget callback the Process may have
         // been disposed before this background task completes.
-        var deadline = DateTime.UtcNow + GraceWindow;
-        while (DateTime.UtcNow < deadline && !SafeHasExited(process))
+        var deadline = tp.GetUtcNow() + GraceWindow;
+        while (tp.GetUtcNow() < deadline && !SafeHasExited(process))
         {
-            await Task.Delay(200);
+            await Task.Delay(TimeSpan.FromMilliseconds(200), tp);
         }
 
         // Still alive after grace — hard kill.
