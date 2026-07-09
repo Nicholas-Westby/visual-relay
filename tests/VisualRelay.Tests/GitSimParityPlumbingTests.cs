@@ -120,4 +120,33 @@ public sealed class GitSimParityPlumbingTests
             TestFileSystem.DeleteDirectoryResilient(simWt);
         }
     }
+
+    [Fact]
+    public void WorktreeRemoveForce_Parity()
+    {
+        if (!Ready()) return;
+        using var h = new ParityHarness();
+        h.SeedCommit("a.txt", "content", "seed");
+        var realWt = Path.Combine(Path.GetTempPath(), "gitsim-parity", Guid.NewGuid().ToString("N"));
+        var simWt = Path.Combine(Path.GetTempPath(), "gitsim-parity", Guid.NewGuid().ToString("N"));
+        try
+        {
+            h.RealGit("worktree", "add", "--detach", "--quiet", realWt, "HEAD");
+            h.SimGit("worktree", "add", "--detach", "--quiet", simWt, "HEAD");
+            Assert.True(Directory.Exists(realWt));
+            Assert.True(Directory.Exists(simWt));
+
+            // remove --force unregisters AND deletes the on-disk directory in both.
+            var real = h.RealGit("worktree", "remove", "--force", realWt);
+            var sim = h.SimGit("worktree", "remove", "--force", simWt);
+            Assert.Equal(real.Exit, sim.Exit);
+            Assert.False(Directory.Exists(realWt));
+            Assert.False(Directory.Exists(simWt));
+        }
+        finally
+        {
+            TestFileSystem.DeleteDirectoryResilient(realWt);
+            TestFileSystem.DeleteDirectoryResilient(simWt);
+        }
+    }
 }
