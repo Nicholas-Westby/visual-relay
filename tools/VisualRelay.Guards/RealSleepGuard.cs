@@ -66,7 +66,6 @@ public static class RealSleepGuard
         "ProcessCaptureGracefulStopTests.cs",
         "SandboxedTestRunnerReapTests.cs",
         "ActivityWatchdogSocketWedgeTests.cs",
-        "SwivalSubagentRunnerSlowIntegrationTests.cs",
         // Real detached-child reaping and a Windows heartbeat-file window: genuine OS
         // effects with no virtualizable signal, gated / OS-guarded, real settle needed.
         "FdLeakTests.cs",
