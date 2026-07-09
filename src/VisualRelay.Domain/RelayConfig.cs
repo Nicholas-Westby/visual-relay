@@ -23,8 +23,8 @@ public sealed record RelayConfig(
     int SubagentTimeoutMilliseconds,
     int TestTimeoutMilliseconds,
     // Per-tier first-output watchdog (ms). A swival invocation that emits zero
-    // trace entries / stdout bytes within this window is killed and retried
-    // (up to MaxStallRetries). The threshold varies sharply by tier:
+    // trace entries / stdout bytes within this window is killed and the stage
+    // escalates to the next tier. The threshold varies sharply by tier:
     //   cheap    ~90 s  (healthy max ~34 s)
     //   balanced ~120 s (healthy max ~46 s)
     //   frontier ~660 s (healthy max ~412 s; Review stage, heaviest reasoning)
@@ -32,12 +32,6 @@ public sealed record RelayConfig(
     IReadOnlyDictionary<string, int> FirstOutputTimeoutMsByTier,
     // Fallback (ms) for tiers absent from FirstOutputTimeoutMsByTier.
     int FirstOutputTimeoutMs,
-    // Maximum retries after a first-output stall kill before giving up.
-    int MaxStallRetries,
-    // Maximum corrective retries when a stage completes (exit 0) but the output
-    // lacks a parseable fenced JSON contract block (or the block has wrong shape).
-    // 0 preserves today's fail-fast; defaults to 1.
-    int MaxContractRetries = 1,
     // Maximum concurrent planning tasks during Phase 1 (parallel planning).
     // Planning stages (1–4) are read-only and run in isolated git worktrees,
     // so they are safe to overlap. Stages 5–11 always run serially.
@@ -72,7 +66,7 @@ public sealed record RelayConfig(
     string? FormatCommand = null,
     // Per-tier inactivity timeout (ms). A stage with no liveness pulse
     // (stdout/stderr bytes, trace-dir entry, or trace-file growth) within
-    // this window is killed and retried (up to MaxStallRetries).
+    // this window is killed and the stage escalates to the next tier.
     // Tiers not in the map fall back to InactivityTimeoutMs.
     // Suggested: cheap/balanced ~600_000 (10 min), frontier ~1_200_000 (20 min).
     IReadOnlyDictionary<string, int>? InactivityTimeoutMsByTier = null,

@@ -55,11 +55,21 @@ public sealed partial class RelayDriver
         var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;
         var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
 
+        var runsExecuted = 0;
         for (var run = 1; run <= maxRuns; run++)
         {
             var tier = StageEscalation.TierForRun(stage.Tier, run);
             var turns = StageEscalation.TurnsForRun(baseTurns, run, boosted);
             var ceilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));
+            // No-repeat exhaustion: under the flat 10× boost turn doubling is
+            // suppressed, so a frontier-tier run computes the same (tier, turns) as the
+            // previous run. Re-running an identical config is what the always-escalate
+            // policy rejects, so stop and flag rather than repeat it.
+            if (run > 1
+                && tier == StageEscalation.TierForRun(stage.Tier, run - 1)
+                && turns == StageEscalation.TurnsForRun(baseTurns, run - 1, boosted))
+                break;
+            runsExecuted = run;
             if (run > 1)
             {
                 await PublishStageEscalatedAsync(rootPath, runId, taskId, stage, run, maxRuns,
@@ -205,9 +215,10 @@ public sealed partial class RelayDriver
             failingVerifyOutputPath = attemptVerifyOutputPath;
         }
 
-        // All runs exhausted — flag.
+        // All runs exhausted — flag. runsExecuted may be below maxRuns when the
+        // no-repeat guard stops a boosted ladder before an identical-config re-run.
         var finalOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-            $"verify failed after {maxRuns} fix-verify {(maxRuns == 1 ? "attempt" : "attempts")}", failingTestOutput, statusEntries, cancellationToken);
+            $"verify failed after {runsExecuted} fix-verify {(runsExecuted == 1 ? "attempt" : "attempts")}", failingTestOutput, statusEntries, cancellationToken);
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
 

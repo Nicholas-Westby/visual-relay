@@ -25,22 +25,20 @@ public sealed partial class SwivalSubagentRunner
         // Parse trace-dir name so retries follow stage{n}-attempt{k}.
         var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
         RelayAttempt.TryParse(Path.GetFileName(invocation.TraceDirectory), out var stageNum, out var startAttempt);
-        var maxStallAttempts = _config.MaxStallRetries + 1;
-        var stallRetriesLeft = _config.MaxStallRetries;
-        var contractRetriesLeft = _config.MaxContractRetries;
         var attempt = startAttempt;
         var currentInvocation = invocation;
         string? correctivePriorOutput = null;
         string? correctiveShapeError = null;
 
-        // Generalized escalation: ANY in-process failure (contract/shape reject,
-        // nonzero exit, persistent stall) re-runs the stage at the next tier
-        // (cheap→balanced→frontier, capped) with a DOUBLED turn + ceiling budget,
-        // up to MaxStageFailures runs (original + escalations) — then it fails. The
-        // run-1 base is the (already-boost-applied) invocation budget; the doubling
-        // is suppressed in flat 10× mode while the tier still escalates. Hard infra
-        // aborts (absolute ceiling, socket wedge) never escalate. MaxSelfEscalations
-        // (0 for the fix-verify loop, which owns escalation externally) caps this.
+        // Always-escalate model: ANY retryable in-process failure (contract/shape
+        // reject, nonzero exit, persistent stall) goes STRAIGHT to the next tier
+        // (cheap→balanced→frontier, capped) with a DOUBLED turn + ceiling budget —
+        // never a same-config retry. Attempt index == run index, up to
+        // MaxStageFailures runs total, then it fails. The run-1 base is the
+        // (already-boost-applied) invocation budget; the doubling is suppressed in
+        // flat 10× mode while the tier still escalates. Hard infra aborts (absolute
+        // ceiling, socket wedge) never escalate. MaxSelfEscalations (0 for the
+        // fix-verify loop, which owns escalation externally) caps this.
         var baseTurns = invocation.MaxTurns;
         var baseCeilingMs = absoluteCeilingMs;
         var flatBoost = invocation.IsTurnBoosted;
@@ -51,26 +49,32 @@ public sealed partial class SwivalSubagentRunner
         var skipDirs = await NonoRollbackSkipDirs.ComputeAsync(
             invocation.TargetRoot, _gitInvoker, cancellationToken);
 
-        // One escalation rung: bump tier (capped at frontier), scale turns + ceiling
-        // (×2 per run; flat under the 10× boost), reset the within-run stall/contract
-        // budgets and corrective prompt (a higher tier re-runs fresh), re-resolve
-        // commands for the new tier, and log the transition. False at the run cap.
+        // One escalation rung: bump tier (capped at frontier) and scale turns +
+        // ceiling (×2 per run; flat under the 10× boost), re-resolve commands for the
+        // new tier, and log the transition. Returns false — the ladder is exhausted —
+        // at the run cap OR when the next rung's (tier, turns) equals the current
+        // config: under the flat 10× boost turn doubling is suppressed, so a
+        // frontier-tier run would compute an identical config, and re-running the same
+        // (tier, max-turns) is exactly what the always-escalate policy rejects (a
+        // boosted frontier-base stage therefore gets exactly one attempt). The caller
+        // owns the corrective-context carry: contract failures set it before
+        // escalating (so the higher tier sees what the prior output got wrong);
+        // stall/crash escalations clear it.
         async Task<bool> TryEscalateAsync(int currentAttempt)
         {
             if (escalationCount >= maxEscalations)
                 return false;
             var fromTier = currentInvocation.Tier;
             var fromTurns = currentInvocation.MaxTurns;
-            escalationCount++;
-            var run = escalationCount + 1;
+            var run = escalationCount + 2;
             var toTier = StageEscalation.NextTier(fromTier);
             var toTurns = StageEscalation.TurnsForRun(baseTurns, run, flatBoost);
+            // No-repeat exhaustion: never re-run an identical (tier, max-turns).
+            if (toTier == fromTier && toTurns == fromTurns)
+                return false;
+            escalationCount++;
             currentInvocation = currentInvocation with { Tier = toTier, MaxTurns = toTurns };
             absoluteCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, flatBoost));
-            stallRetriesLeft = _config.MaxStallRetries;
-            contractRetriesLeft = _config.MaxContractRetries;
-            correctivePriorOutput = null;
-            correctiveShapeError = null;
             resolvedCommands = ResolveCommandsOnPath(currentInvocation.Stage.Commands, _eventSink, currentInvocation);
             await PublishEscalationAsync(currentInvocation, currentAttempt, run, maxEscalations + 1,
                 fromTier, toTier, fromTurns, toTurns, cancellationToken);
@@ -171,15 +175,13 @@ public sealed partial class SwivalSubagentRunner
                                 $"subtree was idle for {wdResult.SilenceMs}ms. Last signal: {wdResult.LastPulseSource}."),
                             HardAbort: true);
                     }
-                    // Plain stall: retry at the same tier within budget, then escalate.
-                    else if (stallRetriesLeft > 0)
-                    {
-                        stallRetriesLeft--;
-                        attempt++;
-                        continue;
-                    }
+                    // Plain stall: escalate straight to the next tier (no same-config
+                    // retry), carrying no corrective context. At the ladder's edge,
+                    // surface the persistent-stall reason with the attempts made.
                     else if (await TryEscalateAsync(attempt))
                     {
+                        correctivePriorOutput = null;
+                        correctiveShapeError = null;
                         attempt++;
                         continue;
                     }
@@ -187,7 +189,7 @@ public sealed partial class SwivalSubagentRunner
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
                             ErrorHintClassifier.WithHint(BuildPersistentStallReason(
-                                wdResult, currentFirstOutputMs, currentInactivityMs, maxStallAttempts)));
+                                wdResult, currentFirstOutputMs, currentInactivityMs, escalationCount + 1)));
                     }
                 }
             }
@@ -221,21 +223,18 @@ public sealed partial class SwivalSubagentRunner
                 await PublishNonzeroExitAsync(attemptInvocation, attempt, result.ExitCode,
                     result.Output.Length, killedOutputPath, cancellationToken);
 
-                // Retry within the shared stall-retry budget (combined stall+crash
-                // attempts stay bounded), then escalate tier+turns before giving up.
-                if (stallRetriesLeft > 0)
-                {
-                    stallRetriesLeft--;
-                    attempt++;
-                    continue;
-                }
+                // Nonzero exit: escalate straight to the next tier (no same-config
+                // retry), carrying no corrective context. When the ladder is
+                // exhausted, surface the real error.
                 if (await TryEscalateAsync(attempt))
                 {
+                    correctivePriorOutput = null;
+                    correctiveShapeError = null;
                     attempt++;
                     continue;
                 }
 
-                // Retries + escalations exhausted — surface the real error.
+                // Escalations exhausted — surface the real error.
                 // BuildNonzeroExitReason distills swival's output; when that yields no
                 // usable diagnostic (just the echoed prompt) it folds in the proxy
                 // log's model-backend cause.
@@ -265,18 +264,14 @@ public sealed partial class SwivalSubagentRunner
 
             if (json is null)
             {
-                // Within a run: nudge for the missing/rejected JSON block at the same
-                // tier (corrective prompt). When that budget is spent, escalate.
-                if (contractRetriesLeft > 0)
-                {
-                    contractRetriesLeft--;
-                    correctivePriorOutput = result.Output;
-                    await PublishContractRetryAsync(attemptInvocation, attempt, cancellationToken);
-                    attempt++;
-                    continue;
-                }
+                // Contract/shape reject: escalate straight to the next tier, carrying
+                // the corrective diagnostic (prior output + shape error) into the
+                // escalated attempt's prompt so the higher tier knows what the prior
+                // output got wrong. When the ladder is exhausted, fail the stage.
+                correctivePriorOutput = result.Output;
                 if (await TryEscalateAsync(attempt))
                 {
+                    await PublishContractRetryAsync(attemptInvocation, attempt, cancellationToken);
                     attempt++;
                     continue;
                 }

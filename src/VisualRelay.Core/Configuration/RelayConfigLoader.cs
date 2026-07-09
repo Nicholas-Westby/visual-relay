@@ -32,8 +32,6 @@ public static partial class RelayConfigLoader
                 ["frontier"] = 660_000
             },
             FirstOutputTimeoutMs: 660_000,
-            MaxStallRetries: 2,
-            MaxContractRetries: 1,
             MaxPlanConcurrency: 10,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
@@ -216,8 +214,6 @@ public static partial class RelayConfigLoader
                 TestTimeoutMilliseconds = OptionalInt(root, "testTimeoutMs", defaults.TestTimeoutMilliseconds),
                 FirstOutputTimeoutMsByTier = firstOutputTiers,
                 FirstOutputTimeoutMs = OptionalInt(root, "firstOutputTimeoutMs", defaults.FirstOutputTimeoutMs),
-                MaxStallRetries = OptionalInt(root, "maxStallRetries", defaults.MaxStallRetries),
-                MaxContractRetries = OptionalInt(root, "maxContractRetries", defaults.MaxContractRetries),
                 CommitProofArtifacts = OptionalBool(root, "commitProofArtifacts", defaults.CommitProofArtifacts),
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 InactivityTimeoutMsByTier = inactivityTiers,
