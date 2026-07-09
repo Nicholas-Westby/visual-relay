@@ -77,6 +77,8 @@ internal static partial class GitSimCommands
 
     public static bool MatchesAny(string path, IReadOnlyList<string> pathspecs)
     {
+        if (pathspecs.Count == 0)
+            return true; // no pathspec == match every path (git convention)
         foreach (var spec in pathspecs)
         {
             var s = spec.Replace('\\', '/').TrimEnd('/');
