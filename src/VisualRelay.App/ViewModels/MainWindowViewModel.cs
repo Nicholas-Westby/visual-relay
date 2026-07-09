@@ -3,6 +3,7 @@ using Avalonia.Media;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using VisualRelay.App.Services;
+using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
@@ -67,7 +68,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];
     public ObservableCollection<StageRowViewModel> Stages { get; } = [];
-    public ObservableCollection<RelayEvent> Events { get; } = [];
+    public ObservableCollection<IRunLogRow> Events { get; } = [];
     public ObservableCollection<TraceEntry> TraceEntries { get; } = [];
     public ObservableCollection<AttachmentRowViewModel> Attachments { get; } = [];
 

@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
+using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
@@ -35,7 +36,14 @@ public partial class MainWindowViewModel
         _allTaskEvents.Insert(0, relayEvent);
         if (_selectedStageFilter is null || relayEvent.StageNumber == _selectedStageFilter)
         {
-            Events.Insert(0, relayEvent);
+            if (Events.Count > 0 && RunLogGrouper.MergeNewest(Events, relayEvent))
+            {
+                // merged into an existing group row — no new row added
+            }
+            else
+            {
+                Events.Insert(0, new SingleEventRow(relayEvent));
+            }
         }
 
         if (traceEntry is not null)
@@ -270,9 +278,9 @@ public partial class MainWindowViewModel
     private void ApplyLogFilter()
     {
         Events.Clear();
-        foreach (var relayEvent in _allTaskEvents.Where(IsInSelectedStage))
+        foreach (var row in RunLogGrouper.GroupEvents(_allTaskEvents.Where(IsInSelectedStage)))
         {
-            Events.Add(relayEvent);
+            Events.Add(row);
         }
 
         TraceEntries.Clear();

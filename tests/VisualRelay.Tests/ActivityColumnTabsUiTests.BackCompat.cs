@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
+using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 using VisualRelay.Domain;
@@ -19,9 +20,9 @@ public sealed partial class ActivityColumnTabsUiTests
     public void RunLog_StillShowsEvents()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        vm.Events.Add(new RelayEvent(
+        vm.Events.Add(new SingleEventRow(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "stage_start", "run-1", "/tmp",
-            "task-1", 1, "cheap", 1));
+            "task-1", 1, "cheap", 1)));
 
         var activityColumn = ShowActivityColumn(vm);
 

@@ -1,4 +1,5 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -21,7 +22,7 @@ public sealed partial class MainWindowViewModelTests
         viewModel.SelectStageCommand.Execute(viewModel.Stages[0]);
         Assert.Equal("stage 01", viewModel.LogScopeLabel);
         Assert.Single(viewModel.Events);
-        Assert.All(viewModel.Events, item => Assert.Equal(1, item.StageNumber));
+        Assert.All(viewModel.Events, item => Assert.Equal(1, item.Event.StageNumber));
         Assert.Single(viewModel.TraceEntries);
         Assert.Contains("stage one", viewModel.TraceEntries[0].Content);
         Assert.True(viewModel.Stages[0].IsSelected);

@@ -3,6 +3,7 @@ using Avalonia.Headless;
 using Avalonia.Media.Imaging;
 using VisualRelay.App;
 using VisualRelay.App.ViewModels;
+using VisualRelay.App.ViewModels.RunLogRows;
 using VisualRelay.App.Views;
 using VisualRelay.Domain;
 
@@ -181,18 +182,18 @@ static void SeedActivity(MainWindowViewModel viewModel, string demoTaskMarkdown)
     SeedStages(viewModel);
 
     viewModel.Events.Clear();
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-2), "info", "stage_start", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced" }));
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-7), "info", "trace", "demo", root, taskId, 3, "balanced",
-        Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" }));
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-22), "info", "stage_done", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" }));
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-24), "info", "stage_report", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" }));
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-30), "warn", "tests_red", "demo", root, taskId, 2, "cheap",
-        Data: new Dictionary<string, string> { ["reason"] = "2 failing before implementation", ["time"] = "4s" }));
-    viewModel.Events.Add(new RelayEvent(now.AddSeconds(-45), "info", "stage_done", "demo", root, taskId, 1, "cheap",
-        Data: new Dictionary<string, string> { ["name"] = "Ideate", ["model"] = "cheap", ["time"] = "19s", ["cost"] = "$0.00" }));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-2), "info", "stage_start", "demo", root, taskId, 3, "balanced",
+        Data: new Dictionary<string, string> { ["name"] = "Diagnose", ["model"] = "balanced" })));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-7), "info", "trace", "demo", root, taskId, 3, "balanced",
+        Data: new Dictionary<string, string> { ["title"] = "read_file", ["time"] = "1s", ["cost"] = "$0.00" })));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-22), "info", "stage_done", "demo", root, taskId, 2, "cheap",
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" })));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-24), "info", "stage_report", "demo", root, taskId, 2, "cheap",
+        Data: new Dictionary<string, string> { ["name"] = "Research", ["model"] = "cheap", ["time"] = "22s", ["cost"] = "$0.01" })));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-30), "warn", "tests_red", "demo", root, taskId, 2, "cheap",
+        Data: new Dictionary<string, string> { ["reason"] = "2 failing before implementation", ["time"] = "4s" })));
+    viewModel.Events.Add(new SingleEventRow(new RelayEvent(now.AddSeconds(-45), "info", "stage_done", "demo", root, taskId, 1, "cheap",
+        Data: new Dictionary<string, string> { ["name"] = "Ideate", ["model"] = "cheap", ["time"] = "19s", ["cost"] = "$0.00" })));
 
     viewModel.TraceEntries.Clear();
     viewModel.TraceEntries.Add(new TraceEntry(TraceEntryKind.ToolCall, "Research", "rg \"COMMANDS|add\" src tests", 2));
