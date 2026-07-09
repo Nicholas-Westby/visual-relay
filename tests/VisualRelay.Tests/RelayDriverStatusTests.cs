@@ -25,7 +25,7 @@ public sealed class RelayDriverStatusTests
 
         var entries = StageStatusRecord.Read(Path.Combine(repo.Root, ".relay", "status-test"));
         Assert.Equal(12, entries.Count);
-        Assert.All(entries, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(entries);
     }
 
     [Fact]

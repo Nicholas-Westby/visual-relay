@@ -13,12 +13,18 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
     private string _codeOnlyFile = "src/View.axaml";
     private bool _testOnly;
     private string _testOnlyFile = "tests/regression.cs";
+    private bool _reviewChanges;
 
     public void SeedHappyPath(string codeFile, string testFile)
     {
         _codeFile = codeFile;
         _testFile = testFile;
     }
+
+    // Makes Review (stage 7) return a non-clean verdict so the driver's
+    // clean-review Fix-skip does NOT trigger and Fix (stage 9) runs — for tests
+    // that exercise Fix's mechanics (invocation, targeted command, flag/resume).
+    public void SeedReviewChanges() => _reviewChanges = true;
 
     // A non-code change: the manifest contains only documentation/config files
     // (e.g. .md, .txt, .json). Stage 5 returns no testFiles.
@@ -61,7 +67,9 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
             5 when _testOnly => $$"""{"testFiles":["{{_testOnlyFile}}"],"rationale":"test-only change"}""",
             5 => $$"""{"testFiles":["{{_testFile}}"],"rationale":"red first"}""",
             6 => """{"summary":"implemented"}""",
-            7 => """{"verdict":"pass","issues":[]}""",
+            7 => _reviewChanges
+                ? """{"verdict":"changes","issues":["address the review finding"]}"""
+                : """{"verdict":"pass","issues":[]}""",
             8 => """{"verdict":"pass","issues":[]}""",
             9 => """{"summary":"fixed review notes"}""",
             10 => """{"summary":"verified","commitMessages":["feat: implement feature","fix: address edge case","chore: update project files"]}""",
@@ -92,6 +100,8 @@ internal sealed class CapturingSubagentRunner : ISubagentRunner
 
     public void SeedHappyPath(string codeFile, string testFile) =>
         _inner.SeedHappyPath(codeFile, testFile);
+
+    public void SeedReviewChanges() => _inner.SeedReviewChanges();
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {

@@ -85,7 +85,7 @@ public sealed class RelayDriverResumeTests
 
         // Status shows all stages Done.
         var statusAfterRun2 = StageStatusRecord.Read(taskDir);
-        Assert.All(statusAfterRun2, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(statusAfterRun2);
 
         // NEEDS-REVIEW is gone.
         Assert.False(File.Exists(Path.Combine(taskDir, "NEEDS-REVIEW")));
@@ -127,7 +127,7 @@ public sealed class RelayDriverResumeTests
 
         // Status shows all Done.
         var status = StageStatusRecord.Read(taskDir);
-        Assert.All(status, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(status);
     }
 
     [Fact]

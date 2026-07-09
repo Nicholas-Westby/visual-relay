@@ -1,6 +1,7 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using Xunit;
 using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
@@ -56,6 +57,14 @@ internal static class RelayDriverTestHelpers
         sim.InitRepo(repo.Root, branch);
         return sim;
     }
+
+    /// <summary>
+    /// Asserts a completed clean-review, green-verify happy path: Fix (9) and
+    /// Fix-verify (11) are recorded Skipped (no findings / nothing to fix), and
+    /// every other stage is Done.
+    /// </summary>
+    public static void AssertHappyPathStatuses(IReadOnlyList<StageStatusEntry> entries) =>
+        Assert.All(entries, e => Assert.Equal(e.Stage is 9 or 11 ? "Skipped" : "Done", e.Status));
 
     public static async Task RunHappyPath(TestRepository repo, string taskId)
     {

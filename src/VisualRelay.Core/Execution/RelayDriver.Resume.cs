@@ -20,7 +20,12 @@ public sealed partial class RelayDriver
         var priorStatus = StageStatusRecord.Read(taskDirectory);
         if (priorStatus.Count == 0)
             return;
-        var firstNonDone = priorStatus.FirstOrDefault(e => e.Status != "Done");
+        // A stage recorded as "Skipped" (Fix on a clean review family, Fix-verify on a
+        // green Verify) is COMPLETE for resume: the skip was decided upstream and must
+        // not be re-entered without that context, so treat it like Done and advance to
+        // the first genuinely-incomplete stage.
+        var firstNonDone = priorStatus.FirstOrDefault(e =>
+            e.Status != "Done" && !"Skipped".Equals(e.Status, StringComparison.OrdinalIgnoreCase));
         firstStageToRun = firstNonDone?.Stage ?? (RelayStages.All.Count + 1);
 
         // Capture prior task-input hash for re-add detection.

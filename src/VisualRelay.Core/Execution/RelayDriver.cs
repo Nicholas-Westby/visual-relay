@@ -48,6 +48,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
             var reviewPairHandled = false;
+            var reviewFamilyClean = false;
             var fixVerifyHandled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
             var implementationFrontLoaded = false;
@@ -90,11 +91,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     taskHash = pairState.TaskHash;
                     sessionCostUsd = pairState.SessionCostUsd;
                     unknownCostStageCount = pairState.UnknownCostStageCount;
+                    reviewFamilyClean = pairState.ReviewFamilyClean;
                     reviewPairHandled = true;
                     continue;
                 }
-                if (fixVerifyHandled && stage.Number == 11)
-                    continue;
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
@@ -103,6 +103,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 string? check = null;
                 RelayCostEstimate? cost = null;
                 double? testDurationSeconds = null;
+
+                // Skip Fix (9) when the review family is clean/skipped (see SkipStages).
+                if (stage.Number == 9 && reviewFamilyClean)
+                {
+                    (previousSeal, taskHash) = await RecordFixSkipAsync(rootPath, runId, taskId,
+                        taskDirectory, stage, ledger, seals, statusEntries, manifest,
+                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                    continue;
+                }
 
                 if (stage.Kind == "driver")
                 {
@@ -264,21 +273,12 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         }
                         if (check == "green" && !fixVerifyHandled)
                         {
-                            // Record stage 10 green explicitly.
-                            (previousSeal, taskHash) = await RecordStageAsync(
+                            // Verify green: record stage 10, then skip Fix-verify (11).
+                            (previousSeal, taskHash) = await RecordVerifyGreenSkipFixVerifyAsync(
                                 rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                                 stopwatch, ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-                                cancellationToken, testDurationSeconds);
-                            // Skip stage 11: nothing to fix.
-                            var fixVerifyStage = RelayStages.All[10];
-                            (previousSeal, taskHash) = await RecordStageAsync(
-                                rootPath, runId, taskId, taskDirectory, fixVerifyStage,
-                                "_Skipped: Verify passed; nothing to fix._",
-                                "green", null, Stopwatch.StartNew(),
-                                ledger, seals, statusEntries, manifest,
-                                previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-                                cancellationToken);
+                                testDurationSeconds, cancellationToken);
                             fixVerifyHandled = true;
                         }
                     }

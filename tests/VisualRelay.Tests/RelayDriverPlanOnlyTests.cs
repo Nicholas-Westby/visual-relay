@@ -129,7 +129,7 @@ public sealed class RelayDriverPlanOnlyTests
 
         // Status shows all Done after phase 2.
         var statusAfterResume = StageStatusRecord.Read(taskDir);
-        Assert.All(statusAfterResume, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(statusAfterResume);
 
         // Seals file covers all 12 stages.
         var sealsPath = Path.Combine(taskDir, "two-phase.seals");

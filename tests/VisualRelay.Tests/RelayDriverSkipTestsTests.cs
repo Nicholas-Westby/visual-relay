@@ -41,9 +41,10 @@ public sealed class RelayDriverSkipTestsTests
         Assert.Equal("Skipped", stage5.Status);
         Assert.Equal("green", stage5.Check);
 
-        // All other stages must be "Done" (except stage 8 Visual-review which is
-        // skipped when vision tier is not configured).
-        foreach (var e in entries.Where(e => e.Stage != 5 && e.Stage != 8))
+        // All other stages must be "Done" — except 8 (Visual-review, skipped
+        // without vision), 9 (Fix, skipped on a clean review), and 11 (Fix-verify,
+        // skipped on a green verify).
+        foreach (var e in entries.Where(e => e.Stage is not (5 or 8 or 9 or 11)))
         {
             Assert.Equal("Done", e.Status);
         }

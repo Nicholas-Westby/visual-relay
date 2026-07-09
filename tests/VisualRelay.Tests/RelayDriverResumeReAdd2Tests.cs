@@ -12,8 +12,11 @@ public sealed class RelayDriverResumeReAdd2Tests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("partial-task", "# v1 — original\n");
 
-        // Run 1: flag at stage 9 (leaves stages 1-8 Done, 9 Flagged)
-        var flagAt9 = new FlagAtStageSubagentRunner(flagAtStage: 9);
+        // Run 1: flag at stage 9 (leaves stages 1-8 Done, 9 Flagged). Review
+        // must report changes so Fix (9) actually runs rather than being skipped.
+        var flagInner = new ScriptedSubagentRunner();
+        flagInner.SeedReviewChanges();
+        var flagAt9 = new FlagAtStageSubagentRunner(flagAtStage: 9, flagInner);
         var driver1 = new RelayDriver(
             RelayDriverTestHelpers.DepsFor(repo, flagAt9, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -62,9 +65,9 @@ public sealed class RelayDriverResumeReAdd2Tests
         Assert.True(sealCountAfterRun2 > sealCountAfterRun1);
         Assert.True(sealCountAfterRun2 >= 11);
 
-        // All Done after resume
+        // Resume re-runs Fix (9) → Done; only Fix-verify (11) skips (green verify).
         var statusAfterRun2 = StageStatusRecord.Read(taskDir);
-        Assert.All(statusAfterRun2, e => Assert.Equal("Done", e.Status));
+        Assert.All(statusAfterRun2, e => Assert.Equal(e.Stage == 11 ? "Skipped" : "Done", e.Status));
     }
 
     [Fact]
@@ -126,7 +129,7 @@ public sealed class RelayDriverResumeReAdd2Tests
         var finalTaskDir = Path.Combine(repo.Root, ".relay", "multi-add");
         Assert.True(Directory.Exists(finalTaskDir));
         var finalStatus = StageStatusRecord.Read(finalTaskDir);
-        Assert.All(finalStatus, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(finalStatus);
         var finalSeals = await File.ReadAllLinesAsync(Path.Combine(finalTaskDir, "multi-add.seals"));
         Assert.Contains("\"n\":1", finalSeals[0], StringComparison.Ordinal);
     }

@@ -22,6 +22,7 @@ public sealed class RelayDriverManifestPrefixTests
             _plan = plan;
             _manifest = manifest;
             _inner.SeedHappyPath("src/Existing.cs", "tests/Existing.tests.cs");
+            _inner.SeedReviewChanges(); // keep Fix (9) running to assert its invocation
         }
 
         public IReadOnlyList<StageInvocation> Invocations => _inner.Invocations;
@@ -56,6 +57,7 @@ public sealed class RelayDriverManifestPrefixTests
             _firstManifestFile = firstManifestFile;
             _retryManifestFile = retryManifestFile;
             _inner.SeedHappyPath(firstManifestFile, "tests/T.cs");
+            _inner.SeedReviewChanges(); // keep Fix (9) running to assert its invocation
         }
 
         public IReadOnlyList<StageInvocation> Invocations => _inner.Invocations;

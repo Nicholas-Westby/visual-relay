@@ -12,7 +12,7 @@ public sealed partial class RelayDriver
 
     private sealed record PairState(
         string PreviousSeal, string TaskHash, double SessionCostUsd,
-        int UnknownCostStageCount, RelayTaskOutcome? FlaggedOutcome);
+        int UnknownCostStageCount, RelayTaskOutcome? FlaggedOutcome, bool ReviewFamilyClean);
 
     // Runs Review (stage 7) and Visual-review (stage 8) concurrently with triage-based routing.
     private async Task<PairState> RunReviewPairAsync(
@@ -85,13 +85,13 @@ public sealed partial class RelayDriver
         {
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
                 "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome);
+            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
         if (visualResult is { Check: "red" })
         {
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                 "Visual-review returned an invalid result", visualResult.Body, statusEntries, cancellationToken);
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome);
+            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
 
         // Serialize ledger writes: Review first, then Visual-review.
@@ -121,7 +121,7 @@ public sealed partial class RelayDriver
                 unknownCostStageCount, cancellationToken);
         }
 
-        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null);
+        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, visualResult?.Body));
     }
 
     private sealed record TriageResult(string VisualReview, string Reason);

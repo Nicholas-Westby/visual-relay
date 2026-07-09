@@ -160,7 +160,7 @@ public sealed class TargetedTestInvocationTests
         repo.WriteTask("targeted-test", "# Targeted test\n");
         var runner = new CapturingSubagentRunner();
         // Manifest: src/app.cs (impl) + tests/app.tests.cs (authored test file)
-        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs"); runner.SeedReviewChanges();
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 10 verify — green
@@ -202,7 +202,7 @@ public sealed class TargetedTestInvocationTests
             """);
         repo.WriteTask("fallback-test", "# Fallback test\n");
         var runner = new CapturingSubagentRunner();
-        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs"); runner.SeedReviewChanges();
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 10 verify — green

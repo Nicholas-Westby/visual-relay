@@ -20,7 +20,7 @@ public sealed class RelayDriverResumeReAddTests
         var taskDir = Path.Combine(repo.Root, ".relay", "re-added");
         Assert.True(File.Exists(Path.Combine(taskDir, "status.json")));
         var oldStatus = StageStatusRecord.Read(taskDir);
-        Assert.All(oldStatus, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);
 
         var oldSealsPath = Path.Combine(taskDir, "re-added.seals");
         Assert.True(File.Exists(oldSealsPath));
@@ -50,7 +50,7 @@ public sealed class RelayDriverResumeReAddTests
         // Archive contains old status.json
         Assert.True(File.Exists(Path.Combine(archiveDirs[0], "status.json")));
         var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);
-        Assert.All(archivedStatus, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);
 
         // Archive contains old seals
         Assert.True(File.Exists(Path.Combine(archiveDirs[0], "re-added.seals")));
@@ -88,7 +88,7 @@ public sealed class RelayDriverResumeReAddTests
         var taskDir = Path.Combine(repo.Root, ".relay", "stable-task");
         Assert.True(File.Exists(Path.Combine(taskDir, "status.json")));
         var statusAfterRun1 = StageStatusRecord.Read(taskDir);
-        Assert.All(statusAfterRun1, e => Assert.Equal("Done", e.Status));
+        RelayDriverTestHelpers.AssertHappyPathStatuses(statusAfterRun1);
 
         var sealsPath = Path.Combine(taskDir, "stable-task.seals");
         var sealCountAfterRun1 = (await File.ReadAllLinesAsync(sealsPath)).Length;
