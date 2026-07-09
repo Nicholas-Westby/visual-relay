@@ -2,7 +2,6 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.ViewModels;
-using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
@@ -19,16 +18,8 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
-        Assert.NotNull(dialog);
+        var dialog = await OpenScopedSettingsAsync(repo);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
         var litTierItems = panel.FindControl<ItemsControl>("LitTierItems");
@@ -59,16 +50,8 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
-        Assert.NotNull(dialog);
+        var dialog = await OpenScopedSettingsAsync(repo);
 
         Dispatcher.UIThread.RunJobs();
 
@@ -96,16 +79,10 @@ public sealed partial class SettingsPanelUiTests
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: false);
         using var _ = SeedUserEnv(repo, "");
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
 
         try
         {
-            var dialog = OpenSettings(window);
-            Assert.NotNull(dialog);
+            var dialog = await OpenScopedSettingsAsync(repo);
 
             Dispatcher.UIThread.RunJobs();
 
@@ -142,16 +119,8 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel { RootPath = repo.Root, EnvironmentAccessor = _env };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
-        Assert.NotNull(dialog);
+        var dialog = await OpenScopedSettingsAsync(repo);
 
         Dispatcher.UIThread.RunJobs();
 

@@ -23,12 +23,25 @@ public sealed partial class SettingsPanelUiTests
         SettingsTestHelpers.SeedUserEnv(_env, repo, content);
     private static void WriteCommitConfig(TestRepository repo, bool? commitProofArtifacts) =>
         SettingsTestHelpers.WriteCommitConfig(repo, commitProofArtifacts);
-    private static SettingsWindow OpenSettings(MainWindow window) =>
-        SettingsTestHelpers.OpenSettings(window);
+
+    // Scoped-down construction: build the settings panel under test (a
+    // SettingsWindow bound to the VM) without the whole MainWindow, the cog, or
+    // LoadInitialAsync. OpenSettingsAsync populates the same panel state the cog
+    // path does. See SettingsTestHelpers.ShowScopedSettings for why this also
+    // removes the async-void spin-loop that flaked under parallel load.
+    private async Task<SettingsWindow> OpenScopedSettingsAsync(TestRepository repo)
+    {
+        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
+        await vm.OpenSettingsAsync();
+        return SettingsTestHelpers.ShowScopedSettings(vm);
+    }
 
     [AvaloniaFact]
     public async Task CogOpensSettingsPanel()
     {
+        // WHOLE-APP wiring: the cog click and the close→IsSettingsOpen reset are
+        // owned by the MainWindow/TopBar cog handler, so this fact keeps the full
+        // MainWindow boot (allowlisted in NoWholeAppBootGuardTests).
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
@@ -40,7 +53,7 @@ public sealed partial class SettingsPanelUiTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var dialog = OpenSettings(window);
+        var dialog = SettingsTestHelpers.OpenSettings(window);
         Assert.True(vm.IsSettingsOpen);
         Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());
 
@@ -55,16 +68,9 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
 
-        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        // Open the Settings dialog via the cog button.
-        var dialog = OpenSettings(window);
+        var dialog = await OpenScopedSettingsAsync(repo);
+        var vm = (MainWindowViewModel)dialog.DataContext!;
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
@@ -101,16 +107,10 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
+        var dialog = await OpenScopedSettingsAsync(repo);
+        var vm = (MainWindowViewModel)dialog.DataContext!;
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
@@ -133,16 +133,10 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
+        var dialog = await OpenScopedSettingsAsync(repo);
+        var vm = (MainWindowViewModel)dialog.DataContext!;
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();
@@ -172,13 +166,9 @@ public sealed partial class SettingsPanelUiTests
         WriteCommitConfig(repo, commitProofArtifacts: true);
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-from-env-file\nDEEPSEEK_API_KEY=sk-deepseek-999\n");
 
+        // VM-only fact: no window at all. KeyStates start empty; OpenSettingsAsync
+        // must populate them (the behaviour the cog relies on).
         var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-
-        // Before opening settings, key states should already be populated
-        // by LoadInitialAsync, but OpenSettingsAsync should refresh them again.
-        // Clear them to verify OpenSettingsAsync repopulates.
-        vm.KeyStates.Clear();
         Assert.Empty(vm.KeyStates);
 
         await vm.OpenSettingsAsync();
@@ -199,15 +189,15 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
 
+        // Scoped to just the TopBar under test (hosted in a bare window so the
+        // control renders) — the top-bar composition needs no MainWindow.
         var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
+        var topBar = new TopBar { DataContext = vm };
+        var host = new Window { Content = topBar, Width = 1440, Height = 120 };
+        host.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var topBar = SettingsTestHelpers.GetTopBar(window);
         // The separate "Keys" button must be gone after consolidation.
         var keyButton = topBar.FindControl<CommonButton>("KeySetupButton");
         Assert.Null(keyButton);
@@ -215,6 +205,9 @@ public sealed partial class SettingsPanelUiTests
         // The Settings cog must still be present.
         var settingsButton = topBar.FindControl<CommonButton>("SettingsButton");
         Assert.NotNull(settingsButton);
+
+        host.Close();
+        Dispatcher.UIThread.RunJobs();
     }
 
     [AvaloniaFact]
@@ -223,16 +216,10 @@ public sealed partial class SettingsPanelUiTests
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();
         WriteCommitConfig(repo, commitProofArtifacts: true);
-        repo.WriteTask("alpha", "# Alpha\n");
         using var r = SeedUserEnv(repo, "HF_TOKEN=hf-test\n");
 
-        var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };
-        await vm.LoadInitialAsync();
-        var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var dialog = OpenSettings(window);
+        var dialog = await OpenScopedSettingsAsync(repo);
+        var vm = (MainWindowViewModel)dialog.DataContext!;
         Assert.True(vm.IsSettingsOpen);
 
         var panel = dialog.GetVisualDescendants().OfType<SettingsPanel>().First();

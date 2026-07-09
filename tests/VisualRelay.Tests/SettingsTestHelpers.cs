@@ -6,6 +6,7 @@ using Avalonia.Headless;
 using Avalonia.Input;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 
@@ -54,12 +55,21 @@ internal static class SettingsTestHelpers
     public static SettingsWindow OpenSettings(MainWindow window)
     {
         ClickSettingsButton(window);
-        for (var i = 0; i < 50; i++)
+        // The cog handler is async void: the SettingsWindow appears only after an
+        // await gap (RefreshKeyStatesAsync does file IO on a threadpool thread and
+        // posts its continuation back to the dispatcher). RunJobs pumps that
+        // continuation, but the threadpool work needs wall-clock time to finish, so
+        // a brief sleep between pumps keeps this deterministic under heavy parallel
+        // load — a plain Thread.Yield starves when every core is busy, which is the
+        // contention that flaked the cog-path settings tests. Prefer scoping a fact
+        // down (SettingsTestHelpers.ShowScopedSettings) over this whole-app path.
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+        while (DateTime.UtcNow < deadline)
         {
             Dispatcher.UIThread.RunJobs();
             if (window.OwnedWindows.OfType<SettingsWindow>().FirstOrDefault() is { } sw)
                 return sw;
-            Thread.Yield(); // scheduler turn, not a wall-clock wait; loop re-pumps
+            Thread.Sleep(2);
         }
         throw new InvalidOperationException(
             "SettingsWindow did not appear in OwnedWindows after clicking the cog.");
@@ -72,6 +82,28 @@ internal static class SettingsTestHelpers
     /// </summary>
     public static void ClickSettingsButton(MainWindow window) =>
         Click(FindButton(GetTopBar(window), "SettingsButton"), window);
+
+    /// <summary>
+    /// Shows a <see cref="SettingsWindow"/> bound to <paramref name="vm"/> and
+    /// returns it, WITHOUT booting the whole <see cref="MainWindow"/> or driving
+    /// the async-void cog path. This is the scoped-down construction for
+    /// panel-local settings assertions: the caller first
+    /// <c>await vm.OpenSettingsAsync()</c> (populates KeyStates + LitTierRows
+    /// exactly as the cog does), so the dialog renders the same panel the cog
+    /// opens — but deterministically. No MainWindow, no LoadInitialAsync, and no
+    /// spin-loop waiting on an owned window, so it neither races the shared
+    /// headless dispatcher under parallel load nor pays the full-app boot cost.
+    /// Callers <see cref="Window.Close()"/> it as before.
+    /// </summary>
+    public static SettingsWindow ShowScopedSettings(MainWindowViewModel vm)
+    {
+        var dialog = new SettingsWindow { DataContext = vm };
+        dialog.Show();
+        dialog.Measure(new Size(dialog.Width, dialog.Height));
+        dialog.Arrange(new Rect(0, 0, dialog.Width, dialog.Height));
+        Dispatcher.UIThread.RunJobs();
+        return dialog;
+    }
 
     /// <summary>
     /// The layout (content) scroll regions under <paramref name="root"/>, i.e.
