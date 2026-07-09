@@ -70,7 +70,13 @@ internal static partial class GitCommitter
         {
             var checkArgs = new List<string> { "check-ignore", "--" };
             checkArgs.AddRange(manifest);
-            var ci = await GitAsync(gi, rootPath, checkArgs, cancellationToken);
+            // check-ignore returns exit 1 as its NORMAL "no paths are ignored"
+            // result (like grep), so treat 0 and 1 as final answers. Without this
+            // a clean manifest — the common case — is retried through ~1.25s of
+            // backoff on every commit. A genuine failure (e.g. exit 128) still
+            // retries via the default predicate.
+            var ci = await GitAsync(gi, rootPath, checkArgs, cancellationToken,
+                isSuccessExit: static code => code is 0 or 1);
             if (ci.ExitCode == 0 && !string.IsNullOrWhiteSpace(ci.Output))
             {
                 var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
@@ -219,19 +225,24 @@ internal static partial class GitCommitter
         IEnumerable<string> arguments,
         CancellationToken cancellationToken,
         TimeSpan? timeout = null,
-        IReadOnlyDictionary<string, string>? environment = null)
+        IReadOnlyDictionary<string, string>? environment = null,
+        Func<int, bool>? isSuccessExit = null)
     {
         const int maxAttempts = 3;
         // Materialize once: this retry loop enumerates 'arguments' on every attempt,
         // so a deferred source would re-run side effects / risk inconsistent args.
         var args = arguments as IReadOnlyList<string> ?? arguments.ToList();
+        // Which exit codes are a FINAL answer (never retried). Default: only 0. A
+        // caller widens this for a command whose non-zero exit is a normal result,
+        // not a transient failure — otherwise that result burns pointless backoff.
+        Func<int, bool> isSuccess = isSuccessExit ?? (static code => code == 0);
         (int ExitCode, string Output, bool TimedOut) lastResult = default;
 
         for (int attempt = 1; attempt <= maxAttempts; attempt++)
         {
             var result = await gitInvoker.RunAsync(rootPath, args, cancellationToken, timeout, environment);
 
-            if (result.ExitCode == 0 || attempt == maxAttempts)
+            if (isSuccess(result.ExitCode) || attempt == maxAttempts)
                 return result;
 
             lastResult = result;
