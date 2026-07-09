@@ -26,10 +26,8 @@ public sealed partial class RelayQueueController
     /// each planning driver's vr-guard profile self-heal resolves through it; it is
     /// <c>null</c> in production (real env) and a hermetic temp-XDG accessor in tests,
     /// keeping the parallel plan phase off the user's real <c>~/.config</c>.
-    /// <paramref name="gitInvoker"/> is likewise threaded into the planning phase
-    /// (<see cref="PlanPhaseRunner.RunPlanPhaseAsync"/>) and the flagged-task worktree
-    /// reset (<see cref="ResetAndLogAsync"/>); it is <c>null</c> in production (real
-    /// <see cref="GitInvoker"/>) and a repo-bound in-memory sim in tests.</summary>
+    /// <paramref name="gitInvoker"/> is likewise threaded into planning and the
+    /// flagged-task worktree reset — <c>null</c> in production, a repo-bound sim in tests.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
