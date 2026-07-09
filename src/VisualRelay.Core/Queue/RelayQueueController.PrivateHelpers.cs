@@ -22,8 +22,8 @@ public sealed partial class RelayQueueController
 
     private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)
     {
-        var gitInvoker = new GitInvoker();
-        try { await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gitInvoker); }
+        var gi = _gitInvoker ?? new GitInvoker();
+        try { await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi); }
         catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, "reset-failed", ex.Message); }
     }
 

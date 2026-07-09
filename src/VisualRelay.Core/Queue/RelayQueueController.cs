@@ -16,6 +16,7 @@ public sealed partial class RelayQueueController
     private readonly Func<string, IRelayEventSink>? _planEventSinkFactory;
     private readonly DrainLifecycleCallbacks? _lifecycle;
     private readonly IEnvironmentAccessor? _environmentAccessor;
+    private readonly IGitInvoker? _gitInvoker;
     private Func<IReadOnlyList<RelayTaskItem>>? _externalTaskSource;
     private bool _pauseRequested;
 
@@ -24,7 +25,11 @@ public sealed partial class RelayQueueController
     /// <paramref name="environmentAccessor"/> is forwarded to the planning phase so
     /// each planning driver's vr-guard profile self-heal resolves through it; it is
     /// <c>null</c> in production (real env) and a hermetic temp-XDG accessor in tests,
-    /// keeping the parallel plan phase off the user's real <c>~/.config</c>.</summary>
+    /// keeping the parallel plan phase off the user's real <c>~/.config</c>.
+    /// <paramref name="gitInvoker"/> is likewise threaded into the planning phase
+    /// (<see cref="PlanPhaseRunner.RunPlanPhaseAsync"/>) and the flagged-task worktree
+    /// reset (<see cref="ResetAndLogAsync"/>); it is <c>null</c> in production (real
+    /// <see cref="GitInvoker"/>) and a repo-bound in-memory sim in tests.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
@@ -32,7 +37,8 @@ public sealed partial class RelayQueueController
         ITestRunner? planTestRunner = null,
         Func<string, IRelayEventSink>? planEventSinkFactory = null,
         DrainLifecycleCallbacks? lifecycle = null,
-        IEnvironmentAccessor? environmentAccessor = null)
+        IEnvironmentAccessor? environmentAccessor = null,
+        IGitInvoker? gitInvoker = null)
     {
         RootPath = rootPath;
         _runner = runner;
@@ -42,6 +48,7 @@ public sealed partial class RelayQueueController
         _planEventSinkFactory = planEventSinkFactory;
         _lifecycle = lifecycle;
         _environmentAccessor = environmentAccessor;
+        _gitInvoker = gitInvoker;
     }
 
     private string RootPath { get; }
@@ -157,7 +164,7 @@ public sealed partial class RelayQueueController
 
                         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
                             RootPath, needsPlan, configResult.Config, _planTestRunner, drainCts.Token,
-                            _planEventSinkFactory, _environmentAccessor);
+                            _planEventSinkFactory, _environmentAccessor, _gitInvoker);
 
                         foreach (var (taskId, outcome) in planResults)
                         {
