@@ -206,7 +206,7 @@ public sealed partial class SwivalSubagentRunner
         }
     }
 
-    private static (int Files, long Bytes) CountTraceFiles(string traceDir)
+    internal static (int Files, long Bytes) CountTraceFiles(string traceDir)
     {
         if (!Directory.Exists(traceDir)) return (0, 0);
         var files = 0;

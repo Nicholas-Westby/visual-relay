@@ -10,7 +10,7 @@ public sealed partial class SwivalSubagentRunner
     /// (no real output + idle agent subtree + ESTABLISHED backend socket) so the
     /// autopsy is unambiguous.
     /// </summary>
-    private static string BuildPersistentStallReason(
+    internal static string BuildPersistentStallReason(
         ActivityWatchdog.Result wdResult, int firstOutputMs, int inactivityMs, int maxStallAttempts)
     {
         if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredSocketWedge)
