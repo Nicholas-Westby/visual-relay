@@ -58,6 +58,5 @@ public sealed class WindowsLaunchTargetTests
             TestTimeoutMilliseconds: 300_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
-            FirstOutputTimeoutMs: 660_000,
-            MaxStallRetries: 2);
+            FirstOutputTimeoutMs: 660_000);
 }

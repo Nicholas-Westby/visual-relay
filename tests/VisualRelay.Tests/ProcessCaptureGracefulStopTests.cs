@@ -210,8 +210,7 @@ public sealed class ProcessCaptureGracefulStopTests
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 3_000 },
-            SubagentTimeoutMilliseconds = 8_000,  // backstop (inactivity 3s + ~5s)
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 8_000  // backstop (inactivity 3s + ~5s)
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -255,8 +254,7 @@ public sealed class ProcessCaptureGracefulStopTests
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 3_000 },
-            SubagentTimeoutMilliseconds = 8_000,
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 8_000
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -294,7 +292,6 @@ public sealed class ProcessCaptureGracefulStopTests
                 ["frontier"] = 660_000
             },
             660_000,
-            2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

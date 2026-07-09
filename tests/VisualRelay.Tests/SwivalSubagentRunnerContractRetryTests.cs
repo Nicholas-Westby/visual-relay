@@ -31,7 +31,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
         var sink = new InMemoryRelayEventSink();
         var config = TestConfig() with
         {
-            MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
@@ -72,7 +71,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
         var sink = new InMemoryRelayEventSink();
         var config = TestConfig() with
         {
-            MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
@@ -84,12 +82,17 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
         Assert.True(result.IsValid);
         Assert.Contains("corrected on retry", result.Json, StringComparison.Ordinal);
 
-        // The corrective prompt (attempt 2) must contain the prior output
-        // and the instruction to reply with ONLY the fenced JSON block.
+        // The corrective prompt (attempt 2 — the escalated attempt) must contain the
+        // prior output and the instruction to reply with ONLY the fenced JSON block.
         var correctivePrompt = await File.ReadAllTextAsync(
             Path.Combine(repo.Root, "prompt-stage1-attempt2.txt"));
         Assert.Contains("Analysis without contract block", correctivePrompt, StringComparison.Ordinal);
         Assert.Contains("reply with ONLY", correctivePrompt, StringComparison.OrdinalIgnoreCase);
+
+        // The corrective context is carried ACROSS an escalation: the contract failure
+        // stepped the tier (stage_escalated) rather than re-running the same config.
+        Assert.Contains(sink.Events, e => e.EventName == "stage_escalated");
+        Assert.Contains(sink.Events, e => e.EventName == "contract_retry");
     }
 
     [Fact]
@@ -129,7 +132,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
         var sink = new InMemoryRelayEventSink();
         var config = TestConfig() with
         {
-            MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
@@ -173,7 +175,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             """);
         var config = TestConfig() with
         {
-            MaxContractRetries = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -186,7 +187,7 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     }
 
     [Fact]
-    public async Task RunAsync_MaxContractRetriesZero_PreservesFailFast()
+    public async Task RunAsync_MaxStageFailuresOne_ContractFailure_FailsFastNoEscalation()
     {
         SlowIntegration.SkipIfNotOptedIn();
 
@@ -201,7 +202,7 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             """);
         var config = TestConfig() with
         {
-            MaxContractRetries = 0,
+            MaxStageFailures = 1,
             SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -213,9 +214,9 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
 
         Assert.False(result.IsValid);
         Assert.Contains("no valid fenced json block", result.Error, StringComparison.Ordinal);
-        // No retry attempt directory must exist.
+        // No second attempt directory must exist — the run cap is 1.
         Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay", "task", "stage1-attempt2")),
-            "MaxContractRetries=0 must not create a retry attempt directory.");
+            "MaxStageFailures=1 must not create a second attempt directory.");
     }
 
     private static RelayConfig TestConfig() =>
@@ -226,7 +227,7 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             [],
             new Dictionary<string, string> { ["cheap"] = "cheap" },
             true,
-            1,
+            3,
             1,
             false,
             true,
@@ -234,7 +235,6 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
             300_000,
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
-            2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

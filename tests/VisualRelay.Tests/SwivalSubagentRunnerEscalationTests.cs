@@ -48,7 +48,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
     // firstOutputMs > 0 pins a tiny first-output window across all tiers so a
     // no-output stall fires the watchdog deterministically fast (the stall-ladder test).
-    private static RelayConfig EscalationConfig(int maxStageFailures = 3, int maxContractRetries = 0, int maxStallRetries = 0, int maxTurns = 200, int firstOutputMs = 0) =>
+    private static RelayConfig EscalationConfig(int maxStageFailures = 3, int maxTurns = 200, int firstOutputMs = 0) =>
         new(
             TasksDir: "llm-tasks",
             TestCommand: "true",
@@ -66,8 +66,6 @@ public sealed class SwivalSubagentRunnerEscalationTests
                 ? new Dictionary<string, int> { ["cheap"] = firstOutputMs, ["balanced"] = firstOutputMs, ["frontier"] = firstOutputMs }
                 : new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             FirstOutputTimeoutMs: firstOutputMs > 0 ? firstOutputMs : 660_000,
-            MaxStallRetries: maxStallRetries,
-            MaxContractRetries: maxContractRetries,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 
@@ -137,8 +135,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
         using var repo = TestRepository.Create();
         // A no-output stall: each run writes its ladder row then blocks forever (0-CPU),
-        // so the first-output watchdog (pinned tiny) fires. maxStallRetries:0 means the
-        // first stall escalates immediately, so the stall path drives the full ladder.
+        // so the first-output watchdog (pinned tiny) fires. Each stall escalates
+        // immediately (no same-config retry), so the stall path drives the full ladder.
         var script = await WriteLadderSwivalAsync(repo.Root, "stall");
         var runner = new SwivalSubagentRunner(EscalationConfig(firstOutputMs: 2000), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -188,6 +186,28 @@ public sealed class SwivalSubagentRunnerEscalationTests
         var ladder = await ReadLadderAsync(repo.Root);
         Assert.Equal(["cheap", "balanced", "frontier"], ladder.Select(r => r.Profile));
         Assert.Equal(["2000", "2000", "2000"], ladder.Select(r => r.Turns));
+    }
+
+    [Fact]
+    public async Task RunAsync_TenXBoostFrontierBase_GetsExactlyOneAttempt_DedupeExhaustion()
+    {
+        SlowIntegration.SkipIfNotOptedIn();
+
+        using var repo = TestRepository.Create();
+        var script = await WriteLadderSwivalAsync(repo.Root, "contract");
+        var review = RelayStages.All[6]; // stage 7 Review — frontier default
+        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+            nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
+
+        // Boosted frontier-base: run 1 = frontier@2000, and NextTier(frontier)=frontier
+        // with turns held flat, so run 2 would recompute the identical frontier@2000.
+        // The no-repeat rule treats that as ladder-exhausted → exactly one attempt.
+        await runner.RunAsync(InvocationFor(repo.Root, review, maxTurns: 2000, boosted: true));
+
+        var ladder = await ReadLadderAsync(repo.Root);
+        Assert.Single(ladder);
+        Assert.Equal(("stage7-attempt1", "frontier", "2000"), ladder[0]);
+        Assert.False(Directory.Exists(Path.Combine(repo.Root, ".relay", "task", "stage7-attempt2")));
     }
 
     [Fact]

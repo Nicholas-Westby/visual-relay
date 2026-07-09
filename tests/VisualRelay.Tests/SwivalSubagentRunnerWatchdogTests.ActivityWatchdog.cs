@@ -35,8 +35,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 2_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 7_000  // backstop (first-output window 2s + ~5s)
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));

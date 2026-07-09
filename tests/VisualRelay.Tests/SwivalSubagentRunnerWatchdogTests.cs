@@ -7,7 +7,7 @@ namespace VisualRelay.Tests;
 public sealed partial class SwivalSubagentRunnerWatchdogTests
 {
     [Fact]
-    public async Task RunAsync_StallThenRecover_RetriesAndReturnsSuccess()
+    public async Task RunAsync_StallThenRecover_EscalatesAndReturnsSuccess()
     {
         SlowIntegration.SkipIfNotOptedIn();
 
@@ -38,7 +38,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["frontier"] = 660_000
             },
             SubagentTimeoutMilliseconds = 8_000,  // backstop (first-output window 3s + ~5s)
-            MaxStallRetries = 1
+            MaxStageFailures = 2
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -52,7 +52,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     }
 
     [Fact]
-    public async Task RunAsync_PersistentStall_FlagsAfterMaxRetries()
+    public async Task RunAsync_PersistentStall_FlagsAfterEscalationExhausted()
     {
         SlowIntegration.SkipIfNotOptedIn();
 
@@ -68,12 +68,14 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         {
             FirstOutputTimeoutMsByTier = new Dictionary<string, int>
             {
-                ["cheap"] = 90_000,
+                // All tiers pinned tiny so the escalated (frontier) attempt also
+                // stalls fast — the ladder is exhausted well under the backstop.
+                ["cheap"] = 2_000,
                 ["balanced"] = 2_000,
-                ["frontier"] = 660_000
+                ["frontier"] = 2_000
             },
             SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
-            MaxStallRetries = 1
+            MaxStageFailures = 2
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -106,7 +108,6 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             300_000,
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
-            2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

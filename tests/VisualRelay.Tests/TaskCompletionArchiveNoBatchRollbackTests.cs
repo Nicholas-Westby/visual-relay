@@ -27,8 +27,7 @@ public sealed class TaskCompletionArchiveNoBatchRollbackTests
         SubagentTimeoutMilliseconds: 1_200_000,
         TestTimeoutMilliseconds: 300_000,
         FirstOutputTimeoutMsByTier: new Dictionary<string, int>(),
-        FirstOutputTimeoutMs: 660_000,
-        MaxStallRetries: 2);
+        FirstOutputTimeoutMs: 660_000);
 
     [Fact]
     public void RetireAsync_FlatNoBatch_RollbackRestoresOriginalLocation()

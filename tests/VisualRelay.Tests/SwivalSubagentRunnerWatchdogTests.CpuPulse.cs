@@ -39,8 +39,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 6_000 },
-            SubagentTimeoutMilliseconds = 60_000,
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 60_000
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -78,8 +77,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         var config = TestConfig() with
         {
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 3_000 },
-            SubagentTimeoutMilliseconds = 8_000,  // backstop (inactivity window 3s + ~5s)
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 8_000  // backstop (inactivity window 3s + ~5s)
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));

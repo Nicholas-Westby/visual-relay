@@ -40,7 +40,6 @@ internal static class PlanPhaseTestHelpers
             TestTimeoutMilliseconds: 300_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>(),
             FirstOutputTimeoutMs: 660_000,
-            MaxStallRetries: 2,
             MaxPlanConcurrency: maxPlanConcurrency,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);

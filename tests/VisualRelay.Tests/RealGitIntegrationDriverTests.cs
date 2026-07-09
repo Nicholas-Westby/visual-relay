@@ -42,7 +42,7 @@ public sealed class RealGitIntegrationDriverTests
             MaxStageFailures: 3, MaxTurns: 200, BaselineVerify: true, ArchiveOnDone: true,
             SubagentTimeoutMilliseconds: 1_200_000, TestTimeoutMilliseconds: 300_000,
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>(), FirstOutputTimeoutMs: 660_000,
-            MaxStallRetries: 2, MaxPlanConcurrency: 2, InactivityTimeoutMsByTier: null, InactivityTimeoutMs: 600_000);
+            MaxPlanConcurrency: 2, InactivityTimeoutMsByTier: null, InactivityTimeoutMs: 600_000);
 
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("task-a", runnerA), ("task-b", runnerB)], config: config,

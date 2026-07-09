@@ -174,7 +174,6 @@ public sealed class StageInputArtifactIntegrationTests
             300_000,
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
-            2,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000);
 }

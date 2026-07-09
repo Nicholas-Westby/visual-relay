@@ -2,20 +2,20 @@ using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Tests;
 
-// Nonzero-exit retry-and-persist tests. When a swival process exits nonzero
-// without producing a valid report, the runner must persist the full captured
-// output and retry within the shared MaxStallRetries budget — exactly like the
-// stall path does. These tests assert the target behavior; they will fail
-// against the current fail-fast nonzero-exit branch.
+// Nonzero-exit escalate-and-persist tests. When a swival process exits nonzero
+// without producing a valid report, the runner persists the full captured output
+// and escalates straight to the next tier (no same-config retry) — exactly like
+// the stall path does — until the escalation ladder (MaxStageFailures runs) is
+// exhausted, then it flags.
 public sealed partial class SwivalSubagentRunnerWatchdogTests
 {
     /// <summary>
     /// A swival that exits 1 on the first attempt (with diagnostic stderr) and
-    /// succeeds on the second attempt must be retried: the first attempt's
-    /// output is persisted to killed-output.txt, and the final result is valid.
+    /// succeeds on the escalated second attempt: the first attempt's output is
+    /// persisted to killed-output.txt, and the final result is valid.
     /// </summary>
     [Fact]
-    public async Task RunAsync_NonzeroExitThenRecover_RetriesAndReturnsSuccess()
+    public async Task RunAsync_NonzeroExitThenRecover_EscalatesAndReturnsSuccess()
     {
         SlowIntegration.SkipIfNotOptedIn();
 
@@ -48,15 +48,15 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["frontier"] = 660_000
             },
             SubagentTimeoutMilliseconds = 30_000,
-            MaxStallRetries = 1
+            MaxStageFailures = 3
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 
-        // The retry succeeded — the final result must be valid.
-        Assert.True(result.IsValid, $"expected retry to succeed, got error: {result.Error}");
+        // The escalated attempt succeeded — the final result must be valid.
+        Assert.True(result.IsValid, $"expected escalated attempt to succeed, got error: {result.Error}");
         Assert.Null(result.Error);
         Assert.Contains("recovered", result.Json, StringComparison.Ordinal);
 
@@ -127,7 +127,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["frontier"] = 660_000
             },
             SubagentTimeoutMilliseconds = 30_000,
-            MaxStallRetries = 1  // 1 retry → 2 total attempts before flagging
+            MaxStageFailures = 2  // two escalation attempts before flagging
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -166,21 +166,19 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         var secondContent = await File.ReadAllTextAsync(secondPersisted);
         Assert.Contains("Invalid model name", secondContent, StringComparison.Ordinal);
 
-        // No attempt3 file — retries were exhausted after 2 attempts.
+        // No attempt3 file — escalation was exhausted after 2 attempts.
         var thirdPersisted = Path.Combine(repo.Root, ".relay", "task", "stage1-attempt3.killed-output.txt");
         Assert.False(File.Exists(thirdPersisted),
-            "attempt 3 should not exist — MaxStallRetries=1 limits to 2 attempts");
+            "attempt 3 should not exist — MaxStageFailures=2 limits to 2 attempts");
     }
 
     /// <summary>
-    /// Pre-flight fail-fast cases must remain unchanged. An always-ready probe
-    /// combined with valid resolved commands means the guard path still lets
-    /// the spawned process run (and the nonzero-exit retry logic handles it).
-    /// This is already covered by the two tests above; this test asserts the
-    /// invariant explicitly.
+    /// With MaxStageFailures = 1 there is no escalation: a nonzero exit persists
+    /// its captured output and flags on the single attempt, with no second
+    /// attempt directory. Fail-fast behavior is preserved by the run cap.
     /// </summary>
     [Fact]
-    public async Task RunAsync_NonzeroExit_BoundedBySharedStallBudget()
+    public async Task RunAsync_NonzeroExit_MaxStageFailuresOne_FlagsOnSingleAttempt()
     {
         SlowIntegration.SkipIfNotOptedIn();
 
@@ -194,8 +192,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             echo "error line 2" >&2
             exit 1
             """);
-        // MaxStallRetries = 0 — no retries, just persist and flag (same as
-        // stall path with MaxStallRetries=0).
+        // MaxStageFailures = 1 (base) — no escalation, just persist and flag.
         var config = TestConfig() with
         {
             FirstOutputTimeoutMsByTier = new Dictionary<string, int>
@@ -204,8 +201,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
                 ["balanced"] = 120_000,
                 ["frontier"] = 660_000
             },
-            SubagentTimeoutMilliseconds = 30_000,
-            MaxStallRetries = 0
+            SubagentTimeoutMilliseconds = 30_000
         };
         var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
@@ -215,7 +211,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         // Must be flagged on the first (and only) attempt.
         Assert.False(result.IsValid, "expected flag on nonzero exit with no retries");
 
-        // With MaxStallRetries=0, the reason should still include the tail
+        // With a single attempt, the reason should still include the tail
         // (the actual error), not just a TrimForError head.
         Assert.Contains("error line 1", result.Error, StringComparison.Ordinal);
         Assert.Contains("error line 2", result.Error, StringComparison.Ordinal);
@@ -228,9 +224,9 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
         Assert.Contains("error line 1", content, StringComparison.Ordinal);
         Assert.Contains("error line 2", content, StringComparison.Ordinal);
 
-        // No attempt2 — MaxStallRetries=0 means only one attempt.
+        // No attempt2 — MaxStageFailures=1 means only one attempt.
         var secondPersisted = Path.Combine(repo.Root, ".relay", "task", "stage1-attempt2.killed-output.txt");
         Assert.False(File.Exists(secondPersisted),
-            "attempt 2 should not exist with MaxStallRetries=0");
+            "attempt 2 should not exist with MaxStageFailures=1");
     }
 }

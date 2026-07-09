@@ -103,10 +103,11 @@ public sealed class RelayDriverVerifyFixEscalationTests
         await driver.RunTaskAsync(repo.Root, "fv-boost");
 
         var stage11 = runner.Invocations.Where(i => i.Stage.Number == 11).ToList();
-        Assert.Equal(3, stage11.Count);
-        // Tier still escalates under the boost.
-        Assert.Equal(["balanced", "frontier", "frontier"], stage11.Select(i => i.Tier));
-        // Turns stay flat at 10× base (200 × 10 = 2000) — no per-run doubling.
-        Assert.Equal([2000, 2000, 2000], stage11.Select(i => i.MaxTurns));
+        // No-repeat under the boost: run 1 = balanced@2000, run 2 = frontier@2000, and
+        // run 3 would recompute the identical frontier@2000 — suppressed as exhausted.
+        Assert.Equal(2, stage11.Count);
+        // Tier still escalates under the boost; turns stay flat at 10× base (200 × 10).
+        Assert.Equal(["balanced", "frontier"], stage11.Select(i => i.Tier));
+        Assert.Equal([2000, 2000], stage11.Select(i => i.MaxTurns));
     }
 }

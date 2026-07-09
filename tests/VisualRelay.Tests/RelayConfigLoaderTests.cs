@@ -228,7 +228,6 @@ public sealed partial class RelayConfigLoaderTests
         Assert.Equal(120_000, defaults.FirstOutputTimeoutMsByTier["balanced"]);
         Assert.Equal(660_000, defaults.FirstOutputTimeoutMsByTier["frontier"]);
         Assert.Equal(660_000, defaults.FirstOutputTimeoutMs);
-        Assert.Equal(2, defaults.MaxStallRetries);
     }
 
     [Fact]
@@ -266,8 +265,7 @@ public sealed partial class RelayConfigLoaderTests
             """
             {
               "testCmd": "dotnet test",
-              "firstOutputTimeoutMs": 300000,
-              "maxStallRetries": 3
+              "firstOutputTimeoutMs": 300000
             }
             """);
 
@@ -275,7 +273,6 @@ public sealed partial class RelayConfigLoaderTests
 
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.Equal(300_000, result.Config.FirstOutputTimeoutMs);
-        Assert.Equal(3, result.Config.MaxStallRetries);
         // Absent per-tier map retains defaults.
         Assert.Equal(90_000, result.Config.FirstOutputTimeoutMsByTier["cheap"]);
     }
