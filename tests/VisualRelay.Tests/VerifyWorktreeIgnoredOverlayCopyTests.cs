@@ -21,7 +21,7 @@ namespace VisualRelay.Tests;
 /// CleanupVerifyWorktreeForTestAsync) with the real GitInvoker against a temp
 /// `git init` repo, mirroring <see cref="VerifyWorktreeIgnoredOverlayTests"/>.
 /// </summary>
-public sealed class VerifyWorktreeIgnoredOverlayCopyTests
+public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
 {
     /// <summary>A threshold low enough that small fixtures land below it but a
     /// padded "large" dir lands above it — so tests never write 64 MB.</summary>

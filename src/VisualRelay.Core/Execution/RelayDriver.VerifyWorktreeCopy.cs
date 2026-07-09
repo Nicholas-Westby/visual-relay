@@ -7,8 +7,9 @@ public sealed partial class RelayDriver
     /// worktree so the test command sees real, WRITABLE, ISOLATED content (a test
     /// that writes a git-ignored path stays inside the sandboxed cwd instead of
     /// following a symlink out to the source). Resilient by design:
-    ///   • reparse points (symlinks) inside the tree are SKIPPED — never followed,
-    ///     so a cycle or a link into the real tree can't be traversed or copied;
+    ///   • reparse points (symlinks) inside the tree are RECREATED as link nodes —
+    ///     never followed or traversed, so a cycle or escape link can't expand into
+    ///     the real tree;
     ///   • a per-entry IO error is swallowed and the walk continues;
     ///   • parent dirs are created as needed.
     /// A copy failure must NEVER abort worktree creation (the caller also guards).
@@ -42,10 +43,12 @@ public sealed partial class RelayDriver
         {
             try
             {
-                // Skip reparse points: following a symlink risks cycles and could copy
-                // (or descend into) content outside this dir's own footprint.
                 if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
+                {
+                    // Recreate the link node — never follow or traverse into it.
+                    RecreateSymlink(entry, sourceDir, destDir);
                     continue;
+                }
 
                 var target = Path.Combine(destDir, entry.Name);
                 if (entry is DirectoryInfo subDir)
@@ -58,6 +61,52 @@ public sealed partial class RelayDriver
                 // Per-entry IO error (deleted mid-walk, denied, …) — skip it.
             }
         }
+    }
+
+    /// <summary>
+    /// Recreates <paramref name="entry"/> as a symlink at the corresponding path
+    /// under <paramref name="destDir"/>, applying three target-rewriting rules:
+    ///   • relative targets → verbatim (resolves within the copied tree naturally)
+    ///   • absolute targets inside sourceDir → prefix-swap sourceDir→destDir
+    ///   • absolute targets outside sourceDir → verbatim (read-mostly sharing)
+    /// Dangling targets are recreated verbatim (cp -RP semantics).
+    /// Never follows or enumerates into the link.
+    /// </summary>
+    private static void RecreateSymlink(FileSystemInfo entry, string sourceDir, string destDir)
+    {
+        string? linkTarget;
+        try { linkTarget = entry.LinkTarget; }
+        catch { return; } // unreadable link target — skip, don't throw
+
+        if (string.IsNullOrEmpty(linkTarget)) return;
+
+        string resolvedTarget;
+        if (Path.IsPathRooted(linkTarget))
+        {
+            // Absolute target: if it points inside sourceDir, rewrite to destDir.
+            var normalizedTarget = Path.GetFullPath(linkTarget);
+            var normalizedSource = Path.GetFullPath(sourceDir);
+            if (normalizedTarget.StartsWith(normalizedSource + Path.DirectorySeparatorChar)
+                || normalizedTarget == normalizedSource)
+            {
+                resolvedTarget = Path.GetFullPath(Path.Combine(
+                    destDir, normalizedTarget[(normalizedSource.Length + 1)..]));
+            }
+            else
+            {
+                resolvedTarget = linkTarget; // outside sourceDir — verbatim
+            }
+        }
+        else
+        {
+            resolvedTarget = linkTarget; // relative — verbatim
+        }
+
+        var targetPath = Path.Combine(destDir, entry.Name);
+        if (entry is DirectoryInfo)
+            Directory.CreateSymbolicLink(targetPath, resolvedTarget);
+        else
+            File.CreateSymbolicLink(targetPath, resolvedTarget);
     }
 
     /// <summary>

@@ -131,9 +131,23 @@ public sealed partial class RelayDriver
             {
                 OverlayIgnoredEntry(src, dst, isDirectory, thresholdBytes);
             }
-            catch
+            catch (Exception ex)
             {
                 // Best-effort: a failed overlay must NOT abort worktree creation.
+                try
+                {
+                    await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                        DateTimeOffset.UtcNow, "warn", "verify_overlay_skipped", runId, sourcePath, worktreeId,
+                        Data: new Dictionary<string, string>
+                        {
+                            ["entry"] = name,
+                            ["error"] = ex.Message
+                        }), cancellationToken);
+                }
+                catch
+                {
+                    // Publish itself must not throw — the overlay loop must always complete.
+                }
             }
         }
         return worktreePath;
@@ -232,46 +246,6 @@ public sealed partial class RelayDriver
 
     private static IEnumerable<string> SplitNul(string? gitOutput) =>
         (gitOutput ?? string.Empty).Split('\0', StringSplitOptions.RemoveEmptyEntries);
-
-    /// <summary>Best-effort teardown: git worktree remove, then a resilient dir delete.</summary>
-    private async Task CleanupVerifyWorktreeAsync(string sourcePath, string worktreePath, CancellationToken cancellationToken)
-    {
-        // SAFETY-CRITICAL: unlink the symlinks we added FIRST. A `git worktree remove`
-        // or a recursive Directory.Delete that traversed a DIRECTORY symlink would
-        // delete the REAL node_modules/.env contents in the source repo. Remove the
-        // LINKS only (never recursive on a reparse point) so nothing can follow them.
-        UnlinkOverlaySymlinks(worktreePath);
-        await PlanningWorktree.RemoveAsync(sourcePath, worktreePath, cancellationToken, _dependencies.GitInvoker);
-        try { if (Directory.Exists(worktreePath)) Directory.Delete(worktreePath, recursive: true); }
-        catch { /* PRODUCTION fallback — never reference TestFileSystem here (Defect E). */ }
-    }
-
-    /// <summary>
-    /// Removes the top-level symlinks added by the ignored-content overlay, leaving their
-    /// TARGETS untouched. For a directory symlink, <c>Directory.Delete(recursive:false)</c>
-    /// removes the link only; passing recursive:true on a reparse point would delete the
-    /// target's contents. Best-effort per entry — never throws.
-    /// </summary>
-    private static void UnlinkOverlaySymlinks(string worktreePath)
-    {
-        if (!Directory.Exists(worktreePath)) return;
-        foreach (var entry in Directory.EnumerateFileSystemEntries(worktreePath))
-        {
-            try
-            {
-                var attributes = File.GetAttributes(entry);
-                if (!attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
-                if (attributes.HasFlag(FileAttributes.Directory))
-                    Directory.Delete(entry, recursive: false); // unlink dir symlink, never its target
-                else
-                    File.Delete(entry); // unlink file symlink
-            }
-            catch
-            {
-                // Best-effort: leave it for git worktree remove / the dir delete fallback.
-            }
-        }
-    }
 
     /// <summary>
     /// Emits a <c>verify_mutated_tree</c> warn advisory naming the DELTA files the test
