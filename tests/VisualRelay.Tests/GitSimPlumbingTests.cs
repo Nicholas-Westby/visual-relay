@@ -187,8 +187,14 @@ public sealed class GitSimPlumbingTests
         var (exit, _) = await sim.Git(repo.Root, "worktree", "add", "--detach", "--quiet", linked, "HEAD");
         Assert.Equal(0, exit);
         Assert.Equal("content", File.ReadAllText(Path.Combine(linked, "a.txt")));
-        await sim.Git(repo.Root, "worktree", "remove", "--force", linked);
-        Directory.Delete(linked, recursive: true);
+
+        // Parity: `worktree remove --force` deletes the on-disk directory, exactly as
+        // real git does — no manual cleanup needed. (PlanningWorktree.RemoveAsync relies
+        // on this to discard an ephemeral planning worktree and any stray writes in it.)
+        var (removeExit, _) = await sim.Git(repo.Root, "worktree", "remove", "--force", linked);
+        Assert.Equal(0, removeExit);
+        Assert.False(Directory.Exists(linked),
+            "worktree remove --force must delete the worktree directory on disk");
     }
 
     [Fact]

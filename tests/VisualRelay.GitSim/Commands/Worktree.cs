@@ -7,7 +7,8 @@ internal static partial class GitSimCommands
     /// <summary>
     /// <c>worktree add --detach --quiet &lt;path&gt; HEAD</c> (materialize HEAD's tree at
     /// a new linked worktree sharing this repo's object store, with its own detached
-    /// HEAD + index), <c>worktree remove --force &lt;path&gt;</c> (unregister it), and
+    /// HEAD + index), <c>worktree remove --force &lt;path&gt;</c> (unregister it AND
+    /// delete its on-disk directory, exactly as real git does), and
     /// <c>worktree prune</c> (no-op).
     /// </summary>
     public static GitSimResult Worktree(GitSimContext ctx)
@@ -53,7 +54,14 @@ internal static partial class GitSimCommands
         var operands = ctx.Args.Skip(2).Where(a => !a.StartsWith('-')).ToList();
         if (operands.Count == 0)
             return ctx.Unsupported();
-        GitSimRegistry.Remove(operands[0]);
+
+        var path = operands[0];
+        GitSimRegistry.Remove(path);
+        // Real `git worktree remove --force` deletes the working-tree directory, not
+        // just the admin entry. Match that so callers that assert the on-disk worktree
+        // is gone (e.g. PlanningWorktree cleanup) see identical behavior.
+        if (Directory.Exists(path))
+            Directory.Delete(path, recursive: true);
         return GitSimResult.Ok();
     }
 }
