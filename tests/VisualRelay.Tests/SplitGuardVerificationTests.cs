@@ -167,6 +167,10 @@ public sealed partial class SplitGuardVerificationTests
         // files are deleted. Three BackendConfigGenerator* companion files
         // (AliasConsistency, VisionTier, PerModelTimeout) migrated verbatim with
         // the same [Fact] counts as their predecessors — net zero from the split.
+        // Net zero on 2026-07-08: the in-memory-git-simulator pilot migrated the
+        // GitCommitterTests family onto GitSim and split its hook-rejection (2) and
+        // retry (4) facts into standalone parallel classes tracked below. Six [Fact]s
+        // moved out of the main file into new sibling classes; none were lost.
         const int baseline = 171;
 
         string[] prefixes =
@@ -209,6 +213,9 @@ public sealed partial class SplitGuardVerificationTests
             "BackendConfigGeneratorAliasConsistencyTests",
             "RelayDriverBaselineVerifyTests",
             "SwivalSubagentRunnerCommandFilterIntegrationTests",
+            // ── commit-family facts relocated by the GitSim pilot migration ──
+            "GitCommitterHookRejectionTests",
+            "GitCommitterResilienceTests",
         ];
 
         int count = 0;
