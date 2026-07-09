@@ -1,229 +1,62 @@
-using System.Diagnostics;
 using VisualRelay.Core.Execution;
+using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
 
+/// <summary>
+/// The commit family, migrated onto GitSim. This class holds the low-latency facts —
+/// the happy-path candidate acceptance and the gitignored-manifest backstop — so its
+/// solo run stays fast. The hook-rejection and retry-after-transient facts (which
+/// exercise GitCommitter's real, unavoidable retry backoff and so cost seconds
+/// regardless of the git backend) live in sibling classes that run as parallel
+/// collections; all keep their original assertions, now against in-memory GitSim state
+/// and, for hook rejection, via <see cref="GitSim.PreCommitHook"/>.
+/// </summary>
 public sealed class GitCommitterTests
 {
-    // ── Resilience: transient git failure tests (a–d) ───────────────────
-
-    [Fact]
-    public async Task CommitAsync_ProbeFailsTwiceThenSucceeds_CommitsSuccessfully()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-
-        var shim = new TransientGitShim();
-        shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: not a git repository");
-        var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123",
-            ["feat: add widget"], ["src/app.cs"], [],
-            commitToken: null, preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, shim);
-
-        Assert.True(result.Success, $"Expected success, got: {result.Error}");
-        Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
-    }
-
-    [Fact]
-    public async Task CommitAsync_ProbeFailsPersistently_ReturnsFailureWithDiagnostics()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-
-        var shim = new TransientGitShim();
-        // 99 failures: effectively persistent for the 3-attempt retry window.
-        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123",
-            ["feat: add widget"], ["src/app.cs"], [],
-            commitToken: null, preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, shim);
-
-        Assert.False(result.Success);
-        Assert.NotNull(result.Error);
-        Assert.Contains("git exit 128", result.Error, StringComparison.Ordinal);
-        Assert.Contains("fatal: not a git repository", result.Error, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public async Task CommitAsync_AddFailsTransientlyThenSucceeds_CommitsSuccessfully()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-
-        var shim = new TransientGitShim();
-        shim.FailNext("add", failureCount: 1, exitCode: 128, stderr: "fatal: index file open failed");
-        var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123",
-            ["feat: add widget"], ["src/app.cs"], [],
-            commitToken: null, preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, shim);
-
-        Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
-    }
-
-    [Fact]
-    public async Task CommitAsync_PersistentFailure_CompletesWithinReasonableTime()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-
-        var shim = new TransientGitShim();
-        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        var sw = Stopwatch.StartNew();
-        var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123",
-            ["feat: test"], [], [],
-            commitToken: null, preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, shim);
-        sw.Stop();
-
-        Assert.False(result.Success);
-        // 3 attempts with 250ms + 1s backoff = 1.25s max added latency.
-        // Allow generous headroom for process spawn + OS scheduling.
-        Assert.True(sw.Elapsed.TotalSeconds < 10,
-            $"Persistent failure took {sw.Elapsed.TotalSeconds:F1}s, expected < 10s");
-    }
-
     [Fact]
     public async Task CommitAsync_FirstCandidateAccepted_CommitsAndReturnsSha()
     {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-
-        // Modify a file so there's something to commit.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
+        Write(repo, "src/app.cs", "updated");
 
         var candidates = new[] { "feat: add widget", "docs: update readme" };
         var result = await GitCommitter.CommitAsync(
-            repo.Root,
-            "my-task",
-            "abc123",
-            candidates,
-            ["src/app.cs"],
-            [],
-            commitToken: null,
-            preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, new GitInvoker());
+            repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            CancellationToken.None, sim);
 
-        Assert.True(result.Success);
+        Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
-        var subject = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
-        Assert.Equal("feat: add widget", subject.Trim());
-        var fullMessage = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%B");
-        Assert.Contains("Task: my-task", fullMessage);
-        Assert.Contains("Relay-Seal: abc123", fullMessage);
+        var info = sim.CommitInfo(repo.Root, result.CommitSha!)!;
+        Assert.Equal("feat: add widget", info.Message.Split('\n')[0]);
+        Assert.Contains("Task: my-task", info.Message, StringComparison.Ordinal);
+        Assert.Contains("Relay-Seal: abc123", info.Message, StringComparison.Ordinal);
     }
-
-    [Fact]
-    public async Task CommitAsync_FirstCandidateRejectedByCommitMsgHook_UsesSecond()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-
-        // Modify a file so there's something to commit.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-
-        // Install a commit-msg hook that rejects subjects containing "*.cs" or ".cs"
-        GitCommitterTestHelpers.InstallRejectingCommitMsgHook(repo.Root, "\\.cs");
-
-        // First candidate contains a file-name pattern, second avoids it.
-        var candidates = new[] { "fix(src): update app.cs logic", "fix: correct update logic" };
-        var result = await GitCommitter.CommitAsync(
-            repo.Root,
-            "my-task",
-            "abc123",
-            candidates,
-            ["src/app.cs"],
-            [],
-            commitToken: null,
-            preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, new GitInvoker());
-
-        Assert.True(result.Success);
-        var subject = GitCommitterTestHelpers.RunGit(repo.Root, "log -1 --pretty=%s");
-        Assert.Equal("fix: correct update logic", subject.Trim());
-    }
-
-    [Fact]
-    public async Task CommitAsync_AllCandidatesRejected_ReturnsFailure()
-    {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
-
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-
-        // Install a commit-msg hook that rejects everything.
-        GitCommitterTestHelpers.InstallRejectAllCommitMsgHook(repo.Root);
-
-        var candidates = new[] { "feat: first", "fix: second" };
-        var result = await GitCommitter.CommitAsync(
-            repo.Root,
-            "my-task",
-            "abc123",
-            candidates,
-            ["src/app.cs"],
-            [],
-            commitToken: null,
-            preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, new GitInvoker());
-
-        Assert.False(result.Success);
-        Assert.NotNull(result.Error);
-        Assert.Contains("commit rejected", result.Error);
-    }
-
-    // ── gitignore rejection at stage 11 backstop ─────────────────────
 
     [Fact]
     public async Task CommitAsync_WhenManifestContainsGitignoredPath_ReturnsExplicitPathNames()
     {
-        using var repo = TestRepository.Create();
-        await GitCommitterTestHelpers.InitGitRepo(repo.Root);
-        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, ".gitignore", "swival.toml\n");
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
 
-        // Runtime artifact that PrepareAsync regenerates — exists on disk
-        // but is gitignored. The manifest must not claim it.
-        File.WriteAllText(Path.Combine(repo.Root, "swival.toml"), "[runtime]\nkey = \"val\"");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+        // Runtime artifact that exists on disk but is gitignored: the manifest must not claim it.
+        Write(repo, "swival.toml", "[runtime]\nkey = \"val\"");
+        Write(repo, "src/app.cs", "updated");
 
         var result = await GitCommitter.CommitAsync(
-            repo.Root, "my-task", "abc123",
-            ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
-            commitToken: null, preRunUntracked: null,
-            tasksDir: null,
-            CancellationToken.None, new GitInvoker());
+            repo.Root, "my-task", "abc123", ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
+            commitToken: null, preRunUntracked: null, tasksDir: null,
+            CancellationToken.None, sim);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
-        // Must name the offending path explicitly — not bury it in raw git output.
         Assert.Contains("manifest contains gitignored", result.Error, StringComparison.Ordinal);
         Assert.Contains("swival.toml", result.Error, StringComparison.Ordinal);
     }
