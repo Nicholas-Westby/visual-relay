@@ -127,10 +127,16 @@ public partial class MainWindowViewModel
     /// </summary>
     internal async Task WaitForRewriteToFinishForTests(string taskId)
     {
-        // Pump so the background rewrite task has been captured, await it to completion
-        // (its dispatcher continuation — status update + reload — included via the
-        // FromCurrentSynchronizationContext eviction), then pump once more to flush that
-        // continuation. Causal: no polling, no wall-clock wait.
+        // The command runs its pre-launch awaits (confirm + config load) and only THEN
+        // captures the background rewrite task. Await the command's own execution first so
+        // the capture has definitely happened (a single RunJobs pump can miss it while the
+        // config load is still in flight under load), then await the captured background
+        // task — its dispatcher completion continuation (status + reload, via the
+        // FromCurrentSynchronizationContext eviction) included. Pump around both. Causal:
+        // no polling, no wall-clock wait.
+        Dispatcher.UIThread.RunJobs();
+        if (RewriteSelectedTaskCommand.ExecutionTask is { } exec)
+            await exec;
         Dispatcher.UIThread.RunJobs();
         if (_rewriteTasksForTests.TryGetValue(taskId, out var task))
             await task;
