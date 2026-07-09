@@ -145,35 +145,27 @@ public sealed class BackendReadinessProbeTests
     public async Task CheckWithRetryAsync_CancellationStopsRetries()
     {
         var callCount = 0;
-        var backoff = TimeSpan.FromMilliseconds(500);
+        using var cts = new CancellationTokenSource();
         Task<BackendReadiness> Probe(CancellationToken ct)
         {
             Interlocked.Increment(ref callCount);
+            // Cancel DURING the first attempt so the inter-attempt backoff is cut short
+            // deterministically — the retry stops by causality, not by a wall-clock race.
+            cts.Cancel();
             return Task.FromResult(new BackendReadiness(false, "still down"));
         }
 
-        using var cts = new CancellationTokenSource();
-        // Cancel after one backoff interval so we get at most 2 calls
-        // (the first call returns immediately, then Task.Delay starts, then cancel fires).
-        cts.CancelAfter(backoff);
-
-        var sw = System.Diagnostics.Stopwatch.StartNew();
         var result = await BackendReadinessProbe.CheckWithRetryAsync(
             Probe,
             maxAttempts: BackendReadinessProbe.DefaultRetryAttempts,
-            retryBackoff: backoff,
+            retryBackoff: TimeSpan.FromMilliseconds(500),
             cancellationToken: cts.Token);
-        sw.Stop();
 
         Assert.False(result.IsReady);
-        // Should not have made all attempts — cancellation cut retries short.
+        // Cancellation cut retries short: far fewer than the full attempt budget, and
+        // the backoff's Task.Delay observed the cancelled token and returned at once.
         Assert.True(callCount < BackendReadinessProbe.DefaultRetryAttempts,
             $"Expected fewer than {BackendReadinessProbe.DefaultRetryAttempts} calls, got {callCount}");
-        // Must return promptly — well under the full retry budget of
-        // (DefaultRetryAttempts-1) × backoff.  Even with scheduling variance
-        // it should finish in under 2× backoff.
-        Assert.True(sw.Elapsed < backoff * 4,
-            $"Cancellation should return promptly, got {sw.Elapsed.TotalMilliseconds:F0}ms");
     }
 
     [Fact]

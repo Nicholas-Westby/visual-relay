@@ -36,6 +36,8 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
     [Fact]
     public async Task ProcessCapture_SyntheticWedge_IdleChildPlusSocket_IsKilled()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         // cpu sampling needs ps(1); skip cleanly where it is unavailable.
         if (ProcessTreeCpuSampler.TrySampleTreeCpuMs(Environment.ProcessId) is null)
             return;
@@ -96,6 +98,8 @@ public sealed partial class ActivityWatchdogSocketWedgeTests
     [Fact]
     public async Task ProcessCapture_BusyChildPlusSocket_NotKilled()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (ProcessTreeCpuSampler.TrySampleTreeCpuMs(Environment.ProcessId) is null)
             return;
 

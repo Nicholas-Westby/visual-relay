@@ -3,11 +3,14 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
+[Collection("Watchdog")]
 public sealed partial class SwivalSubagentRunnerContractRetryTests
 {
     [Fact]
     public async Task RunAsync_ContractFailureThenRecover_RetriesAndReturnsSuccess()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -45,6 +48,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     [Fact]
     public async Task RunAsync_ContractRetry_CorrectivePromptContainsPriorOutput()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -90,6 +95,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     [Fact]
     public async Task RunAsync_WhenManifestContainsGitignoredPath_TriggersCorrectiveRetry()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         // Set up a real git repo with a .gitignore so git check-ignore works.
         TestGit.Run(repo.Root, "init");
@@ -153,6 +160,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     [Fact]
     public async Task RunAsync_ContractRetryExhausted_FlagsWithHint()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -179,6 +188,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
     [Fact]
     public async Task RunAsync_MaxContractRetriesZero_PreservesFailFast()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

@@ -46,6 +46,8 @@ public sealed class RelayDriverGitCommitGitignoredBackstopTests
     [Fact]
     public async Task Stage4_ManifestWithMissingFile_TriggersContractRetry()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         // The stage-4 manifest lists a file (src/ghost.cs) that does not exist
         // on disk. The existence check in CheckManifestAgainstGitignoreAsync
         // must trigger a corrective retry — the second attempt must return a

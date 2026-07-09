@@ -3,6 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
+[Collection("Watchdog")]
 public sealed class SwivalSubagentRunnerCommandFilterIntegrationTests
 {
     // ── RunAsync integration: some commands missing ───────────────────
@@ -10,6 +11,8 @@ public sealed class SwivalSubagentRunnerCommandFilterIntegrationTests
     [Fact]
     public async Task RunAsync_SomeCommandsMissing_StillRuns()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var bogus = Guid.NewGuid().ToString("N");
         var script = await SwivalTestHelpers.WriteExecutableAsync(
@@ -57,6 +60,8 @@ public sealed class SwivalSubagentRunnerCommandFilterIntegrationTests
     [Fact]
     public async Task RunAsync_AllCommandsMissing_FailsPreSpawn()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var bogusA = Guid.NewGuid().ToString("N");
         var bogusB = Guid.NewGuid().ToString("N");

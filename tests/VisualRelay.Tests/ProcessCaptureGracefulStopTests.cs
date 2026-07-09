@@ -17,6 +17,7 @@ namespace VisualRelay.Tests;
 /// These tests assert the TARGET behaviour; they must FAIL before the
 /// implementation exists.
 /// </summary>
+[Collection("Watchdog")]
 public sealed class ProcessCaptureGracefulStopTests
 {
     // ── ProcessCapture.RunAsync timeouts ───────────────────────────
@@ -40,6 +41,7 @@ public sealed class ProcessCaptureGracefulStopTests
     [Fact]
     public async Task GracefulStop_ChildTrapsInt_ExitsCleanly()
     {
+        SlowIntegration.SkipIfNotOptedIn();
         // Graceful stop is POSIX-only; on Windows the kill stays immediate.
         if (OperatingSystem.IsWindows())
             return;
@@ -92,6 +94,8 @@ public sealed class ProcessCaptureGracefulStopTests
     [Fact]
     public async Task GracefulStop_ChildIgnoresInt_ForceKilled()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (OperatingSystem.IsWindows())
             return;
 
@@ -187,6 +191,8 @@ public sealed class ProcessCaptureGracefulStopTests
     [Fact]
     public async Task KilledOutput_HeaderIncludesTracePresence()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -235,6 +241,8 @@ public sealed class ProcessCaptureGracefulStopTests
     [Fact]
     public async Task KilledOutput_HeaderTraceFilesZero_WhenNoTraceFiles()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

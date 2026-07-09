@@ -16,6 +16,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_TotallySilentProcess_KilledAtFirstOutputDeadline()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

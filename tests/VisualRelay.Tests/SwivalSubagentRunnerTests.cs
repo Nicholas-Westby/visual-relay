@@ -14,6 +14,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_CreatesTemporarySwivalProfileAndKeepsFailureOutput()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -38,6 +40,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_ModelAuthFailure_SurfacesProxyAuthCauseNotPromptEcho()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         // End-to-end: swival exits nonzero but emits ONLY the echoed prompt (no
         // failure marker) — the ground-truth model-auth incident. The real 401 lives
         // in the litellm proxy log, injected via proxyLogReader. The surfaced error
@@ -77,6 +81,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_PublishesTraceEntriesFromSwivalJsonl()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -106,6 +112,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_ExtractsJsonWhenStringContainsMarkdownFence()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         // The manifest lists src/calculator.py, which must exist on disk
         // for the stage-4 existence check to pass.
@@ -130,6 +138,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_PassesPromptAsRawArgumentWithoutJsonEscaping()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -160,6 +170,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_ExtractsJsonWhenClosingFenceSharesTheJsonLine()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         // Regression: stage 6 of author-edit-and-manage-task-attachments returned
         // a valid single-line JSON object with the closing ``` appended directly
         // to the same line (no newline before it). The old line-based fence
@@ -188,6 +200,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_FailingVerifyOutput_AppearsInPrompt()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -221,6 +235,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_NoFailingOutput_NoVerifySection()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

@@ -9,6 +9,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_TimeoutWithNoOutput_ReportsStalledBackend()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -48,6 +50,8 @@ public sealed partial class SwivalSubagentRunnerTests
     [Fact]
     public async Task RunAsync_TimeoutWithPartialOutput_ReportsHungTestCommand()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

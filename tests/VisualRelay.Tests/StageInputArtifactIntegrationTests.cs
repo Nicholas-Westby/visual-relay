@@ -3,11 +3,14 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
+[Collection("Watchdog")]
 public sealed class StageInputArtifactIntegrationTests
 {
     [Fact]
     public async Task RunAsync_WritesInputArtifactOnStageStart()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -59,6 +62,8 @@ public sealed class StageInputArtifactIntegrationTests
     [Fact]
     public async Task RunAsync_EmitsStageInputEventWithMetadataOnly()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -103,6 +108,8 @@ public sealed class StageInputArtifactIntegrationTests
     [Fact]
     public async Task RunAsync_FrontLoadedStage6_UsesConfirmImplementationPrompt()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

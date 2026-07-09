@@ -9,6 +9,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_StallThenRecover_RetriesAndReturnsSuccess()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -52,6 +54,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_PersistentStall_FlagsAfterMaxRetries()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

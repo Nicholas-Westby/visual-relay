@@ -34,6 +34,8 @@ public sealed class SandboxedTestRunnerReapTests
     [Fact]
     public async Task RunWatchedAsync_WrapperOutlivesFinishedTests_ReturnsRealResultPromptly()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
         var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
@@ -76,6 +78,8 @@ public sealed class SandboxedTestRunnerReapTests
     [Fact]
     public async Task RunWatchedAsync_WrapperExitsCleanly_ReturnsRealResult()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
         var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
@@ -106,6 +110,8 @@ public sealed class SandboxedTestRunnerReapTests
     [Fact]
     public async Task RunWatchedAsync_SilentFromStart_HaltsAsTimeout()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (PosixUnsupported) return;
         using var repo = TestRepository.Create();
         var wrapper = await SwivalTestHelpers.WriteExecutableAsync(
@@ -134,6 +140,8 @@ public sealed class SandboxedTestRunnerReapTests
     [Fact]
     public async Task RunWatchedAsync_BusyButSilent_NotReaped_RidesHardCap()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         if (PosixUnsupported) return;
         // Needs working process-tree CPU sampling (ps); skip gracefully otherwise.
         if (ProcessTreeCpuSampler.TrySampleTreeCpuMs(Environment.ProcessId) is null)

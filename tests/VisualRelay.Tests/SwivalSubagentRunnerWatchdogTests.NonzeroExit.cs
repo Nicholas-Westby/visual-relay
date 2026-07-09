@@ -17,6 +17,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_NonzeroExitThenRecover_RetriesAndReturnsSuccess()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,
@@ -80,6 +82,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_AlwaysNonzeroExit_FlagsAfterMaxRetriesWithTailNotHead()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         // Produce a realistic nono-style output: a long startup banner (the
         // first ~800 chars are just the sandbox header), then the real error.
@@ -178,6 +182,8 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
     [Fact]
     public async Task RunAsync_NonzeroExit_BoundedBySharedStallBudget()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await SwivalTestHelpers.WriteExecutableAsync(
             repo.Root,

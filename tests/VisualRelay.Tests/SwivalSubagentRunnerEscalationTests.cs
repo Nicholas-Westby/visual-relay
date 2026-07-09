@@ -13,6 +13,7 @@ namespace VisualRelay.Tests;
 /// records the <c>--profile</c> (tier) and <c>--max-turns</c> it was launched with on
 /// each attempt, wrapped by the transparent passthrough nono.
 /// </summary>
+[Collection("Watchdog")]
 public sealed class SwivalSubagentRunnerEscalationTests
 {
     // Fake swival that records "<attemptDir> profile=<p> turns=<t>" to ladder.log,
@@ -92,6 +93,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_ContractFailure_EscalatesTierAndDoublesTurns_ThreeRunsThenFails()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -112,6 +115,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_NonzeroExit_AlsoEscalates_NotJustContractFailures()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "nonzero");
         var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -128,6 +133,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_PersistentStall_AlsoEscalates_ThreeRunsThenFails()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         // A no-output stall: each run writes its ladder row then blocks forever (0-CPU),
         // so the first-output watchdog (pinned tiny) fires. maxStallRetries:0 means the
@@ -150,6 +157,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_FrontierDefaultStage_StaysFrontier_ButTurnsStillDouble()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var review = RelayStages.All[6]; // stage 7 Review — frontier default
@@ -166,6 +175,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_TenXBoost_TurnsStayFlat_ButTierStillEscalates()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
@@ -182,6 +193,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_RecoversOnEscalatedRun_ReturnsSuccess_AndLogsEscalation()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "recover2");
         var sink = new InMemoryRelayEventSink();
@@ -204,6 +217,8 @@ public sealed class SwivalSubagentRunnerEscalationTests
     [Fact]
     public async Task RunAsync_MaxStageFailuresOne_DoesNotEscalate()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var runner = new SwivalSubagentRunner(EscalationConfig(maxStageFailures: 1), script, backendProbe: SwivalTestHelpers.AlwaysReady,
