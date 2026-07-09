@@ -19,6 +19,11 @@ internal static class TestGit
         // (matching what GitInvoker.ResolveGitBinary does).
         process.StartInfo.Environment.Remove("DEVELOPER_DIR");
         process.StartInfo.Environment.Remove("SDKROOT");
+        // Hermetic + host-independent: never scan the host's global/system git config
+        // and never block on a credential prompt (faster, deterministic across hosts).
+        process.StartInfo.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        process.StartInfo.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
+        process.StartInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         process.StartInfo.ArgumentList.Add("-C");
         process.StartInfo.ArgumentList.Add(rootPath);
         foreach (var argument in arguments)

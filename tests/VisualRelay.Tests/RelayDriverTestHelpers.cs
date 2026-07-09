@@ -1,5 +1,7 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -9,6 +11,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal static class RelayDriverTestHelpers
 {
+    /// <summary>
+    /// Real-git repo seed (used only by the opt-in <see cref="RealGitIntegrationTests"/>
+    /// and callers still asserting against the real binary). Hermetic: the spawn seam
+    /// (<see cref="TestGit"/>) pins <c>GIT_CONFIG_GLOBAL/SYSTEM=/dev/null</c> so no host
+    /// config is scanned. In-memory driver tests seed via <see cref="InitSim"/> instead.
+    /// </summary>
     public static void InitGitRepo(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));
@@ -20,12 +28,41 @@ internal static class RelayDriverTestHelpers
         TestGit.Run(root, "commit", "-m", "chore: seed repo");
     }
 
+    /// <summary>
+    /// Driver dependencies for a git-FREE driver test: identical to
+    /// <see cref="RelayDriverDependencies.ForTests(ISubagentRunner, ITestRunner, IRelayEventSink, IGitInvoker?, IEnvironmentAccessor?)"/>
+    /// but binds an in-memory <see cref="GitSimEngine"/> (unregistered at
+    /// <paramref name="repo"/>'s root, so every git probe answers
+    /// <c>fatal: not a git repository</c> exactly as the real binary does on a
+    /// non-repo <see cref="TestRepository"/> root) — removing the real-git process
+    /// floor the default <c>new GitInvoker()</c> imposed on all eleven stages.
+    /// </summary>
+    public static RelayDriverDependencies DepsFor(
+        TestRepository repo, ISubagentRunner runner, ITestRunner testRunner, IRelayEventSink sink)
+    {
+        _ = repo; // deps are only ever driven with repo.Root; a GitSim is root-agnostic.
+        return RelayDriverDependencies.ForTests(runner, testRunner, sink, new GitSimEngine());
+    }
+
+    /// <summary>
+    /// A GitSim registered at <paramref name="repo"/>'s root (empty, unborn HEAD),
+    /// the in-memory stand-in for <c>git init</c> that a git-ASSERTING driver test
+    /// injects (<c>ForTests(..., sim)</c>) then seeds via <c>sim.Seed</c>/<c>sim.Commit</c>
+    /// and inspects via <c>sim.Head</c>/<c>sim.CommitInfo</c>/<c>sim.FilesInCommit</c>.
+    /// </summary>
+    public static GitSimEngine InitSim(TestRepository repo, string branch = "main")
+    {
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root, branch);
+        return sim;
+    }
+
     public static async Task RunHappyPath(TestRepository repo, string taskId)
     {
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
         Assert.Equal(RelayTaskOutcomeStatus.Committed, (await driver.RunTaskAsync(repo.Root, taskId)).Status);
     }

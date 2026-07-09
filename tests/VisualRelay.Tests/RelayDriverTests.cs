@@ -1,6 +1,7 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
+using static VisualRelay.Tests.GitSimTestHelpers;
 
 namespace VisualRelay.Tests;
 
@@ -19,7 +20,7 @@ public sealed class RelayDriverTests
             new TestRunResult(0, "green"));
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "add-status");
@@ -51,10 +52,12 @@ public sealed class RelayDriverTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", []);
         repo.WriteTask("repair-status", "# Repair status\n");
-        RelayDriverTestHelpers.InitGitRepo(repo.Root);
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
         var testRunner = new RedGateObservingTestRunner(repo.Root);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), testRunner, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), testRunner, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "repair-status");
@@ -64,7 +67,7 @@ public sealed class RelayDriverTests
         Assert.Equal(["old", "new"], testRunner.StatusSnapshots);
         // Production file was implemented correctly at stage 6.
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src", "status.cs")));
-        Assert.DoesNotContain("relay-redgate:repair-status:", TestGit.Run(repo.Root, "stash", "list"));
+        Assert.DoesNotContain("relay-redgate:repair-status:", (await sim.Git(repo.Root, "stash", "list")).Output);
     }
 
     [Fact]
@@ -78,7 +81,7 @@ public sealed class RelayDriverTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedNonCodeOnly("docs/README.md");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "update-readme");
@@ -93,7 +96,7 @@ public sealed class RelayDriverTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("crashy", "# Crashy\n");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new ThrowingSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, new ThrowingSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "crashy");
@@ -137,7 +140,7 @@ public sealed class RelayDriverTests
             new TestRunResult(0, "green"));
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "turns-task");
@@ -161,7 +164,7 @@ public sealed class RelayDriverTests
         await File.WriteAllTextAsync(Path.Combine(repo.Root, ".relay", "retry-me", "NEEDS-REVIEW"), "old failure\n");
         var runner = new ScriptedSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
         var outcome = await driver.RunTaskAsync(repo.Root, "retry-me");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
@@ -178,7 +181,7 @@ public sealed class RelayDriverTests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new BadManifestSubagentRunner(), tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, new BadManifestSubagentRunner(), tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bad-manifest");
@@ -201,7 +204,7 @@ public sealed class RelayDriverTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("only-task-dir", "# Only task dir\n");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new OnlyTaskDirManifestSubagentRunner(), new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, new OnlyTaskDirManifestSubagentRunner(), new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "only-task-dir");
@@ -229,7 +232,7 @@ public sealed class RelayDriverTests
         repo.WriteTask("array-root", "# Array root\n");
         var runner = new ArrayRootSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "array-root");
