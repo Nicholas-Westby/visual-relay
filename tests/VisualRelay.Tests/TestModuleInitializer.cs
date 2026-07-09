@@ -10,6 +10,15 @@ namespace VisualRelay.Tests;
 /// </summary>
 internal static class TestModuleInitializer
 {
+    /// <summary>
+    /// The temp directory this initializer redirected <c>XDG_CONFIG_HOME</c> to,
+    /// captured at module load. Hermeticity tests assert against this recorded
+    /// value rather than the live env var: a concurrent test in another collection
+    /// transiently nulls and restores the process-wide var under a try/finally, and
+    /// a live read racing that window would spuriously see the null.
+    /// </summary>
+    internal static string? RedirectedXdgConfigHome { get; private set; }
+
     [ModuleInitializer]
     public static void Initialize()
     {
@@ -19,5 +28,6 @@ internal static class TestModuleInitializer
             Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempDir);
         Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", tempDir);
+        RedirectedXdgConfigHome = tempDir;
     }
 }

@@ -122,9 +122,11 @@ public sealed class ObsidianBridgeHermeticityTests : IDisposable
     [AvaloniaFact]
     public void XdgConfigHome_IsRedirectedToTempDir()
     {
-        // The [ModuleInitializer] in TestModuleInitializer must have set
-        // XDG_CONFIG_HOME to a temp directory before any test runs.
-        var xdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
+        // Assert against the value the module initializer RECORDED at load, not
+        // the live env var: a concurrent test in the ProcessEnv collection nulls
+        // and restores the process-wide XDG_CONFIG_HOME under a try/finally, and a
+        // live read here (a different, parallel collection) can land in that window.
+        var xdg = TestModuleInitializer.RedirectedXdgConfigHome;
         Assert.NotNull(xdg);
         Assert.NotEmpty(xdg);
 
