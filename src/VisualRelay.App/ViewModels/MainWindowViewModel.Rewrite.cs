@@ -127,13 +127,11 @@ public partial class MainWindowViewModel
     /// </summary>
     internal async Task WaitForRewriteToFinishForTests(string taskId)
     {
-        var deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
-        while (_rewritingTaskIds.Contains(taskId) && DateTimeOffset.UtcNow < deadline)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
-
+        // Pump so the background rewrite task has been captured, await it to completion
+        // (its dispatcher continuation — status update + reload — included via the
+        // FromCurrentSynchronizationContext eviction), then pump once more to flush that
+        // continuation. Causal: no polling, no wall-clock wait.
+        Dispatcher.UIThread.RunJobs();
         if (_rewriteTasksForTests.TryGetValue(taskId, out var task))
             await task;
         Dispatcher.UIThread.RunJobs();
