@@ -58,18 +58,17 @@ internal static class SettingsTestHelpers
         // The cog handler is async void: the SettingsWindow appears only after an
         // await gap (RefreshKeyStatesAsync does file IO on a threadpool thread and
         // posts its continuation back to the dispatcher). RunJobs pumps that
-        // continuation, but the threadpool work needs wall-clock time to finish, so
-        // a brief sleep between pumps keeps this deterministic under heavy parallel
-        // load — a plain Thread.Yield starves when every core is busy, which is the
-        // contention that flaked the cog-path settings tests. Prefer scoping a fact
-        // down (SettingsTestHelpers.ShowScopedSettings) over this whole-app path.
+        // continuation; Thread.Yield hands the core to the threadpool thread so its
+        // work completes even under parallel load. The loop is time-bounded rather
+        // than a fixed 50 turns so a busy machine gets more scheduler turns before
+        // giving up. Prefer scoping a fact down (ShowScopedSettings) over this path.
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
         while (DateTime.UtcNow < deadline)
         {
             Dispatcher.UIThread.RunJobs();
             if (window.OwnedWindows.OfType<SettingsWindow>().FirstOrDefault() is { } sw)
                 return sw;
-            Thread.Sleep(2);
+            Thread.Yield(); // scheduler hand-off, not a wall-clock wait; loop re-pumps
         }
         throw new InvalidOperationException(
             "SettingsWindow did not appear in OwnedWindows after clicking the cog.");
