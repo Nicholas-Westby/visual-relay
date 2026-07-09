@@ -30,17 +30,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
 
         var expanders = outputView.GetVisualDescendants()

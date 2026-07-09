@@ -24,17 +24,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var systemView = SwitchToTabAndFindView<StageSystemView>(activityColumn, 2);
         var selectableBlocks = systemView.GetVisualDescendants()
             .OfType<SelectableTextBlock>()
@@ -65,17 +55,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
         var expanders = inputView.GetVisualDescendants()
             .OfType<Expander>()
@@ -105,17 +85,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
         AssertContainsText(outputView, "summary");
         AssertContainsText(outputView, "testFiles");
@@ -141,17 +111,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
         var toggles = outputView.GetVisualDescendants()
             .OfType<CheckBox>()
@@ -184,17 +144,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
         var rawToggle = inputView.GetVisualDescendants()
             .OfType<CheckBox>()
@@ -223,17 +173,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
         var expanders = inputView.GetVisualDescendants()
             .OfType<Expander>()
@@ -260,17 +200,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
         AssertContainsText(outputView, "summary");
         AssertContainsText(outputView, "Framed idea.");

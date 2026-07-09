@@ -23,17 +23,7 @@ public sealed partial class ActivityColumnTabsUiTests
             DateTimeOffset.UtcNow, "info", "stage_start", "run-1", "/tmp",
             "task-1", 1, "cheap", 1));
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         // Switch to Run Log tab (index 0) to ensure content is loaded.
         var runLogView = SwitchToTabAndFindView<RunLogView>(activityColumn, 0);
@@ -58,17 +48,7 @@ public sealed partial class ActivityColumnTabsUiTests
         vm.TraceEntries.Add(new TraceEntry(
             TraceEntryKind.ToolCall, "verify", "dotnet test", 1));
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         // Switch to Commands tab (index 1) to ensure TraceList is loaded.
         var commandsView = SwitchToTabAndFindView<CommandsView>(activityColumn, 1);

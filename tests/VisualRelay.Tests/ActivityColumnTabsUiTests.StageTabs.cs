@@ -21,17 +21,7 @@ public sealed partial class ActivityColumnTabsUiTests
         Assert.Equal(StageDetailState.NoStage, vm.StageDetail.InputState);
         Assert.Equal(StageDetailState.NoStage, vm.StageDetail.OutputState);
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         const string expected = "Click a stage to see its system prompt, input prompt, and output.";
 
@@ -62,17 +52,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var systemView = SwitchToTabAndFindView<StageSystemView>(activityColumn, 2);
         AssertContainsText(systemView, "You are a senior software engineer. Frame the task.");
@@ -95,17 +75,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var inputView = SwitchToTabAndFindView<StageInputView>(activityColumn, 3);
         AssertContainsText(inputView, "Stage 03 (Diagnose)");
@@ -128,17 +98,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var outputView = SwitchToTabAndFindView<StageOutputView>(activityColumn, 4);
         AssertContainsText(outputView, "Stage 04 (Implement)");
@@ -163,17 +123,7 @@ public sealed partial class ActivityColumnTabsUiTests
             }
         };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         const string driverMsg = "This stage runs git directly";
 

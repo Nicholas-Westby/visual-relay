@@ -20,17 +20,7 @@ public sealed partial class ActivityColumnTabsUiTests
     public void SystemTab_HasNoDividerBorderOrClass()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var tabControl = activityColumn.GetVisualDescendants()
             .OfType<TabControl>()

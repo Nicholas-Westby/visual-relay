@@ -19,17 +19,7 @@ public sealed partial class ActivityColumnTabsUiTests
     public void TabControl_HasFiveTabs_WithCorrectHeaders()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var tabControl = activityColumn.GetVisualDescendants()
             .OfType<TabControl>()
@@ -62,17 +52,7 @@ public sealed partial class ActivityColumnTabsUiTests
     public void StageTabs_AppearAfterCommandsTab()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var tabControl = activityColumn.GetVisualDescendants()
             .OfType<TabControl>()
@@ -99,17 +79,7 @@ public sealed partial class ActivityColumnTabsUiTests
     public void SwitchingTabs_UpdatesSelectedIndex()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         var tabControl = activityColumn.GetVisualDescendants()
             .OfType<TabControl>()
@@ -142,17 +112,7 @@ public sealed partial class ActivityColumnTabsUiTests
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() }) { LogScopeLabel = "ideate" };
 
-        var window = new MainWindow
-        {
-            DataContext = vm,
-            Width = 1440,
-            Height = 900
-        };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-
-        var activityColumn = window.FindControl<ActivityColumn>("ActivityColumn");
-        Assert.NotNull(activityColumn);
+        var activityColumn = ShowActivityColumn(vm);
 
         // Header should say "ACTIVITY", not "RUN LOG".
         var allTextBlocks = activityColumn.GetVisualDescendants().OfType<TextBlock>().ToList();
@@ -233,6 +193,24 @@ public sealed partial class ActivityColumnTabsUiTests
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Hosts a standalone <see cref="ActivityColumn"/> bound to <paramref name="vm"/>
+    /// in a bare window and returns it — the scoped-down construction for
+    /// ActivityColumn-local assertions (tabs, headers, stage tab rendering). The
+    /// column is the control under test, so booting the whole <see cref="MainWindow"/>
+    /// only added shared-dispatcher contention. Facts that inspect the column's
+    /// MainWindow siblings (the collapsed rail) or measured accordion layout within
+    /// the resizable window keep the full boot.
+    /// </summary>
+    private static ActivityColumn ShowActivityColumn(MainWindowViewModel vm)
+    {
+        var column = new ActivityColumn { DataContext = vm };
+        var host = new Window { Content = column, Width = 900, Height = 900 };
+        host.Show();
+        Dispatcher.UIThread.RunJobs();
+        return column;
+    }
 
     private static string? GetTabHeader(TabControl tabControl, int index)
     {
