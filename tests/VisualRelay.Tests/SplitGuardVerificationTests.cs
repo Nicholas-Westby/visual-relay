@@ -171,6 +171,10 @@ public sealed partial class SplitGuardVerificationTests
         // GitCommitterTests family onto GitSim and split its hook-rejection (2) and
         // retry (4) facts into standalone parallel classes tracked below. Six [Fact]s
         // moved out of the main file into new sibling classes; none were lost.
+        // Net zero on 2026-07-09: split-slow-classes parallelism work moved 7
+        // RelayDriverTests facts into RelayDriverRerunTests (3) and
+        // RelayDriverManifestTests (4); all three prefixes tracked below, count
+        // unchanged.
         const int baseline = 171;
 
         string[] prefixes =
@@ -187,6 +191,8 @@ public sealed partial class SplitGuardVerificationTests
             "RelayDriverGitCommitTests",
             "SwivalSubagentRunnerCommandFilterTests",
             "RelayDriverTests",
+            "RelayDriverRerunTests",
+            "RelayDriverManifestTests",
             "NoCommitContaminationTests",
             "PlanPhaseRunnerTests",
             // ── new standalone classes (promoted from companion files) ──
