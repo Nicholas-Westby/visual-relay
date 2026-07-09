@@ -2,6 +2,7 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -56,6 +57,26 @@ internal static class PlanPhaseTestHelpers
         File.WriteAllText(Path.Combine(rootPath, ".gitkeep"), string.Empty);
         TestGit.Run(rootPath, "add", ".");
         TestGit.Run(rootPath, "commit", "-m", "seed");
+    }
+
+    /// <summary>
+    /// In-memory GitSim analogue of <see cref="InitGitRepo"/>: registers a repo with a
+    /// seed commit (so worktree creation resolves a valid HEAD) and returns the engine
+    /// to inject through the <c>gitInvoker</c> seam of
+    /// <see cref="PlanPhaseRunner.RunPlanPhaseAsync"/> or the
+    /// <see cref="VisualRelay.Core.Queue.RelayQueueController"/> constructor. The whole
+    /// plan phase then runs without spawning the real git binary — the same migration the
+    /// driver families already took (<see cref="RelayDriverTestHelpers.InitSim"/>). The
+    /// GitSim worktree materializes HEAD's tree on the real filesystem exactly as
+    /// <c>git worktree add</c> does, so the planning drivers run against real files.
+    /// </summary>
+    public static GitSimEngine InitGitSim(string rootPath)
+    {
+        var sim = new GitSimEngine();
+        sim.InitRepo(rootPath);
+        sim.Seed(rootPath, ".gitkeep", string.Empty);
+        sim.Commit(rootPath, "seed");
+        return sim;
     }
 }
 

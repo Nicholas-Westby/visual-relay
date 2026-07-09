@@ -8,9 +8,6 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_EnforcesBatchLimit_NoMoreThanMaxConcurrencyInFlight()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // When maxPlanConcurrency is e.g. 3 and we have 10 tasks, the peak
         // concurrent planning runs must never exceed 3.
         using var repo = TestRepository.Create();
@@ -19,8 +16,8 @@ public sealed partial class PlanPhaseRunnerTests
         const int maxConcurrency = 3;
         for (int i = 0; i < taskCount; i++)
             repo.WriteTask($"task-{i:D2}", $"# Task {i}\n");
-        // Git repo required for worktree creation.
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        // In-memory GitSim repo backs worktree creation (no real git binary).
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         // Each task needs its own CountingConcurrencySubagentRunner so the
         // Interlocked counter is shared across all concurrent runs.
@@ -41,7 +38,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         // All tasks should complete planning.
         Assert.Equal(taskCount, results.Count);
@@ -60,9 +58,6 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_EachTaskGetsOwnArtifactDirectory()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // N concurrent planning tasks must each produce their own
         // .relay/<taskId>/ artifacts without writing into another task's directory.
         using var repo = TestRepository.Create();
@@ -70,8 +65,8 @@ public sealed partial class PlanPhaseRunnerTests
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
         repo.WriteTask("gamma", "# Gamma\n");
-        // Git repo required for worktree creation.
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        // In-memory GitSim repo backs worktree creation (no real git binary).
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var tasks = new[]
         {
@@ -87,7 +82,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Equal(3, results.Count);
         Assert.All(results, r => Assert.Equal(RelayTaskOutcomeStatus.Planned, r.Outcome.Status));
@@ -124,9 +120,6 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_StrayShellWriteStaysInWorktree()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // A planning agent that shells a write (simulated by ShellWritingSubagentRunner)
         // must NOT modify the main repo's working tree. The write must land in
         // the ephemeral worktree that gets discarded.
@@ -134,13 +127,9 @@ public sealed partial class PlanPhaseRunnerTests
         repo.WriteConfig("dotnet test", []);
 
         // Create a tracked file in the main repo so we can detect contamination.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "clean.cs"), "pristine");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/clean.cs", "pristine");
+        sim.Commit(repo.Root, "seed");
 
         repo.WriteTask("stray-writer", "# Stray writer\n");
         var strayWriter = new ShellWritingSubagentRunner("contamination.txt");
@@ -153,7 +142,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
@@ -176,9 +166,6 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_NeverThrowsActiveTaskLockCollision()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // Parallel planning runs each use their own worktree with their own
         // .relay/ACTIVE directory, so no run should ever throw
         // "relay: another task is already active". This test runs 5 planning
@@ -189,8 +176,8 @@ public sealed partial class PlanPhaseRunnerTests
         const int taskCount = 5;
         for (int i = 0; i < taskCount; i++)
             repo.WriteTask($"lock-{i:D2}", $"# Lock test {i}\n");
-        // Git repo required for worktree creation.
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        // In-memory GitSim repo backs worktree creation (no real git binary).
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var runners = Enumerable.Range(0, taskCount)
             .Select(i =>
@@ -208,7 +195,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Equal(taskCount, results.Count);
         // No task should have Failed with "another task is already active".
@@ -220,17 +208,14 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_CopiesArtifactsBackToMainRepo()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // After a planning task completes in its worktree, its .relay/<taskId>/
         // artifacts must be copied back to the main repo so the serial execute
         // phase can find them.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("copy-back", "# Copy back\n");
-        // Git repo required for worktree creation.
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        // In-memory GitSim repo backs worktree creation (no real git binary).
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
 
@@ -241,7 +226,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);

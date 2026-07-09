@@ -8,17 +8,14 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_FlaggedTasksAreReturnedButExcludedFromExecutePhase()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // Tasks that flag during planning must be returned with Flagged status
         // and must NOT proceed to the execute phase. The plan runner must
         // still copy back the NEEDS-REVIEW marker and partial artifacts.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("flag-in-plan", "# Flag in plan\n");
-        // Git repo required for worktree creation.
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        // In-memory GitSim repo backs worktree creation (no real git binary).
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
         var flagAt3 = new FlagAtStageSubagentRunner(flagAtStage: 3);
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
@@ -28,7 +25,8 @@ public sealed partial class PlanPhaseRunnerTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, results[0].Outcome.Status);
