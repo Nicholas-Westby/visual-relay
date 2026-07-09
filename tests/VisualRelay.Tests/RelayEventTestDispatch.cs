@@ -38,6 +38,17 @@ internal static class RelayEventTestDispatch
                 ["cost"] = "$0.01"
             });
 
+    /// <summary>A stage_done carrying <c>status = "Skipped"</c> — the terminal
+    /// event the driver now publishes for a skipped Visual-review, which settles
+    /// the stage row to "Skipped" instead of a stuck "Running".</summary>
+    public static RelayEvent StageDoneSkipped(string taskId, int stage, DateTimeOffset at) =>
+        new(at, "info", "stage_done", "test-run", "/root", taskId, stage, "balanced",
+            Data: new Dictionary<string, string>
+            {
+                ["name"] = $"Stage {stage}",
+                ["status"] = "Skipped"
+            });
+
     /// <summary>A stage-abandoned (flagged) event. Carries no reported duration,
     /// so the VM drops the open segment WITHOUT banking the partial attempt.</summary>
     public static RelayEvent Flagged(string taskId, int stage, DateTimeOffset at) =>

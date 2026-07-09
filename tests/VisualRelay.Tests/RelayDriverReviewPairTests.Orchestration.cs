@@ -93,6 +93,40 @@ public sealed partial class RelayDriverReviewPairTests
         Assert.Contains("## Stage 8 - Visual-review", ledger, StringComparison.Ordinal);
         Assert.Contains("_Skipped:", ledger, StringComparison.Ordinal);
         Assert.Contains("no visual changes", ledger, StringComparison.Ordinal);
+
+        // The skip must publish a terminal stage_done{status:Skipped} so the live
+        // stage-8 card settles instead of ticking "Running" forever.
+        Assert.Contains(sink.Events, e =>
+            e is { EventName: "stage_done", StageNumber: 8 } &&
+            e.Data is not null && e.Data.TryGetValue("status", out var status) && status == "Skipped");
+    }
+
+    [Fact]
+    public async Task RunTaskAsync_TriageDeclinesWithNonSkipVerdict_PublishesSkippedStageDone()
+    {
+        // The loader always injects a default "vision" tier, so visionConfigured is
+        // true through RunTaskAsync; the fallback "vision tier unconfigured" skip
+        // reason is reached when triage declines with a verdict other than "skip".
+        // Both skip variants share the one RecordStageAsync call, so this pins the
+        // fallback branch also emits the terminal stage_done{status:Skipped}.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("triage-decline", "# Triage decline\n");
+        var sink = new InMemoryRelayEventSink();
+        var runner = new TriageDeclineSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "triage-decline");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        Assert.Contains(sink.Events, e =>
+            e is { EventName: "stage_done", StageNumber: 8 } &&
+            e.Data is not null && e.Data.TryGetValue("status", out var status) && status == "Skipped");
+        var ledger = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "triage-decline", "ledger.md"));
+        Assert.Contains("_Skipped: vision tier unconfigured_", ledger, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -192,6 +226,32 @@ internal sealed class TriageSkipSubagentRunner : ISubagentRunner
             return Task.FromResult(new SubagentResult(
                 RawText: """```json\n{"visualReview":"skip","reason":"no visual changes"}\n```""",
                 Json: """{"visualReview":"skip","reason":"no visual changes"}""",
+                IsValid: true,
+                Error: null));
+        }
+        return _inner.RunAsync(invocation, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Returns a triage verdict other than <c>"needed"</c>/<c>"skip"</c> for the
+/// triage stage (0), so Visual-review is skipped via the fallback reason branch
+/// (<c>_Skipped: vision tier unconfigured_</c>) rather than the triage-skip one.
+/// </summary>
+internal sealed class TriageDeclineSubagentRunner : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _inner = new();
+
+    public void SeedHappyPath(string codeFile, string testFile) =>
+        _inner.SeedHappyPath(codeFile, testFile);
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == 0)
+        {
+            return Task.FromResult(new SubagentResult(
+                RawText: """```json\n{"visualReview":"none","reason":"no rendered surface"}\n```""",
+                Json: """{"visualReview":"none","reason":"no rendered surface"}""",
                 IsValid: true,
                 Error: null));
         }

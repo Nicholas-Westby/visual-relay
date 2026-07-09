@@ -107,18 +107,18 @@ public sealed partial class RelayDriver
         }
         else
         {
-            // Record Visual-review as skipped.
+            // Record Visual-review as skipped through the shared RecordStageAsync
+            // path so it publishes a stage_done{status:Skipped}; the live stage-8
+            // card then settles instead of ticking "Running" until next rehydrate.
+            // MarkStatusSkipped first so the alreadySkipped guard keeps "Skipped".
             var skipReason = triageResult is { VisualReview: "skip" }
                 ? $"_Skipped: {triageResult.Reason}_"
                 : "_Skipped: vision tier unconfigured_";
-            AppendLedgerSection(ledger, visualStage, skipReason);
             MarkStatusSkipped(statusEntries, visualStage);
-            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-            var h = Hashing.Sha256Hex("8", visualStage.Name, skipReason);
-            var seal = Hashing.Sha256Hex(previousSeal, "8", DateTimeOffset.UtcNow.ToString("O"), h, string.Empty, string.Empty);
-            seals.Add(SerializeSeal(8, h, string.Empty, seal, null));
-            previousSeal = seal; taskHash = seal;
-            await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
+            (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
+                visualStage, skipReason, "green", null, Stopwatch.StartNew(), ledger, seals,
+                statusEntries, manifest, previousSeal, taskHash, sessionCostUsd,
+                unknownCostStageCount, cancellationToken);
         }
 
         return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null);

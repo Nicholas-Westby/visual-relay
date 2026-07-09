@@ -232,4 +232,33 @@ public sealed partial class MainWindowViewModelTests
         Assert.Contains("Stage 07", viewModel.SelectedTask.RunningStepLabel, StringComparison.Ordinal);
         Assert.Contains("Stage 08", viewModel.SelectedTask.RunningStepLabel, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task ApplyStageEvent_SkippedVisualReviewStageDone_SettlesRowToSkipped()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        var taskId = "visual-skipped";
+        var activeDir = Path.Combine(repo.Root, "llm-tasks", "active");
+        Directory.CreateDirectory(activeDir);
+        await File.WriteAllTextAsync(Path.Combine(activeDir, $"{taskId}.md"), "# Visual skipped\n");
+
+        var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        await viewModel.LoadInitialAsync();
+        viewModel.SelectedTask = Assert.Single(viewModel.Tasks);
+        await viewModel.LastSelectionLoad!;
+        Assert.Equal(12, viewModel.Stages.Count);
+
+        // Live stream for a skipped Visual-review: stage_start opens the ticking
+        // timer, then stage_done{status:Skipped} must settle stage 8 to Skipped
+        // (not the stuck "Running" the missing terminal event used to leave).
+        RelayEventTestDispatch.Dispatch(viewModel,
+            RelayEventTestDispatch.StageStart(taskId, 8, DateTimeOffset.UtcNow));
+        Assert.Equal("Running", viewModel.Stages[7].Status);
+
+        RelayEventTestDispatch.Dispatch(viewModel,
+            RelayEventTestDispatch.StageDoneSkipped(taskId, 8, DateTimeOffset.UtcNow));
+
+        Assert.Equal("Skipped", viewModel.Stages[7].Status);
+    }
 }
