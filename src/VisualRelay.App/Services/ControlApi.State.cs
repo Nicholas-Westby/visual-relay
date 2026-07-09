@@ -110,6 +110,11 @@ public sealed partial class ControlApi
     /// first (from IcommandNames), then property-backed actions (from
     /// PropertyActions). The index page renders this list; adding a command to
     /// either source array automatically flows here and onto the page.
+    /// Computed on access rather than a cached initializer: PropertyActions lives
+    /// in the other partial-class part, and static field-initializer order across
+    /// partial parts is unspecified, so a cached initializer could observe a
+    /// not-yet-initialized (null) PropertyActions. Evaluating on access runs after
+    /// all static fields are set, so both source arrays are always populated.
     /// </summary>
-    public static IReadOnlyList<string> CommandNames { get; } = [.. IcommandNames, .. PropertyActions];
+    public static IReadOnlyList<string> CommandNames => [.. IcommandNames, .. PropertyActions];
 }
