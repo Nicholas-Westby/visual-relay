@@ -10,15 +10,12 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task PlanPhaseRunner_TraceEvents_DeliveredToEventSink()
     {
-        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
-        // injection seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // The fixed planSubagentFactory now passes an ObservableRelayEventSink
         // to SwivalSubagentRunner, so trace events reach the GUI event sink.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("trace-me", "# Trace me\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var captured = new InMemoryRelayEventSink();
         var inner = new ScriptedSubagentRunner();
@@ -31,7 +28,7 @@ public sealed partial class DrainExecutionLoggingTests
             mainRootPath: repo.Root, tasks: [("trace-me", traceRunner)],
             config: config, testRunner: new ScriptedTestRunner(),
             eventSinkFactory: _ => captured,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);

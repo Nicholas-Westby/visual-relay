@@ -138,33 +138,28 @@ public sealed class PlanningWorktreeConfigCopyTests
     //    config in the working tree. PRE-FIX every task flagged stage 1 with
     //    "config not found" because the checkout lacked the ignored config.
     //
-    //    GAP (genuinely needs the real git binary — verified): this fact
-    //    drives PlanPhaseRunner.RunPlanPhaseAsync, whose PlanOneTaskAsync
-    //    hardcodes `var gitInvoker = new GitInvoker();` with no injection
-    //    seam anywhere in its public signature — PlanPhaseRunner.cs is
-    //    outside this migration's file list, so there is no way to thread a
-    //    GitSim into this call. Stays on the real git binary, gated behind
-    //    SlowIntegration so it is skipped by default.
+    //    With the PlanPhaseRunner gitInvoker seam this drives the whole plan
+    //    phase against a repo-bound GitSim: its `add .` respects .gitignore, so
+    //    the committed tree omits .relay/ exactly like real git, and the detached
+    //    planning worktree checkout therefore lacks config.json — the real bug.
     // ───────────────────────────────────────────────────────────────────
     [Fact]
     public async Task RunPlanPhase_ConfigGitIgnored_NotCommitted_PlansSuccessfully()
     {
-        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []); // .relay/config.json in the working tree
         repo.WriteTask("ignored-cfg", "# Ignored config\n");
 
         // Init the repo and commit EVERYTHING EXCEPT .relay/ (git-ignored), so the
         // detached planning checkout will NOT contain config.json — the real bug.
-        TestGit.Run(repo.Root, "init", "-q");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
         await File.WriteAllTextAsync(Path.Combine(repo.Root, ".gitignore"), ".relay/\n");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-q", "-m", "seed");
+        await sim.Git(repo.Root, "add", ".");
+        sim.Commit(repo.Root, "seed");
 
         // Sanity: config.json is genuinely git-ignored (not in the committed tree).
-        var tracked = TestGit.Run(repo.Root, "ls-files", ".relay");
+        var (_, tracked) = await sim.Git(repo.Root, "ls-files", ".relay");
         Assert.True(string.IsNullOrWhiteSpace(tracked),
             "pre-condition: .relay/config.json must be git-ignored (uncommitted)");
 
@@ -178,7 +173,8 @@ public sealed class PlanningWorktreeConfigCopyTests
             config: config,
             testRunner: new ScriptedTestRunner(),
             cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         Assert.Single(results);
         // PRE-FIX: Flagged with "config not found". POST-FIX: Planned.

@@ -52,32 +52,24 @@ public sealed partial class RelayQueueControllerWorktreeResetTests
         }
     }
 
-    // GAP (genuinely needs the real git binary — verified): the drain's reset path
-    // (RelayQueueController.PrivateHelpers.cs's ResetAndLogAsync) hardcodes
-    // `var gitInvoker = new GitInvoker();` with no injection seam anywhere in
-    // RelayQueueController's public surface — that file is outside this
-    // migration's file list, so there is no way to thread a GitSim into
-    // WorktreeResetter.ResetAsync here. Stays on the real git binary, gated
-    // behind SlowIntegration so it is skipped by default.
+    // The drain's flagged-task reset path (RelayQueueController.ResetAndLogAsync →
+    // WorktreeResetter.ResetAsync) now takes an injected IGitInvoker, so a repo-bound
+    // GitSim backs the reset: `reset -q HEAD` + `checkout -- .` restore the tracked
+    // file to HEAD and `ls-files --others` enumerates the real-disk untracked file the
+    // resetter then deletes — exactly the real-git behavior, now always-on.
     [Fact]
     public async Task DrainAsync_FlaggedTask_ResetsWorktreeBeforeNextTask()
     {
-        SlowIntegration.SkipIfNotOptedIn();
-        // 1. Create a real git repo with tracked file plus two queued tasks.
+        // 1. Create a GitSim repo with a tracked file plus two queued tasks.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha — will flag with dirty tree\n");
         repo.WriteTask("beta", "# Beta — must inherit clean tree\n");
 
-        // Init git and commit a tracked file.
-        var srcDir = Path.Combine(repo.Root, "src");
-        Directory.CreateDirectory(srcDir);
-        File.WriteAllText(Path.Combine(srcDir, "app.cs"), "original");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        // Register a repo and commit a tracked file.
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app.cs", "original");
+        sim.Commit(repo.Root, "seed");
 
         // Write a pre-run untracked snapshot for both tasks (empty — no
         // pre-existing untracked files).  This is what the real driver does
@@ -90,7 +82,7 @@ public sealed partial class RelayQueueControllerWorktreeResetTests
         }
 
         var runner = new DirtyThenCleanAssertingRunner();
-        var controller = new RelayQueueController(repo.Root, runner);
+        var controller = new RelayQueueController(repo.Root, runner, gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();

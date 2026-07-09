@@ -21,17 +21,13 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_WhenPausedAfterPhase1_ReturnsPlannedOutcomes()
     {
-        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
-        // which hardcodes a real GitInvoker for worktree creation (no injection
-        // seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // 3 tasks, pause after first completes planning → all 3 Planned.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("task-1", "# Task 1\n");
         repo.WriteTask("task-2", "# Task 2\n");
         repo.WriteTask("task-3", "# Task 3\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var planRunner = new ScriptedSubagentRunner();
         planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -50,7 +46,7 @@ public sealed partial class DrainExecutionLoggingTests
 
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner, planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -65,16 +61,12 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_WhenPausedAfterPhase1_IncludesMixedOutcomes()
     {
-        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
-        // which hardcodes a real GitInvoker for worktree creation (no injection
-        // seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // 2 tasks: one Flagged, one Planned. Both must appear in results.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("good", "# Good\n");
         repo.WriteTask("bad-plan", "# Bad plan\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var goodRunner = new ScriptedSubagentRunner();
         goodRunner.SeedHappyPath("src/good.cs", "tests/good.tests.cs");
@@ -95,7 +87,7 @@ public sealed partial class DrainExecutionLoggingTests
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: id => id == "bad-plan" ? badRunner : goodRunner,
             planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -111,16 +103,12 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_PausedAfterPhase1_RunLogAndResultsIncludePlanned()
     {
-        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
-        // which hardcodes a real GitInvoker for worktree creation (no injection
-        // seam) — this fact is irreducibly bound to the real git binary.
-        SlowIntegration.SkipIfNotOptedIn();
         // Pause after Phase 1: run.log exists with planning events, results
         // include Planned outcome, no execute events in run.log.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("pause-me", "# Pause me\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/pause.cs", "tests/pause.tests.cs");
@@ -136,7 +124,7 @@ public sealed partial class DrainExecutionLoggingTests
         ctrl = new RelayQueueController(repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => runner,
             planTestRunner: new ScriptedTestRunner(), lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
         await ctrl.RefreshAsync();
 
         var results = await ctrl.DrainAsync();
@@ -165,19 +153,13 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_ExecutePhase_AppendsEventsToRunLog()
     {
-        // Phase 1 (PlanPhaseRunner) hardcodes a real GitInvoker for worktree
-        // creation (no injection seam) — this fact is irreducibly bound to the
-        // real git binary. Phase 2 below still moves to DepsFor's git-free sim
-        // (CreateGitCommit:false, no git assertions there), trimming this fact's
-        // real-git surface to just the mandatory Phase-1 worktree machinery.
-        SlowIntegration.SkipIfNotOptedIn();
-        // Phase 1 (PlanPhaseRunner) writes run.log in worktree, copies back.
-        // Phase 2 uses a FileRelayEventSink (the fixed GuiTaskRunner pattern),
-        // so execute-phase events (stages 5–11) are appended to run.log.
+        // Phase 1 (PlanPhaseRunner) writes run.log in a GitSim-backed worktree,
+        // copies back. Phase 2 uses a FileRelayEventSink (the fixed GuiTaskRunner
+        // pattern), so execute-phase events (stages 5–11) are appended to run.log.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("full-run", "# Full run\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -188,7 +170,7 @@ public sealed partial class DrainExecutionLoggingTests
         var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("full-run", runner)],
             config: config, testRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
         Assert.Single(planResults);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, planResults[0].Outcome.Status);
 
@@ -220,19 +202,14 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task ExecutePhase_WithFileSink_AppendsToExistingRunLog()
     {
-        // Phase 1 (PlanPhaseRunner) hardcodes a real GitInvoker for worktree
-        // creation (no injection seam) — this fact is irreducibly bound to the
-        // real git binary. Phase 2 below still moves to DepsFor's git-free sim
-        // (CreateGitCommit:false, no git assertions there), trimming this fact's
-        // real-git surface to just the mandatory Phase-1 worktree machinery.
-        SlowIntegration.SkipIfNotOptedIn();
         // CompositeRelayEventSink with FileRelayEventSink appends execute
         // events to planning run.log. Also verifies subagent trace events
         // land in run.log when the subagent is wired to the composite sink.
+        // Phase 1 runs against a GitSim-backed worktree.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("correct", "# Correct\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
 
         var inner = new ScriptedSubagentRunner();
         inner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -241,7 +218,7 @@ public sealed partial class DrainExecutionLoggingTests
         await PlanPhaseRunner.RunPlanPhaseAsync(
             mainRootPath: repo.Root, tasks: [("correct", inner)],
             config: config, testRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
 
         var runLogPath = Path.Combine(repo.Root, ".relay", "correct", "run.log");
         Assert.True(File.Exists(runLogPath));
