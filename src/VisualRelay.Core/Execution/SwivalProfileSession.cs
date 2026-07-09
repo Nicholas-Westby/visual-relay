@@ -1,16 +1,30 @@
 using VisualRelay.Core.Logging;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
 
-internal sealed class SwivalProfileSession : IAsyncDisposable
+/// <summary>
+/// Pins a frozen swival.toml at a target root for the lifetime of a subagent
+/// launch, restoring the working tree's original content on dispose.
+///
+/// Concurrency: the review pair (stage 7) launches review, triage and
+/// visual-review invocations that each pin the SAME root's swival.toml at once.
+/// To keep the shared file coherent, pinned sessions for one (root, content) are
+/// REF-COUNTED through a process-wide registry (see the PinnedRegistry partial):
+/// only the first prepare writes the pin and captures the original, and only the
+/// last dispose restores it — so concurrent siblings never tear each other's read
+/// nor double-restore. The restore drains under a handoff barrier so a following
+/// pin epoch captures the restored tree, not a peer's in-flight pin. All writes
+/// are atomic (temp file + rename) so an external reader (swival) never observes
+/// a 0-byte truncate window under any residual concurrency.
+/// </summary>
+internal sealed partial class SwivalProfileSession : IAsyncDisposable
 {
     internal const string FileName = "swival.toml";
     private readonly string _path;
     private readonly bool _created;
-    private readonly string? _originalContent;
-    private readonly string? _pinnedContent;
     private readonly bool _pinnedMode;
+    private readonly PinnedRoot? _pinnedRoot;
+    private int _disposed;
 
     private SwivalProfileSession(string path, bool created)
     {
@@ -19,12 +33,10 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         _pinnedMode = false;
     }
 
-    private SwivalProfileSession(string path, string? originalContent, string pinnedContent)
+    private SwivalProfileSession(string path, PinnedRoot pinnedRoot)
     {
         _path = path;
-        _originalContent = originalContent;
-        _pinnedContent = pinnedContent;
-        _created = originalContent is null;
+        _pinnedRoot = pinnedRoot;
         _pinnedMode = true;
     }
 
@@ -38,7 +50,7 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
             return new SwivalProfileSession(path, created: false);
         }
 
-        await File.WriteAllTextAsync(path, DefaultToml, cancellationToken);
+        await AtomicWriteAsync(path, DefaultToml, cancellationToken);
         return new SwivalProfileSession(path, created: true);
     }
 
@@ -54,6 +66,10 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
     /// When <paramref name="eventSink"/> is non-null and pinned content differs
     /// from the tree's current content, an info-level
     /// "swival_profile_divergence" event is emitted.
+    ///
+    /// Concurrent siblings pinning the same content on the same root share one
+    /// ref-counted pin: only the first prepare reads/writes/diverges, the rest
+    /// wait for that write and share it; only the last dispose restores.
     /// </summary>
     public static async Task<SwivalProfileSession> PrepareWithPinnedContentAsync(
         string rootPath,
@@ -64,144 +80,68 @@ internal sealed class SwivalProfileSession : IAsyncDisposable
         CancellationToken cancellationToken)
     {
         var path = Path.Combine(rootPath, FileName);
-        string? originalContent = null;
-        if (File.Exists(path))
+        var (root, isFirst) = await AcquirePinnedRootAsync(path, pinnedContent, cancellationToken);
+
+        if (!isFirst)
         {
-            originalContent = await File.ReadAllTextAsync(path, cancellationToken);
+            // A sibling already opened this pin epoch. Wait until its write
+            // completes, then share the pin without re-reading or re-writing.
+            try
+            {
+                await root.Ready.Task.WaitAsync(cancellationToken);
+            }
+            catch
+            {
+                await ReleasePinnedRootAsync(path, root);
+                throw;
+            }
+
+            return new SwivalProfileSession(path, root);
         }
 
-        // Emit divergence event when pinned content differs from tree content.
-        if (eventSink is not null && originalContent is not null
-            && !string.Equals(originalContent, pinnedContent, StringComparison.Ordinal))
+        // First prepare of this epoch: capture the original tree content, emit
+        // any divergence, and write the pin — exactly once for all siblings.
+        try
         {
-            await eventSink.PublishAsync(new RelayEvent(
-                DateTimeOffset.UtcNow,
-                "info",
-                "swival_profile_divergence",
-                RunId: runId,
-                RootPath: rootPath,
-                TaskId: taskId,
-                Data: new Dictionary<string, string>
-                {
-                    ["reason"] = "pinned swival profile differs from working-tree swival.toml — "
-                               + "the run will use the pinned (frozen) content; "
-                               + "a backend/profile swap is pending at the drive boundary"
-                }), cancellationToken);
+            string? originalContent = File.Exists(path)
+                ? await File.ReadAllTextAsync(path, cancellationToken)
+                : null;
+            root.OriginalContent = originalContent;
+            root.Created = originalContent is null;
+
+            if (eventSink is not null && originalContent is not null
+                && !string.Equals(originalContent, pinnedContent, StringComparison.Ordinal))
+            {
+                await PublishDivergenceAsync(eventSink, rootPath, runId, taskId, cancellationToken);
+            }
+
+            await AtomicWriteAsync(path, pinnedContent, cancellationToken);
+            root.Ready.TrySetResult();
+        }
+        catch (Exception ex)
+        {
+            // The pin was never established: fault waiters and drain the epoch so
+            // a later prepare starts fresh instead of attaching to a dead pin.
+            root.Ready.TrySetException(ex);
+            await ReleasePinnedRootAsync(path, root);
+            throw;
         }
 
-        await File.WriteAllTextAsync(path, pinnedContent, cancellationToken);
-        return new SwivalProfileSession(path, originalContent, pinnedContent);
+        return new SwivalProfileSession(path, root);
     }
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            return;
+
         if (_pinnedMode)
         {
-            // Only restore the original tree content when the task did NOT
-            // edit swival.toml during the session (file still matches pinned).
-            // If it differs, the task authored a legitimate edit — leave it.
-            string? currentContent = null;
-            if (File.Exists(_path))
-            {
-                currentContent = await File.ReadAllTextAsync(_path);
-            }
-
-            if (currentContent is not null
-                && string.Equals(currentContent, _pinnedContent, StringComparison.Ordinal))
-            {
-                // No edit occurred — restore the original tree content.
-                if (_originalContent is not null)
-                {
-                    await File.WriteAllTextAsync(_path, _originalContent);
-                }
-                else
-                {
-                    File.Delete(_path);
-                }
-            }
-            // else: file was edited during the session — leave it untouched.
+            await ReleasePinnedRootAsync(_path, _pinnedRoot!);
         }
         else if (_created)
         {
             File.Delete(_path);
         }
     }
-
-    // Interpolated raw string so every base_url reads from the centralized
-    // ModelBackend (one source of truth). static readonly because interpolation
-    // is not a compile-time constant; the generated TOML is byte-identical.
-    internal static readonly string DefaultToml =
-        $"""
-        [profiles.frontier]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "frontier"
-        max_context_tokens = 200000
-
-        [profiles.balanced]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "balanced"
-        max_context_tokens = 128000
-
-        [profiles.cheap]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "cheap"
-        max_context_tokens = 128000
-
-        [profiles.vision]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "vision"
-        max_context_tokens = 128000
-
-        [profiles.claude]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude"
-        max_context_tokens = 200000
-
-        [profiles.opus]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude-opus-1m"
-        max_context_tokens = 1000000
-
-        [profiles.sonnet]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "claude-sonnet"
-        max_context_tokens = 200000
-
-        [profiles.gpt5]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "gpt-5"
-        max_context_tokens = 400000
-
-        [profiles.qwen-coder]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "hf-qwen3-coder-next"
-        max_context_tokens = 256000
-
-        [profiles.fallback]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "fallback"
-        max_context_tokens = 256000
-
-        [profiles.glm]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "glm-5.2"
-        max_context_tokens = 200000
-
-        [profiles.kimi]
-        provider = "generic"
-        base_url = "{ModelBackend.BaseUrl}"
-        model = "kimi-k2"
-        max_context_tokens = 256000
-        """;
 }
