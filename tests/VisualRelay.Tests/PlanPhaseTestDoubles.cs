@@ -71,6 +71,13 @@ internal sealed class CountingConcurrencySubagentRunner : ISubagentRunner
     private int _inFlight;
     private int _peak;
 
+    // Released the instant two runs are concurrently in-flight, so the peak observably
+    // reaches the overlap the test asserts (>= 2) — deterministically, with no timed
+    // delay. Runs entering after release proceed immediately. The plan phase always
+    // admits >= 2 concurrently (maxConcurrency >= 2 with >= 2 tasks), so it never stalls.
+    private readonly TaskCompletionSource _overlapGate =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     // ReSharper disable once InconsistentlySynchronizedField — _peak is written
     // under lock during the run; this getter is only read AFTER the awaited plan
     // phase fully completes (all writers joined), so no concurrent access occurs.
@@ -92,8 +99,11 @@ internal sealed class CountingConcurrencySubagentRunner : ISubagentRunner
 
         try
         {
-            // Small delay so concurrent runs overlap observably.
-            await Task.Delay(50, cancellationToken);
+            // Hold each run until a second run is concurrently in-flight, so peak
+            // concurrency observably overlaps — no wall-clock delay.
+            if (current >= 2)
+                _overlapGate.TrySetResult();
+            await _overlapGate.Task.WaitAsync(cancellationToken);
             return await _inner.RunAsync(invocation, cancellationToken);
         }
         finally

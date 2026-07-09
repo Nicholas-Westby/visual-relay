@@ -112,10 +112,11 @@ public sealed class RelayQueueControllerParallelTests
         var controller = new RelayQueueController(repo.Root, runner);
         await controller.RefreshAsync();
 
-        // Start drain in background, cancel after a short delay.
+        // Start drain in background, cancel once it is genuinely in-flight (a task has
+        // begun running) — a causal signal, not a wall-clock guess.
         using var cts = new CancellationTokenSource();
         var drainTask = controller.DrainAsync(cts.Token);
-        await Task.Delay(100, CancellationToken.None);
+        await runner.FirstStarted;
         cts.Cancel();
 
         IReadOnlyList<RelayTaskOutcome> results;
@@ -139,10 +140,20 @@ public sealed class RelayQueueControllerParallelTests
     /// </summary>
     private sealed class CancellableRecordingTaskRunner : IRelayTaskRunner
     {
+        private readonly TaskCompletionSource _firstStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        // Completes once at least one task has begun running, so the test can cancel
+        // exactly when the drain is in-flight — no wall-clock guess.
+        public Task FirstStarted => _firstStarted.Task;
+
         public async Task<RelayTaskOutcome> RunTaskAsync(
             string rootPath, string taskId, CancellationToken cancellationToken = default)
         {
-            await Task.Delay(200, cancellationToken);
+            _firstStarted.TrySetResult();
+            // Block until the drain is cancelled — a never-completing gate honoring the
+            // token — so the task stays in-flight until the test pulls cancellation.
+            await new TaskCompletionSource().Task.WaitAsync(cancellationToken);
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, "hash", "sha", null);
         }
     }

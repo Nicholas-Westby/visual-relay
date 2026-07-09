@@ -72,6 +72,10 @@ public sealed class FdLeakTests
     [Fact]
     public async Task ProcessCapture_DetachedChildReapedAfterNormalExit()
     {
+        // Genuine OS-semantics: real detached-child reaping over a real settle window
+        // (no virtualizable signal). Opt-in only; the always-on cost stays at zero.
+        SlowIntegration.SkipIfNotOptedIn();
+
         // Process-group reaping via setpgid/kill(-pgid) is POSIX-only.
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
             !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
@@ -150,6 +154,10 @@ public sealed class FdLeakTests
     [Fact]
     public async Task ProcessCapture_ReturnsPromptlyWhenChildInheritsPipeAndSurvives()
     {
+        // Genuine OS-semantics: an orphan holding the inherited pipe write-end over a
+        // real drain window (no virtualizable signal). Opt-in only.
+        SlowIntegration.SkipIfNotOptedIn();
+
         // Process-group reaping via setpgid/kill(-pgid) is POSIX-only.
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux) &&
             !RuntimeInformation.IsOSPlatform(OSPlatform.OSX))

@@ -215,13 +215,13 @@ public sealed class ControlServerTests
         var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        // Dispose must release the port so a fresh TcpListener can bind it.
-        // Kernel socket teardown (e.g. TIME_WAIT) can vary — poll with a bounded
-        // retry instead of assuming the port is instantly bindable.
+        // Dispose must release the port so a fresh TcpListener can bind it. The
+        // accept-loop task finishes its socket teardown asynchronously, so re-probe
+        // the bind and YIELD (a scheduler turn, not a wall-clock sleep) between tries —
+        // the bind succeeds the instant the port is free.
         server.Dispose();
 
-        const int retryMs = 50;
-        const int maxRetries = 40; // ~2 s total
+        const int maxRetries = 2_000;
         for (var attempt = 0; attempt < maxRetries; attempt++)
         {
             try
@@ -236,12 +236,12 @@ public sealed class ControlServerTests
             catch (SocketException)
             {
                 if (attempt < maxRetries - 1)
-                    Thread.Sleep(retryMs);
+                    await Task.Yield();
             }
         }
 
         Assert.Fail(
-            $"Dispose() did not release port {port} within {maxRetries * retryMs}ms. " +
+            $"Dispose() did not release port {port} within {maxRetries} rebind attempts. " +
             "The accept-loop task may not have completed socket teardown.");
     }
 }

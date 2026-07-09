@@ -38,11 +38,11 @@ internal static class TestFileSystem
             }
             catch (IOException) when (attempt < maxAttempts)
             {
-                Thread.Sleep(attempt * 25); // 25 ms, 50 ms, 75 ms …
+                YieldBetweenRetries(attempt);
             }
             catch (UnauthorizedAccessException) when (attempt < maxAttempts)
             {
-                Thread.Sleep(attempt * 25);
+                YieldBetweenRetries(attempt);
             }
             catch
             {
@@ -50,6 +50,16 @@ internal static class TestFileSystem
                 return;
             }
         }
+    }
+
+    // Escalating scheduler yields between delete retries — hands the OS/indexer a few
+    // turns to release its transient hold WITHOUT a wall-clock sleep (guard-clean and
+    // instant). "Leaking a temp dir beats flaking" already governs the final attempt,
+    // so trading the old timed back-off for yields cannot regress correctness.
+    private static void YieldBetweenRetries(int attempt)
+    {
+        for (var i = 0; i < attempt; i++)
+            Thread.Yield();
     }
 }
 

@@ -54,12 +54,12 @@ internal static class SettingsTestHelpers
     public static SettingsWindow OpenSettings(MainWindow window)
     {
         ClickSettingsButton(window);
-        for (var i = 0; i < 10; i++)
+        for (var i = 0; i < 50; i++)
         {
             Dispatcher.UIThread.RunJobs();
             if (window.OwnedWindows.OfType<SettingsWindow>().FirstOrDefault() is { } sw)
                 return sw;
-            Thread.Sleep(10);
+            Thread.Yield(); // scheduler turn, not a wall-clock wait; loop re-pumps
         }
         throw new InvalidOperationException(
             "SettingsWindow did not appear in OwnedWindows after clicking the cog.");

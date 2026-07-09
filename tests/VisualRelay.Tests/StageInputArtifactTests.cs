@@ -113,10 +113,11 @@ public sealed class StageInputArtifactTests
         File.WriteAllText(path3, """{"version":1,"stage":5,"attempt":3,"name":"Author-tests","systemPrompt":"Write tests","inputPrompt":"test","timestamp":"2026-06-20T03:00:00Z"}""");
         File.SetLastWriteTimeUtc(path3, mtime1.AddDays(-1)); // force older mtime
 
-        // Write attempt 2 with a NEWER mtime
-        Thread.Sleep(10); // ensure distinct mtime
+        // Write attempt 2 with an explicitly NEWER mtime (set directly rather than
+        // slept-for, so the ordering is deterministic and instant).
         var path2 = Path.Combine(dir.Path, "stage5-attempt2.input.json");
         File.WriteAllText(path2, """{"version":1,"stage":5,"attempt":2,"name":"Author-tests","systemPrompt":"Write tests","inputPrompt":"test","timestamp":"2026-06-20T02:00:00Z"}""");
+        File.SetLastWriteTimeUtc(path2, mtime1.AddSeconds(1)); // newer than attempt 1 (and 3)
 
         var latest = StageInputArtifact.LatestPath(dir.Path, 5);
         Assert.Equal(path3, latest); // attempt 3, even though its mtime is oldest

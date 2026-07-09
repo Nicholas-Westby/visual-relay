@@ -192,14 +192,12 @@ public sealed partial class MainWindowViewModelFixTaskTests
         Assert.Equal("Creating fix task…", vm.CreateFixTaskButtonLabel);
         Assert.False(vm.CanCreateFixTaskPublic);
 
-        // Release and pump.
+        // Release the gate and await the command's own in-flight execution to complete
+        // (it runs to the end, clearing the busy flag) — causal, no wall-clock wait.
         gate.SetResult();
+        if (vm.CreateFixTaskCommand.ExecutionTask is { } exec)
+            await exec;
         Dispatcher.UIThread.RunJobs();
-        for (var i = 0; i < 10; i++)
-        {
-            Dispatcher.UIThread.RunJobs();
-            await Task.Delay(10);
-        }
 
         Assert.False(vm.IsCreatingFixTask);
         Assert.Equal("Create task to fix", vm.CreateFixTaskButtonLabel);

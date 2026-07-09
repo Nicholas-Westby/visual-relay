@@ -235,9 +235,8 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
 
             await lifecycle.StartAsync();
 
-            // Give the stub a beat to write its env dump.
-            for (var i = 0; i < 50 && !File.Exists(envLog); i++)
-                await Task.Delay(50);
+            // Wait (event-driven, not polled) for the spawned stub to write its env dump.
+            await TestWaits.ForFileAsync(envLog);
 
             Assert.True(File.Exists(envLog), "litellm stub never ran (no env captured)");
             var env = await File.ReadAllLinesAsync(envLog);

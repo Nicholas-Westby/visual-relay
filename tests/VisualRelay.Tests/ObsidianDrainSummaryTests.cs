@@ -96,15 +96,14 @@ public sealed class ObsidianDrainSummaryTests : IDisposable
         var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(
             viewModel.RootPath);
         var layout = new ObsidianVaultLayout(vaultRoot, repoName);
-        // The export is fire-and-forget (_ = ExportSummaryOnCompletion(...)). Poll a
-        // short while for the dated summary to appear under Completed/<date>/.
-        var deadline = DateTime.UtcNow.AddSeconds(10);
-        while (DateTime.UtcNow < deadline)
-        {
-            var hit = FindSummary(layout, taskId);
-            if (hit is not null) return await File.ReadAllTextAsync(hit);
-            await Task.Delay(50);
-        }
+        // The export is fire-and-forget (_ = ExportSummaryOnCompletion(...)). Wait
+        // event-driven (a FileSystemWatcher on the repo dir, not a poll) for the dated
+        // summary to land under Completed/<date>/.
+        await TestWaits.ForFileAsync(
+            Path.Combine(layout.RepoDir, "Completed"),
+            predicate: () => FindSummary(layout, taskId) is not null);
+        if (FindSummary(layout, taskId) is { } hit)
+            return await File.ReadAllTextAsync(hit);
 
         var dirs = Directory.Exists(layout.RepoDir)
             ? string.Join(", ", Directory.GetFileSystemEntries(

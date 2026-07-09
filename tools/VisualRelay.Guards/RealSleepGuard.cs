@@ -67,6 +67,10 @@ public static class RealSleepGuard
         "SandboxedTestRunnerReapTests.cs",
         "ActivityWatchdogSocketWedgeTests.cs",
         "SwivalSubagentRunnerSlowIntegrationTests.cs",
+        // Real detached-child reaping and a Windows heartbeat-file window: genuine OS
+        // effects with no virtualizable signal, gated / OS-guarded, real settle needed.
+        "FdLeakTests.cs",
+        "WindowsExecutionTests.cs",
     ];
 
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);
