@@ -56,7 +56,7 @@ public sealed partial class RelayDriver
         if (triageNeeded && visionConfigured)
         {
             var renderOutput = await RunVisualRenderAsync(rootPath, taskDirectory, config, cancellationToken);
-            var visualInput = BuildVisualReviewInput(input.Markdown, taskDirectory,
+            var visualInput = BuildVisualReviewInput(input.Markdown,
                 renderOutput.PngPaths, renderOutput.ErrorOutput, taskImagePaths);
             var visualInvocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
                 config, visualStage, input with { Markdown = visualInput },
@@ -211,7 +211,7 @@ public sealed partial class RelayDriver
         }
     }
 
-    private static string BuildVisualReviewInput(string markdown, string taskDirectory,
+    private static string BuildVisualReviewInput(string markdown,
         IReadOnlyList<string> renderPngs, string? renderError,
         IReadOnlyList<string> taskImagePaths)
     {
@@ -273,7 +273,7 @@ public sealed partial class RelayDriver
         if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
         {
             return new StageRunResult(
-                result.RawText ?? result.Error ?? "invalid subagent result",
+                result.RawText,
                 "red", costUsd, costUnknown, stopwatch, null);
         }
 

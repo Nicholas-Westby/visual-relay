@@ -107,7 +107,6 @@ internal sealed partial class SwivalProfileSession : IAsyncDisposable
                 ? await File.ReadAllTextAsync(path, cancellationToken)
                 : null;
             root.OriginalContent = originalContent;
-            root.Created = originalContent is null;
 
             if (eventSink is not null && originalContent is not null
                 && !string.Equals(originalContent, pinnedContent, StringComparison.Ordinal))

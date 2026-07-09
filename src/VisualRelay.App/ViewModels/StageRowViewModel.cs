@@ -72,7 +72,6 @@ public sealed partial class StageRowViewModel : ViewModelBase
         "Done" => SuccessBrush,
         "Running" => RunningBrush,
         "Flagged" => FlaggedBrush,
-        "Skipped" => MutedBrush,
         _ => MutedBrush
     };
     public IBrush CardBackgroundBrush => Status == "Running" ? ActiveCardBrush : IsSelected ? SelectedCardBrush : WaitingCardBrush;

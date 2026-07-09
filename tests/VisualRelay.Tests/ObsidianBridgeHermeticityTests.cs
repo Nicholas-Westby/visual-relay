@@ -108,7 +108,7 @@ public sealed class ObsidianBridgeHermeticityTests : IDisposable
         // With the hermetic change, an empty accessor can't resolve config dir
         // so the persist is a no-op (InvalidOperationException caught by Save).
         var leakyEnv = new DictionaryEnvironmentAccessor();
-        var vm = new MainWindowViewModel(environmentAccessor: leakyEnv)
+        _ = new MainWindowViewModel(environmentAccessor: leakyEnv)
         {
             ObsidianVaultRoot = "/Users/dev/obsidian-vault"
         };

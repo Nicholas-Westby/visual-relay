@@ -87,13 +87,4 @@ internal static class SwivalTestHelpers
             new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             660_000,
             2);
-
-    /// <summary>
-    /// Constructs a RelayConfig for SwivalSubagentRunner tests
-    /// (simplified overload for timeout-focused tests).
-    /// </summary>
-    public static RelayConfig Config(
-        int frontendTimeoutMs = 5_000,
-        int inactivityTimeoutMs = 300_000) =>
-        TestConfig(frontendTimeoutMs, inactivityTimeoutMs);
 }

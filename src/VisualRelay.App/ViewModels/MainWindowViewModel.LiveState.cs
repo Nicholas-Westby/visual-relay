@@ -110,7 +110,7 @@ public partial class MainWindowViewModel
         _runningTaskIds.Clear();
         _runningTaskIds.Add(taskId);
         _runningTaskId = taskId;
-        _runningStageNumbers[taskId] = stageNumber is { } s ? new HashSet<int> { s } : new HashSet<int>();
+        _runningStageNumbers[taskId] = stageNumber is { } s ? [s] : [];
         _runningStageNames[taskId] = stageName;
         _taskElapsed.TryAdd(taskId, new CumulativeElapsed());
         ApplyRunningTaskToRows();

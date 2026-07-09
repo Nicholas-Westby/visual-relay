@@ -82,7 +82,7 @@ public partial class StageCardButton : TemplatedControl
         if (_innerButton is not null)
         {
             // Forward Content, Command, CommandParameter from outer to inner.
-            _innerButton.Bind(Button.ContentProperty, this.GetObservable(ContentProperty));
+            _innerButton.Bind(ContentControl.ContentProperty, this.GetObservable(ContentProperty));
             _innerButton.Bind(Button.CommandProperty, this.GetObservable(CommandProperty));
             _innerButton.Bind(Button.CommandParameterProperty, this.GetObservable(CommandParameterProperty));
 

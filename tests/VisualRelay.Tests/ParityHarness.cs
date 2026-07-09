@@ -59,16 +59,6 @@ internal sealed class ParityHarness : IDisposable
         SimGit("commit", "-m", message);
     }
 
-    public void DeleteBoth(string rel)
-    {
-        foreach (var root in new[] { RealRoot, SimRoot })
-        {
-            var full = Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(full))
-                File.Delete(full);
-        }
-    }
-
     public (int Exit, string Stdout, string Stderr) RealGit(params string[] args)
     {
         var psi = new ProcessStartInfo(GitBinary)

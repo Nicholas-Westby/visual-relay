@@ -25,7 +25,7 @@ public partial class MainWindowViewModel
     /// headless tests inject an in-memory git so the rewrite exercises worktree
     /// add/remove without spawning real <c>git worktree</c> processes.
     /// </summary>
-    internal IGitInvoker? RewriteGitInvokerForTests { get; set; }
+    internal IGitInvoker? RewriteGitInvokerForTests { get; init; }
 
     [RelayCommand(CanExecute = nameof(CanRewriteSelected))]
     private async Task RewriteSelectedTaskAsync()

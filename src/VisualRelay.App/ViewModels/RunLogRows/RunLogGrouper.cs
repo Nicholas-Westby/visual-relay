@@ -75,12 +75,10 @@ public static class RunLogGrouper
         }
 
         // Case 2: newest row is a single heartbeat — promote to group.
-        if (newest is SingleEventRow single &&
-            single.Event.EventName == "watchdog_heartbeat" &&
+        if (newest is SingleEventRow { Event.EventName: "watchdog_heartbeat" } single &&
             single.DisplayLine == relayEvent.DisplayLine)
         {
-            var promoted = HeartbeatGroupRow.FromList(
-                new List<RelayEvent> { relayEvent, single.Event });
+            var promoted = HeartbeatGroupRow.FromList([relayEvent, single.Event]);
             promoted.IsExpanded = single.IsExpanded;
             rows[0] = promoted;
             return true;

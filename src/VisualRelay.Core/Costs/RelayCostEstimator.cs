@@ -65,6 +65,7 @@ public static class RelayCostEstimator
     /// stage ceiling, so at most one rate-window boundary crossing can occur per
     /// stage — this approximation is acceptable.
     /// </summary>
+    /// <param name="report">The stage report JSON to price (model, timeline, timestamp).</param>
     /// <param name="evaluationInstant">
     /// Optional UTC instant for rate-schedule evaluation (e.g. time-of-day windows).
     /// When <c>null</c>, the report's top-level <c>timestamp</c> field is used.

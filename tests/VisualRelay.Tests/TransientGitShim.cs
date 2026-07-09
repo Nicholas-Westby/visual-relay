@@ -7,21 +7,13 @@ namespace VisualRelay.Tests;
 /// transient git failures within the <see cref="GitCommitter"/> retry loop.
 /// Intercepts git calls whose argument list contains a configured substring
 /// and returns synthetic failures for a specified count before delegating to
-/// an inner invoker (a GitSim, in the migrated pilot) — or, when constructed
-/// without one, falling through to the real git process (legacy behavior).
+/// an inner invoker (a GitSim, in the migrated pilot).
 /// </summary>
-internal sealed class TransientGitShim : IGitInvoker
+internal sealed class TransientGitShim(IGitInvoker inner) : IGitInvoker
 {
-    private readonly IGitInvoker? _inner;
     private readonly Dictionary<string, int> _failureCounts = new();
     private int _exitCode = 128;
     private string _stderr = "fatal: transient error";
-
-    /// <summary>Falls through to the real git process once the synthetic failures are spent.</summary>
-    public TransientGitShim() { }
-
-    /// <summary>Delegates to <paramref name="inner"/> once the synthetic failures are spent (used with GitSim).</summary>
-    public TransientGitShim(IGitInvoker inner) => _inner = inner;
 
     /// <summary>
     /// Configure the next <paramref name="failureCount"/> git invocations whose
@@ -51,16 +43,7 @@ internal sealed class TransientGitShim : IGitInvoker
             }
         }
 
-        // Synthetic failures spent: delegate to the inner invoker when one was
-        // supplied (GitSim in the migrated pilot), else fall through to real git.
-        if (_inner is not null)
-            return await _inner.RunAsync(rootPath, argsList, ct, timeout, environment, killToken, onActivity);
-
-        // Fall through to real git. Strip DEVELOPER_DIR/SDKROOT so xcrun
-        // shim cannot resurrect a stale nix-store path inherited from the
-        // shell environment.
-        return await ProcessCapture.RunAsync("git", argsList,
-            rootPath, timeout ?? TimeSpan.FromSeconds(30), ct, environment,
-            envRemove: new HashSet<string>(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" });
+        // Synthetic failures spent: delegate to the inner invoker (GitSim).
+        return await inner.RunAsync(rootPath, argsList, ct, timeout, environment, killToken, onActivity);
     }
 }

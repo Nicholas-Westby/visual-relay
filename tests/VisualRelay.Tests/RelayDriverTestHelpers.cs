@@ -12,23 +12,6 @@ namespace VisualRelay.Tests;
 internal static class RelayDriverTestHelpers
 {
     /// <summary>
-    /// Real-git repo seed (used only by the opt-in <see cref="RealGitIntegrationTests"/>
-    /// and callers still asserting against the real binary). Hermetic: the spawn seam
-    /// (<see cref="TestGit"/>) pins <c>GIT_CONFIG_GLOBAL/SYSTEM=/dev/null</c> so no host
-    /// config is scanned. In-memory driver tests seed via <see cref="InitSim"/> instead.
-    /// </summary>
-    public static void InitGitRepo(string root)
-    {
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
-    }
-
-    /// <summary>
     /// Driver dependencies for a git-FREE driver test: identical to
     /// <see cref="RelayDriverDependencies.ForTests(ISubagentRunner, ITestRunner, IRelayEventSink, IGitInvoker?, IEnvironmentAccessor?)"/>
     /// but binds an in-memory <see cref="GitSimEngine"/> (unregistered at

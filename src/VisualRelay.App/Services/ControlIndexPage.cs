@@ -6,7 +6,7 @@ namespace VisualRelay.App.Services;
 /// <summary>
 /// Pure, static, UI-thread-free HTML renderer for the control API index page.
 /// Every interpolated value is HTML-encoded with
-/// <see cref="WebUtility.HtmlEncode"/>. Route rows and command names come from
+/// <see cref="WebUtility.HtmlEncode(string)"/>. Route rows and command names come from
 /// the caller — this class contains NO hard-coded route path or command name.
 /// </summary>
 public static class ControlIndexPage

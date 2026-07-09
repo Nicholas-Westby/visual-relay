@@ -126,7 +126,6 @@ public sealed partial class WorktreeFilterTests
 
         // Create a new tracked file AFTER the commit — it will be staged
         // but never committed, so it's absent from HEAD.
-        var newFilePath = Path.Combine(repo.Root, "src", "new-file.cs");
         var sim = new GitSimEngine();
         sim.Seed(repo.Root, "src/new-file.cs", "new");
 

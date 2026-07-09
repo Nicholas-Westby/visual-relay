@@ -28,7 +28,6 @@ public sealed class TaskCardThemeGuardTests
         Assert.True(File.Exists(QueuePanelPath),
             $"QueuePanel.axaml not found at {QueuePanelPath}");
 
-        var text = File.ReadAllText(QueuePanelPath);
         var lines = File.ReadAllLines(QueuePanelPath);
 
         // Find the line containing x:Name="TaskQueueList" and assert it also

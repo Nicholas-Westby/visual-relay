@@ -30,25 +30,4 @@ internal static class RelayDriverGitCommitTestHelpers
         Assert.True(process.ExitCode == 0, stderr);
         return stdout;
     }
-
-    public static void InstallRejectingCommitMsgHook(string repoRoot, string rejectPattern)
-    {
-        var hooksDir = Path.Combine(repoRoot, ".git", "hooks");
-        Directory.CreateDirectory(hooksDir);
-        var hookPath = Path.Combine(hooksDir, "commit-msg");
-        File.WriteAllText(hookPath,
-            $"#!/usr/bin/env bash{Environment.NewLine}" +
-            $"set -euo pipefail{Environment.NewLine}" +
-            $"subject=\"$(head -n 1 \"$1\")\"{Environment.NewLine}" +
-            $"if echo \"$subject\" | grep -qE '{rejectPattern}'; then{Environment.NewLine}" +
-            $"  echo \"hook: subject matches rejected pattern\" >&2{Environment.NewLine}" +
-            $"  exit 1{Environment.NewLine}" +
-            $"fi{Environment.NewLine}" +
-            $"exit 0{Environment.NewLine}");
-        if (!OperatingSystem.IsWindows())
-        {
-            File.SetUnixFileMode(hookPath,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-    }
 }

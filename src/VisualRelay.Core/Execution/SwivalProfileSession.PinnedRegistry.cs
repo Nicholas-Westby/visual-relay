@@ -17,12 +17,11 @@ internal sealed partial class SwivalProfileSession
         public string PinnedContent { get; } = pinnedContent;
         public int RefCount;
         public string? OriginalContent;
-        public bool Created;
         public bool Draining;
 
         // Completes when the first prepare has written the pin; siblings await it
         // so none launches swival before the frozen profile is on disk. Written
-        // before completion, so any awaiter observes OriginalContent/Created.
+        // before completion, so any awaiter observes OriginalContent.
         public TaskCompletionSource Ready { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
 
