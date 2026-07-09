@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverVerifyFixTests
+public sealed class RelayDriverVerifyFixDistillTests
 {
     [Fact]
     public async Task RunVerifyFixLoop_FailureOutputShownToAgent_HasNonoNoiseStripped()

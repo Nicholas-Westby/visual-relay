@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverVerifyFixTests
+public sealed class RelayDriverVerifyFixTests
 {
     [Fact]
     public async Task RunTaskAsync_FixableVerifyFailure_CommitsAfterFixVerifyLoop()

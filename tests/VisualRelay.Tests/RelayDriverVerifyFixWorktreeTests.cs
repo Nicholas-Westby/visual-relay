@@ -4,7 +4,7 @@ using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverVerifyFixTests
+public sealed class RelayDriverVerifyFixWorktreeTests
 {
     [Fact]
     public async Task RunVerifyFixLoop_AgentEditUncommitted_AdvisoryExcludesAgentEditAndIncludesTestWrite()

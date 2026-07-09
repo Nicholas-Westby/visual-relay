@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed partial class RelayDriverVerifyFixTests
+public sealed class RelayDriverSkipTestsTests
 {
     [Fact]
     public async Task RunTaskAsync_SkipTests_Stage5RecordedAsSkipped_NoSubagentInvocation()
