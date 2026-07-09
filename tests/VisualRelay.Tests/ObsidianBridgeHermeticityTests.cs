@@ -125,9 +125,9 @@ public sealed class ObsidianBridgeHermeticityTests : IDisposable
     public void XdgConfigHome_IsRedirectedToTempDir()
     {
         // Assert against the value the module initializer RECORDED at load, not
-        // the live env var: a concurrent test in the ProcessEnv collection nulls
-        // and restores the process-wide XDG_CONFIG_HOME under a try/finally, and a
-        // live read here (a different, parallel collection) can land in that window.
+        // the live env var, so this fact is independent of the live process
+        // environment; runtime mutation of it in tests is banned outright by the
+        // conventions guard (NoTestFile_CallsEnvironmentSetEnvironmentVariable).
         var xdg = TestModuleInitializer.RedirectedXdgConfigHome;
         Assert.NotNull(xdg);
         Assert.NotEmpty(xdg);

@@ -6,14 +6,11 @@ namespace VisualRelay.Tests;
 /// Status / stop decision tests plus the start-path guarantees (legacy cleanup,
 /// gen-config timeout/fallback, generated-config write) for the ported C# backend
 /// lifecycle. The readiness probe is injected so these stay hermetic regardless
-/// of what is listening on :4000. Replaces the runtime <c>Installer5BackendSh*</c>
+/// of what is listening on :4000; the provider-key fact likewise injects a HOME
+/// accessor so it resolves the user-level <c>.env</c> without mutating the
+/// process-wide environment. Replaces the runtime <c>Installer5BackendSh*</c>
 /// characterization tests.
-///
-/// In the "ProcessEnv" collection: one fact temporarily overrides the process-wide
-/// <c>HOME</c> so a spawned stub resolves the user-level env, which must not race a
-/// concurrent test reading <c>HOME</c> via <c>GetFolderPath(UserProfile)</c>.
 /// </summary>
-[Collection("ProcessEnv")]
 public sealed partial class BackendLifecycleStatusTests : IDisposable
 {
     private readonly string _home = Path.Combine(
@@ -217,45 +214,36 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
             return; // sandbox denies the chmod this real-spawn check requires
         }
 
-        // ── temporarily point HOME at the temp dir so LoadProviderKeys ──
-        // ── resolves the user-level .env from the same temp home        ──
-        var originalHome = Environment.GetEnvironmentVariable("HOME");
-        var originalXdg = Environment.GetEnvironmentVariable("XDG_CONFIG_HOME");
-        Environment.SetEnvironmentVariable("HOME", _home);
-        Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", null);
-        try
+        // ── inject a HOME-only accessor so LoadProviderKeys resolves the ──
+        // ── user-level .env from the temp home (XDG_CONFIG_HOME absent => ──
+        // ── resolution falls to HOME) with no process-env mutation       ──
+        var envAccessor = new DictionaryEnvironmentAccessor { ["HOME"] = _home };
+        var options = new BackendStartOptions
         {
-            var options = new BackendStartOptions
-            {
-                RepoRoot = repoRoot,
-                ReadyTimeout = TimeSpan.FromSeconds(3),
-            };
+            RepoRoot = repoRoot,
+            ReadyTimeout = TimeSpan.FromSeconds(3),
+        };
 
-            var lifecycle = new BackendLifecycle(
-                paths,
-                options,
-                _ => { },
-                healthCheck: _ => Task.FromResult(false),
-                ensureVenv: (_, _) => new BackendVenv.Result(paths.VenvLitellm));
+        var lifecycle = new BackendLifecycle(
+            paths,
+            options,
+            _ => { },
+            healthCheck: _ => Task.FromResult(false),
+            ensureVenv: (_, _) => new BackendVenv.Result(paths.VenvLitellm),
+            env: envAccessor);
 
-            await lifecycle.StartAsync();
+        await lifecycle.StartAsync();
 
-            // Wait (event-driven, not polled) for the spawned stub to write its env dump.
-            await TestWaits.ForFileAsync(envLog);
+        // Wait (event-driven, not polled) for the spawned stub to write its env dump.
+        await TestWaits.ForFileAsync(envLog);
 
-            Assert.True(File.Exists(envLog), "litellm stub never ran (no env captured)");
-            var env = await File.ReadAllLinesAsync(envLog);
+        Assert.True(File.Exists(envLog), "litellm stub never ran (no env captured)");
+        var env = await File.ReadAllLinesAsync(envLog);
 
-            // User-level key: MUST be loaded.
-            Assert.Contains("USER_LEVEL_KEY=from_user_env", env);
-            // Repo-root key: must NOT be loaded (the bug fix).
-            Assert.DoesNotContain("REPO_ROOT_KEY=from_repo_env", env);
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("HOME", originalHome);
-            Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", originalXdg);
-        }
+        // User-level key: MUST be loaded.
+        Assert.Contains("USER_LEVEL_KEY=from_user_env", env);
+        // Repo-root key: must NOT be loaded (the bug fix).
+        Assert.DoesNotContain("REPO_ROOT_KEY=from_repo_env", env);
     }
 
     // Copies the repo's real static litellm template into a temp repo so the

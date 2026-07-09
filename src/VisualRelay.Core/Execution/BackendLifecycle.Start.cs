@@ -191,11 +191,11 @@ public sealed partial class BackendLifecycle
     {
         var keys = new Dictionary<string, string>(StringComparer.Ordinal);
 
-        var userEnv = KeyEnvFile.ResolvePathForCurrentUser();
+        var userEnv = KeyEnvFile.ResolvePathForCurrentUser(_env);
         if (File.Exists(userEnv))
         {
             _log($"loading provider keys from {userEnv}");
-            Merge(keys, KeyEnvFile.GetUnsetKeysPublic(userEnv));
+            Merge(keys, KeyEnvFile.GetUnsetKeysPublic(userEnv, _env));
         }
 
         return keys;

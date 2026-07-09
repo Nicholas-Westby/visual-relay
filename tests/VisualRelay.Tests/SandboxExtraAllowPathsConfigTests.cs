@@ -10,11 +10,9 @@ namespace VisualRelay.Tests;
 /// expands <c>~</c>/<c>$HOME</c>, rejects <c>..</c> (load error), rejects paths
 /// outside <c>$HOME</c> and the workspace root, and accepts legitimate paths.
 ///
-/// In the "ProcessEnv" collection: these facts read the live <c>HOME</c> via
-/// <c>GetFolderPath(UserProfile)</c>, so they must not run while another test
-/// transiently overrides the process-wide <c>HOME</c> environment variable.
+/// These facts read the live <c>HOME</c> via <c>GetFolderPath(UserProfile)</c>;
+/// no test mutates the process-wide <c>HOME</c>, so they need no serialization.
 /// </summary>
-[Collection("ProcessEnv")]
 public sealed class SandboxExtraAllowPathsConfigTests
 {
     [Fact]
