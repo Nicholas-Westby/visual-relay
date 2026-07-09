@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
 
@@ -19,25 +20,21 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
         //   (b) a genuinely authored file outside the tasks dir IS auto-included,
         //   (c) FindUncommittedAuthoredFilesAsync does NOT false-flag the tasks-dir
         //       file as a missed authored file.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // Snapshot before the run: no untracked files.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // Simulate: agent authors a new src file and modifies a tracked file,
         // AND the user drops a new task file under the tasks dir mid-run.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "new-impl.cs"), "// genuinely authored");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "llm-tasks", "new-task"));
-        File.WriteAllText(
-            Path.Combine(repo.Root, "llm-tasks", "new-task", "new-task.md"),
-            "# user-dropped mid-run task");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "src/new-impl.cs", "// genuinely authored");
+        Write(repo, "llm-tasks/new-task/new-task.md", "# user-dropped mid-run task");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -46,10 +43,10 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None);
+            CancellationToken.None, sim);
         Assert.True(commit.Success, commit.Error);
 
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         // (b) genuinely authored file outside tasks dir IS auto-included.
         Assert.Contains("src/new-impl.cs", committed);
         // (a) tasks-dir file dropped mid-run is NOT in the commit.
@@ -60,7 +57,7 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None);
+            CancellationToken.None, sim);
         Assert.DoesNotContain("llm-tasks/new-task/new-task.md", missed);
     }
 }

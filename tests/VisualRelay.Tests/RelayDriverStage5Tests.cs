@@ -22,13 +22,9 @@ public sealed class RelayDriverStage5Tests
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
 
         // Create the production file and commit so the repo is healthy.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "seed");
 
         // Override stage 5 to also author an extra test file not in the manifest.
         var wrapped = new ExtraTestFileRunner(runner, "tests/extra.tests.cs");
@@ -36,7 +32,7 @@ public sealed class RelayDriverStage5Tests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(wrapped, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(wrapped, tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-tests");
@@ -62,13 +58,9 @@ public sealed class RelayDriverStage5Tests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "seed");
 
         // Stage 5 returns testFiles that are already in the manifest.
         // ScriptedSubagentRunner already returns ["tests/status.tests.cs"] for stage 5,
@@ -77,7 +69,7 @@ public sealed class RelayDriverStage5Tests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "dup-tests");
@@ -103,13 +95,9 @@ public sealed class RelayDriverStage5Tests
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
 
         // Minimal git repo so the worktree filter can enumerate.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "seed");
 
         // Override stage 5 to return a test file under llm-tasks/.
         var wrapped = new ExtraTestFileRunner(runner, "llm-tasks/extra-test.md");
@@ -117,7 +105,7 @@ public sealed class RelayDriverStage5Tests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(wrapped, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(wrapped, tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "taskdir-test");
@@ -146,17 +134,13 @@ public sealed class RelayDriverStage5Tests
         var runner = new ScriptedSubagentRunner();
         runner.SeedNonCodeOnly("docs/README.md");
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "docs"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "docs", "README.md"), "# Readme");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "docs/README.md", "# Readme");
+        sim.Commit(repo.Root, "seed");
 
         var tests = new ScriptedTestRunner(new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-tests");
@@ -182,17 +166,13 @@ public sealed class RelayDriverStage5Tests
         repo.WriteTask("prod-edit", "# Production edit\n");
         var runner = new PrematureImplementationRunner();
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "status.cs"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "seed");
 
         var testRunner = new RedGateObservingTestRunner(repo.Root);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "prod-edit");

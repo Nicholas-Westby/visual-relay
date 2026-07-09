@@ -17,20 +17,18 @@ public sealed class RelayDriverGitCommitGitignoredBackstopTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        // Runtime artifact that PrepareAsync regenerates — gitignored.
+        // Runtime artifact that PrepareAsync regenerates — gitignored. Left as a
+        // real, untracked file: sim.Seed always stages, so it must NOT go through
+        // it or it would stop being an ignored/untracked path.
         File.WriteAllText(Path.Combine(repo.Root, "swival.toml"), "[runtime]\nkey = \"val\"");
-        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
-        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "init");
-        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.email visual-relay@example.test");
-        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "config user.name \"Visual Relay Tests\"");
-        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "add .");
-        RelayDriverGitCommitTestHelpers.RunGit(repo.Root, "commit -m \"chore: seed repo\"");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Seed(repo.Root, ".gitignore", "swival.toml\n");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         var runner = new GitignoredManifestSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");

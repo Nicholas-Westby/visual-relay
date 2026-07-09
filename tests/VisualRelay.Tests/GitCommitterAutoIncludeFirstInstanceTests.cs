@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
 
@@ -16,25 +17,23 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
         // from the first snapshot → auto-included. With the old behaviour
         // (re-snapshot on resume) those files would be classified as
         // pre-existing and silently dropped.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // S1 — snapshot at FIRST instance start (no untracked files).
         var firstInstanceSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(firstInstanceSnapshot);
 
         // Interrupted instance authors new files (stages 5–10).
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         // S2 — what a resumed instance would capture (includes authored files).
         var resumeSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Contains("tests/new-test.cs", resumeSnapshot);
 
         // Commit with S1 (the persisted first-instance snapshot).
@@ -49,10 +48,10 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/app.cs", committed);
         // KEY: the interrupted-instance file IS committed when using S1.
         Assert.Contains("tests/new-test.cs", committed);
@@ -65,25 +64,22 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
         // remain excluded across resume, even when the first-instance snapshot
         // is persisted and reused. Only files authored by the run — absent
         // from the first snapshot — are auto-included.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "scratch"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // Operator scratch file created before the first instance starts.
-        File.WriteAllText(Path.Combine(repo.Root, "scratch", "notes.txt"), "scratch");
+        Write(repo, "scratch/notes.txt", "scratch");
 
         // S1 — first-instance snapshot captures the operator scratch file.
         var firstInstanceSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Contains("scratch/notes.txt", firstInstanceSnapshot);
 
         // Interrupted instance authors new files.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         // Commit with S1.
         var manifest = new[] { "src/app.cs" };
@@ -97,10 +93,10 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         // Newly authored file IS included (absent from first snapshot).
         Assert.Contains("tests/new-test.cs", committed);
         // Operator scratch file IS excluded (present in first snapshot).

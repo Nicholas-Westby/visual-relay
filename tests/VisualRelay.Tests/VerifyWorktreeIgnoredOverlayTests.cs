@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -23,20 +24,17 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
         new(RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(),
             new ScriptedTestRunner(),
-            new InMemoryRelayEventSink()));
+            new InMemoryRelayEventSink(),
+            new GitSimEngine()));
 
-    /// <summary>Initialise a git repo with a committed tracked file.</summary>
-    private static void InitRepo(string root)
-    {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-    }
+    /// <summary>Registers an in-memory GitSim repo (no real <c>.git</c> directory).</summary>
+    private static void InitRepo(string root) => new GitSimEngine().InitRepo(root);
 
-    private static void CommitAll(string root, string message)
+    private static async Task CommitAll(string root, string message)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        var sim = new GitSimEngine();
+        await sim.Git(root, "add", ".");
+        sim.Commit(root, message);
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -63,7 +61,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             await File.WriteAllTextAsync(Path.Combine(root, "node_modules", "dep", "index.js"), "module.exports = 42;");
             // Ignored file (config).
             await File.WriteAllTextAsync(Path.Combine(root, ".env"), "SECRET=abc");
-            CommitAll(root, "seed"); // commits .gitignore + tracked.txt only (rest ignored)
+            await CommitAll(root, "seed"); // commits .gitignore + tracked.txt only (rest ignored)
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-overlay", "run-overlay", CancellationToken.None);
 
@@ -114,7 +112,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             await File.WriteAllBytesAsync(depFile, new byte[lowThreshold * 2]);
             var envFile = Path.Combine(root, ".env"); // small → copied (also must survive)
             await File.WriteAllTextAsync(envFile, "REAL-ENV");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-safety", "run-safety", CancellationToken.None, lowThreshold);
@@ -164,7 +162,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             await File.WriteAllTextAsync(Path.Combine(root, ".relay", "state.json"), "{}");
             Directory.CreateDirectory(Path.Combine(root, "node_modules"));
             await File.WriteAllTextAsync(Path.Combine(root, "node_modules", "x.js"), "x");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-internal", "run-internal", CancellationToken.None);
 
@@ -204,7 +202,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             Directory.CreateDirectory(Path.Combine(root, "data", "cache"));
             await File.WriteAllTextAsync(Path.Combine(root, "data", "keep.txt"), "keep");
             await File.WriteAllTextAsync(Path.Combine(root, "data", "cache", "blob.bin"), "cached");
-            CommitAll(root, "seed"); // commits data/keep.txt + .gitignore
+            await CommitAll(root, "seed"); // commits data/keep.txt + .gitignore
 
             var ex = await Record.ExceptionAsync(async () =>
                 worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-partial", "run-partial", CancellationToken.None));
@@ -252,7 +250,7 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             await File.WriteAllTextAsync(Path.Combine(root, ".build", "debug", "artifact.o"), "obj");
             Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
             await File.WriteAllTextAsync(Path.Combine(root, "node_modules", "dep", "index.js"), "module.exports = 1;");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-buildout", "run-buildout", CancellationToken.None);
 

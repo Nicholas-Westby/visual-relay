@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -14,7 +15,7 @@ internal static class RelayDriverResumeTestHelpers
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
@@ -137,13 +138,17 @@ internal static class RelayDriverResumeTestHelpers
         return Hashing.Sha256Hex(parts.ToArray());
     }
 
-    public static void InitTestRepo(string root)
+    /// <summary>
+    /// GitSim-backed replacement for the former real-git <c>InitTestRepo(string)</c>
+    /// (no external consumers outside <see cref="RelayDriverResumeFlaggedWork2Tests"/>,
+    /// so it was safe to convert in place rather than adding a parallel method).
+    /// Returns the sim so callers inject it into <c>RelayDriverDependencies.ForTests</c>.
+    /// </summary>
+    public static GitSimEngine InitTestRepo(TestRepository repo)
     {
-        TestGit.Run(root, "init", "-b", "main");
-        TestGit.Run(root, "config", "user.email", "test@test");
-        TestGit.Run(root, "config", "user.name", "Test");
-        File.WriteAllText(Path.Combine(root, ".gitignore"), ".relay/*\n");
-        TestGit.Run(root, "add", ".gitignore");
-        TestGit.Run(root, "commit", "-m", "initial");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, ".gitignore", ".relay/*\n");
+        sim.Commit(repo.Root, "initial");
+        return sim;
     }
 }

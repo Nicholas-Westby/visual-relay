@@ -52,9 +52,17 @@ public sealed partial class RelayQueueControllerWorktreeResetTests
         }
     }
 
+    // GAP (genuinely needs the real git binary — verified): the drain's reset path
+    // (RelayQueueController.PrivateHelpers.cs's ResetAndLogAsync) hardcodes
+    // `var gitInvoker = new GitInvoker();` with no injection seam anywhere in
+    // RelayQueueController's public surface — that file is outside this
+    // migration's file list, so there is no way to thread a GitSim into
+    // WorktreeResetter.ResetAsync here. Stays on the real git binary, gated
+    // behind SlowIntegration so it is skipped by default.
     [Fact]
     public async Task DrainAsync_FlaggedTask_ResetsWorktreeBeforeNextTask()
     {
+        SlowIntegration.SkipIfNotOptedIn();
         // 1. Create a real git repo with tracked file plus two queued tasks.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);

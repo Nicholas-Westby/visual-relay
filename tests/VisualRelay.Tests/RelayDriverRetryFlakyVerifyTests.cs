@@ -23,7 +23,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
             new TestRunResult(0, "green"));            // stage 9 verify — retry passes
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "transient");
@@ -59,7 +59,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
             new TestRunResult(1, "Failed TestX"));     // stage 9 verify — retry also fails
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "persistent");
@@ -92,7 +92,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
             new TestRunResult(1, "Failed TestX"));     // stage 9 verify — retry also fails
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "retry-label");
@@ -121,7 +121,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
             new TestRunResult(0, "green"));            // stage 10 verify — retry flips green
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "flaky");
@@ -161,7 +161,7 @@ public sealed class RelayDriverRetryFlakyVerifyTests
             new TestRunResult(1, "Failed TestX")); // stage 10 verify — fail, no retry
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-retry");

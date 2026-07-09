@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -55,7 +56,7 @@ public sealed class RelayDriverRepoGuardTests
             ("dotnet test", testRunner));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, combined, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "big-file");
@@ -98,7 +99,7 @@ public sealed class RelayDriverRepoGuardTests
             }
             """);
         repo.WriteTask("old-debt", "# Old debt\n");
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo);
 
         var subagent = new ScriptedSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -115,7 +116,7 @@ public sealed class RelayDriverRepoGuardTests
             ("dotnet test", testRunner));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "old-debt");
@@ -149,7 +150,7 @@ public sealed class RelayDriverRepoGuardTests
             new TestRunResult(0, "green"));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-guard");
@@ -198,7 +199,7 @@ public sealed class RelayDriverRepoGuardTests
             ("dotnet test", testRunner));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, combined, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fix-guard");
@@ -219,15 +220,18 @@ public sealed class RelayDriverRepoGuardTests
 
     // ── Helpers ────────────────────────────────────────────────────────
 
-    internal static void InitGitRepo(string root)
+    /// <summary>
+    /// Seeds a GitSim repo (one commit, <c>src/status.cs</c>) at <paramref name="repo"/>'s
+    /// root and returns it, so baselineVerify's internal stash/checkout-HEAD dance
+    /// (needed even when the driver never asserts on git state afterward) has a
+    /// real HEAD to operate against. Shared with <see cref="RelayDriverRepoGuardRegressionTests"/>.
+    /// </summary>
+    internal static GitSimEngine InitGitRepo(TestRepository repo)
     {
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
+        return sim;
     }
 
     // ReSharper disable once InvalidXmlDocComment — cref ambiguities acceptable in test helper docs

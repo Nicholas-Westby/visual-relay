@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -19,11 +20,11 @@ public sealed class RelayDriverCodeChangeGateTests
         // manifest carries no impl file. The agent writes nothing → phantom.
         repo.WriteTask("design-tokens",
             "# Centralize design tokens\n\n## Deliverables\n- Create the tokens module\n");
-        SeedGit(repo.Root);
+        var (sim, seed) = SeedGit(repo);
 
         var runner = new GateScenarioRunner("[]", "[]");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "design-tokens");
@@ -33,7 +34,7 @@ public sealed class RelayDriverCodeChangeGateTests
         // Not retired to DONE-, not committed.
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "design-tokens.md")));
         Assert.False(Directory.Exists(Path.Combine(repo.Root, "llm-tasks", "completed")));
-        Assert.Equal("1", TestGit.Run(repo.Root, "rev-list", "--count", "HEAD").Trim());
+        Assert.Empty(sim.CommitsBetween(repo.Root, seed, "HEAD"));
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "design-tokens", "NEEDS-REVIEW")));
     }
 
@@ -45,11 +46,11 @@ public sealed class RelayDriverCodeChangeGateTests
         // No checklist — code-expecting derives purely from the impl file in the
         // stage-4 manifest. The agent authors nothing, so nothing changes.
         repo.WriteTask("ghost-impl", "# Add a helper\n\nWire it up.\n");
-        SeedGit(repo.Root);
+        var (sim, seed) = SeedGit(repo);
 
         var runner = new GateScenarioRunner("[\"src/helper.cs\"]", "[]");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ghost-impl");
@@ -57,7 +58,7 @@ public sealed class RelayDriverCodeChangeGateTests
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
         Assert.Contains("no changes", outcome.Reason ?? "", StringComparison.OrdinalIgnoreCase);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ghost-impl.md")));
-        Assert.Equal("1", TestGit.Run(repo.Root, "rev-list", "--count", "HEAD").Trim());
+        Assert.Empty(sim.CommitsBetween(repo.Root, seed, "HEAD"));
     }
 
     [Fact]
@@ -67,7 +68,7 @@ public sealed class RelayDriverCodeChangeGateTests
         repo.WriteConfig("true", []);
         repo.WriteTask("real-tokens",
             "# Centralize design tokens\n\n## Deliverables\n- Create the tokens module\n");
-        SeedGit(repo.Root);
+        var (sim, seed) = SeedGit(repo);
 
         // The agent authors a real, non-bookkeeping source file at Implement.
         var runner = new GateScenarioRunner("[\"src/tokens.cs\"]", "[]",
@@ -77,14 +78,14 @@ public sealed class RelayDriverCodeChangeGateTests
                 File.WriteAllText(Path.Combine(inv.TargetRoot, "src", "tokens.cs"), "public static class Tokens {}");
             });
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "real-tokens");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        Assert.Equal("2", TestGit.Run(repo.Root, "rev-list", "--count", "HEAD").Trim());
-        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        Assert.Single(sim.CommitsBetween(repo.Root, seed, "HEAD"));
+        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/tokens.cs", names);
     }
 
@@ -95,7 +96,7 @@ public sealed class RelayDriverCodeChangeGateTests
         repo.WriteConfig("true", []);
         repo.WriteTask("scratch-only",
             "# Do the work\n\n## Deliverables\n- Create the tokens module\n");
-        SeedGit(repo.Root);
+        var (sim, _) = SeedGit(repo);
 
         // The only thing the run leaves behind is VR-internal swival scratch — a
         // general target repo does not gitignore .swival/, so it shows up as
@@ -107,7 +108,7 @@ public sealed class RelayDriverCodeChangeGateTests
                 File.WriteAllText(Path.Combine(inv.TargetRoot, ".swival", "cmd_output.txt"), "scratch");
             });
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "scratch-only");
@@ -124,11 +125,11 @@ public sealed class RelayDriverCodeChangeGateTests
         // No impl in the manifest and no deliverables/done-when checklist →
         // a legitimately read-only task that must still complete.
         repo.WriteTask("observe-only", "# Observe the codebase\n\nJust look around and report.\n");
-        SeedGit(repo.Root);
+        var (sim, _) = SeedGit(repo);
 
         var runner = new GateScenarioRunner("[]", "[]");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "observe-only");
@@ -139,13 +140,19 @@ public sealed class RelayDriverCodeChangeGateTests
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "DONE-observe-only.md")));
     }
 
-    private static void SeedGit(string root)
+    /// <summary>
+    /// An empty seed commit (none of these facts write a production file before
+    /// the gate runs — the manifest/testFiles/writeAtStage6 knobs on
+    /// <see cref="GateScenarioRunner"/> supply whatever the scenario needs) plus
+    /// its sha, so callers can assert "0 new commits" (flagged) or "1 new commit"
+    /// (completed) via <see cref="GitSimEngine.CommitsBetween"/> instead of an
+    /// absolute <c>rev-list --count HEAD</c>, which GitSim has no equivalent for.
+    /// </summary>
+    private static (GitSimEngine Sim, string Seed) SeedGit(TestRepository repo)
     {
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        var seed = sim.Commit(repo.Root, "chore: seed repo");
+        return (sim, seed);
     }
 }
 

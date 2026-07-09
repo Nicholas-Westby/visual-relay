@@ -21,6 +21,10 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_WhenPausedAfterPhase1_ReturnsPlannedOutcomes()
     {
+        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
+        // which hardcodes a real GitInvoker for worktree creation (no injection
+        // seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // 3 tasks, pause after first completes planning → all 3 Planned.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -61,6 +65,10 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_WhenPausedAfterPhase1_IncludesMixedOutcomes()
     {
+        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
+        // which hardcodes a real GitInvoker for worktree creation (no injection
+        // seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // 2 tasks: one Flagged, one Planned. Both must appear in results.
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
@@ -103,6 +111,10 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_PausedAfterPhase1_RunLogAndResultsIncludePlanned()
     {
+        // RelayQueueController.DrainAsync calls PlanPhaseRunner.RunPlanPhaseAsync,
+        // which hardcodes a real GitInvoker for worktree creation (no injection
+        // seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // Pause after Phase 1: run.log exists with planning events, results
         // include Planned outcome, no execute events in run.log.
         using var repo = TestRepository.Create();
@@ -153,6 +165,12 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task DrainAsync_ExecutePhase_AppendsEventsToRunLog()
     {
+        // Phase 1 (PlanPhaseRunner) hardcodes a real GitInvoker for worktree
+        // creation (no injection seam) — this fact is irreducibly bound to the
+        // real git binary. Phase 2 below still moves to DepsFor's git-free sim
+        // (CreateGitCommit:false, no git assertions there), trimming this fact's
+        // real-git surface to just the mandatory Phase-1 worktree machinery.
+        SlowIntegration.SkipIfNotOptedIn();
         // Phase 1 (PlanPhaseRunner) writes run.log in worktree, copies back.
         // Phase 2 uses a FileRelayEventSink (the fixed GuiTaskRunner pattern),
         // so execute-phase events (stages 5–11) are appended to run.log.
@@ -182,7 +200,7 @@ public sealed partial class DrainExecutionLoggingTests
         var executeObs = new InMemoryRelayEventSink();
         var fileSink = new FileRelayEventSink(runLogPath);
         var sink = new CompositeRelayEventSink(executeObs, fileSink);
-        var executeDeps = RelayDriverDependencies.ForTests(runner,
+        var executeDeps = RelayDriverTestHelpers.DepsFor(repo, runner,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
             sink);
         var executeDriver = new RelayDriver(executeDeps,
@@ -202,6 +220,12 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task ExecutePhase_WithFileSink_AppendsToExistingRunLog()
     {
+        // Phase 1 (PlanPhaseRunner) hardcodes a real GitInvoker for worktree
+        // creation (no injection seam) — this fact is irreducibly bound to the
+        // real git binary. Phase 2 below still moves to DepsFor's git-free sim
+        // (CreateGitCommit:false, no git assertions there), trimming this fact's
+        // real-git surface to just the mandatory Phase-1 worktree machinery.
+        SlowIntegration.SkipIfNotOptedIn();
         // CompositeRelayEventSink with FileRelayEventSink appends execute
         // events to planning run.log. Also verifies subagent trace events
         // land in run.log when the subagent is wired to the composite sink.
@@ -229,7 +253,7 @@ public sealed partial class DrainExecutionLoggingTests
         var fileSink = new FileRelayEventSink(runLogPath);
         var sink = new CompositeRelayEventSink(obs, fileSink);
         var traceRunner = new TraceEmittingSubagentRunner(inner, traceSink: sink);
-        var deps = RelayDriverDependencies.ForTests(traceRunner,
+        var deps = RelayDriverTestHelpers.DepsFor(repo, traceRunner,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
             sink);
         var driver = new RelayDriver(deps,
@@ -250,6 +274,9 @@ public sealed partial class DrainExecutionLoggingTests
     [Fact]
     public async Task PlanPhaseRunner_TraceEvents_DeliveredToEventSink()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // The fixed planSubagentFactory now passes an ObservableRelayEventSink
         // to SwivalSubagentRunner, so trace events reach the GUI event sink.
         using var repo = TestRepository.Create();

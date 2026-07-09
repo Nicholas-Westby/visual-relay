@@ -18,13 +18,9 @@ public sealed class RedGateApplicabilityTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("tweak-markup", "# Tweak markup\n");
         // Create a git repo with a committed impl file.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "Panel.axaml"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/Panel.axaml", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
         // The production file is dirty before stage 5, simulating an agent
         // edit.  WorktreeFilter at stage 5 reverts it to HEAD because the
         // agent returned no testFiles — non-test edits are discarded.
@@ -35,7 +31,8 @@ public sealed class RedGateApplicabilityTests
             RelayDriverDependencies.ForTests(
                 runner,
                 new ScriptedTestRunner(new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "tweak-markup");
@@ -60,7 +57,8 @@ public sealed class RedGateApplicabilityTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedNonCodeOnly("docs/README.md");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(
+            RelayDriverTestHelpers.DepsFor(
+                repo,
                 runner,
                 new ScriptedTestRunner(new TestRunResult(0, "green")),
                 new InMemoryRelayEventSink()),
@@ -86,7 +84,8 @@ public sealed class RedGateApplicabilityTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedTestOnly("tests/regression.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(
+            RelayDriverTestHelpers.DepsFor(
+                repo,
                 runner,
                 new ScriptedTestRunner(new TestRunResult(0, "green")),
                 new InMemoryRelayEventSink()),
@@ -110,19 +109,16 @@ public sealed class RedGateApplicabilityTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("already-resolved", "# Add regression test\n");
         // Impl file is already committed (fix already present) — no working-tree delta.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "fix.ts"), "correct code\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/fix.ts", "correct code\n");
+        sim.Commit(repo.Root, "chore: seed repo");
         var runner = new AlreadyResolvedSubagentRunner("src/fix.ts", "tests/regression.test.ts");
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(
                 runner,
                 new ScriptedTestRunner(new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "already-resolved");

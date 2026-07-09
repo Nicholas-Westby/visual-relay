@@ -18,7 +18,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/Views/MainWindow.axaml", "tests/ui.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "vision-input");
@@ -39,7 +39,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "attach-only");
@@ -59,7 +59,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "happy-path");
@@ -83,7 +83,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new TriageSkipSubagentRunner();
         runner.SeedHappyPath("docs/README.md", "tests/docs.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "docs-only");
@@ -105,7 +105,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new FlagStageSubagentRunner(7);
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bad-review");
@@ -123,7 +123,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new FlagStageSubagentRunner(8);
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bad-visual");
@@ -141,7 +141,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "events-test");
@@ -162,7 +162,7 @@ public sealed partial class RelayDriverReviewPairTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "resume-8");

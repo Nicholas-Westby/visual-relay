@@ -14,7 +14,7 @@ public sealed class RelayDriverStatusTests
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "status-test");
@@ -37,7 +37,7 @@ public sealed class RelayDriverStatusTests
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "commit-zero");
@@ -61,7 +61,7 @@ public sealed class RelayDriverStatusTests
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "checks-test");
@@ -81,7 +81,7 @@ public sealed class RelayDriverStatusTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("flag-error", "# Flag error\n");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new ThrowingSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, new ThrowingSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "flag-error");
@@ -102,7 +102,7 @@ public sealed class RelayDriverStatusTests
         repo.WriteTask("mid-flag", "# Mid flag\n");
         // Stage 1-3 pass, stage 4 returns invalid → flags
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new FlagAtStageSubagentRunner(4), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, new FlagAtStageSubagentRunner(4), new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mid-flag");
@@ -131,7 +131,7 @@ public sealed class RelayDriverStatusTests
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "proof-status");

@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -22,7 +23,7 @@ public sealed partial class WorktreeFilterTests
         // No git init — just a plain temp directory.
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
         Assert.Empty(result.TrackedDiscarded);
@@ -46,7 +47,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(testFile, "// new test");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["+tests/NewTests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["+tests/NewTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
         Assert.True(File.Exists(testFile),
@@ -70,7 +71,7 @@ public sealed partial class WorktreeFilterTests
 
         // Agent may emit Windows-style backslash paths.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [@"tests\FooTests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, [@"tests\FooTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(testFile),
             "test file with backslash path must be preserved");
@@ -93,7 +94,7 @@ public sealed partial class WorktreeFilterTests
 
         // Agent may emit paths with "./" prefix.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["./tests/BarTests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["./tests/BarTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(testFile),
             "test file with './' prefix must be preserved");
@@ -117,7 +118,7 @@ public sealed partial class WorktreeFilterTests
         // Agent may emit the path with different case on a
         // case-insensitive host (default macOS volume).
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/footests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["tests/footests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(testFile),
             "case-divergent test file entry must preserve the on-disk file");
@@ -134,17 +135,28 @@ public sealed partial class WorktreeFilterTests
         using var repo = TestRepository.Create();
         var aPath = await InitRepoWithTrackedFile(repo.Root, "a.txt", "A");
         var bPath = Path.Combine(repo.Root, "b.txt");
-        await File.WriteAllTextAsync(bPath, "B");
-        TestGit.Run(repo.Root, "add", "b.txt");
-        TestGit.Run(repo.Root, "commit", "-m", "add b");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "b.txt", "B");
+        sim.Commit(repo.Root, "add b");
 
         // Modify a.txt in the working tree.
         await File.WriteAllTextAsync(aPath, "A-modified");
-        // Stage a rename: b.txt → c.txt (git mv stages the rename).
-        TestGit.Run(repo.Root, "mv", "b.txt", "c.txt");
+        // Stage a rename: b.txt → c.txt. GitSim has no `mv` verb, so the rename
+        // is reproduced at the index level: move the file for real, then `add -A`
+        // stages the old path's disappearance (a delete) and the new path's
+        // appearance (an add) exactly as git's index would after a real `git mv`.
+        // (Neither endpoint here is a declared testFile, so this fact does not
+        // depend on GitSim's diff reporting R100 — see ResidualDataLoss.cs /
+        // RevertHardening.cs for the facts that inject a synthetic rename record.)
+        File.Move(bPath, Path.Combine(repo.Root, "c.txt"));
+        await sim.Git(repo.Root, "add", "-A");
 
+        // c.txt is staged but never committed (absent from HEAD), so the git
+        // invoker must be HeadCheckoutAwareGitInvoker-corrected (see
+        // WorktreeFilterTests.cs) for `checkout HEAD -- c.txt` to fail the way
+        // real git does, letting the cat-file probe + rm --cached + delete run.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new HeadCheckoutAwareGitInvoker(sim));
 
         Assert.Null(result.Error);
         // a.txt must be reverted — proves the batch did not abort on c.txt.
@@ -178,18 +190,17 @@ public sealed partial class WorktreeFilterTests
         var taskFile = Path.Combine(tasksDir, "task.md");
         await File.WriteAllTextAsync(taskFile, "original-task");
 
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        await sim.Git(repo.Root, "add", ".");
+        sim.Commit(repo.Root, "seed");
 
         // Modify both tracked files — simulate agent edits during stage 5.
         await File.WriteAllTextAsync(artifactFile, "modified-config");
         await File.WriteAllTextAsync(taskFile, "modified-task");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: "llm-tasks", CancellationToken.None);
+            repo.Root, [], tasksDir: "llm-tasks", CancellationToken.None, sim);
 
         // Neither tracked file should be reverted.
         Assert.Equal("modified-config", await File.ReadAllTextAsync(artifactFile));

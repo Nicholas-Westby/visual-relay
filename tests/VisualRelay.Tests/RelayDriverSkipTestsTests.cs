@@ -27,7 +27,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var tests = new ScriptedTestRunner(
             new TestRunResult(0, "green"));  // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "readme-only");

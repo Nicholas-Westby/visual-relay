@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -12,15 +13,12 @@ public sealed partial class RelayDriverVerifyFixTests
         // uncommitted edits (overlaid into the snapshot before the "before" capture) and
         // INCLUDE only files the test suite wrote during the gate.
         using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
         var manifestRel = Path.Combine("src", "app.cs");
         var manifestPath = Path.Combine(repo.Root, manifestRel);
-        Directory.CreateDirectory(Path.GetDirectoryName(manifestPath)!);
-        File.WriteAllText(manifestPath, "// committed");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        sim.Seed(repo.Root, "src/app.cs", "// committed");
+        sim.Commit(repo.Root, "seed");
 
         repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("delta-exclusion", "# Delta exclusion\n");
@@ -45,7 +43,7 @@ public sealed partial class RelayDriverVerifyFixTests
 
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(agentRunner, mutatingTests, sink),
+            RelayDriverDependencies.ForTests(agentRunner, mutatingTests, sink, sim),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "delta-exclusion");
@@ -73,16 +71,13 @@ public sealed partial class RelayDriverVerifyFixTests
         // must be unmodified (the write lands in the isolated snapshot), and a
         // verify_mutated_tree advisory naming that file must be emitted.
         using var repo = TestRepository.Create();
-        // Real git repo (full-fidelity snapshot needs HEAD). TestGit.Run is SYNC.
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
+        // In-memory GitSim repo (full-fidelity snapshot needs HEAD).
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
         var trackedRel = Path.Combine("src", "app.cs");
         var trackedFilePath = Path.Combine(repo.Root, trackedRel);
-        Directory.CreateDirectory(Path.GetDirectoryName(trackedFilePath)!);
-        File.WriteAllText(trackedFilePath, "// original");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        sim.Seed(repo.Root, "src/app.cs", "// original");
+        sim.Commit(repo.Root, "seed");
 
         repo.WriteConfig("dotnet test", [], baselineVerify: false, enableFixVerify: true);
         repo.WriteTask("mutating-verify", "# Mutating verify\n");
@@ -102,7 +97,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var runner = new ScriptedSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, mutatingTests, sink),
+            RelayDriverDependencies.ForTests(runner, mutatingTests, sink, sim),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "mutating-verify");

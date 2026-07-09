@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -20,12 +21,10 @@ public sealed class PlanningWorktreeRewriteIsolationTests
 {
     private static void InitRepo(string root)
     {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        File.WriteAllText(Path.Combine(root, "README.md"), "# Repo\n");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", "seed");
+        var sim = new GitSimEngine();
+        sim.InitRepo(root);
+        sim.Seed(root, "README.md", "# Repo\n");
+        sim.Commit(root, "seed");
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -45,12 +44,12 @@ public sealed class PlanningWorktreeRewriteIsolationTests
 
             // A rewrite worktree is live (the concurrently-running rewrite).
             rewriteWt = await PlanningWorktree.CreateAsync(
-                root, "rewrite-task", "rewrite-123", CancellationToken.None, isRewrite: true);
+                root, "rewrite-task", "rewrite-123", CancellationToken.None, new GitSimEngine(), isRewrite: true);
             Assert.True(Directory.Exists(rewriteWt));
 
             // A drain begins: planning prunes its own (non-rewrite) namespace.
             await PlanningWorktree.PruneLeftoversAsync(
-                root, "20260101000000-plan-task", CancellationToken.None);
+                root, "20260101000000-plan-task", CancellationToken.None, new GitSimEngine());
 
             Assert.True(Directory.Exists(rewriteWt),
                 "a planning-phase prune must NOT delete a live rewrite worktree");
@@ -58,7 +57,7 @@ public sealed class PlanningWorktreeRewriteIsolationTests
         finally
         {
             if (rewriteWt is not null)
-                await PlanningWorktree.RemoveAsync(root, rewriteWt, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, rewriteWt, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -79,12 +78,12 @@ public sealed class PlanningWorktreeRewriteIsolationTests
 
             // A planning worktree is live (a normal drain in progress).
             planningWt = await PlanningWorktree.CreateAsync(
-                root, "plan-task", "20260101000000-plan-task", CancellationToken.None);
+                root, "plan-task", "20260101000000-plan-task", CancellationToken.None, new GitSimEngine());
             Assert.True(Directory.Exists(planningWt));
 
             // A rewrite finishes and prunes its OWN namespace.
             await PlanningWorktree.PruneLeftoversAsync(
-                root, "rewrite-999", CancellationToken.None, isRewrite: true);
+                root, "rewrite-999", CancellationToken.None, new GitSimEngine(), isRewrite: true);
 
             Assert.True(Directory.Exists(planningWt),
                 "a rewrite-namespace prune must NOT delete a live planning worktree");
@@ -92,7 +91,7 @@ public sealed class PlanningWorktreeRewriteIsolationTests
         finally
         {
             if (planningWt is not null)
-                await PlanningWorktree.RemoveAsync(root, planningWt, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, planningWt, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -115,13 +114,13 @@ public sealed class PlanningWorktreeRewriteIsolationTests
 
             // A crashed prior rewrite of "task-a" left a worktree behind.
             var stale = await PlanningWorktree.CreateAsync(
-                root, "task-a", "rewrite-OLD", CancellationToken.None, isRewrite: true);
+                root, "task-a", "rewrite-OLD", CancellationToken.None, new GitSimEngine(), isRewrite: true);
             // A DIFFERENT task is being rewritten concurrently right now.
             sibling = await PlanningWorktree.CreateAsync(
-                root, "task-b", "rewrite-LIVE", CancellationToken.None, isRewrite: true);
+                root, "task-b", "rewrite-LIVE", CancellationToken.None, new GitSimEngine(), isRewrite: true);
 
             // Starting a fresh rewrite of "task-a" reclaims only task-a's leftovers.
-            await PlanningWorktree.PruneTaskLeftoversAsync(root, "task-a", CancellationToken.None);
+            await PlanningWorktree.PruneTaskLeftoversAsync(root, "task-a", CancellationToken.None, new GitSimEngine());
 
             Assert.False(Directory.Exists(stale),
                 "a same-task crashed rewrite worktree must be reclaimed");
@@ -131,7 +130,7 @@ public sealed class PlanningWorktreeRewriteIsolationTests
         finally
         {
             if (sibling is not null)
-                await PlanningWorktree.RemoveAsync(root, sibling, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, sibling, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -152,9 +151,9 @@ public sealed class PlanningWorktreeRewriteIsolationTests
             InitRepo(root);
 
             planningWt = await PlanningWorktree.CreateAsync(
-                root, "task", "20260101000000-task", CancellationToken.None);
+                root, "task", "20260101000000-task", CancellationToken.None, new GitSimEngine());
             rewriteWt = await PlanningWorktree.CreateAsync(
-                root, "task", "rewrite-1", CancellationToken.None, isRewrite: true);
+                root, "task", "rewrite-1", CancellationToken.None, new GitSimEngine(), isRewrite: true);
 
             // The repo-hash parent directories (…/<segment>/<repoHash>/) differ,
             // so a Directory.GetDirectories under one can never see the other.
@@ -165,9 +164,9 @@ public sealed class PlanningWorktreeRewriteIsolationTests
         finally
         {
             if (planningWt is not null)
-                await PlanningWorktree.RemoveAsync(root, planningWt, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, planningWt, CancellationToken.None, new GitSimEngine());
             if (rewriteWt is not null)
-                await PlanningWorktree.RemoveAsync(root, rewriteWt, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, rewriteWt, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }

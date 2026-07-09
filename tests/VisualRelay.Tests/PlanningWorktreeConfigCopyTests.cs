@@ -1,6 +1,7 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -22,17 +23,13 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class PlanningWorktreeConfigCopyTests
 {
-    private static void InitRepo(string root)
-    {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-    }
+    private static void InitRepo(string root) => new GitSimEngine().InitRepo(root);
 
-    private static void CommitAll(string root, string message)
+    private static async Task CommitAll(string root, string message)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        var sim = new GitSimEngine();
+        await sim.Git(root, "add", ".");
+        sim.Commit(root, message);
     }
 
     private const string SampleConfig =
@@ -65,10 +62,10 @@ public sealed class PlanningWorktreeConfigCopyTests
             // Real config in the working tree, but git-ignored (NOT committed).
             Directory.CreateDirectory(Path.Combine(root, ".relay"));
             await File.WriteAllTextAsync(Path.Combine(root, ".relay", "config.json"), SampleConfig);
-            CommitAll(root, "seed"); // commits .gitignore + tracked.txt only; .relay ignored
+            await CommitAll(root, "seed"); // commits .gitignore + tracked.txt only; .relay ignored
 
             // Sanity: the clean checkout does NOT contain the git-ignored config.
-            worktree = await PlanningWorktree.CreateAsync(root, "cfg-task", "run-cfg", CancellationToken.None);
+            worktree = await PlanningWorktree.CreateAsync(root, "cfg-task", "run-cfg", CancellationToken.None, new GitSimEngine());
             Assert.False(File.Exists(Path.Combine(worktree, ".relay", "config.json")),
                 "pre-condition: the detached checkout must lack the git-ignored config");
 
@@ -88,7 +85,7 @@ public sealed class PlanningWorktreeConfigCopyTests
         finally
         {
             if (worktree is not null)
-                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -110,9 +107,9 @@ public sealed class PlanningWorktreeConfigCopyTests
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, ".gitignore"), ".relay/\n");
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
-            CommitAll(root, "seed"); // no .relay/config.json anywhere
+            await CommitAll(root, "seed"); // no .relay/config.json anywhere
 
-            worktree = await PlanningWorktree.CreateAsync(root, "nocfg-task", "run-nocfg", CancellationToken.None);
+            worktree = await PlanningWorktree.CreateAsync(root, "nocfg-task", "run-nocfg", CancellationToken.None, new GitSimEngine());
 
             // Best-effort copy must not throw when the source has no config.
             var ex = Record.Exception(() => PlanningWorktree.CopyConfigIntoWorktree(root, worktree));
@@ -130,7 +127,7 @@ public sealed class PlanningWorktreeConfigCopyTests
         finally
         {
             if (worktree is not null)
-                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None);
+                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None, new GitSimEngine());
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -140,10 +137,19 @@ public sealed class PlanningWorktreeConfigCopyTests
     //    that git-ignores .relay/ (the normal setup) with an UNCOMMITTED
     //    config in the working tree. PRE-FIX every task flagged stage 1 with
     //    "config not found" because the checkout lacked the ignored config.
+    //
+    //    GAP (genuinely needs the real git binary — verified): this fact
+    //    drives PlanPhaseRunner.RunPlanPhaseAsync, whose PlanOneTaskAsync
+    //    hardcodes `var gitInvoker = new GitInvoker();` with no injection
+    //    seam anywhere in its public signature — PlanPhaseRunner.cs is
+    //    outside this migration's file list, so there is no way to thread a
+    //    GitSim into this call. Stays on the real git binary, gated behind
+    //    SlowIntegration so it is skipped by default.
     // ───────────────────────────────────────────────────────────────────
     [Fact]
     public async Task RunPlanPhase_ConfigGitIgnored_NotCommitted_PlansSuccessfully()
     {
+        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []); // .relay/config.json in the working tree
         repo.WriteTask("ignored-cfg", "# Ignored config\n");

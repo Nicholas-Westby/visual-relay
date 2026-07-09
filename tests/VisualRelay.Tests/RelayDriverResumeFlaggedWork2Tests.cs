@@ -11,14 +11,14 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-driver", "# Resume driver\n");
-        RelayDriverResumeTestHelpers.InitTestRepo(repo.Root);
+        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
 
         // Run 1: flag at stage 6 (Implement). Use CreateGitCommit so the
         // run-base SHA is persisted — needed for the flagged-work bundle.
         var flagRunner = new FlagAtStageSubagentRunner(flagAtStage: 6);
         var driver1 = new RelayDriver(
             RelayDriverDependencies.ForTests(flagRunner, new ScriptedTestRunner(
-                new TestRunResult(1, "red")), new InMemoryRelayEventSink()),
+                new TestRunResult(1, "red")), new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true));
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "resume-driver");
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome1.Status);
@@ -33,7 +33,7 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
             new ScriptedSubagentRunner(), stage: 6, "src/app.cs", "implemented");
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
-                new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+                new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "resume-driver");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);
@@ -48,13 +48,13 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-adv", "# Advanced base\n");
-        RelayDriverResumeTestHelpers.InitTestRepo(repo.Root);
+        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
 
         // Run 1: flag at stage 6.
         var flagRunner = new FlagAtStageSubagentRunner(flagAtStage: 6);
         var driver1 = new RelayDriver(
             RelayDriverDependencies.ForTests(flagRunner, new ScriptedTestRunner(
-                new TestRunResult(1, "red")), new InMemoryRelayEventSink()),
+                new TestRunResult(1, "red")), new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true));
         await driver1.RunTaskAsync(repo.Root, "resume-adv");
 
@@ -63,15 +63,14 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         Assert.True(File.Exists(bundlePath));
 
         // Advance HEAD with an unrelated commit.
-        File.WriteAllText(Path.Combine(repo.Root, "unrelated.txt"), "unrelated");
-        TestGit.Run(repo.Root, "add", "unrelated.txt");
-        TestGit.Run(repo.Root, "commit", "-m", "unrelated commit");
+        sim.Seed(repo.Root, "unrelated.txt", "unrelated");
+        sim.Commit(repo.Root, "unrelated commit");
 
         // Run 2: resume onto advanced base.
         var happyRunner = new ScriptedSubagentRunner();
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
-                new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+                new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "resume-adv");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);
@@ -85,12 +84,12 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-s3", "# Stage 3 resume\n");
-        RelayDriverResumeTestHelpers.InitTestRepo(repo.Root);
+        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
 
         var flagRunner = new FlagAtStageSubagentRunner(flagAtStage: 3);
         var driver1 = new RelayDriver(
             RelayDriverDependencies.ForTests(flagRunner, new ScriptedTestRunner(),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true));
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "resume-s3");
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome1.Status);
@@ -107,7 +106,7 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "resume-s3");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);

@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -41,7 +42,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(junkPath, "junk");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [testFileRel], tasksDir: null, CancellationToken.None);
+            repo.Root, [testFileRel], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
 
@@ -83,7 +84,7 @@ public sealed partial class WorktreeFilterTests
 
         // Declare testFile with different case: tests/helper.cs (lowercase h).
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/helper.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["tests/helper.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         var isCaseInsensitiveHost = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows();
 
@@ -126,13 +127,17 @@ public sealed partial class WorktreeFilterTests
         // Create a new tracked file AFTER the commit — it will be staged
         // but never committed, so it's absent from HEAD.
         var newFilePath = Path.Combine(repo.Root, "src", "new-file.cs");
-        Directory.CreateDirectory(Path.GetDirectoryName(newFilePath)!);
-        await File.WriteAllTextAsync(newFilePath, "new");
-        TestGit.Run(repo.Root, "add", "src/new-file.cs");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "src/new-file.cs", "new");
 
         // Override rm to return the realistic benign result: with
         // --ignore-unmatch, real git exits 0 on an absent pathspec.  The new
         // ExitCode != 0 guard (Hole 2) must NOT flag this exit-0 case.
+        // Fallback is HeadCheckoutAwareGitInvoker-corrected (WorktreeFilterTests.cs)
+        // so `checkout HEAD -- src/new-file.cs` fails the way real git does for
+        // this staged-but-never-committed (absent-from-HEAD) path — otherwise
+        // GitSim's checkout would silently no-op-succeed and `rm` would never
+        // be reached at all.
         var rmCalled = false;
         var gitInvoker = new InterceptedGitInvoker(
             repo.Root,
@@ -141,7 +146,8 @@ public sealed partial class WorktreeFilterTests
             {
                 rmCalled = true;
                 return Task.FromResult((0, "", false));
-            });
+            },
+            new HeadCheckoutAwareGitInvoker(sim));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
@@ -168,18 +174,13 @@ public sealed partial class WorktreeFilterTests
         using var repo = TestRepository.Create();
 
         // ── Set up two tracked files committed to HEAD ─────────────
-        var dir = Path.Combine(repo.Root, "src");
-        Directory.CreateDirectory(dir);
         var prodPathA = Path.Combine(repo.Root, "src", "app.cs");
         var prodPathB = Path.Combine(repo.Root, "src", "lib.cs");
-        await File.WriteAllTextAsync(prodPathA, "original-A");
-        await File.WriteAllTextAsync(prodPathB, "original-B");
-
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "src/app.cs", "original-A");
+        sim.Seed(repo.Root, "src/lib.cs", "original-B");
+        sim.Commit(repo.Root, "seed");
 
         // Modify both so they appear dirty.
         await File.WriteAllTextAsync(prodPathA, "modified-A");

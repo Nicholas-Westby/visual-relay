@@ -14,6 +14,10 @@ public sealed class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_PlanThenExecute_EachCommitContainsOnlyItsOwnFiles()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam), and phase 2's commits must stay coherent with phase
+        // 1's on-disk history — this fact is irreducibly bound to real git.
+        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("task-a", "# Task A\n");
@@ -125,6 +129,10 @@ public sealed class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_FirstCommitDoesNotIncludeSecondTasksUntrackedFiles()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam), and phase 2's commits must stay coherent with phase
+        // 1's on-disk history — this fact is irreducibly bound to real git.
+        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("first", "# First\n");
@@ -214,6 +222,10 @@ public sealed class NoCommitContaminationTests
     [Fact]
     public async Task TwoTasks_ManifestAuthority_EnforcedAcrossPlanExecuteSplit()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam), and phase 2's commits must stay coherent with phase
+        // 1's on-disk history — this fact is irreducibly bound to real git.
+        SlowIntegration.SkipIfNotOptedIn();
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("clean", "# Clean\n");

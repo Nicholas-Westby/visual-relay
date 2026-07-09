@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -18,6 +19,17 @@ public sealed partial class WorktreeFilterTests
     /// filter must NOT destroy the rename destination — that is the
     /// only surviving copy of the test content.  Currently the
     /// destination leaks into nonTestTracked and is deleted.
+    /// <para>
+    /// GAP: GitSim's <c>diff --name-status</c> does not perform
+    /// <c>-M</c>/<c>-C</c> rename detection (a rename reads back as a plain
+    /// add+delete), so the <c>R100</c> record this fact depends on is injected
+    /// via <see cref="InterceptedGitInvoker"/> for the one <c>--name-status
+    /// --cached</c> call (same technique as WorktreeFilterTests.CopyRecords.cs);
+    /// the physical rename (and its real <c>add -A</c> staging) still happens
+    /// for real. Both endpoints are excluded by the rename-pair guard before the
+    /// revert loop runs, so neither ever reaches <c>checkout</c> — this fact
+    /// does not need the HeadCheckoutAwareGitInvoker correction.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task RenameSourceIsTestFile_PreservesBothEndpoints()
@@ -28,24 +40,30 @@ public sealed partial class WorktreeFilterTests
         // rename stays staged (not committed).
         var bPath = Path.Combine(repo.Root, "b.txt");
         var prodPath = Path.Combine(repo.Root, "src", "app.cs");
-        Directory.CreateDirectory(Path.GetDirectoryName(prodPath)!);
-        await File.WriteAllTextAsync(bPath, "test-content");
-        await File.WriteAllTextAsync(prodPath, "original");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "b.txt", "test-content");
+        sim.Seed(repo.Root, "src/app.cs", "original");
+        sim.Commit(repo.Root, "seed");
 
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
-
-        // Stage a rename: b.txt → c.txt (git mv stages the rename).
-        TestGit.Run(repo.Root, "mv", "b.txt", "c.txt");
+        // Stage a rename: b.txt → c.txt. GitSim has no `mv` verb — move the
+        // file for real, then `add -A` stages it at the index level exactly as
+        // `git mv` would (old path removed, new path added).
+        File.Move(bPath, Path.Combine(repo.Root, "c.txt"));
+        await sim.Git(repo.Root, "add", "-A");
 
         // Modify the production file in the working tree.
         await File.WriteAllTextAsync(prodPath, "modified");
 
+        // Inject the R100 record `git diff --cached --name-status -M -C -z`
+        // would emit for this rename (GAP above).
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "R100\0b.txt\0c.txt\0", false)));
+
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["b.txt"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["b.txt"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
         // ── CRITICAL assertion ──────────────────────────────────
         // The rename destination c.txt must survive — it holds the
@@ -83,6 +101,19 @@ public sealed partial class WorktreeFilterTests
     /// copy of the content) is NOT disturbed: no test-content loss, no stray
     /// staged deletion.
     /// </para>
+    /// <para>
+    /// GAP: same GitSim rename-detection limitation as
+    /// <see cref="RenameSourceIsTestFile_PreservesBothEndpoints"/> — the
+    /// <c>R100</c> record is injected via <see cref="InterceptedGitInvoker"/>
+    /// for the one <c>--name-status --cached</c> call. Unlike that fact, the
+    /// SOURCE (<c>prod.cs</c>) is NOT rename-protected (it is not itself a
+    /// testFile) so it DOES reach <c>checkout HEAD -- prod.cs</c> — but
+    /// <c>prod.cs</c> is committed (present in HEAD), so GitSim's checkout
+    /// handles it correctly without needing the HeadCheckoutAwareGitInvoker
+    /// correction (that gap only bites an ABSENT-from-HEAD path, and the one
+    /// absent path here — <c>my.Tests.cs</c> — is excluded before the revert
+    /// loop runs).
+    /// </para>
     /// </summary>
     [Fact]
     public async Task ProdToTestRename_RestoresProdSource_KeepsTestDest()
@@ -92,12 +123,20 @@ public sealed partial class WorktreeFilterTests
         // prod.cs is a production file committed to HEAD.
         var prodPath = await InitRepoWithTrackedFile(repo.Root, "prod.cs", "prod-content");
 
-        // Stage rename: prod.cs → my.Tests.cs.  The destination is
-        // the declared testFile.
-        TestGit.Run(repo.Root, "mv", "prod.cs", "my.Tests.cs");
+        // Stage rename: prod.cs → my.Tests.cs. GitSim has no `mv` verb — move
+        // the file for real, then `add -A` stages it at the index level.
+        var sim = new GitSimEngine();
+        File.Move(prodPath, Path.Combine(repo.Root, "my.Tests.cs"));
+        await sim.Git(repo.Root, "add", "-A");
+
+        // Inject the R100 record for this rename (GAP above).
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "R100\0prod.cs\0my.Tests.cs\0", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["my.Tests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["my.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
         Assert.Null(result.Error);
 
@@ -113,7 +152,7 @@ public sealed partial class WorktreeFilterTests
             "production source prod.cs must be restored — staged deletion reverted");
         Assert.Equal("prod-content", await File.ReadAllTextAsync(prodPath));
 
-        var stagedStatus = TestGit.Run(repo.Root, "diff", "--cached", "--name-status", "-M");
+        var stagedStatus = (await sim.Git(repo.Root, "diff", "--cached", "--name-status", "-M")).Output;
         Assert.DoesNotContain("prod.cs", stagedStatus, StringComparison.Ordinal);
     }
 
@@ -127,6 +166,18 @@ public sealed partial class WorktreeFilterTests
     /// endpoints must be fully reverted: the old name restored from
     /// HEAD, the new name deleted.  Regression-guard for the
     /// legitimate rename-revert path.
+    /// <para>
+    /// GAP: this fact needs no rename-record injection (no testFile is
+    /// declared, so the outcome is identical whether GitSim reports the
+    /// rename as R100 or as a plain add+delete — see
+    /// WorktreeFilterTests.DataLossFixes.cs's
+    /// <c>DiscardNonTestEditsAsync_StagedRename_DoesNotAbortReverts</c> for the
+    /// same reasoning). It DOES need the <see cref="HeadCheckoutAwareGitInvoker"/>
+    /// correction (WorktreeFilterTests.cs): <c>c.txt</c> is staged but never
+    /// committed (absent from HEAD), and real git's <c>checkout HEAD -- c.txt</c>
+    /// failing is what drives the cat-file probe + rm --cached + delete path
+    /// that removes it.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task RenameNeitherTestFile_BothEndpointsReverted()
@@ -136,15 +187,16 @@ public sealed partial class WorktreeFilterTests
         // Both a.txt and b.txt are production files.
         var aPath = await InitRepoWithTrackedFile(repo.Root, "a.txt", "A-content");
         var bPath = Path.Combine(repo.Root, "b.txt");
-        await File.WriteAllTextAsync(bPath, "B-content");
-        TestGit.Run(repo.Root, "add", "b.txt");
-        TestGit.Run(repo.Root, "commit", "-m", "add b");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "b.txt", "B-content");
+        sim.Commit(repo.Root, "add b");
 
-        // Stage rename: a.txt → c.txt.
-        TestGit.Run(repo.Root, "mv", "a.txt", "c.txt");
+        // Stage rename: a.txt → c.txt (move for real, then `add -A` stages it).
+        File.Move(aPath, Path.Combine(repo.Root, "c.txt"));
+        await sim.Git(repo.Root, "add", "-A");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new HeadCheckoutAwareGitInvoker(sim));
 
         Assert.Null(result.Error);
 

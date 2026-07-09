@@ -39,7 +39,7 @@ public sealed class RelayDriverNewGuardProbeTests
         var testRunner = new RecordingTestRunner(
             new TestRunResult(1, "red"), new TestRunResult(0, "all green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-guards");
@@ -57,7 +57,7 @@ public sealed class RelayDriverNewGuardProbeTests
             ("tools/guards/new.sh", [new TestRunResult(0, "guard clean")]),
             ("dotnet test", [new TestRunResult(1, "red"), new TestRunResult(0, "all green")]));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-ok");
@@ -76,7 +76,7 @@ public sealed class RelayDriverNewGuardProbeTests
             ("dotnet test", [new TestRunResult(1, "red"), new TestRunResult(0, "all green"),
                 new TestRunResult(0, "all green")]));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-fail");
@@ -102,7 +102,7 @@ public sealed class RelayDriverNewGuardProbeTests
         var testRunner = new RecordingTestRunner(
             new TestRunResult(1, "red"), new TestRunResult(0, "all green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "disabled");
@@ -120,7 +120,7 @@ public sealed class RelayDriverNewGuardProbeTests
             ("tools/guards/new.sh", [new TestRunResult(-1, "killed: timeout", TimedOut: true)]),
             ("dotnet test", [new TestRunResult(1, "red"), new TestRunResult(0, "all green")]));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "guard-timeout");

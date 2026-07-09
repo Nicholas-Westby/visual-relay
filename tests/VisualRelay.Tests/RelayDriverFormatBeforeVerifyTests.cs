@@ -47,7 +47,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             ]));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fmt-green");
@@ -112,7 +112,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             ]));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fmt-fix");
@@ -178,7 +178,7 @@ public sealed class RelayDriverFormatBeforeVerifyTests
             ]));
 
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-fmt");

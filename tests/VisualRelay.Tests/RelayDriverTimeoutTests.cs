@@ -24,7 +24,7 @@ public sealed class RelayDriverTimeoutTests
             new TestRunResult(-1, TimeoutSimulatingTestRunner.Output, TimedOut: true)); // stage 9 — timeout
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "hung-suite");

@@ -15,6 +15,8 @@ public sealed class RelayDriverGitCommitSelfCommitSquashTests
     [Fact]
     public async Task RunTaskAsync_WhenAgentSelfCommitsMidRun_SquashesIntoOneSealedCommit()
     {
+        SlowIntegration.SkipIfNotOptedIn();
+
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");

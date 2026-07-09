@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -30,19 +31,16 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
         new(RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(),
             new ScriptedTestRunner(),
-            new InMemoryRelayEventSink()));
+            new InMemoryRelayEventSink(),
+            new GitSimEngine()));
 
-    private static void InitRepo(string root)
-    {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-    }
+    private static void InitRepo(string root) => new GitSimEngine().InitRepo(root);
 
-    private static void CommitAll(string root, string message)
+    private static async Task CommitAll(string root, string message)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        var sim = new GitSimEngine();
+        await sim.Git(root, "add", ".");
+        sim.Commit(root, message);
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -65,7 +63,7 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             var sourceTiming = Path.Combine(root, "TEST-TIMING.md");
             await File.WriteAllTextAsync(sourceTiming, "ORIGINAL");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-copyfile", "run-copyfile", CancellationToken.None, LowThresholdBytes);
@@ -109,7 +107,7 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             Directory.CreateDirectory(Path.Combine(root, ".test-tmp", "nested"));
             await File.WriteAllTextAsync(Path.Combine(root, ".test-tmp", "nested", "seed.txt"), "seed");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-copydir", "run-copydir", CancellationToken.None, LowThresholdBytes);
@@ -159,7 +157,7 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             await File.WriteAllBytesAsync(
                 Path.Combine(root, "node_modules", "dep", "blob.bin"),
                 new byte[LowThresholdBytes * 2]);
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-largedir", "run-largedir", CancellationToken.None, LowThresholdBytes);
@@ -200,7 +198,7 @@ public sealed class VerifyWorktreeIgnoredOverlayCopyTests
             Directory.CreateDirectory(Path.Combine(root, "node_modules", "dep"));
             var depFile = Path.Combine(root, "node_modules", "dep", "blob.bin");
             await File.WriteAllBytesAsync(depFile, new byte[LowThresholdBytes * 2]);
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-mixsafe", "run-mixsafe", CancellationToken.None, LowThresholdBytes);

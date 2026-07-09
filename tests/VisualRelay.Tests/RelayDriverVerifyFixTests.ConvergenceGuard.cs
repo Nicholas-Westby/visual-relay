@@ -31,7 +31,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "Failed TestX"));       // fix-verify run 3 retry — red
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "non-convergent");
@@ -74,7 +74,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(0, "green"));            // fix-verify attempt 2 gate — green
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(writeOnce, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, writeOnce, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "convergent");
@@ -107,7 +107,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 gate — red
             new TestRunResult(1, "Failed TestX"));     // fix-verify attempt 2 retry — red
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "unfixable");

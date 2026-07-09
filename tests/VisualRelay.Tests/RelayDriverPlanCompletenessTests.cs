@@ -31,17 +31,13 @@ public sealed class RelayDriverPlanCompletenessTests
         r.Seed("src/Auth.cs", "tests/T.cs");
 
         // Minimal git repo so the stage-5 worktree filter can enumerate.
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "Auth.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/Auth.cs", "old");
+        sim.Commit(repo.Root, "seed");
 
         var sink = new InMemoryRelayEventSink();
         var d = new RelayDriver(RelayDriverDependencies.ForTests(r,
-            new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), sink),
+            new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), sink, sim),
             RelayDriverOptions.NoGitCommit);
         var o = await d.RunTaskAsync(repo.Root, "t");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, o.Status);
@@ -59,7 +55,7 @@ public sealed class RelayDriverPlanCompletenessTests
             ["src/Dashboard.axaml", "src/Api.cs"]);
         r.Seed("src/Dashboard.axaml", "tests/T.cs");
         var sink = new InMemoryRelayEventSink();
-        var d = new RelayDriver(RelayDriverDependencies.ForTests(r,
+        var d = new RelayDriver(RelayDriverTestHelpers.DepsFor(repo, r,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), sink),
             RelayDriverOptions.NoGitCommit);
         var o = await d.RunTaskAsync(repo.Root, "t");
@@ -78,7 +74,7 @@ public sealed class RelayDriverPlanCompletenessTests
         repo.WriteTask("t", "## Done when\n- Create migration\n- Update EF models\n");
         var r = new Stage4Runner("Create migration.", ["src/Migration.sql"]);
         r.Seed("src/Migration.sql", "tests/T.cs");
-        var d = new RelayDriver(RelayDriverDependencies.ForTests(r,
+        var d = new RelayDriver(RelayDriverTestHelpers.DepsFor(repo, r,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
             new InMemoryRelayEventSink()), RelayDriverOptions.NoGitCommit);
         var o = await d.RunTaskAsync(repo.Root, "t");
@@ -94,7 +90,7 @@ public sealed class RelayDriverPlanCompletenessTests
         repo.WriteTask("t", "# Simple task\nJust do work.\n");
         var r = new Stage4Runner("Do work.", ["src/Work.cs"]);
         r.Seed("src/Work.cs", "tests/T.cs");
-        var d = new RelayDriver(RelayDriverDependencies.ForTests(r,
+        var d = new RelayDriver(RelayDriverTestHelpers.DepsFor(repo, r,
             new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
             new InMemoryRelayEventSink()), RelayDriverOptions.NoGitCommit);
         var o = await d.RunTaskAsync(repo.Root, "t");
@@ -109,7 +105,7 @@ public sealed class RelayDriverPlanCompletenessTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("t", "## Done when\n- Build something different\n");
         var r = new Stage4Runner("Refactor unrelated module.", ["src/Unrelated.cs"]);
-        var d = new RelayDriver(RelayDriverDependencies.ForTests(r, new ScriptedTestRunner(),
+        var d = new RelayDriver(RelayDriverTestHelpers.DepsFor(repo, r, new ScriptedTestRunner(),
             new InMemoryRelayEventSink()), new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4));
         var o = await d.RunTaskAsync(repo.Root, "t");
         Assert.Equal(RelayTaskOutcomeStatus.Planned, o.Status);

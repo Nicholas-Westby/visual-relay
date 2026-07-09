@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -23,19 +24,16 @@ public sealed class VerifyWorktreeStagedOverlayTests
         new(RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(),
             new ScriptedTestRunner(),
-            new InMemoryRelayEventSink()));
+            new InMemoryRelayEventSink(),
+            new GitSimEngine()));
 
-    private static void InitRepo(string root)
-    {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-    }
+    private static void InitRepo(string root) => new GitSimEngine().InitRepo(root);
 
-    private static void CommitAll(string root, string message)
+    private static async Task CommitAll(string root, string message)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        var sim = new GitSimEngine();
+        await sim.Git(root, "add", ".");
+        sim.Commit(root, message);
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -56,10 +54,17 @@ public sealed class VerifyWorktreeStagedOverlayTests
         {
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, "old.txt"), "RENAME-CONTENT");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
-            // STAGED rename: git mv stages A new.txt + D old.txt and moves the file on disk.
-            TestGit.Run(root, "mv", "old.txt", "new.txt");
+            // STAGED rename: git mv stages A new.txt + D old.txt and moves the file on
+            // disk. GitSim has no `mv` verb — move the file for real, then `add -A`
+            // stages it at the index level exactly as `git mv` would. (No rename-record
+            // injection needed here: EnumerateUncommittedAsync / EnumerateDeletedTrackedAsync
+            // use plain `--name-only` / `--no-renames`, so they already treat a rename as
+            // a delete+add — which is exactly how GitSim's diff reports it too.)
+            var sim = new GitSimEngine();
+            File.Move(Path.Combine(root, "old.txt"), Path.Combine(root, "new.txt"));
+            await sim.Git(root, "add", "-A");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-staged-rename", "run-staged-rename", CancellationToken.None);
 
@@ -94,11 +99,11 @@ public sealed class VerifyWorktreeStagedOverlayTests
         {
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, "edited.txt"), "HEAD-CONTENT");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             // STAGED modification: edit then git add (staged, NOT committed).
             await File.WriteAllTextAsync(Path.Combine(root, "edited.txt"), "STAGED-CONTENT");
-            TestGit.Run(root, "add", "edited.txt");
+            await new GitSimEngine().Git(root, "add", "edited.txt");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-staged-mod", "run-staged-mod", CancellationToken.None);
 

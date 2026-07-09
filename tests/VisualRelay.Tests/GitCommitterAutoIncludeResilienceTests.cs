@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
 
@@ -18,23 +19,22 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         // before git add (TOCTOU race), the auto-include pass must NOT fail
         // the whole commit.  The existence gate (File.Exists/Directory.Exists)
         // must skip the vanished file and commit only the extant ones.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // Create a real authored file AND a sibling whose path we will
         // inject into the snapshot as "stale" (it never exists on disk).
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests-extra.cs"), "// real");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests-extra.cs", "// real");
 
         var staleRelPath = "ghost-file.cs";
-        var staleInvoker = new StaleSnapshotGitInvoker(staleRelPath);
+        var staleInvoker = new StaleSnapshotGitInvoker(staleRelPath, sim);
 
         var manifest = new[] { "src/app.cs" };
 
@@ -46,7 +46,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             gitInvoker: staleInvoker);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         // The real authored file IS committed.
         Assert.Contains("tests-extra.cs", committed);
         // The ghost path was never on disk and must NOT appear.
@@ -62,27 +62,26 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         // SPACE must be successfully auto-included end-to-end.  This character
         // is emitted by the app's ControlScreenshot feature and must survive
         // the full git ls-files → filter → git add pipeline.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
-        // Disable git's core.quotePath so non-ASCII paths are emitted
-        // verbatim rather than C-quoted (e.g. \342\200\257 for U+202F).
-        TestGit.Run(repo.Root, "config", "core.quotePath", "false");
+        // Real git needs core.quotePath=false to emit non-ASCII paths verbatim
+        // instead of C-quoted; GitSim never quotes/escapes paths in any output
+        // (no command handler reads GitSimContext.QuotePath), so no equivalent
+        // setup step is needed here.
 
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
+        Write(repo, "src/app.cs", "updated");
 
         // File name with U+202F between "05" and "AM" — mirrors the real
         // screenshot filename that triggered the original failure.
         var unicodeName = $"Screenshot 2026-07-01 at 9.59.05{NarrowNoBreakSpace}AM.png";
-        var unicodePath = Path.Combine(repo.Root, unicodeName);
-        File.WriteAllText(unicodePath, "fake screenshot");
+        Write(repo, unicodeName, "fake screenshot");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -90,10 +89,10 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains(unicodeName, committed);
     }
 
@@ -103,27 +102,24 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         // A file dropped under the tasks dir whose path contains U+202F
         // must be excluded from auto-include.  The tasks-dir guard must work
         // regardless of Unicode characters in the path.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
-        // Disable git's core.quotePath so non-ASCII paths are emitted verbatim.
-        TestGit.Run(repo.Root, "config", "core.quotePath", "false");
+        // (No core.quotePath setup needed — see comment above; GitSim always
+        // emits literal paths.)
 
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "new-impl.cs"), "// genuinely authored");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "src/new-impl.cs", "// genuinely authored");
 
         // Tasks-dir file with U+202F in the directory name.
         var tasksDirName = $"task{NarrowNoBreakSpace}dir";
-        var tasksDirFull = Path.Combine(repo.Root, "llm-tasks", tasksDirName);
-        Directory.CreateDirectory(tasksDirFull);
-        File.WriteAllText(Path.Combine(tasksDirFull, "task.md"), "# user task");
+        Write(repo, $"llm-tasks/{tasksDirName}/task.md", "# user task");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -131,10 +127,10 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None);
+            CancellationToken.None, sim);
         Assert.True(commit.Success, commit.Error);
 
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         // Genuinely authored file outside tasks dir IS auto-included.
         Assert.Contains("src/new-impl.cs", committed);
         // Tasks-dir file (with Unicode) is NOT in the commit.
@@ -145,7 +141,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None);
+            CancellationToken.None, sim);
         Assert.DoesNotContain(relTaskPath, missed);
     }
 
@@ -155,30 +151,27 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         // The snapshot helper (git ls-files --others --exclude-standard)
         // must correctly capture files with U+202F in the name — no filtering
         // or escaping at the ls-files level should drop them.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "content");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        sim.Commit(repo.Root, "chore: seed");
 
-        // Disable git's core.quotePath so non-ASCII paths are emitted verbatim.
-        TestGit.Run(repo.Root, "config", "core.quotePath", "false");
+        // (No core.quotePath setup needed — see comment above; GitSim always
+        // emits literal paths.)
 
         var unicodeName = $"report{NarrowNoBreakSpace}2026-07-01.log";
-        File.WriteAllText(Path.Combine(repo.Root, unicodeName), "log");
+        Write(repo, unicodeName, "log");
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
 
         Assert.Contains(unicodeName, snapshot);
     }
 
     // ── stub IGitInvoker that injects a stale path into ls-files output ─
 
-    private sealed class StaleSnapshotGitInvoker(string stalePath) : IGitInvoker
+    private sealed class StaleSnapshotGitInvoker(string stalePath, IGitInvoker inner) : IGitInvoker
     {
-        private readonly GitInvoker _real = new();
-
         public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath,
             IEnumerable<string> arguments,
@@ -195,14 +188,14 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             // vanished between the snapshot and git add.
             if (args is ["ls-files", "--others", "--exclude-standard"])
             {
-                var result = await _real.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
+                var result = await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
                 var injected = string.IsNullOrWhiteSpace(result.Output)
                     ? stalePath
                     : result.Output.TrimEnd() + "\n" + stalePath;
                 return (result.ExitCode, injected, result.TimedOut);
             }
 
-            return await _real.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
+            return await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
         }
     }
 }

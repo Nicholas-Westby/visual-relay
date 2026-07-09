@@ -18,7 +18,7 @@ public sealed class RelayDriverPlanOnlyTests
         var sink = new InMemoryRelayEventSink();
         var planOptions = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(), sink),
             planOptions);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "plan-me");
@@ -70,7 +70,7 @@ public sealed class RelayDriverPlanOnlyTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var planOptions = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             planOptions);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "plan-lock");
@@ -95,7 +95,7 @@ public sealed class RelayDriverPlanOnlyTests
         // Phase 1 — plan
         var planOptions = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
         var planDriver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             planOptions);
         var planOutcome = await planDriver.RunTaskAsync(repo.Root, "two-phase");
         Assert.Equal(RelayTaskOutcomeStatus.Planned, planOutcome.Status);
@@ -110,7 +110,7 @@ public sealed class RelayDriverPlanOnlyTests
         // Phase 2 — resume from stage 5, with git commit
         var resumeOptions = new RelayDriverOptions(CreateGitCommit: false, Resume: true);
         var resumeDriver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             resumeOptions);
@@ -150,7 +150,7 @@ public sealed class RelayDriverPlanOnlyTests
         var flagAt3 = new FlagAtStageSubagentRunner(flagAtStage: 3);
         var planOptions = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(flagAt3, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, flagAt3, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             planOptions);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "flag-plan");
@@ -187,7 +187,7 @@ public sealed class RelayDriverPlanOnlyTests
         var throwingTestRunner = new ThrowingTestRunner();
         var planOptions = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, throwingTestRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, throwingTestRunner, new InMemoryRelayEventSink()),
             planOptions);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "plan-no-test");

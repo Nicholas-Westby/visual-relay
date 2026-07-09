@@ -25,13 +25,9 @@ public sealed class RelayDriverGitCommitProofOptOutTests
             }
             """);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         // Pre-create per-stage .input.json and .report.json artifacts so
         // the commit gate can enumerate them when CommitProofArtifacts is true.
@@ -40,13 +36,13 @@ public sealed class RelayDriverGitCommitProofOptOutTests
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
 
         // No .relay/ proof paths should appear in the commit.
         Assert.DoesNotContain(".relay/ship-status/manifest.txt", names);
@@ -69,7 +65,7 @@ public sealed class RelayDriverGitCommitProofOptOutTests
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
 
         // Relay-Seal trailer still present.
-        var message = TestGit.Run(repo.Root, "log", "-1", "--pretty=%B");
+        var message = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message;
         Assert.Contains("Relay-Seal:", message);
     }
 
@@ -92,13 +88,9 @@ public sealed class RelayDriverGitCommitProofOptOutTests
             }
             """);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         // Pre-create per-stage .input.json and .report.json artifacts so
         // the commit gate can enumerate them when CommitProofArtifacts is true.
@@ -107,13 +99,13 @@ public sealed class RelayDriverGitCommitProofOptOutTests
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
 
         // All four .relay/ proof files must be present.
         Assert.Contains(".relay/ship-status/manifest.txt", names);
@@ -133,7 +125,7 @@ public sealed class RelayDriverGitCommitProofOptOutTests
         Assert.Contains("src/status.cs", names);
 
         // Relay-Seal trailer still present.
-        var message = TestGit.Run(repo.Root, "log", "-1", "--pretty=%B");
+        var message = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message;
         Assert.Contains("Relay-Seal:", message);
     }
 
@@ -155,13 +147,9 @@ public sealed class RelayDriverGitCommitProofOptOutTests
             }
             """);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         // Stages 1-3 were retried: attempt1 and attempt2 both exist.
         // Stages 4-9 ran once: only attempt1 exists.
@@ -170,13 +158,13 @@ public sealed class RelayDriverGitCommitProofOptOutTests
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
 
         // Retried stages (1-3): only attempt2 (the highest) is committed.
         for (var s = 1; s <= 3; s++)

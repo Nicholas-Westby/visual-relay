@@ -77,6 +77,10 @@ internal static class CliHarness
         psi.Environment["PATH"] = stubBin + Path.PathSeparator + "/usr/bin" + Path.PathSeparator + "/bin";
         psi.Environment["VISUAL_RELAY_SCRIPT_DIR"] = repoRoot;
         psi.Environment["ORIGINAL_CWD"] = repoRoot;
+        // Hermetic + host-independent for any git the CLI spawns under this harness.
+        psi.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        psi.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
+        psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
 
         // .NET resolves a bare "dotnet" against the running host, not PATH, so a
         // PATH stub cannot intercept the CLI's own dotnet shell-outs. Point the

@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -11,7 +12,7 @@ public sealed class RelayDriverEarlyImplementationTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("front-loaded", "# Front-loaded\n");
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo);
 
         var capturer = new CapturingSubagentRunner();
         capturer.SeedHappyPath("src/status.cs", "tests/status.test");
@@ -24,7 +25,7 @@ public sealed class RelayDriverEarlyImplementationTests
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "front-loaded");
@@ -49,7 +50,7 @@ public sealed class RelayDriverEarlyImplementationTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("clean-change", "# Clean change\n");
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo);
 
         var capturer = new CapturingSubagentRunner();
         capturer.SeedHappyPath("src/status.cs", "tests/status.test");
@@ -58,7 +59,7 @@ public sealed class RelayDriverEarlyImplementationTests
             RelayDriverDependencies.ForTests(capturer, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "clean-change");
@@ -76,7 +77,7 @@ public sealed class RelayDriverEarlyImplementationTests
         // Write a config that explicitly disables the down-shift.
         repo.WriteConfigWithDownshift("dotnet test", [], downshiftOnEarlyImplementation: false);
         repo.WriteTask("disabled-front", "# Disabled\n");
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo);
 
         var capturer = new CapturingSubagentRunner();
         capturer.SeedHappyPath("src/status.cs", "tests/status.test");
@@ -87,7 +88,7 @@ public sealed class RelayDriverEarlyImplementationTests
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "disabled-front");
@@ -105,7 +106,7 @@ public sealed class RelayDriverEarlyImplementationTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("record-test", "# Record test\n");
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo);
 
         var capturer = new CapturingSubagentRunner();
         capturer.SeedHappyPath("src/status.cs", "tests/status.test");
@@ -116,7 +117,7 @@ public sealed class RelayDriverEarlyImplementationTests
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "record-test");
@@ -132,15 +133,12 @@ public sealed class RelayDriverEarlyImplementationTests
         Assert.Contains(seals, line => line.Contains("\"n\":6", StringComparison.Ordinal));
     }
 
-    private static void InitGitRepo(string root)
+    private static GitSimEngine InitGitRepo(TestRepository repo)
     {
-        Directory.CreateDirectory(Path.Combine(root, "src"));
-        File.WriteAllText(Path.Combine(root, "src", "status.cs"), "old\n");
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
+        return sim;
     }
 
     /// <summary>

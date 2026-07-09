@@ -8,6 +8,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_EnforcesBatchLimit_NoMoreThanMaxConcurrencyInFlight()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // When maxPlanConcurrency is e.g. 3 and we have 10 tasks, the peak
         // concurrent planning runs must never exceed 3.
         using var repo = TestRepository.Create();
@@ -57,6 +60,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_EachTaskGetsOwnArtifactDirectory()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // N concurrent planning tasks must each produce their own
         // .relay/<taskId>/ artifacts without writing into another task's directory.
         using var repo = TestRepository.Create();
@@ -118,6 +124,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_StrayShellWriteStaysInWorktree()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // A planning agent that shells a write (simulated by ShellWritingSubagentRunner)
         // must NOT modify the main repo's working tree. The write must land in
         // the ephemeral worktree that gets discarded.
@@ -167,6 +176,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_NeverThrowsActiveTaskLockCollision()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // Parallel planning runs each use their own worktree with their own
         // .relay/ACTIVE directory, so no run should ever throw
         // "relay: another task is already active". This test runs 5 planning
@@ -208,6 +220,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_CopiesArtifactsBackToMainRepo()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // After a planning task completes in its worktree, its .relay/<taskId>/
         // artifacts must be copied back to the main repo so the serial execute
         // phase can find them.
@@ -246,6 +261,9 @@ public sealed partial class PlanPhaseRunnerTests
     [Fact]
     public async Task RunPlanPhase_FlaggedTasksAreReturnedButExcludedFromExecutePhase()
     {
+        // PlanPhaseRunner hardcodes a real GitInvoker for worktree creation (no
+        // injection seam) — this fact is irreducibly bound to the real git binary.
+        SlowIntegration.SkipIfNotOptedIn();
         // Tasks that flag during planning must be returned with Flagged status
         // and must NOT proceed to the execute phase. The plan runner must
         // still copy back the NEEDS-REVIEW marker and partial artifacts.

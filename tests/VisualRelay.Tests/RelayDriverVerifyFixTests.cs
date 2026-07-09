@@ -21,7 +21,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(0, "green"));            // fix-verify attempt 1 retry — green
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fixable-verify");
@@ -55,7 +55,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "Failed TestX"),      // fix-verify attempt 2 first run — red
             new TestRunResult(0, "green"));            // fix-verify attempt 2 retry — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "retry-twice");
@@ -82,7 +82,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "Failed DeepCheck"),        // fix-verify gate
             new TestRunResult(0, "green"));                  // fix-verify retry
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
         var outcome = await driver.RunTaskAsync(repo.Root, "fail-visible");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
@@ -107,7 +107,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(0, "green"));  // stage 10 verify — green on first try
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "green-skip");
@@ -153,7 +153,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "red"),     // stage 5 author gate
             new TestRunResult(0, "green"));  // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "big-one");
@@ -190,7 +190,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "red"),     // stage 5 author gate
             new TestRunResult(0, "green"));  // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "normal-task");
@@ -221,7 +221,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(0, "green"));            // pad (not reached)
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "verify-event");
@@ -264,7 +264,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "red"),         // stage 5 author gate
             new TestRunResult(0, "All 42 tests passed!"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
         var outcome = await driver.RunTaskAsync(repo.Root, "stage9-green-output");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
@@ -288,7 +288,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, "FAIL: TestDeepCheck"),
             new TestRunResult(0, "All green!"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
         var outcome = await driver.RunTaskAsync(repo.Root, "stage9-fail-output");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);

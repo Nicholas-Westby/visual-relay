@@ -113,8 +113,19 @@ internal sealed class ScratchRepo : IDisposable
         IGitInvoker git, IReadOnlyList<string> args,
         IReadOnlyDictionary<string, string>? env = null)
     {
+        // Hermetic + host-independent: never scan the host's global/system git config
+        // and never block on a credential prompt. Merge over any caller-supplied env.
+        var hermeticEnv = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["GIT_CONFIG_GLOBAL"] = "/dev/null",
+            ["GIT_CONFIG_SYSTEM"] = "/dev/null",
+            ["GIT_TERMINAL_PROMPT"] = "0",
+        };
+        if (env is not null)
+            foreach (var (k, v) in env)
+                hermeticEnv[k] = v;
         var result = await git.RunAsync(Root, args, CancellationToken.None,
-            timeout: TimeSpan.FromSeconds(30), environment: env);
+            timeout: TimeSpan.FromSeconds(30), environment: hermeticEnv);
         Assert.True(result.ExitCode == 0,
             $"git {string.Join(' ', args)} failed ({result.ExitCode}): {result.Output}");
         return result;

@@ -15,7 +15,7 @@ public sealed class RelayDriverResumeReAdd2Tests
         // Run 1: flag at stage 9 (leaves stages 1-8 Done, 9 Flagged)
         var flagAt9 = new FlagAtStageSubagentRunner(flagAtStage: 9);
         var driver1 = new RelayDriver(
-            RelayDriverDependencies.ForTests(flagAt9, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, flagAt9, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "partial-task");
@@ -40,7 +40,7 @@ public sealed class RelayDriverResumeReAdd2Tests
         var happyRunner = new ArtifactWritingSubagentRunner();
         happyRunner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver2 = new RelayDriver(
-            RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, happyRunner, new ScriptedTestRunner(
                 new TestRunResult(0, "green")), sink2),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
 
@@ -83,7 +83,7 @@ public sealed class RelayDriverResumeReAdd2Tests
         var runner2 = new ArtifactWritingSubagentRunner();
         runner2.SeedHappyPath("src/v2.cs", "tests/v2.tests.cs");
         var driver2 = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner2, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), sink2),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
@@ -96,7 +96,7 @@ public sealed class RelayDriverResumeReAdd2Tests
         var runner3 = new ArtifactWritingSubagentRunner();
         runner3.SeedHappyPath("src/v3.cs", "tests/v3.tests.cs");
         var driver3 = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner3, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner3, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), sink3),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));

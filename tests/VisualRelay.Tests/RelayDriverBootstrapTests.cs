@@ -27,7 +27,7 @@ public sealed class RelayDriverBootstrapTests
             new TestRunResult(0, "green"),     // stage 9 bootstrap check — green
             new TestRunResult(0, "green"));    // stage 9 verify test — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "add-nono");
@@ -66,7 +66,7 @@ public sealed class RelayDriverBootstrapTests
             new TestRunResult(1, "red"),       // stage 5 author gate — red (passes)
             new TestRunResult(0, "green"));    // stage 9 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "add-feature");
@@ -109,7 +109,7 @@ public sealed class RelayDriverBootstrapTests
         var capturingSubagent = new CapturingFlakeNixSubagentRunner();
         var testRunner = new CommandAwareTestRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(capturingSubagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, capturingSubagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "break-flake");
@@ -147,7 +147,7 @@ public sealed class RelayDriverBootstrapTests
         var tests = new CommandAwareTestRunner();
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "bootstrap-complete-log");
@@ -201,7 +201,7 @@ public sealed class RelayDriverBootstrapTests
             new TestRunResult(0, "green"),            // stage 9 bootstrap — custom command
             new TestRunResult(0, "green"));           // stage 9 verify
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, subagent, testRunner, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "custom-bootstrap");

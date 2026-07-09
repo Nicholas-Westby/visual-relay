@@ -11,7 +11,9 @@ public sealed class RelayDriverBaselineVerifyTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", [], baselineVerify: true);
         repo.WriteTask("pre-existing-fail", "# Pre-existing failure\n");
-        RelayDriverTestHelpers.InitGitRepo(repo.Root);
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "Failed OldTest"),   // stage 5 author gate — red (passes)
@@ -19,7 +21,7 @@ public sealed class RelayDriverBaselineVerifyTests
             new TestRunResult(1, "Failed OldTest"),   // stage 9 verify — retry also fails
             new TestRunResult(1, "Failed OldTest"));  // stage 9 verify baseline — same failure
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "pre-existing-fail");
@@ -33,14 +35,16 @@ public sealed class RelayDriverBaselineVerifyTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("full-suite", [], baselineVerify: true, enableFixVerify: false);
         repo.WriteTask("new-failure", "# New failure\n");
-        RelayDriverTestHelpers.InitGitRepo(repo.Root);
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                                    // stage 5 author gate — red (passes)
             new TestRunResult(1, "Failed OldTest\nFailed NewTest"),         // stage 9 working — OldTest + NewTest
             new TestRunResult(1, "Failed OldTest"));                        // stage 9 baseline — only OldTest
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(new PrematureImplementationRunner(), tests, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-failure");
@@ -64,7 +68,7 @@ public sealed class RelayDriverBaselineVerifyTests
             new TestRunResult(1, "Failed AnyTest"),    // stage 9 verify — first run fails
             new TestRunResult(1, "Failed AnyTest"));   // stage 9 verify — retry also fails
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "any-failure");

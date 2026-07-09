@@ -20,19 +20,20 @@ public sealed class TaskCompletionArchiveNoBatchTests
         repo.WriteConfig("test -f src/status.cs", [], archiveOnDone: true);
         // Deliberately NO "batch: N" line.
         repo.WriteTask("ship-status", "# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        // The original repo.WriteConfig/WriteTask output must also be tracked at
+        // seed (as real `git add .` would) so the task file's later archive-rename
+        // shows as a tracked delete, not a file that was never in history.
+        await sim.Git(repo.Root, "add", "-A");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
@@ -47,7 +48,7 @@ public sealed class TaskCompletionArchiveNoBatchTests
         Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
 
         // Commit must stage the archived path.
-        var nameStatus = TestGit.Run(repo.Root, "show", "--name-status", "--no-renames", "--pretty=format:", "HEAD");
+        var (_, nameStatus) = await sim.Git(repo.Root, "diff-tree", "--no-commit-id", "--name-status", "-r", sim.Head(repo.Root)!);
         Assert.Contains("A\tllm-tasks/completed/DONE-ship-status.md", nameStatus, StringComparison.Ordinal);
         Assert.Contains("D\tllm-tasks/ship-status.md", nameStatus, StringComparison.Ordinal);
     }
@@ -60,19 +61,20 @@ public sealed class TaskCompletionArchiveNoBatchTests
         // No "batch: N" line; nested task with sibling files.
         repo.WriteNestedTask("ship-status", "# Ship status\n",
             ("notes.txt", "some notes"), ("diagram.png", "fake png"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        // The original repo.WriteConfig/WriteTask output must also be tracked at
+        // seed (as real `git add .` would) so the task file's later archive-rename
+        // shows as a tracked delete, not a file that was never in history.
+        await sim.Git(repo.Root, "add", "-A");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
@@ -148,29 +150,28 @@ public sealed class TaskCompletionArchiveNoBatchTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", [], archiveOnDone: true);
         repo.WriteTask("ship-status", "# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
-        var seedSha = TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim();
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        // llm-tasks/ship-status.md must be tracked at seed (as real `git add .`
+        // would) so the mid-test checkout below can restore it from this commit.
+        await sim.Git(repo.Root, "add", "-A");
+        var seedSha = sim.Commit(repo.Root, "chore: seed repo");
 
         // First run — archives to completed/DONE-ship-status.md.
         var runner1 = new EditingSubagentRunner();
         var driver1 = new RelayDriver(
             RelayDriverDependencies.ForTests(runner1,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.Default);
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "ship-status");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome1.Status);
         Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "DONE-ship-status.md")));
 
         // Simulate crash-recovery: soft-reset to seed to bring back original.
-        TestGit.Run(repo.Root, "reset", "--soft", seedSha);
-        TestGit.Run(repo.Root, "checkout", seedSha, "--", "llm-tasks/ship-status.md");
+        await sim.Git(repo.Root, "reset", "--soft", seedSha);
+        await sim.Git(repo.Root, "checkout", seedSha, "--", "llm-tasks/ship-status.md");
 
         // Second run — must complete without throwing.
         var sink2 = new InMemoryRelayEventSink();
@@ -178,7 +179,8 @@ public sealed class TaskCompletionArchiveNoBatchTests
         var driver2 = new RelayDriver(
             RelayDriverDependencies.ForTests(runner2,
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                sink2),
+                sink2,
+                sim),
             RelayDriverOptions.Default);
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "ship-status");
 

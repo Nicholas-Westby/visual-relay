@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -26,19 +27,41 @@ public sealed class VerifyWorktreeDeletionOverlayTests
         new(RelayDriverDependencies.ForTests(
             new ScriptedSubagentRunner(),
             new ScriptedTestRunner(),
-            new InMemoryRelayEventSink()));
+            new InMemoryRelayEventSink(),
+            new GitSimEngine()));
 
-    private static void InitRepo(string root)
+    private static void InitRepo(string root) => new GitSimEngine().InitRepo(root);
+
+    private static async Task CommitAll(string root, string message)
     {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
+        var sim = new GitSimEngine();
+        await sim.Git(root, "add", ".");
+        sim.Commit(root, message);
     }
 
-    private static void CommitAll(string root, string message)
+    /// <summary>
+    /// Reproduces a STAGED <c>git rm</c> (removed from BOTH the index and the
+    /// working tree) using only GitSim-supported primitives: GitSim's own
+    /// <c>rm</c> handler requires <c>--cached</c> (a bare <c>git rm &lt;path&gt;</c>
+    /// throws "unsupported git invocation" — verified). Deleting the real
+    /// file/dir and then staging via <c>add -A</c> produces the IDENTICAL end
+    /// state (gone from disk AND from the index) through Add's own tracked-path
+    /// loop, which stages a now-missing tracked path as a removal.
+    /// </summary>
+    private static async Task StagedRemoveAsync(string root, string relativePath, bool recursive = false)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        var full = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        if (recursive && Directory.Exists(full))
+            Directory.Delete(full, recursive: true);
+        else if (File.Exists(full) || TryIsSymlink(full))
+            File.Delete(full);
+        await new GitSimEngine().Git(root, "add", "-A");
+    }
+
+    private static bool TryIsSymlink(string path)
+    {
+        try { return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint); }
+        catch { return false; }
     }
 
     // ───────────────────────────────────────────────────────────────────
@@ -61,10 +84,10 @@ public sealed class VerifyWorktreeDeletionOverlayTests
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, "doomed.txt"), "delete me");
             await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "keep me");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             // STAGED deletion: removes the path from index AND working tree.
-            TestGit.Run(root, "rm", "-q", "doomed.txt");
+            await StagedRemoveAsync(root, "doomed.txt");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-del-staged", "run-del-staged", CancellationToken.None);
 
@@ -97,7 +120,7 @@ public sealed class VerifyWorktreeDeletionOverlayTests
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, "doomed.txt"), "delete me");
             await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "keep me");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             // UNSTAGED deletion: removed from the working tree only (still in the index).
             File.Delete(Path.Combine(root, "doomed.txt"));
@@ -138,9 +161,9 @@ public sealed class VerifyWorktreeDeletionOverlayTests
             await File.WriteAllTextAsync(Path.Combine(root, "deadpkg", "inner", "a.txt"), "a");
             await File.WriteAllTextAsync(Path.Combine(root, "deadpkg", "inner", "b.txt"), "b");
             await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "keep");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
-            TestGit.Run(root, "rm", "-q", "-r", "deadpkg");
+            await StagedRemoveAsync(root, "deadpkg", recursive: true);
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-del-dir", "run-del-dir", CancellationToken.None);
 
@@ -178,7 +201,7 @@ public sealed class VerifyWorktreeDeletionOverlayTests
             Directory.CreateDirectory(Path.Combine(root, "pkg"));
             await File.WriteAllTextAsync(Path.Combine(root, "pkg", "gone.txt"), "gone");
             await File.WriteAllTextAsync(Path.Combine(root, "pkg", "stay.txt"), "stay");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             File.Delete(Path.Combine(root, "pkg", "gone.txt"));
 
@@ -217,7 +240,7 @@ public sealed class VerifyWorktreeDeletionOverlayTests
             InitRepo(root);
             await File.WriteAllTextAsync(Path.Combine(root, "doomed.txt"), "delete me");
             await File.WriteAllTextAsync(Path.Combine(root, "edited.txt"), "ORIGINAL");
-            CommitAll(root, "seed");
+            await CommitAll(root, "seed");
 
             File.Delete(Path.Combine(root, "doomed.txt"));                                  // deletion
             await File.WriteAllTextAsync(Path.Combine(root, "edited.txt"), "AGENT-EDIT");    // modification
@@ -250,22 +273,38 @@ public sealed class VerifyWorktreeDeletionOverlayTests
     //    Windows correctness fix — but it guards the behavior on both platforms.
     //    Presence is checked via a directory LISTING (readdir surfaces the link
     //    entry regardless of target), independent of the removal mechanism.
+    //
+    //    GAP (genuinely needs the real git binary — verified): GitSim has no
+    //    data-model representation for a tracked symlink at all — there is no
+    //    120000 index mode (WorkingTree.ModeOnDisk only ever returns 100644 /
+    //    100755), and `add`'s StageBlob calls File.ReadAllBytes on the path,
+    //    which THROWS FileNotFoundException for a genuinely dangling symlink
+    //    (confirmed empirically) rather than storing the link's own target
+    //    string as git does. There is no GitSim-primitive way to seed this
+    //    fixture, so — per the migration contract — this ONE fact stays on the
+    //    real git binary, gated behind SlowIntegration so it is skipped by
+    //    default and does not slow the always-on run.
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
     public async Task CreateVerifyWorktree_DeletedDanglingSymlink_RemovedFromWorktree()
     {
+        SlowIntegration.SkipIfNotOptedIn();
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-del-dangling-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        var driver = NewDriver();
+        var driver = new RelayDriver(RelayDriverDependencies.ForTests(
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()));
         string? worktree = null;
         try
         {
-            InitRepo(root);
+            TestGit.Run(root, "init", "-q");
+            TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
+            TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
             // A tracked symlink whose target does NOT exist → dangling once checked out.
             File.CreateSymbolicLink(Path.Combine(root, "link"), "missing-target");
             await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "keep");
-            CommitAll(root, "seed");
+            TestGit.Run(root, "add", ".");
+            TestGit.Run(root, "commit", "-q", "-m", "seed");
 
             // Staged removal of the (dangling) tracked symlink.
             TestGit.Run(root, "rm", "-q", "link");

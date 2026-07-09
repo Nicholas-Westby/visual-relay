@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -76,6 +77,20 @@ public sealed partial class WorktreeFilterTests
     /// End-to-end safety assertion for the case-only rename: with the rename
     /// destination declared as the testFile, its content must survive intact
     /// and the rename must be left staged (no spurious discard, no error).
+    /// <para>
+    /// GAP: GitSim's <c>diff --name-status</c> deliberately does not perform
+    /// <c>-M</c>/<c>-C</c> rename/copy detection (documented on
+    /// <c>GitSimCommands.Diff</c>: "renames read as an add plus a delete") — it
+    /// can never itself synthesize an <c>R100</c> record. The exact staged-rename
+    /// SHAPE this fact exercises is therefore injected via
+    /// <see cref="InterceptedGitInvoker"/> (same technique as
+    /// WorktreeFilterTests.CopyRecords.cs) for the one <c>--name-status
+    /// --cached</c> call; every other call (rev-parse, unstaged diff, ls-files,
+    /// checkout, cat-file) stays on the in-memory GitSim fallback. The physical
+    /// case-only rename (and the real <c>add -A</c> staging of it) still happens
+    /// for real, so the on-disk content/identity assertions below are genuine —
+    /// only the name-status REPORT is hand-supplied.
+    /// </para>
     /// </summary>
     [Fact]
     public async Task CaseOnlyRenameOfTestFile_PreservesTestContent()
@@ -89,17 +104,26 @@ public sealed partial class WorktreeFilterTests
         // case-insensitive macOS / Windows volume both names map to one
         // on-disk file; the content "test-content" lives at that inode.
         var fooPath = Path.Combine(repo.Root, "Foo.cs");
-        await File.WriteAllTextAsync(fooPath, "test-content");
-        TestGit.Run(repo.Root, "add", "Foo.cs");
-        TestGit.Run(repo.Root, "commit", "-m", "add Foo.cs");
-        TestGit.Run(repo.Root, "mv", "Foo.cs", "foo.cs");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "Foo.cs", "test-content");
+        sim.Commit(repo.Root, "add Foo.cs");
+        File.Move(fooPath, Path.Combine(repo.Root, "foo.cs"));
+        await sim.Git(repo.Root, "add", "-A");
 
         // Modify the production file so it appears dirty.
         await File.WriteAllTextAsync(prodPath, "prod-modified");
 
+        // Inject the R100 record `git diff --cached --name-status -M -C -z`
+        // would emit for this rename (GAP above) — GitSim itself would report
+        // it as a plain add+delete instead.
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "R100\0Foo.cs\0foo.cs\0", false)));
+
         // Declare foo.cs (the rename destination) as the testFile.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["foo.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["foo.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
         // The case-renamed test file must still exist on disk with its
         // content intact, and must not be reported as discarded.
@@ -138,16 +162,15 @@ public sealed partial class WorktreeFilterTests
 
         // Create a NEW non-test file, stage it, then modify it again → "AM".
         var newPath = Path.Combine(repo.Root, "src", "new.cs");
-        Directory.CreateDirectory(Path.GetDirectoryName(newPath)!);
-        await File.WriteAllTextAsync(newPath, "v1");
-        TestGit.Run(repo.Root, "add", "src/new.cs");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "src/new.cs", "v1");
         await File.WriteAllTextAsync(newPath, "v2-modified");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, sim);
 
-        // Determine the post-condition: read the index for src/new.cs.
-        var staged = TestGit.Run(repo.Root, "ls-files", "--stage", "--", "src/new.cs").Trim();
+        // Determine the post-condition: is src/new.cs still staged in the index?
+        var staged = sim.StagedPaths(repo.Root).Contains("src/new.cs", StringComparer.Ordinal);
         var fileOnDisk = File.Exists(newPath);
 
         // ── CRITICAL assertion ──────────────────────────────────
@@ -156,11 +179,10 @@ public sealed partial class WorktreeFilterTests
         // file) with NO Error surfaced.  Acceptable outcomes are either:
         //   (a) the unstage was clean — the index no longer stages new.cs; or
         //   (b) an Error was surfaced flagging the inconsistency.
-        var indexStillStages = staged.Length > 0;
-        var inconsistentSilent = !fileOnDisk && indexStillStages && result.Error is null;
+        var inconsistentSilent = !fileOnDisk && staged && result.Error is null;
 
         Assert.False(inconsistentSilent,
             "must not File.Delete the worktree file while the index still stages a " +
-            $"missing blob with no Error. index='{staged}', onDisk={fileOnDisk}, error='{result.Error}'");
+            $"missing blob with no Error. stillStaged={staged}, onDisk={fileOnDisk}, error='{result.Error}'");
     }
 }

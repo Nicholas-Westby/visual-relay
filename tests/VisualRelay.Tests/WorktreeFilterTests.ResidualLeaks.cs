@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -35,7 +36,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
         // ── CRITICAL: the TAB-named production edit must be reverted ──
@@ -66,7 +67,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
         // ── CRITICAL: the newline-named production edit must be reverted ──
@@ -98,7 +99,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Null(result.Error);
         // ── CRITICAL: the trailing-space production edit must be reverted ──
@@ -122,6 +123,19 @@ public sealed partial class WorktreeFilterTests
     /// from HEAD (reverting its staged deletion) while leaving the test
     /// destination intact — so stage 6 sees the production tree unchanged
     /// and the authored test content preserved.
+    /// <para>
+    /// GAP: GitSim's <c>diff --name-status</c> does not perform <c>-M</c>/<c>-C</c>
+    /// rename detection, so the <c>R100</c> record this fact depends on is
+    /// injected via <see cref="InterceptedGitInvoker"/> for the one
+    /// <c>--name-status --cached</c> call (same technique as
+    /// WorktreeFilterTests.CopyRecords.cs / RevertHardening.cs). The SOURCE
+    /// (<c>prod.cs</c>) is not rename-protected, so it DOES reach
+    /// <c>checkout HEAD -- prod.cs</c> — but it is committed (present in
+    /// HEAD), so GitSim's checkout handles it correctly without needing the
+    /// HeadCheckoutAwareGitInvoker correction (that gap only bites a path
+    /// ABSENT from HEAD, and the one absent path here — <c>some.Tests.cs</c> —
+    /// is excluded before the revert loop runs).
+    /// </para>
     /// </summary>
     [Fact]
     public async Task ProdToTestRename_RestoresProdSource_NoStrayStagedDeletion()
@@ -131,17 +145,26 @@ public sealed partial class WorktreeFilterTests
         // prod.cs is a production file committed to HEAD.
         var prodPath = await InitRepoWithTrackedFile(repo.Root, "prod.cs", "prod-content");
 
-        // Stage rename: prod.cs → some.Tests.cs (destination is the testFile).
-        TestGit.Run(repo.Root, "mv", "prod.cs", "some.Tests.cs");
+        // Stage rename: prod.cs → some.Tests.cs. GitSim has no `mv` verb —
+        // move the file for real, then `add -A` stages it at the index level.
+        var sim = new GitSimEngine();
+        File.Move(prodPath, Path.Combine(repo.Root, "some.Tests.cs"));
+        await sim.Git(repo.Root, "add", "-A");
+
+        // Inject the R100 record for this rename (GAP above).
+        var gitInvoker = new InterceptedGitInvoker(
+            repo.Root,
+            argv => argv.Contains("--name-status") && argv.Contains("--cached"),
+            _ => Task.FromResult((0, "R100\0prod.cs\0some.Tests.cs\0", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["some.Tests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["some.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
 
         Assert.Null(result.Error);
 
         // ── CRITICAL: no stray staged deletion of the production source ──
         // The index must NOT stage prod.cs as deleted heading into stage 6.
-        var stagedStatus = TestGit.Run(repo.Root, "diff", "--cached", "--name-status", "-M");
+        var stagedStatus = (await sim.Git(repo.Root, "diff", "--cached", "--name-status", "-M")).Output;
         Assert.DoesNotContain("prod.cs", stagedStatus, StringComparison.Ordinal);
 
         // Production source restored on disk from HEAD.

@@ -19,6 +19,10 @@ internal static class RelayDriverGitCommitTestHelpers
         // Strip DEVELOPER_DIR/SDKROOT so xcrun cannot resurrect a stale nix-store path.
         startInfo.Environment.Remove("DEVELOPER_DIR");
         startInfo.Environment.Remove("SDKROOT");
+        // Hermetic + host-independent: no host git config, no credential prompt.
+        startInfo.Environment["GIT_CONFIG_GLOBAL"] = "/dev/null";
+        startInfo.Environment["GIT_CONFIG_SYSTEM"] = "/dev/null";
+        startInfo.Environment["GIT_TERMINAL_PROMPT"] = "0";
         using var process = Process.Start(startInfo)!;
         var stdout = process.StandardOutput.ReadToEnd();
         var stderr = process.StandardError.ReadToEnd();

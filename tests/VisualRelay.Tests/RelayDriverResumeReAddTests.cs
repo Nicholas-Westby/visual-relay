@@ -34,7 +34,7 @@ public sealed class RelayDriverResumeReAddTests
         var runner2 = new ArtifactWritingSubagentRunner();
         runner2.SeedHappyPath("src/new-work.cs", "tests/new-work.tests.cs");
         var driver2 = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner2, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), sink2),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
@@ -98,7 +98,7 @@ public sealed class RelayDriverResumeReAddTests
         var runner2 = new ArtifactWritingSubagentRunner();
         runner2.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver2 = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner2, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), sink2),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));

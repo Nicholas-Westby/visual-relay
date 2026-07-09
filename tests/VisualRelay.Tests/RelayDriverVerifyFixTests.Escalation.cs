@@ -34,7 +34,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, AllRed(3), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, AllRed(3), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fv-ladder");
@@ -58,7 +58,7 @@ public sealed partial class RelayDriverVerifyFixTests
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, AllRed(3), sink),
+            RelayDriverTestHelpers.DepsFor(repo, runner, AllRed(3), sink),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "fv-log");
@@ -97,7 +97,7 @@ public sealed partial class RelayDriverVerifyFixTests
         var runner = new CapturingSubagentRunner();
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, AllRed(3), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, AllRed(3), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "fv-boost");

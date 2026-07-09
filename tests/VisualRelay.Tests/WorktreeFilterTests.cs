@@ -1,24 +1,59 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
 public sealed partial class WorktreeFilterTests
 {
     /// <summary>
-    /// Helper: initializes a git repo in <paramref name="root"/> with a single
-    /// tracked file committed, then returns the absolute path to that file.
+    /// Helper: registers an in-memory GitSim repo rooted at <paramref name="root"/>
+    /// with a single tracked file committed, then returns the absolute path to that
+    /// file. GitSim state lives in a process-wide per-root registry, so callers
+    /// needing a git invoker to pass into the code under test just construct a
+    /// fresh <see cref="GitSimEngine"/> — it resolves the same registered repo.
     /// </summary>
-    private static async Task<string> InitRepoWithTrackedFile(string root, string relPath, string content)
+    private static Task<string> InitRepoWithTrackedFile(string root, string relPath, string content)
     {
-        var dir = Path.GetDirectoryName(Path.Combine(root, relPath))!;
-        Directory.CreateDirectory(dir);
-        await File.WriteAllTextAsync(Path.Combine(root, relPath), content);
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "test@example.test");
-        TestGit.Run(root, "config", "user.name", "Test");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "seed");
-        return Path.Combine(root, relPath);
+        var sim = new GitSimEngine();
+        sim.InitRepo(root);
+        sim.Seed(root, relPath, content);
+        sim.Commit(root, "seed");
+        return Task.FromResult(Path.Combine(root, relPath));
+    }
+
+    /// <summary>
+    /// GitSim GAP compensation (verified empirically — not a modeling choice): GitSim's
+    /// <c>checkout &lt;rev&gt; -- &lt;path&gt;</c> only visits paths that ARE present in the
+    /// resolved revision's tree, so for a path ABSENT from that tree it loops zero times
+    /// and still returns exit 0 — whereas real git fails ("error: pathspec '...' did not
+    /// match any file(s) known to git", non-zero exit). <see cref="WorktreeFilter"/>'s
+    /// revert loop depends on that real-git failure to detect "genuinely absent from
+    /// HEAD" (it then probes <c>cat-file -e</c>, which GitSim DOES implement correctly,
+    /// before unstaging + deleting) — so every fact that reverts a STAGED-BUT-NEVER-
+    /// COMMITTED path needs this correction or the production code silently no-ops
+    /// instead of unstaging/deleting it. This wraps a <see cref="GitSimEngine"/> and
+    /// corrects ONLY the <c>checkout HEAD -- &lt;path&gt;</c> shape
+    /// <see cref="WorktreeFilter"/> emits (by first asking GitSim's own, correctly
+    /// modeled <c>cat-file -e HEAD:&lt;path&gt;</c> whether the path exists), delegating
+    /// every other call unchanged. Never edits GitSim itself.
+    /// </summary>
+    private sealed class HeadCheckoutAwareGitInvoker(GitSimEngine sim) : IGitInvoker
+    {
+        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+            string rootPath, IEnumerable<string> arguments, CancellationToken ct,
+            TimeSpan? timeout = null, IReadOnlyDictionary<string, string>? environment = null,
+            CancellationToken killToken = default, Action<string>? onActivity = null)
+        {
+            var argv = arguments as string[] ?? arguments.ToArray();
+            if (argv is ["checkout", "HEAD", "--", var rel])
+            {
+                var probe = await sim.RunAsync(rootPath, ["cat-file", "-e", $"HEAD:{rel}"], ct);
+                if (probe.ExitCode != 0)
+                    return (1, $"error: pathspec '{rel}' did not match any file(s) known to git\n", false);
+            }
+
+            return await sim.RunAsync(rootPath, argv, ct, timeout, environment, killToken, onActivity);
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -38,7 +73,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(prodFile, "modified by agent");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         // Production file reverted.
         Assert.Equal("original", await File.ReadAllTextAsync(prodFile));
@@ -67,7 +102,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(testFile, "// test");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         // Non-test untracked deleted.
         Assert.False(File.Exists(untrackedProd), "non-test untracked file should be deleted");
@@ -87,10 +122,9 @@ public sealed partial class WorktreeFilterTests
 
         // Create a tracked test file that is dirty.
         var trackedTest = Path.Combine(repo.Root, "tests", "app.tests.cs");
-        Directory.CreateDirectory(Path.GetDirectoryName(trackedTest)!);
-        await File.WriteAllTextAsync(trackedTest, "old test");
-        TestGit.Run(repo.Root, "add", "tests/app.tests.cs");
-        TestGit.Run(repo.Root, "commit", "-m", "add test file");
+        var sim = new GitSimEngine();
+        sim.Seed(repo.Root, "tests/app.tests.cs", "old test");
+        sim.Commit(repo.Root, "add test file");
         // Now modify it (simulating agent authoring a test).
         await File.WriteAllTextAsync(trackedTest, "// updated test");
 
@@ -99,7 +133,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(stub, "stub");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None);
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, sim);
 
         // Tracked test file is NOT reverted.
         Assert.Equal("// updated test", await File.ReadAllTextAsync(trackedTest));
@@ -133,7 +167,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(swivalPath, "cache");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(artifactPath), ".relay/ artifact should be preserved");
         Assert.True(File.Exists(scratchPath), ".relay-scratch/ artifact should be preserved");
@@ -156,7 +190,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(taskFilePath, "# Task");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: tasksDir, CancellationToken.None);
+            repo.Root, [], tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(taskFilePath), "tasks-dir file should be preserved");
     }
@@ -173,7 +207,7 @@ public sealed partial class WorktreeFilterTests
         // Tree is clean.
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None);
+            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         Assert.Empty(result.TrackedDiscarded);
         Assert.Empty(result.UntrackedDeleted);

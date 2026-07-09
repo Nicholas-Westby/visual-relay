@@ -16,26 +16,23 @@ public sealed class RelayDriverManifestScopeTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("test -f src/status.cs", []);
         repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "old");
-        File.WriteAllText(Path.Combine(repo.Root, "src", "shared.cs"), "shared-old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/status.cs", "old");
+        sim.Seed(repo.Root, "src/shared.cs", "shared-old");
+        sim.Commit(repo.Root, "seed");
 
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(
                 new OutsideManifestEditingRunner(),
                 new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
-        var names = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/status.cs", names);
         Assert.Contains("src/shared.cs", names);
     }

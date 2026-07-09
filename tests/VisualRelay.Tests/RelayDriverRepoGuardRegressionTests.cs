@@ -30,7 +30,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
             }
             """);
         repo.WriteTask("count-drift", "# Count drift\n");
-        RelayDriverRepoGuardTests.InitGitRepo(repo.Root);
+        var sim = RelayDriverRepoGuardTests.InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -42,7 +42,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
         var combined = new RelayDriverRepoGuardTests.CommandDispatchTestRunner(
             ("check-file-size.sh", guardRunner), ("dotnet test", testRunner));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "count-drift");
@@ -71,7 +71,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
             }
             """);
         repo.WriteTask("new-oversize", "# New oversize\n");
-        RelayDriverRepoGuardTests.InitGitRepo(repo.Root);
+        var sim = RelayDriverRepoGuardTests.InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -84,7 +84,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
         var combined = new RelayDriverRepoGuardTests.CommandDispatchTestRunner(
             ("check-file-size.sh", guardRunner), ("dotnet test", testRunner));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "new-oversize");
@@ -111,7 +111,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
             }
             """);
         repo.WriteTask("mixed", "# Mixed\n");
-        RelayDriverRepoGuardTests.InitGitRepo(repo.Root);
+        var sim = RelayDriverRepoGuardTests.InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -124,7 +124,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
         var combined = new RelayDriverRepoGuardTests.CommandDispatchTestRunner(
             ("check-file-size.sh", guardRunner), ("dotnet test", testRunner));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "mixed");
@@ -152,7 +152,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
             }
             """);
         repo.WriteTask("numbered-sibling", "# Numbered sibling\n");
-        RelayDriverRepoGuardTests.InitGitRepo(repo.Root);
+        var sim = RelayDriverRepoGuardTests.InitGitRepo(repo);
 
         var subagent = new CapturingSubagentRunner();
         subagent.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -166,7 +166,7 @@ public sealed class RelayDriverRepoGuardRegressionTests
         var combined = new RelayDriverRepoGuardTests.CommandDispatchTestRunner(
             ("check-file-size.sh", guardRunner), ("dotnet test", testRunner));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(subagent, combined, new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "numbered-sibling");

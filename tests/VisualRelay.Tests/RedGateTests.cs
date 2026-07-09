@@ -8,21 +8,18 @@ public sealed class RedGateTests
     public async Task StripToRedAsync_SkipsAbsentPathsAndRestoresTheStash()
     {
         using var repo = TestRepository.Create();
-        File.WriteAllText(Path.Combine(repo.Root, "src.txt"), "old\n");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src.txt", "old\n");
+        sim.Commit(repo.Root, "chore: seed repo");
         File.WriteAllText(Path.Combine(repo.Root, "src.txt"), "new\n");
 
         var tag = RedGate.StashTag("task", "absent-path");
-        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, CancellationToken.None);
+        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, CancellationToken.None, sim);
 
         Assert.True(stashed);
         Assert.Equal("old\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
-        Assert.NotNull(await RedGate.FindStashRefAsync(repo.Root, tag, CancellationToken.None));
-        Assert.Equal(RedGateRestoreResult.Restored, await RedGate.RestoreStashAsync(repo.Root, tag, CancellationToken.None));
+        Assert.NotNull(await RedGate.FindStashRefAsync(repo.Root, tag, CancellationToken.None, sim));
+        Assert.Equal(RedGateRestoreResult.Restored, await RedGate.RestoreStashAsync(repo.Root, tag, CancellationToken.None, sim));
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
     }
 

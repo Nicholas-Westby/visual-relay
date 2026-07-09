@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
 namespace VisualRelay.Tests;
 
@@ -10,21 +11,19 @@ public sealed class GitCommitterAutoIncludeTests
         // A new test file authored during stage 5 that the stage-4 manifest never
         // listed must not be silently dropped. The auto-include pass stages any
         // non-ignored untracked file that appeared after the run started.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // Snapshot before the run: no untracked files exist.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // Simulate an agent authoring a new test file and modifying a manifest-listed file.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         // Manifest only lists src/app.cs — the new test is absent.
         var manifest = new[] { "src/app.cs" };
@@ -39,10 +38,10 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/app.cs", committed);
         Assert.Contains("tests/new-test.cs", committed);
     }
@@ -53,26 +52,23 @@ public sealed class GitCommitterAutoIncludeTests
         // Pre-existing untracked files (present before the run started and captured
         // in the snapshot) must NOT be auto-included. Only files authored during the
         // run (delta: current \ snapshot) are staged.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "scratch"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // Pre-existing untracked scratch that must NOT be committed — created
         // after the seed so it is untracked when the snapshot is taken.
-        File.WriteAllText(Path.Combine(repo.Root, "scratch", "notes.txt"), "scratch");
+        Write(repo, "scratch/notes.txt", "scratch");
 
         // Snapshot captures the pre-existing scratch file.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Contains("scratch/notes.txt", preRunUntracked);
 
         // Agent modifies a tracked file and creates a new test file under tests/.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -86,10 +82,10 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("tests/new-test.cs", committed);
         Assert.DoesNotContain("scratch/notes.txt", committed);
     }
@@ -101,22 +97,20 @@ public sealed class GitCommitterAutoIncludeTests
         // code), so auto-include must NOT assume a src/tests/tools shape. A new,
         // non-ignored file the run authored anywhere — docs/, lib/, the repo root —
         // must be committed, not silently dropped.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "docs"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "lib"));
-        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "app.py", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // Author files outside any conventional .NET source root.
-        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "docs", "guide.md"), "# Guide");
-        File.WriteAllText(Path.Combine(repo.Root, "lib", "helper.js"), "// helper");
-        File.WriteAllText(Path.Combine(repo.Root, "test_app.py"), "# root-level test");
+        Write(repo, "app.py", "updated");
+        Write(repo, "docs/guide.md", "# Guide");
+        Write(repo, "lib/helper.js", "// helper");
+        Write(repo, "test_app.py", "# root-level test");
 
         var manifest = new[] { "app.py" };
 
@@ -130,10 +124,10 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("docs/guide.md", committed);
         Assert.Contains("lib/helper.js", committed);
         Assert.Contains("test_app.py", committed);
@@ -146,23 +140,20 @@ public sealed class GitCommitterAutoIncludeTests
         // own artifacts (reports, traces, scratch) surface as untracked. They must
         // never be auto-committed into the user's task commit — only the deliberate
         // proof subset is force-added (via proofFiles), handled separately.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "app.py", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // The run authors a real test file AND leaves internal artifacts behind.
-        File.WriteAllText(Path.Combine(repo.Root, "app.py"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.py"), "# new test");
-        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay", "my-task"));
-        File.WriteAllText(Path.Combine(repo.Root, ".relay", "my-task", "stage1-attempt1.report.json"), "{}");
-        Directory.CreateDirectory(Path.Combine(repo.Root, ".swival"));
-        File.WriteAllText(Path.Combine(repo.Root, ".swival", "cmd_output.txt"), "trace");
+        Write(repo, "app.py", "updated");
+        Write(repo, "tests/new-test.py", "# new test");
+        Write(repo, ".relay/my-task/stage1-attempt1.report.json", "{}");
+        Write(repo, ".swival/cmd_output.txt", "trace");
 
         var manifest = new[] { "app.py" };
 
@@ -176,13 +167,13 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("tests/new-test.py", committed);
-        Assert.DoesNotContain(".relay/", committed);
-        Assert.DoesNotContain(".swival/", committed);
+        Assert.DoesNotContain(committed, p => p.StartsWith(".relay/", StringComparison.Ordinal));
+        Assert.DoesNotContain(committed, p => p.StartsWith(".swival/", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -190,22 +181,20 @@ public sealed class GitCommitterAutoIncludeTests
     {
         // Gitignored paths must stay excluded unless force-added as proof files.
         // The auto-include pass must respect .gitignore (--exclude-standard covers it).
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "*.log\n");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Seed(repo.Root, ".gitignore", "*.log\n");
+        sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None);
+            repo.Root, CancellationToken.None, sim);
         Assert.Empty(preRunUntracked);
 
         // Agent creates a gitignored log file and a new test file.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "debug.log"), "log content");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "debug.log", "log content");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -219,10 +208,10 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("tests/new-test.cs", committed);
         Assert.DoesNotContain("debug.log", committed);
     }
@@ -232,16 +221,14 @@ public sealed class GitCommitterAutoIncludeTests
     {
         // When preRunUntracked is null (backward-compatible path), no auto-include
         // pass runs. A new untracked file absent from the manifest is NOT committed.
-        using var repo = TestRepository.Create();
-        await GitCommitterAutoIncludeTestHelpers.InitGitRepo(repo.Root);
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        await GitCommitterAutoIncludeTestHelpers.StageAndCommitSeed(repo.Root, "chore: seed");
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
 
         // Agent creates a new test file that is not in the manifest.
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "updated");
-        File.WriteAllText(Path.Combine(repo.Root, "tests", "new-test.cs"), "// new test");
+        Write(repo, "src/app.cs", "updated");
+        Write(repo, "tests/new-test.cs", "// new test");
 
         var manifest = new[] { "src/app.cs" };
 
@@ -255,10 +242,10 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None);
+            CancellationToken.None, sim);
 
         Assert.True(result.Success, result.Error);
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/app.cs", committed);
         // The new test file is NOT staged — backward-compatible, no auto-include.
         Assert.DoesNotContain("tests/new-test.cs", committed);

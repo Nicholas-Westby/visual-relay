@@ -15,7 +15,7 @@ public sealed class RelayDriverResumeTests
         // --- Run 1: flag at stage 3 (Diagnose) ---
         var flagAt3 = new FlagAtStageSubagentRunner(flagAtStage: 3);
         var driver1 = new RelayDriver(
-            RelayDriverDependencies.ForTests(flagAt3, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, flagAt3, new ScriptedTestRunner(), new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "resume-me");
@@ -53,7 +53,7 @@ public sealed class RelayDriverResumeTests
         var happyRunner = new ArtifactWritingSubagentRunner();
         happyRunner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver2 = new RelayDriver(
-            RelayDriverDependencies.ForTests(happyRunner, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, happyRunner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
@@ -101,7 +101,7 @@ public sealed class RelayDriverResumeTests
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(
                 new TestRunResult(1, "red"),
                 new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));

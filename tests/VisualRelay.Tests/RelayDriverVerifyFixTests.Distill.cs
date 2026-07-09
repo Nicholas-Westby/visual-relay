@@ -45,7 +45,7 @@ public sealed partial class RelayDriverVerifyFixTests
             new TestRunResult(1, rawOutput),                   // fix-verify attempt 1 gate — red
             new TestRunResult(0, "green"));                    // fix-verify attempt 1 retry — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverTestHelpers.DepsFor(repo, runner, tests, new InMemoryRelayEventSink()),
             RelayDriverOptions.NoGitCommit);
 
         await driver.RunTaskAsync(repo.Root, "noise-strip");

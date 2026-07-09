@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -17,14 +18,20 @@ public sealed partial class WorktreeFilterTests
     /// <summary>
     /// An <see cref="IGitInvoker"/> that intercepts specific git calls
     /// (matching a rootPath and argument substring) and returns synthetic
-    /// results, falling through to real git for everything else.
+    /// results, falling through to <paramref name="fallback"/> (an in-memory
+    /// <see cref="GitSimEngine"/> by default, or a
+    /// <see cref="HeadCheckoutAwareGitInvoker"/>-wrapped one when a fact also
+    /// needs that gap corrected) for everything else — used to inject a
+    /// rename/copy name-status record GitSim itself does not synthesize, while
+    /// every other call stays in-memory.
     /// </summary>
     private sealed class InterceptedGitInvoker(
         string interceptRootPath,
         Func<string[], bool> interceptPredicate,
-        Func<string[], Task<(int, string, bool)>> fakeResult) : IGitInvoker
+        Func<string[], Task<(int, string, bool)>> fakeResult,
+        IGitInvoker? fallback = null) : IGitInvoker
     {
-        private static readonly HashSet<string> EnvRemove = new(StringComparer.Ordinal) { "DEVELOPER_DIR", "SDKROOT" };
+        private readonly IGitInvoker _fallback = fallback ?? new GitSimEngine();
 
         public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
             string rootPath, IEnumerable<string> arguments, CancellationToken ct,
@@ -35,10 +42,7 @@ public sealed partial class WorktreeFilterTests
             if (rootPath == interceptRootPath && interceptPredicate(argv))
                 return await fakeResult(argv);
 
-            return await ProcessCapture.RunAsync(
-                "git", ["-C", rootPath, .. argv], rootPath,
-                timeout ?? TimeSpan.FromSeconds(30), ct, environment,
-                envRemove: EnvRemove);
+            return await _fallback.RunAsync(rootPath, argv, ct, timeout, environment, killToken, onActivity);
         }
     }
 
@@ -63,12 +67,16 @@ public sealed partial class WorktreeFilterTests
         // the index — a real staged addition the filter can unstage + delete.
         var copyPath = Path.Combine(repo.Root, "copy.cs");
         await File.WriteAllTextAsync(copyPath, "source-content");
-        TestGit.Run(repo.Root, "add", "copy.cs");
+        await new GitSimEngine().Git(repo.Root, "add", "copy.cs");
 
+        // copy.cs is staged but never committed (absent from HEAD), so the fallback
+        // must be HeadCheckoutAwareGitInvoker-corrected (see WorktreeFilterTests.cs)
+        // for `checkout HEAD -- copy.cs` to fail the way real git does.
         var gitInvoker = new InterceptedGitInvoker(
             repo.Root,
             argv => argv.Contains("--name-status") && argv.Contains("--cached"),
-            _ => Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false)));
+            _ => Task.FromResult((0, "C100\0source.cs\0copy.cs\0", false)),
+            new HeadCheckoutAwareGitInvoker(new GitSimEngine()));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
@@ -104,12 +112,15 @@ public sealed partial class WorktreeFilterTests
 
         var prodDestPath = Path.Combine(repo.Root, "prod2.cs");
         await File.WriteAllTextAsync(prodDestPath, "test-content");
-        TestGit.Run(repo.Root, "add", "prod2.cs");
+        await new GitSimEngine().Git(repo.Root, "add", "prod2.cs");
 
+        // prod2.cs is staged but never committed (absent from HEAD) — same
+        // HeadCheckoutAwareGitInvoker correction as CopyRecordDestination_IsRevertedOrDeleted.
         var gitInvoker = new InterceptedGitInvoker(
             repo.Root,
             argv => argv.Contains("--name-status") && argv.Contains("--cached"),
-            _ => Task.FromResult((0, "C100\0my.Tests.cs\0prod2.cs\0", false)));
+            _ => Task.FromResult((0, "C100\0my.Tests.cs\0prod2.cs\0", false)),
+            new HeadCheckoutAwareGitInvoker(new GitSimEngine()));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
             repo.Root, ["my.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);

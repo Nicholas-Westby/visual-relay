@@ -93,7 +93,7 @@ public sealed class RelayDriverManifestPrefixTests
         var runner = new NewFilePrefixStage4Runner(
             "Add new feature.", ["+src/New.cs", "src/Existing.cs"]);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner,
+            RelayDriverTestHelpers.DepsFor(repo, runner,
                 new ScriptedTestRunner(
                     new TestRunResult(1, "red"), new TestRunResult(0, "green")),
                 new InMemoryRelayEventSink()),
@@ -136,7 +136,7 @@ public sealed class RelayDriverManifestPrefixTests
 
         var runner = new RetryNewFilePrefixStage4Runner("src/Alpha.cs", "src/Beta.cs");
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner,
+            RelayDriverTestHelpers.DepsFor(repo, runner,
                 new ScriptedTestRunner(
                     new TestRunResult(1, "red"), new TestRunResult(0, "green")),
                 new InMemoryRelayEventSink()),

@@ -21,13 +21,9 @@ public sealed class RelayDriverGitCommitResumeCommitTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", []);
         repo.WriteTask("regression-cover", "batch: 3\n\n# Add regression coverage\n");
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "old");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed repo");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed repo");
 
         // ── Run 1: author new file at stage 5, flag at stage 9 ──────────
         var runner1 = new FlagAtStageSubagentRunner(
@@ -37,7 +33,8 @@ public sealed class RelayDriverGitCommitResumeCommitTests
             RelayDriverDependencies.ForTests(
                 runner1,
                 new ScriptedTestRunner(new TestRunResult(1, "red")), // stage 5 author gate
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             RelayDriverOptions.Default);
 
         var outcome1 = await driver1.RunTaskAsync(repo.Root, "regression-cover");
@@ -52,13 +49,14 @@ public sealed class RelayDriverGitCommitResumeCommitTests
             RelayDriverDependencies.ForTests(
                 runner2,
                 new ScriptedTestRunner(new TestRunResult(0, "green")), // stage 9 verify
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             new RelayDriverOptions(CreateGitCommit: true, Resume: true));
 
         var outcome2 = await driver2.RunTaskAsync(repo.Root, "regression-cover");
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);
 
-        var committed = TestGit.Run(repo.Root, "show", "--name-only", "--pretty=format:", "HEAD");
+        var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
         Assert.Contains("src/app.cs", committed);
         // KEY: file authored in run 1 must land in the sealed commit.
         Assert.Contains("tests/regression-tests.cs", committed);

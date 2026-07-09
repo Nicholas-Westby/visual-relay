@@ -35,7 +35,7 @@ public sealed class RelayDriverResumeCommitGateTests
         // be skipped on a successful commit-gate resume).
         var guardRunner = new CommitGateGuardSubagentRunner();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(guardRunner, recordingTestRunner,
+            RelayDriverTestHelpers.DepsFor(repo, guardRunner, recordingTestRunner,
                 new InMemoryRelayEventSink()),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
 
@@ -59,15 +59,10 @@ public sealed class RelayDriverResumeCommitGateTests
         repo.WriteConfig("exit 0", []);
         repo.WriteTask("dirty-resume", "# Dirty resume\n");
 
-        Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
-        File.WriteAllText(Path.Combine(repo.Root, "src", "app.cs"), "original content");
-
         // Minimal git repo so the stage-5 worktree filter can enumerate.
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app.cs", "original content");
+        sim.Commit(repo.Root, "seed");
 
         var manifest = new[] { "src/app.cs" };
         var originalTreeHash = RelayDriverResumeTestHelpers.ComputeTreeHash(repo.Root, manifest);
@@ -87,7 +82,8 @@ public sealed class RelayDriverResumeCommitGateTests
                     new TestRunResult(0, "green"),   // re-validation gate (ignored — hash mismatch)
                     new TestRunResult(1, "red"),     // stage 5 author gate
                     new TestRunResult(0, "green")),  // stage 10 verify
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(),
+                sim),
             new RelayDriverOptions(CreateGitCommit: false, Resume: true));
 
         var outcome = await driver.RunTaskAsync(repo.Root, "dirty-resume");
