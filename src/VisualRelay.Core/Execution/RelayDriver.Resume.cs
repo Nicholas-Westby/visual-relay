@@ -7,6 +7,15 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class RelayDriver
 {
     /// <summary>
+    /// A recorded stage counts as complete for resume and commit-gate purposes when
+    /// its status is "Done" or "Skipped" (Fix on a clean review family, Fix-verify on
+    /// a green Verify). Both satisfy a completeness gate; kept as the single source of
+    /// truth so no call site re-hardcodes the "Skipped" literal.
+    /// </summary>
+    private static bool StageStatusIsComplete(string status) =>
+        status == "Done" || "Skipped".Equals(status, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
     /// Loads prior-run state for a resume: ledger, seals, manifest, costs, status entries,
     /// and determines <paramref name="firstStageToRun"/> from the authoritative status record.
     /// When no prior <c>status.json</c> exists this is a no-op (fresh run).
@@ -24,8 +33,7 @@ public sealed partial class RelayDriver
         // green Verify) is COMPLETE for resume: the skip was decided upstream and must
         // not be re-entered without that context, so treat it like Done and advance to
         // the first genuinely-incomplete stage.
-        var firstNonDone = priorStatus.FirstOrDefault(e =>
-            e.Status != "Done" && !"Skipped".Equals(e.Status, StringComparison.OrdinalIgnoreCase));
+        var firstNonDone = priorStatus.FirstOrDefault(e => !StageStatusIsComplete(e.Status));
         firstStageToRun = firstNonDone?.Stage ?? (RelayStages.All.Count + 1);
 
         // Capture prior task-input hash for re-add detection.

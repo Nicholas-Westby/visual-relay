@@ -24,10 +24,10 @@ internal static class RelayDriverResumeTestHelpers
     }
 
     /// <summary>
-    /// Sets up a task directory with status.json (stages 1–11 Done, stage 12
-    /// Flagged), a seal chain of 11 entries, manifest.txt, ledger.md, and a
-    /// NEEDS-REVIEW marker — exactly what a prior run leaves behind when it
-    /// flags at the commit gate.
+    /// Sets up a task directory with status.json (stages 1–11 complete — Fix (9) and
+    /// Fix-verify (11) Skipped, the rest Done — stage 12 Flagged), a seal chain of 11
+    /// entries, manifest.txt, ledger.md, and a NEEDS-REVIEW marker — exactly what a
+    /// clean-review prior run leaves behind when it flags at the commit gate.
     /// </summary>
     public static void SetupCommitGateResumeScenario(
         string repoRoot,
@@ -44,8 +44,12 @@ internal static class RelayDriverResumeTestHelpers
         {
             if (stage.Number <= 11)
             {
+                // Fix (9) and Fix-verify (11) record as "Skipped" on a clean-review /
+                // green-verify run — seed the real post-skip shape so the commit-gate
+                // guard is exercised against Skipped stages, not literal Done.
+                var status = stage.Number is 9 or 11 ? "Skipped" : "Done";
                 statusEntries.Add(new StageStatusEntry(
-                    stage.Number, stage.Name, "Done",
+                    stage.Number, stage.Name, status,
                     Check: "green", CostUsd: 0, DurationSeconds: 1));
             }
             else

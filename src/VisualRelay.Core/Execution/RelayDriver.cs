@@ -95,6 +95,15 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     reviewPairHandled = true;
                     continue;
                 }
+                // Skip Fix (9) on a clean/skipped review family (see SkipStages); before stage_start so a skip never flickers Running.
+                if (stage.Number == 9 && reviewFamilyClean)
+                {
+                    (previousSeal, taskHash) = await RecordFixSkipAsync(rootPath, runId, taskId,
+                        taskDirectory, stage, ledger, seals, statusEntries, manifest,
+                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                    continue;
+                }
+
                 await PublishAsync("info", "stage_start", rootPath, runId, taskId, stage, cancellationToken);
                 MarkStatus(statusEntries, stage.Number, "Running");
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
@@ -103,15 +112,6 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 string? check = null;
                 RelayCostEstimate? cost = null;
                 double? testDurationSeconds = null;
-
-                // Skip Fix (9) when the review family is clean/skipped (see SkipStages).
-                if (stage.Number == 9 && reviewFamilyClean)
-                {
-                    (previousSeal, taskHash) = await RecordFixSkipAsync(rootPath, runId, taskId,
-                        taskDirectory, stage, ledger, seals, statusEntries, manifest,
-                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
-                    continue;
-                }
 
                 if (stage.Kind == "driver")
                 {

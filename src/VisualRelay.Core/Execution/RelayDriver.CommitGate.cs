@@ -27,7 +27,7 @@ public sealed partial class RelayDriver
     {
         if (_options.Resume && firstStageToRun == 12
             && statusEntries.Count >= 11
-            && statusEntries.Take(11).All(e => e.Status == "Done"))
+            && statusEntries.Take(11).All(e => StageStatusIsComplete(e.Status)))
         {
             var manifestPath = Path.Combine(taskDirectory, "manifest.txt");
             var currentManifest = File.Exists(manifestPath)
