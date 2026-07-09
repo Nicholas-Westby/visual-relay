@@ -8,7 +8,12 @@ namespace VisualRelay.Tests;
 /// lifecycle. The readiness probe is injected so these stay hermetic regardless
 /// of what is listening on :4000. Replaces the runtime <c>Installer5BackendSh*</c>
 /// characterization tests.
+///
+/// In the "ProcessEnv" collection: one fact temporarily overrides the process-wide
+/// <c>HOME</c> so a spawned stub resolves the user-level env, which must not race a
+/// concurrent test reading <c>HOME</c> via <c>GetFolderPath(UserProfile)</c>.
 /// </summary>
+[Collection("ProcessEnv")]
 public sealed partial class BackendLifecycleStatusTests : IDisposable
 {
     private readonly string _home = Path.Combine(

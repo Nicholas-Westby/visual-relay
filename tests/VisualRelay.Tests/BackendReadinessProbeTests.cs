@@ -171,21 +171,56 @@ public sealed class BackendReadinessProbeTests
     [Fact]
     public async Task CheckWithRetryAsync_BaseUrlOverload_ProbesRealPort()
     {
-        // Use a closed port: connection-refused returns near-instantly, so all
-        // DefaultRetryAttempts attempts complete quickly with no backoff penalty
-        // from timeouts.  The overload must call CheckAsync in a retry loop and
-        // return not-ready with a non-blank message after exhausting attempts.
-        var closedPort = FreePort();
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var result = await BackendReadinessProbe.CheckWithRetryAsync(
-            $"http://127.0.0.1:{closedPort}",
-            TimeSpan.FromSeconds(2));
-        sw.Stop();
+        // Own the port for the whole test — a bound listener no parallel test can
+        // steal — and answer every probe with 503, so "not ready" is deterministic:
+        // no closed-port reuse race (the old FreePort approach) and no wall-clock
+        // assertion (macOS drops SYNs for a bound-unlistened port, so a served 503
+        // is the reliable fast negative). The overload must call CheckAsync in a
+        // retry loop and return not-ready with a non-blank message after exhausting.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        using var cts = new CancellationTokenSource();
+        var serve = Task.Run(async () =>
+        {
+            try
+            {
+                while (!cts.IsCancellationRequested)
+                {
+                    using var client = await listener.AcceptTcpClientAsync(cts.Token);
+                    await using var stream = client.GetStream();
+                    // Count read to satisfy CA2022; a client that sent nothing just re-loops.
+                    var read = await stream.ReadAsync(new byte[1024], cts.Token);
+                    if (read == 0)
+                        continue;
+                    await stream.WriteAsync(
+                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray(),
+                        cts.Token);
+                    await stream.FlushAsync(cts.Token);
+                }
+            }
+            catch (Exception)
+            {
+                // Listener stopped / token cancelled while accepting or serving.
+            }
+        });
 
-        Assert.False(result.IsReady);
-        Assert.False(string.IsNullOrWhiteSpace(result.Message));
-        // Connection-refused returns fast; total must be under 10s.
-        Assert.True(sw.Elapsed.TotalSeconds < 10);
+        try
+        {
+            var result = await BackendReadinessProbe.CheckWithRetryAsync(
+                $"http://127.0.0.1:{port}",
+                TimeSpan.FromSeconds(2),
+                retryBackoff: TimeSpan.Zero);
+
+            Assert.False(result.IsReady);
+            Assert.False(string.IsNullOrWhiteSpace(result.Message));
+        }
+        finally
+        {
+            cts.Cancel();
+            listener.Stop();
+            await serve;
+        }
     }
 
     [Fact]

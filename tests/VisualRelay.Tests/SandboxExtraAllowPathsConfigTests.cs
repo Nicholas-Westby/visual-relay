@@ -9,7 +9,12 @@ namespace VisualRelay.Tests;
 /// hatch in <c>.relay/config.json</c>. Validates that the field defaults empty,
 /// expands <c>~</c>/<c>$HOME</c>, rejects <c>..</c> (load error), rejects paths
 /// outside <c>$HOME</c> and the workspace root, and accepts legitimate paths.
+///
+/// In the "ProcessEnv" collection: these facts read the live <c>HOME</c> via
+/// <c>GetFolderPath(UserProfile)</c>, so they must not run while another test
+/// transiently overrides the process-wide <c>HOME</c> environment variable.
 /// </summary>
+[Collection("ProcessEnv")]
 public sealed class SandboxExtraAllowPathsConfigTests
 {
     [Fact]
