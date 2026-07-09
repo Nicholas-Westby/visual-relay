@@ -4,7 +4,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Shared helpers for the always-on GitSim unit tests: a convenience wrapper over
-/// <see cref="GitSim.RunAsync"/> that asserts the never-timed-out contract and
+/// <c>GitSim.RunAsync</c> that asserts the never-timed-out contract and
 /// returns just the exit code + combined output, plus an environment-carrying form
 /// for the commit-token/hook facts.
 /// </summary>

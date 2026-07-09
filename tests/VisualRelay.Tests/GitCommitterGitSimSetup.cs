@@ -15,7 +15,7 @@ internal static class GitCommitterGitSimSetup
     {
         var repo = TestRepository.Create();
         var sim = new GitSimEngine();
-        sim.InitRepo(repo.Root, "main");
+        sim.InitRepo(repo.Root);
         return (sim, repo);
     }
 

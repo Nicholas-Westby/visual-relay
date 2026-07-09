@@ -28,7 +28,7 @@ public sealed class RealGitIntegrationTests
     }
 
     /// <summary>Runs real git under <paramref name="root"/>, hermetic, returning the exit code and combined output WITHOUT asserting success (so rejection paths are observable).</summary>
-    internal static (int Exit, string Output) RunGit(
+    private static (int Exit, string Output) RunGit(
         string root, IReadOnlyDictionary<string, string>? env, params string[] args)
     {
         using var process = new Process();
@@ -74,7 +74,7 @@ public sealed class RealGitIntegrationTests
     }
 
     /// <summary>A real git repo with a single seed commit of <c>src/app.cs</c>.</summary>
-    internal static void SeedRepo(string root, string seedContent = "base")
+    private static void SeedRepo(string root, string seedContent = "base")
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));
         File.WriteAllText(Path.Combine(root, "src", "app.cs"), seedContent);

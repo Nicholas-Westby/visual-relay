@@ -36,7 +36,7 @@ internal static class SettingsTestHelpers
         Dispatcher.UIThread.RunJobs();
     }
 
-    public static TopBar GetTopBar(Visual window) =>
+    private static TopBar GetTopBar(Visual window) =>
         window.GetVisualDescendants().OfType<TopBar>().Single();
 
     /// <summary>

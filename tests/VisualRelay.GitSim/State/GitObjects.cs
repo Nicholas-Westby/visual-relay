@@ -91,7 +91,7 @@ internal sealed class GitObjectStore
     private static string HashBlob(byte[] content)
     {
         var payload = new byte[6 + content.Length];
-        Encoding.ASCII.GetBytes("blob\0").CopyTo(payload, 0);
+        "blob\0"u8.CopyTo(payload);
         content.CopyTo(payload, 5);
         return Hex(SHA1.HashData(payload));
     }
@@ -116,7 +116,7 @@ internal sealed class GitObjectStore
     }
 
     private static string Stamp(GitPerson p) =>
-        $"{p.Name} <{p.Email}> {p.When.ToUnixTimeSeconds()} {p.When.Offset.ToString(@"\+hhmm")}";
+        $"{p.Name} <{p.Email}> {p.When.ToUnixTimeSeconds()} {p.When.Offset:\\+hhmm}";
 
     private static string Hex(byte[] bytes) => Convert.ToHexStringLower(bytes);
 }

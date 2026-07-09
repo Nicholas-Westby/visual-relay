@@ -13,8 +13,8 @@ internal static class RelayDriverTestHelpers
 {
     /// <summary>
     /// Driver dependencies for a git-FREE driver test: identical to
-    /// <see cref="RelayDriverDependencies.ForTests(ISubagentRunner, ITestRunner, IRelayEventSink, IGitInvoker?, IEnvironmentAccessor?)"/>
-    /// but binds an in-memory <see cref="GitSimEngine"/> (unregistered at
+    /// <c>RelayDriverDependencies.ForTests</c> but binds an in-memory
+    /// <see cref="GitSimEngine"/> (unregistered at
     /// <paramref name="repo"/>'s root, so every git probe answers
     /// <c>fatal: not a git repository</c> exactly as the real binary does on a
     /// non-repo <see cref="TestRepository"/> root) — removing the real-git process

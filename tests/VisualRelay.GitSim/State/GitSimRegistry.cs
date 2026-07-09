@@ -48,5 +48,5 @@ internal static class GitSimRegistry
 
     /// <summary>The worktree at <paramref name="root"/>, or null when it is not a registered repo.</summary>
     public static Worktree? Find(string root) =>
-        Worktrees.TryGetValue(Normalize(root), out var worktree) ? worktree : null;
+        Worktrees.GetValueOrDefault(Normalize(root));
 }

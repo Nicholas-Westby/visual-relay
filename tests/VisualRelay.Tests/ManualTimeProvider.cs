@@ -64,41 +64,30 @@ internal sealed class ManualTimeProvider : TimeProvider
         return entry;
     }
 
-    private sealed class TimerEntry : ITimer
+    private sealed class TimerEntry(TimerCallback callback, object? state, ManualTimeProvider owner) : ITimer
     {
-        private readonly TimerCallback _callback;
-        private readonly object? _state;
-        private readonly ManualTimeProvider _owner;
-
         public long DeadlineTicks;
         private bool _active;
 
-        internal object? State => _state;
-        internal TimerCallback Callback => _callback;
-
-        public TimerEntry(TimerCallback callback, object? state, ManualTimeProvider owner)
-        {
-            _callback = callback;
-            _state = state;
-            _owner = owner;
-        }
+        internal object? State { get; } = state;
+        internal TimerCallback Callback { get; } = callback;
 
         public bool Change(TimeSpan dueTime, TimeSpan period)
         {
-            lock (_owner._lock)
+            lock (owner._lock)
             {
                 _active = dueTime != Timeout.InfiniteTimeSpan;
 
                 if (!_active)
                 {
-                    _owner._timers.Remove(this);
+                    owner._timers.Remove(this);
                     return true;
                 }
 
-                DeadlineTicks = _owner._ticks + dueTime.Ticks;
+                DeadlineTicks = owner._ticks + dueTime.Ticks;
 
-                if (!_owner._timers.Contains(this))
-                    _owner._timers.Add(this);
+                if (!owner._timers.Contains(this))
+                    owner._timers.Add(this);
 
                 return true;
             }
@@ -106,10 +95,10 @@ internal sealed class ManualTimeProvider : TimeProvider
 
         public void Dispose()
         {
-            lock (_owner._lock)
+            lock (owner._lock)
             {
                 _active = false;
-                _owner._timers.Remove(this);
+                owner._timers.Remove(this);
             }
         }
 

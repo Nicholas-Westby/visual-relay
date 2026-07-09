@@ -255,7 +255,7 @@ public sealed class TaskRowViewModelTests
             var expectedBrush = hex == "Transparent"
                 ? Brushes.Transparent
                 : Brush.Parse(hex);
-            AssertBrushColor((IBrush)expectedBrush, (IBrush)actual!);
+            AssertBrushColor(expectedBrush, (IBrush)actual!);
         }
         else if (expected is Thickness t)
         {

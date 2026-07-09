@@ -1,5 +1,8 @@
 namespace VisualRelay.Tests;
 
+// The 'K2_7' segment encodes the Kimi K2.7 model id under test; the underscore
+// is a deliberate, meaningful part of the name, not a naming-convention slip.
+// ReSharper disable once InconsistentNaming
 public sealed class BackendConfigGeneratorKimiK2_7UpstreamTests
 {
     // ── Kimi K2.7 Code upstream model id ─────────────────────────────────

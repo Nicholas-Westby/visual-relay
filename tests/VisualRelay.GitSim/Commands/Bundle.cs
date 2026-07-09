@@ -41,7 +41,7 @@ internal static partial class GitSimCommands
             return ctx.Unsupported();
         var tip = ResolveRevision(wt, refName);
         if (tip is null)
-            return GitSimResult.Fatal($"Refusing to create empty bundle.");
+            return GitSimResult.Fatal("Refusing to create empty bundle.");
 
         File.WriteAllText(path, JsonSerializer.Serialize(BuildBundle(wt.Repo.Objects, refName, tip)));
         return GitSimResult.Ok($"Created bundle at {path}\n");

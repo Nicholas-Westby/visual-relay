@@ -190,7 +190,7 @@ public sealed class TaskCardRenderTests
         };
         if (visual is not Border && visual is not ContentPresenter) return;
         if (bg is null) return;
-        if (bg == Transparent) return;
+        if (ReferenceEquals(bg, Transparent)) return;
         if (bg is ISolidColorBrush solid && solid.Color.A == 0) return;
         var desc = visual is Border b2
             ? $"Border [{(b2.Classes.Count > 0 ? string.Join(' ', b2.Classes) : "<no classes>")}]"

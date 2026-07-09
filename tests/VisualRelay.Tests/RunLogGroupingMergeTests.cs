@@ -120,8 +120,10 @@ public sealed class RunLogGroupingMergeTests
     [Fact]
     public void MergeNewest_FirstRowIsNonHeartbeat_ReturnsFalse()
     {
-        var rows = new ObservableCollection<IRunLogRow>();
-        rows.Add(new SingleEventRow(StageStart(7, "frontier")));
+        var rows = new ObservableCollection<IRunLogRow>
+        {
+            new SingleEventRow(StageStart(7, "frontier"))
+        };
 
         var merged = RunLogGrouper.MergeNewest(
             rows,

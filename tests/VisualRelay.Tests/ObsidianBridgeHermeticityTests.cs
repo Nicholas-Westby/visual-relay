@@ -75,12 +75,14 @@ public sealed class ObsidianBridgeHermeticityTests : IDisposable
         var envPath = SeedEnvFile(env, enabled: false,
             vaultRoot: "/tmp/custom-vault", pollSeconds: 45);
 
-        var vm = new MainWindowViewModel(environmentAccessor: env);
         // Hydrate the VM to match the seeded file (each set persists, but
         // after hydration the file matches the VM state).
-        vm.ObsidianPollSeconds = 45; // write first to avoid overwriting
-        vm.ObsidianVaultRoot = "/tmp/custom-vault";
-        vm.ObsidianEnabled = false;
+        var vm = new MainWindowViewModel(environmentAccessor: env)
+        {
+            ObsidianPollSeconds = 45, // write first to avoid overwriting
+            ObsidianVaultRoot = "/tmp/custom-vault",
+            ObsidianEnabled = false
+        };
 
         // Now change only ObsidianEnabled.
         vm.ObsidianEnabled = true;

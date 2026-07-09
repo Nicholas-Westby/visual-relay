@@ -71,7 +71,7 @@ public sealed partial class SplitGuardVerificationTests
     /// construct <c>new MainWindow</c> in code whose class is not allowlisted.
     /// Line comments are stripped so prose mentioning the type never trips it.
     /// </summary>
-    internal static IReadOnlyList<string> FindWholeAppBootOffenders(
+    private static IReadOnlyList<string> FindWholeAppBootOffenders(
         IEnumerable<(string Path, string Source)> files)
     {
         var offenders = new List<string>();

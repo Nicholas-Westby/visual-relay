@@ -64,7 +64,7 @@ public sealed class WatchdogCeilingOverflowTests
 
         Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
         Assert.NotEmpty(runner.Invocations);
-        foreach (var inv in runner.Invocations.Where(i => i.Stage is not null && i.Stage.Number > 0))
+        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number > 0))
         {
             // The boosted ceiling saturates positive instead of overflowing negative.
             Assert.Equal(int.MaxValue, inv.AbsoluteCeilingMs);

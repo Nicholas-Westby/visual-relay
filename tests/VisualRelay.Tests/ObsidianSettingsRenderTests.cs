@@ -9,7 +9,7 @@ namespace VisualRelay.Tests;
 
 /// <summary>
 /// Rendering-level guards for the Obsidian-bridge row in the Settings dialog.
-/// Constructs <see cref="ObsidianSettings"/> directly (no <see cref="MainWindow"/>)
+/// Constructs <see cref="ObsidianSettings"/> directly (no <c>MainWindow</c>)
 /// so the facts stay scoped to the control under test.
 /// </summary>
 [Collection("Headless")]
@@ -24,7 +24,7 @@ public sealed class ObsidianSettingsRenderTests
     [AvaloniaFact]
     public void BrowseAndRevealButtons_HaveEqualDefaultAppearance()
     {
-        var (settings, _) = ShowObsidianSettings();
+        var settings = ShowObsidianSettings();
 
         var buttons = settings.GetVisualDescendants()
             .OfType<CommonButton>()
@@ -49,7 +49,7 @@ public sealed class ObsidianSettingsRenderTests
     [AvaloniaFact]
     public void PollSecondsLabel_IsNonNumericDescriptiveText()
     {
-        var (settings, _) = ShowObsidianSettings();
+        var settings = ShowObsidianSettings();
 
         // The label TextBlock is the first child of the horizontal StackPanel
         // in column 3, alongside the 50px-wide poll-seconds TextBox.
@@ -57,7 +57,7 @@ public sealed class ObsidianSettingsRenderTests
             .OfType<StackPanel>()
             .FirstOrDefault(sp =>
                 sp.Orientation == Avalonia.Layout.Orientation.Horizontal
-                && sp.Children.OfType<TextBox>().Any(tb => tb.Width == 50));
+                && sp.Children.OfType<TextBox>().Any(tb => tb.Width is 50));
 
         Assert.NotNull(pollStackPanel);
 
@@ -95,7 +95,7 @@ public sealed class ObsidianSettingsRenderTests
         // The poll TextBox is the one with Width=50 inside the horizontal StackPanel.
         var textBox = settings.GetVisualDescendants()
             .OfType<TextBox>()
-            .FirstOrDefault(tb => tb.Width == 50);
+            .FirstOrDefault(tb => tb.Width is 50);
 
         Assert.NotNull(textBox);
         Assert.Equal("90", textBox!.Text);
@@ -118,7 +118,7 @@ public sealed class ObsidianSettingsRenderTests
     /// VM in a bare window. Enables <see cref="MainWindowViewModel.ObsidianEnabled"/>
     /// so the grid row renders.
     /// </summary>
-    private static (ObsidianSettings settings, Window host) ShowObsidianSettings()
+    private static ObsidianSettings ShowObsidianSettings()
     {
         var vm = SandboxedViewModel();
         vm.ObsidianEnabled = true;
@@ -126,7 +126,7 @@ public sealed class ObsidianSettingsRenderTests
         var host = new Window { Content = settings, Width = 600, Height = 200 };
         host.Show();
         Dispatcher.UIThread.RunJobs();
-        return (settings, host);
+        return settings;
     }
 
     private static MainWindowViewModel SandboxedViewModel()

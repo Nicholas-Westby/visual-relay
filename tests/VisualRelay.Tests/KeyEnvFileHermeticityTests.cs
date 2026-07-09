@@ -36,8 +36,7 @@ public sealed class KeyEnvFileHermeticityTests
         Environment.SetEnvironmentVariable(TestKey, "process-value");
         try
         {
-            var accessor = new DictionaryEnvironmentAccessor();
-            accessor[TestKey] = "accessor-value";
+            var accessor = new DictionaryEnvironmentAccessor { [TestKey] = "accessor-value" };
             var result = KeyEnvFile.GetEnv(TestKey, accessor);
             Assert.Equal("accessor-value", result);
         }

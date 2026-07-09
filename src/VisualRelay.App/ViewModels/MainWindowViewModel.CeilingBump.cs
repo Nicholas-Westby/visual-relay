@@ -45,6 +45,9 @@ public partial class MainWindowViewModel
     // Hook: when SelectedTaskError changes (set by OnSelectedTaskChanged in
     // RunHistory.cs and RefreshSelectedTaskErrorAfterRun in LiveState.cs),
     // re-evaluate IsCeilingTimeoutError so the banner's button visibility updates.
+    // The generated On*Changed hook passes the new value; this impl re-derives it
+    // from the property, so the parameter is intentionally unused.
+    // ReSharper disable once UnusedParameterInPartialMethod
     partial void OnSelectedTaskErrorChanged(string? value)
     {
         OnPropertyChanged(nameof(IsCeilingTimeoutError));

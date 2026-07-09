@@ -58,10 +58,14 @@ public sealed class ScreenshotAndStateTests
         {
             var context = new DefaultHttpContext
             {
-                Request = { Method = "GET", Path = "/screenshot" },
+                Request =
+                {
+                    Method = "GET",
+                    Path = "/screenshot",
+                    QueryString = new QueryString($"?path={Uri.EscapeDataString(targetPath)}")
+                },
                 Response = { Body = new MemoryStream() }
             };
-            context.Request.QueryString = new QueryString($"?path={Uri.EscapeDataString(targetPath)}");
 
             await handler(context);
             context.Response.Body.Position = 0;

@@ -95,5 +95,5 @@ internal sealed class GitRepository
         new("VisualRelay Test", "test@example.test", DateTimeOffset.FromUnixTimeSeconds(1_600_000_000));
 
     private long _clock = 1_600_000_000;
-    public DateTimeOffset NextTimestamp() => DateTimeOffset.FromUnixTimeSeconds(System.Threading.Interlocked.Increment(ref _clock));
+    public DateTimeOffset NextTimestamp() => DateTimeOffset.FromUnixTimeSeconds(Interlocked.Increment(ref _clock));
 }

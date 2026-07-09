@@ -10,7 +10,7 @@ namespace VisualRelay.Tests;
 /// exercise GitCommitter's real, unavoidable retry backoff and so cost seconds
 /// regardless of the git backend) live in sibling classes that run as parallel
 /// collections; all keep their original assertions, now against in-memory GitSim state
-/// and, for hook rejection, via <see cref="GitSim.PreCommitHook"/>.
+/// and, for hook rejection, via <c>GitSim.PreCommitHook</c>.
 /// </summary>
 public sealed class GitCommitterTests
 {

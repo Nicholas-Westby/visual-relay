@@ -39,7 +39,7 @@ public sealed class RelayDriverVerifyFixBoostTests
         Assert.NotEmpty(runner.Invocations);
         // Every regular stage invocation must carry the boosted turn count (200 * 10 = 2000).
         // Triage invocations have a separate capped MaxTurns (12); filter them out.
-        foreach (var inv in runner.Invocations.Where(i => i.Stage is not null && i.Stage.Number > 0))
+        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number > 0))
         {
             Assert.Equal(2000, inv.MaxTurns);
         }
@@ -76,7 +76,7 @@ public sealed class RelayDriverVerifyFixBoostTests
         Assert.NotEmpty(runner.Invocations);
         // Every regular stage invocation must use the default 200.
         // Triage invocations have a separate capped MaxTurns (12); filter them out.
-        foreach (var inv in runner.Invocations.Where(i => i.Stage is not null && i.Stage.Number > 0))
+        foreach (var inv in runner.Invocations.Where(i => i.Stage.Number > 0))
         {
             Assert.Equal(200, inv.MaxTurns);
         }

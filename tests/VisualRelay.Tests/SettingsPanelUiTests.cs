@@ -184,7 +184,7 @@ public sealed partial class SettingsPanelUiTests
     }
 
     [AvaloniaFact]
-    public async Task KeySetupButtonIsAbsentFromTopBar()
+    public void KeySetupButtonIsAbsentFromTopBar()
     {
         EnsureNoUserEnv();
         using var repo = TestRepository.Create();

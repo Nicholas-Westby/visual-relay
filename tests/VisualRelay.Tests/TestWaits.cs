@@ -18,6 +18,9 @@ internal static class TestWaits
     /// directory rather than polling. Returns the predicate's final value; a false return
     /// means the safety timeout elapsed first.
     /// </summary>
+    // The bool (landed vs timed-out) is deliberate wait-helper API even if
+    // current callers ignore it; keep it and silence the solution-wide check.
+    // ReSharper disable once UnusedMethodReturnValue.Global
     public static async Task<bool> ForFileAsync(
         string path, Func<bool>? predicate = null, int timeoutSeconds = 20)
     {
@@ -29,12 +32,10 @@ internal static class TestWaits
         Directory.CreateDirectory(dir);
 
         var landed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        using var watcher = new FileSystemWatcher(dir)
-        {
-            IncludeSubdirectories = true,
-            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite
-                | NotifyFilters.Size | NotifyFilters.CreationTime | NotifyFilters.DirectoryName,
-        };
+        using var watcher = new FileSystemWatcher(dir);
+        watcher.IncludeSubdirectories = true;
+        watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite
+            | NotifyFilters.Size | NotifyFilters.CreationTime | NotifyFilters.DirectoryName;
         void Check(object? _, FileSystemEventArgs __)
         {
             if (predicate())
