@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-09T09:11:07.493552+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: expand-tilde-in-obsidian-vault-root\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Expand `~` in the Obsidian Vault Root at Point of Use (Stray `<repo>/~/\u2026` Tree)\n\nDiagnosed 2026-07-08: a literal `~/Library/Mobile Documents/iCloud~md~obsidian/\u2026` directory\ntree keeps appearing under the repo root (the user deleted it; the running app recreated it\nthe same day). The audit log (`~/.config/visual-relay/settings-audit.log`) shows the trigger:\n\n```\n2026-07-08T04:55:12Z VR_OBSIDIAN_VAULT_ROOT \"/Users/\u2026/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/\" -> \"~/Library/Mobile Documents/iCloud~md~obsidian/Documents/Visual Relay LLM Tasks/\" source=settings-ui pid=15435 proc=VisualRelay.App\n```\n\nThe tilde form is a deliberate, desirable way to store the vault root (the `.env` is\nper-machine but home paths differ between host and VM) \u2014 the bug is that the live app treats\nthe raw string as a filesystem path. .NET never expands `~`, so `~/\u2026` is a RELATIVE path,\nresolved against the app's working directory (the repo root).\n\n## Root cause (verified in source)\n\n`ObsidianBridgeSettings.Load` (`src/VisualRelay.Core/Configuration/ObsidianBridgeSettings.cs`)\nalready expands the stored value at startup:\n\n```csharp\nvar vaultRoot = !string.IsNullOrWhiteSpace(vaultRootStr)\n    ? ExpandTilde(vaultRootStr, home)\n    : defaultVaultRoot;\n```\n\n```csharp\nprivate static string ExpandTilde(string path, string home)\n{\n    if (string.IsNullOrWhiteSpace(home))\n        return path;\n    if (path.StartsWith(\"~/\", StringComparison.Ordinal))\n        return Path.Combine(home, path[2..]);\n    return path;\n}\n```\n\n\u2026and hydration is guarded (`LoadObsidianBridgeSettings` sets `_isHydrating` so the expanded\nvalue is not persisted back \u2014 `.env` keeps the tilde). So restarted sessions are fine.\n\nThe gap is every path that puts a RAW value into the live `ObsidianVaultRoot` VM property\n(`src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs`):\n\n1. the Settings textbox (the 2026-07-07 edit above), and\n2. the control API \u2014 `src/VisualRelay.App/Services/ControlApi.cs`:\n   `viewModel.ObsidianVaultRoot = path;` \u2014 so headless/loopback drivers hit the same bug.\n\nEvery consumer then uses the property verbatim. The two production\n`ObsidianVaultLayout` constructions (both in `MainWindowViewModel.ObsidianBridge.cs` \u2014 one in\n`RunObsidianBridgeScanAsync`, one in `ExportSummaryOnCompletion`):\n\n```csharp\nvar layout = new ObsidianVaultLayout(ObsidianVaultRoot, repoName);\nlayout.EnsureScaffold();\n```\n\n`ObsidianVaultLayout` (`src/VisualRelay.Core/ObsidianBridge/ObsidianVaultLayout.cs`) does\n`Path.Combine(_vaultRoot, \u2026)` and `Directory.CreateDirectory` on the results \u2014 with\n`_vaultRoot = \"~/Library/\u2026\"` that scaffolds `<cwd>/~/Library/\u2026`. `RevealVaultRoot` (same VM\nfile) has the same defect: `FileReveal.Reveal(ObsidianVaultRoot)` reveals a relative path.\n\nFix at the point of use, not at the write sites: the ctor is the single choke point through\nwhich BOTH production layout uses (and any future one) flow, and it covers textbox and\ncontrol-API writes alike. The VM property deliberately keeps showing the tilde form the user\ntyped, and `.env` keeps storing it.\n\n## What to build (TDD-first)\n\n1. **Shared helper.** New file `src/VisualRelay.Core/Configuration/TildePath.cs`\n   (namespace `VisualRelay.Core.Configuration`, next to `KeyEnvFile`/`XdgConfig`):\n\n   ```csharp\n   /// <summary>Expands a leading \"~/\" to the user's home directory. All other\n   /// forms (absolute, relative, bare \"~\", \"~user/\u2026\") pass through verbatim.</summary>\n   public static class TildePath\n   {\n       public static string Expand(string path) =>\n           Expand(path, Environment.GetEnvironmentVariable(\"HOME\")\n               is { Length: > 0 } home\n               ? home\n               : Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));\n\n       public static string Expand(string path, string? home)\n       {\n           if (string.IsNullOrWhiteSpace(home))\n               return path;\n           return path.StartsWith(\"~/\", StringComparison.Ordinal)\n               ? Path.Combine(home, path[2..])\n               : path;\n       }\n   }\n   ```\n\n   Semantics are exactly today's `ExpandTilde` \u2014 do not extend to `~user` or bare `~`.\n\n2. **Single implementation.** Replace the private `ExpandTilde` in\n   `ObsidianBridgeSettings.cs` with calls to `TildePath.Expand(vaultRootStr, home)` (it keeps\n   resolving `home` through its `IEnvironmentAccessor` seam; delete the private method).\n\n3. **Expand in the layout ctor** \u2014 the fix itself. In `ObsidianVaultLayout`'s constructor:\n\n   ```csharp\n   _vaultRoot = TildePath.Expand(vaultRoot);\n   ```\n\n   Every existing call site passes an absolute or non-`~` path, for which `Expand` is a\n   verbatim no-op \u2014 zero behavior change outside the bug case.\n\n4. **Fix the reveal.** In `RevealVaultRoot`, reveal `TildePath.Expand(ObsidianVaultRoot)`.\n   (No new test \u2014 `FileReveal` shells out to the OS; the expansion is covered by unit tests\n   of `TildePath` itself.)\n\n5. **Tests** (red-first where marked):\n   - New `TildePathTests.cs`: `\"~/x\"` \u2192 `Path.Combine(<resolved home>, \"x\")`; absolute path\n     unchanged; plain relative unchanged; bare `\"~\"` unchanged; `\"~user/x\"` unchanged; the\n     two-arg overload with `home: null` returns input verbatim. Pure string assertions, no\n     filesystem I/O.\n   - **RED regression pin** in `ObsidianVaultLayoutTests.cs`: constructing\n     `new ObsidianVaultLayout(\"~/vault-tilde-test\", \"repo\")` yields a `RepoDir` equal to\n     `Path.Combine(<resolved home>, \"vault-tilde-test\", \"repo\")` \u2014 in particular NOT starting\n     with `\"~\"`. Assert on the computed string only; do NOT call `EnsureScaffold` in this\n     test (never create directories under the real home).\n   - Regression pins that stay green unmodified: the existing tilde-expansion Load tests in\n     `ObsidianBridgeSettingsTests.cs` (they already feed\n     `\"~/Library/Mobile Documents/iCloud~md~obsidian/\u2026\"` through `Load` with a fake\n     accessor), all other `Obsidian*Tests` (they construct layouts with absolute temp\n     roots \u2014 the ctor change is a no-op for them), and `ObsidianBridgeHermeticityTests.cs`.\n\n## Done when\n\n- Typing or control-API-setting a `~/\u2026` vault root in a live session can no longer create\n  `<cwd>/~/\u2026`: both production layout constructions and the reveal path expand it to the\n  real home directory, while the Settings textbox and `.env` continue to display/store the\n  tilde form as entered.\n- `TildePath` is the only tilde-expansion implementation (the private\n  `ObsidianBridgeSettings.ExpandTilde` is gone).\n- All tests above pass; `./visual-relay check` passes.\n\n## Guardrails\n\n- Do NOT normalize at the write sites (textbox change handler, control-API setter,\n  `PersistBridgeSettings`) \u2014 the raw tilde in the VM property and `.env` is intended,\n  VM-portable behavior; only consumption expands. Do not rewrite the user's input.\n- Do NOT add rooted-path validation or reject other relative vault roots \u2014 out of scope.\n- Do NOT delete the existing stray `<repo>/~` tree \u2014 user cleanup, not this task.\n- Touched files stay under the 300-line guard: `ObsidianVaultLayout.cs` (216 now, +1),\n  `ObsidianBridgeSettings.cs` (260 now, net negative), `MainWindowViewModel.ObsidianBridge.cs`\n  (222 now, +1), new `TildePath.cs` (~30).\n- Conventional Commits (`docs/commit-messages.md`, `AGENTS.md`); minimal diffs.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the build log, the project compiles successfully (2846 tests pass, 110 skipped). The task description is extremely detailed and prescriptive. Let me frame the task concisely and offer 2\u20133 distinct solution strategies.\n\n---\n\n## Task Summary\n\nThe Obsidian vault root stored as `~/Library/Mobile Documents/iCloud~md~obsidian/\u2026` (deliberate tilde form for VM portability) is consumed verbatim in two `ObsidianVaultLayout` constructions and one `RevealVaultRoot` call, causing .NET to treat it as a relative path resolved against the working directory. The result: a stray `<repo>/~/Library/\u2026` tree that gets recreated every session.\n\nThe prescribed fix adds a `TildePath.Expand(...)` call at the single choke point (`ObsidianVaultLayout` constructor) plus the reveal path, creates a shared `TildePath` helper class, replaces the private `ExpandTilde` in `ObsidianBridgeSettings`, adds unit tests, and deliberately avoids normalizing at write sites (VM property, `.env`).\n\n---\n\n## Solution Options\n\n**Option A \u2014 Expand at the consumption choke point (prescribed approach)**\nAdd `TildePath.Expand(vaultRoot)` inside `ObsidianVaultLayout`'s constructor and in `RevealVaultRoot`. Extract the shared `TildePath` helper; replace the private `ExpandTilde` in settings. New tests for `TildePath` + one regression pin in `ObsidianVaultLayoutTests`.\n\n- *Pro:* Single-line change in the layout ctor covers *all* current and future consumers instantly. Semantically pure \u2014 tilde expansion is a path-normalisation concern, so it belongs where the path is *used* for I/O, not where it's stored or displayed. Minimal diff (net ~+30 lines).\n- *Con:* None of the task's own constraints. Only caveat: `ObsidianVaultLayout` is constructed in two places in the VM file plus any future caller \u2014 the ctor fix is invisible to callers, so a new caller might still pass a raw `~/\u2026` and get correct behaviour without knowing expansion exists.\n\n**Option B \u2014 Expand in the VM property getter (alternative choke point)**\nStore `ObsidianVaultRoot` as the raw `~/\u2026` string but have the public getter return `TildePath.Expand(value)`. All consumers (layout ctor, reveal, plus any third-party accessor) get the expanded form transparently.\n\n- *Pro:* A single change in one property getter protects every downstream use, not just the layout/reveal paths. More defensive \u2014 even `Debug.WriteLine(ObsidianVaultRoot)` would show a real path.\n- *Con:* The getter would show the expanded path in the Settings textbox (since the textbox binds to the property), violating the requirement that \"the Settings textbox continues to display the tilde form as entered.\" To fix that, the textbox would need a separate display property, adding complexity. Also conflicts with \"do NOT normalize at the write sites\" \u2014 the property getter is a read-site, but the binding feedback loop makes it effectively a write-site concern.\n\n**Option C \u2014 Expand at each call site (no shared choke point)**\nSkip `ObsidianVaultLayout` ctor expansion. Instead, expand `~/\u2026` individually in:\n1. `RunObsidianBridgeScanAsync`\n2. `ExportSummaryOnCompletion`\n3. `RevealVaultRoot`\nKeep the `TildePath` helper and settings replacement (same as Option A), but do not modify the layout constructor.\n\n- *Pro:* Each expansion is explicit and visible at the point of use. No risk of side effects if `ObsidianVaultLayout` is constructed for a non-I/O purpose (currently it isn't).\n- *Con:* Three change sites instead of one; a future fourth layout construction would silently re-introduce the bug. More fragile, more maintenance burden. The task explicitly ruled this out by preferring the layout ctor choke point.\n\n---\n\n**Recommendation:** Option A matches the prescribed fix exactly. It satisfies all guardrails, has zero behavior change outside the bug case, and keeps the diff minimal. The only scenario it doesn't cover is a hypothetical non-layout consumer of `ObsidianVaultRoot` that does I/O directly \u2014 but no such consumer exists today, and the reveal path is independently fixed.\n\n```json\n{\n  \"summary\": \"Backport `~/\u2026` expansion into `ObsidianVaultLayout` constructor and `RevealVaultRoot`, so that the literal tilde string stored in the VM property and `.env` is expanded to the real home directory at the point of filesystem I/O, preventing stray `<repo>/~/Library/\u2026` trees. Also extract a shared `TildePath` helper, replace the private `ExpandTilde` in settings, and add unit tests \u2014 all without normalizing raw user input at write/storage sites.\",\n  \"options\": [\n    \"A \u2014 Expand at the consumption choke point (prescribed): add `TildePath.Expand(vaultRoot)` in `ObsidianVaultLayout` constructor + `RevealVaultRoot`. Single-line fix covers all consumers; minimal diff.\",\n    \"B \u2014 Expand in the VM property getter: protects all downstream code (not just layout/reveal) but would break the Settings textbox binding showing the raw tilde form, requiring workarounds.\",\n    \"C \u2014 Expand at each call site individually: more explicit but three change sites instead of one, and a future fourth consumer would silently re-introduce the bug.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 5,
+    "tool_calls_total": 5,
+    "tool_calls_succeeded": 2,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "list_files": {
+        "succeeded": 1,
+        "failed": 3
+      },
+      "read_file": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 5,
+    "total_llm_time_s": 28.792,
+    "prompt_cache": {
+      "cached_tokens": 25728,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.005,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.971,
+      "prompt_tokens_est": 5669,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*",
+        "path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 154,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/**/*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 154,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.447,
+      "prompt_tokens_est": 6080,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 121,
+      "error": "error: Path '.' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.323,
+      "prompt_tokens_est": 6153,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 35
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 1.462,
+      "prompt_tokens_est": 6201,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/cmd_output_8b8c233ee209.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 29427
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 20.59,
+      "prompt_tokens_est": 14954,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

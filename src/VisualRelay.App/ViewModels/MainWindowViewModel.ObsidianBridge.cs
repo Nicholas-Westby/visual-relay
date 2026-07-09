@@ -92,7 +92,7 @@ public partial class MainWindowViewModel
     private void RevealVaultRoot()
     {
         if (!string.IsNullOrWhiteSpace(ObsidianVaultRoot))
-            FileReveal.Reveal(ObsidianVaultRoot);
+            FileReveal.Reveal(TildePath.Expand(ObsidianVaultRoot));
     }
 
     /// <summary>

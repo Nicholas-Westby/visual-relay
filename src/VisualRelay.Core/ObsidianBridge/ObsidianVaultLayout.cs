@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 
 namespace VisualRelay.Core.ObsidianBridge;
@@ -55,7 +56,7 @@ public sealed partial class ObsidianVaultLayout
     // express that transform without an extra init member.
     public ObsidianVaultLayout(string vaultRoot, string repoName)
     {
-        _vaultRoot = vaultRoot;
+        _vaultRoot = TildePath.Expand(vaultRoot);
         _repoName = SanitizeRepoName(repoName);
     }
 

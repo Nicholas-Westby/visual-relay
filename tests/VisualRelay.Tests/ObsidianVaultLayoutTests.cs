@@ -150,6 +150,21 @@ public sealed class ObsidianVaultLayoutTests
         Assert.Contains("Info.md", names);
     }
 
+    // ── Tilde expansion ──────────────────────────────────────────────
+
+    [Fact]
+    public void Ctor_ExpandsTildeInVaultRoot()
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var layout = new ObsidianVaultLayout("~/vault-tilde-test", "repo");
+
+        var expected = Path.Combine(home, "vault-tilde-test", "repo");
+
+        Assert.Equal(expected, layout.RepoDir);
+        Assert.False(layout.RepoDir.StartsWith("~", StringComparison.Ordinal),
+            "RepoDir must not start with '~' — tilde should be expanded to the real home directory.");
+    }
+
     // ── EnsureScaffold ────────────────────────────────────────────────
 
     [Fact]

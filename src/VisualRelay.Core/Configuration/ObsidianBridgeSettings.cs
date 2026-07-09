@@ -80,7 +80,7 @@ public static class ObsidianBridgeSettings
         var enabled = bool.TryParse(enabledStr, out var e) && e;
 
         var vaultRoot = !string.IsNullOrWhiteSpace(vaultRootStr)
-            ? ExpandTilde(vaultRootStr, home)
+            ? TildePath.Expand(vaultRootStr, home)
             : defaultVaultRoot;
 
         var pollSeconds = int.TryParse(pollStr, out var p) ? p : 60;
@@ -236,18 +236,7 @@ public static class ObsidianBridgeSettings
             return DefaultVaultRootTemplate;
         }
 
-        return ExpandTilde(DefaultVaultRootTemplate, home);
-    }
-
-    private static string ExpandTilde(string path, string home)
-    {
-        if (string.IsNullOrWhiteSpace(home))
-            return path;
-
-        if (path.StartsWith("~/", StringComparison.Ordinal))
-            return Path.Combine(home, path[2..]);
-
-        return path;
+        return TildePath.Expand(DefaultVaultRootTemplate, home);
     }
 }
 
