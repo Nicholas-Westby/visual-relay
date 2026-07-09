@@ -1,4 +1,3 @@
-using Avalonia.Threading;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;

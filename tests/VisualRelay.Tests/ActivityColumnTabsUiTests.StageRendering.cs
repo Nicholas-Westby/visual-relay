@@ -1,9 +1,7 @@
 using Avalonia.Controls;
-using Avalonia.Threading;
 using Avalonia.VisualTree;
 using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
-using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls;
 
 namespace VisualRelay.Tests;

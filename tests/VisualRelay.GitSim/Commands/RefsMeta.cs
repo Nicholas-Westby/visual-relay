@@ -1,5 +1,3 @@
-using VisualRelay.GitSim.State;
-
 namespace VisualRelay.GitSim;
 
 internal static partial class GitSimCommands

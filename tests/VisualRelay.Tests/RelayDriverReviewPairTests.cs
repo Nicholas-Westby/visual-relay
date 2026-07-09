@@ -1,6 +1,5 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
-using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 

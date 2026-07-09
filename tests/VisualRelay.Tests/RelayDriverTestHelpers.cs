@@ -1,7 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Logging;
 using VisualRelay.Domain;
-using Xunit;
 using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;

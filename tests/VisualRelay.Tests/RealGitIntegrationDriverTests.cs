@@ -1,4 +1,3 @@
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 using static VisualRelay.Tests.RealGitIntegrationTests;

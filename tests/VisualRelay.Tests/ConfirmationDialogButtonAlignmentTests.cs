@@ -1,6 +1,3 @@
-using Avalonia;
-using Avalonia.Controls;
-
 namespace VisualRelay.Tests;
 
 /// <summary>

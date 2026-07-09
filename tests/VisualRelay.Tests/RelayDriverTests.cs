@@ -1,7 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
-using static VisualRelay.Tests.GitSimTestHelpers;
 
 namespace VisualRelay.Tests;
 
