@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -21,15 +20,20 @@ namespace VisualRelay.Guards;
 ///   <item>shell <c>sleep N</c> (any duration, incl. <c>infinity</c>) inside a string literal;</item>
 ///   <item>the quoted-argv form <c>"sleep","30"</c> (e.g. <c>new ProcessStartInfo("sleep","30")</c>,
 ///         <c>ArgumentList = { "sleep", "30" }</c>) which spans two literal tokens;</item>
-///   <item>C# <c>Thread.Sleep(...)</c> / <c>Task.Delay(...)</c> whose first argument statically
-///         evaluates to a literal duration &gt;= 1000 ms with no real
-///         <see cref="System.Threading.CancellationToken"/> (<c>.None</c> / <c>default</c> do not count).</item>
+///   <item>every C# <c>Thread.Sleep(...)</c> (it has no virtual-clock overload) and every
+///         <c>Task.Delay(...)</c> that lacks a <see cref="System.TimeProvider"/> argument —
+///         ANY duration, cancellable or not. A real <see cref="System.Threading.CancellationToken"/>
+///         no longer exempts a delay: only a TimeProvider (the virtual-clock seam) does. The
+///         3-arg <c>Task.Delay(TimeSpan, TimeProvider, CancellationToken)</c> and the 2-arg
+///         <c>Task.Delay(TimeSpan, TimeProvider)</c> forms are the sanctioned virtual delays.</item>
 /// </list>
 ///
 /// An inline <c>// vr-allow-sleep: &lt;reason&gt;</c> on the violation's line suppresses it; a bare
-/// marker with no reason does not. The matcher self-exempts <c>RealSleepGuard.cs</c> and
-/// <c>RealSleepGuardTests.cs</c> by filename because they carry sleep fixtures.
-/// No I/O, no git — callers supply the (path, source) pairs.
+/// marker with no reason does not. The matcher self-exempts by filename the guard's own fixture
+/// carriers (<c>RealSleepGuard.cs</c>, <c>RealSleepGuardTests.cs</c>) and the opt-in
+/// slow-integration files (<see cref="RealIntegrationExemptFileNames"/>) whose real waits run
+/// only behind <c>SlowIntegration.SkipIfNotOptedIn()</c>. No I/O, no git — callers supply the
+/// (path, source) pairs.
 /// </summary>
 public static class RealSleepGuard
 {
@@ -48,11 +52,22 @@ public static class RealSleepGuard
     private static readonly Regex AllowMarkerPattern =
         new(@"//\s*vr-allow-sleep:\s*\S", RegexOptions.Compiled);
 
-    /// <summary>The C#-delay floor: shorter literal delays are polling, not "won't stop on its own".</summary>
-    private const int CSharpDelayThresholdMs = 1000;
-
     /// <summary>Filenames whose own bodies legitimately contain sleep fixtures.</summary>
     private static readonly string[] SelfExemptFileNames = ["RealSleepGuard.cs", "RealSleepGuardTests.cs"];
+
+    /// <summary>
+    /// Opt-in slow-integration files: their real processes and real wall-clock windows
+    /// (kill escalation, setpgid reap, SIGINT trap, socket wedge) run only behind
+    /// <c>SlowIntegration.SkipIfNotOptedIn()</c>, so a genuine wait there is legitimate.
+    /// Each has an always-on virtual-clock sibling asserting the same decision logic.
+    /// </summary>
+    private static readonly string[] RealIntegrationExemptFileNames =
+    [
+        "ProcessCaptureGracefulStopTests.cs",
+        "SandboxedTestRunnerReapTests.cs",
+        "ActivityWatchdogSocketWedgeTests.cs",
+        "SwivalSubagentRunnerSlowIntegrationTests.cs",
+    ];
 
     private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);
 
@@ -66,7 +81,8 @@ public static class RealSleepGuard
 
         foreach (var (path, source) in files)
         {
-            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))
+            var fileName = Path.GetFileName(path);
+            if (SelfExemptFileNames.Contains(fileName) || RealIntegrationExemptFileNames.Contains(fileName))
                 continue;
 
             ScanSource(path, source, violations);
@@ -118,7 +134,7 @@ public static class RealSleepGuard
             }
         }
 
-        // Rule 3 — long, uncancellable Thread.Sleep / Task.Delay.
+        // Rule 3 — every Thread.Sleep, and every Task.Delay lacking a TimeProvider.
         foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
         {
             if (inv.Expression is not MemberAccessExpressionSyntax ma)
@@ -132,21 +148,19 @@ public static class RealSleepGuard
                 continue;
 
             var args = inv.ArgumentList.Arguments;
-            if (args.Count == 0)
+
+            // Task.Delay driven by a TimeProvider (the virtual-clock seam) is exempt —
+            // any duration, cancellable or not. Thread.Sleep has no such overload, so it
+            // is ALWAYS a real sleep. A real CancellationToken no longer exempts a delay:
+            // only a TimeProvider does (that is the loophole this rule closes).
+            if (isTaskDelay && HasTimeProviderArgument(args))
                 continue;
 
-            var ms = EvaluateDurationMs(args[0].Expression);
-            if (ms is null || ms.Value < CSharpDelayThresholdMs)
-                continue;
-
-            // Only Task.Delay has a CancellationToken overload; a *real* token (not .None /
-            // default) means a regressed watchdog can still cut the wait short, so don't flag.
-            if (isTaskDelay && args.Count >= 2 && IsRealCancellationToken(args[1].Expression))
-                continue;
-
+            var reason = isThreadSleep
+                ? "Thread.Sleep is a real wall-clock sleep (no TimeProvider overload)"
+                : "Task.Delay with no TimeProvider argument (drive it with a virtual clock)";
             var line = LineOf(text, ma.Name.Identifier.SpanStart);
-            raw.Add(new Violation(path, line, SnippetOf(text, line),
-                $"{owner}.{method}({Format(ms.Value)} ms) with no real CancellationToken"));
+            raw.Add(new Violation(path, line, SnippetOf(text, line), reason));
         }
 
         // Apply the inline allow-list, then de-duplicate per (line, reason).
@@ -172,16 +186,36 @@ public static class RealSleepGuard
         _ => false,
     };
 
-    private static bool IsRealCancellationToken(ExpressionSyntax expr)
+    /// <summary>
+    /// True when a <c>Task.Delay</c> argument list carries a <see cref="System.TimeProvider"/>.
+    /// The only 3-argument overload is <c>(TimeSpan, TimeProvider, CancellationToken)</c>, so any
+    /// call with three arguments carries one; a 2-argument call carries one only when its second
+    /// argument is recognisably a TimeProvider (the ambiguous <c>(TimeSpan, TimeProvider)</c> vs
+    /// <c>(TimeSpan, CancellationToken)</c> case), matched by shape/name.
+    /// </summary>
+    private static bool HasTimeProviderArgument(SeparatedSyntaxList<ArgumentSyntax> args)
     {
-        var compact = expr.ToString().Replace(" ", string.Empty);
-        // .None and default / default(CancellationToken) are not real tokens.
-        if (compact is "default")
-            return false;
-        if (compact.EndsWith("CancellationToken.None", StringComparison.Ordinal)
-            || compact.EndsWith("default(CancellationToken)", StringComparison.Ordinal))
-            return false;
-        return true;
+        if (args.Count >= 3)
+            return true;
+        return args.Count == 2 && IsTimeProviderExpression(args[1].Expression);
+    }
+
+    /// <summary>Recognises a TimeProvider second argument: a <c>TimeProvider.X</c> member access,
+    /// or an identifier named for a clock (<c>timeProvider</c>, <c>_timeProvider</c>, <c>tp</c>,
+    /// <c>time</c>, <c>clock</c>). CancellationToken arguments never match these.</summary>
+    private static bool IsTimeProviderExpression(ExpressionSyntax expr)
+    {
+        if (expr is MemberAccessExpressionSyntax ma && RightmostIdentifier(ma.Expression) == "TimeProvider")
+            return true;
+        var name = expr switch
+        {
+            IdentifierNameSyntax id => id.Identifier.Text,
+            MemberAccessExpressionSyntax m => m.Name.Identifier.Text,
+            _ => string.Empty,
+        };
+        var lower = name.ToLowerInvariant();
+        return lower.Contains("timeprovider", StringComparison.Ordinal)
+            || lower is "tp" or "time" or "clock" or "_time" or "_clock" or "_timeprovider" or "_tp";
     }
 
     private static string RightmostIdentifier(ExpressionSyntax expr) => expr switch
@@ -190,63 +224,6 @@ public static class RealSleepGuard
         MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,
         _ => string.Empty,
     };
-
-    /// <summary>
-    /// Statically evaluates a duration expression to milliseconds, or null when it is not a
-    /// literal we can read (favouring false-negatives on the C# arm, per the design).
-    /// Handles bare numeric literals (ms) and <c>TimeSpan.FromSeconds/FromMilliseconds(literal)</c>.
-    /// </summary>
-    private static double? EvaluateDurationMs(ExpressionSyntax expr)
-    {
-        switch (expr)
-        {
-            case ParenthesizedExpressionSyntax p:
-                return EvaluateDurationMs(p.Expression);
-
-            // ReSharper disable once MergeIntoPattern — IsKind is a method, cannot use property pattern
-            case LiteralExpressionSyntax lit when lit.Token.IsKind(SyntaxKind.NumericLiteralToken):
-                return AsDouble(lit.Token.Value);
-
-            // ReSharper disable MergeIntoPattern — RightmostIdentifier needs m.Expression; IsKind is a method
-            case InvocationExpressionSyntax i
-                when i.Expression is MemberAccessExpressionSyntax m
-                     && RightmostIdentifier(m.Expression) == "TimeSpan"
-                     && i.ArgumentList.Arguments.Count == 1
-                     && i.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax inner
-                     && inner.Token.IsKind(SyntaxKind.NumericLiteralToken):
-                // ReSharper restore MergeIntoPattern
-                {
-                    var n = AsDouble(inner.Token.Value);
-                    if (n is null)
-                        return null;
-                    return m.Name.Identifier.Text switch
-                    {
-                        "FromMilliseconds" => n,
-                        "FromSeconds" => n * 1000,
-                        _ => null,
-                    };
-                }
-
-            default:
-                return null;
-        }
-    }
-
-    private static double? AsDouble(object? value) => value switch
-    {
-        int i => i,
-        long l => l,
-        double d => d,
-        float f => f,
-        decimal m => (double)m,
-        uint u => u,
-        ulong ul => ul,
-        _ => null,
-    };
-
-    private static string Format(double ms) =>
-        // ReSharper disable once CompareOfFloatsByEqualityOperator — exact integer check on double is safe here (values from TimeSpan are exact)
-        ms == Math.Floor(ms) ? ((long)ms).ToString(CultureInfo.InvariantCulture) : ms.ToString(CultureInfo.InvariantCulture);
 
     private static int LineOf(SourceText text, int position) =>
         text.Lines.GetLinePosition(position).Line + 1;

@@ -7,8 +7,8 @@ namespace VisualRelay.Tests;
 /// <see cref="ShellScriptSizeGuardTests"/>). The matcher
 /// (<see cref="RealSleepGuard.FindViolations"/>) is pure: it Roslyn-parses each
 /// source and flags real sleeps — shell <c>sleep N</c> embedded in string literals,
-/// the <c>("sleep","30")</c> argv form, and long uncancellable
-/// <c>Thread.Sleep</c>/<c>Task.Delay</c> calls — while string-literal-token scoping
+/// the <c>("sleep","30")</c> argv form, every <c>Thread.Sleep</c>, and every
+/// <c>Task.Delay</c> lacking a TimeProvider argument — while string-literal-token scoping
 /// makes doc-comment / identifier false positives impossible by construction.
 ///
 /// This file carries the matcher's behavioural facts plus the live enumeration
@@ -55,20 +55,19 @@ public sealed class RealSleepGuardTests
     }
 
     /// <summary>
-    /// No false positives: <c>sleep 30</c> inside a <c>///</c> doc comment, an identifier
-    /// named <c>SleepDuration</c>, and a short cancellable <c>Task.Delay(50, ct)</c> yield
-    /// zero violations. The doc-comment immunity is the whole point of scoping the regex to
-    /// string-literal tokens — comments are trivia, never literal tokens.
+    /// No false positives on non-calls: <c>sleep 30</c> inside a <c>///</c> doc comment and an
+    /// identifier named <c>SleepDuration</c> yield zero violations. The doc-comment immunity is
+    /// the whole point of scoping the shell regex to string-literal tokens — comments are trivia,
+    /// never literal tokens — and an identifier is not a <c>Thread.Sleep</c>/<c>Task.Delay</c> call.
     /// </summary>
     [Fact]
-    public void DocCommentSleep_Identifier_AndShortCancellableDelay_AreNotReported()
+    public void DocCommentSleep_AndIdentifier_AreNotReported()
     {
         const string source = """
             class C
             {
                 /// <summary>waits like <c>sleep 30</c> would, but in-process.</summary>
                 int SleepDuration = 50;
-                Task M(CancellationToken ct) => Task.Delay(50, ct);
             }
             """;
 
@@ -78,8 +77,36 @@ public sealed class RealSleepGuardTests
     }
 
     /// <summary>
-    /// Cancellation carve-out (no real token): a long <c>Task.Delay(60_000, CancellationToken.None)</c>
-    /// is reported because <c>.None</c> is not a real token — nothing can cut the wait short.
+    /// Loophole closed: a SHORT, cancellable <c>Task.Delay(50, ct)</c> is now reported — a real
+    /// <see cref="CancellationToken"/> no longer exempts a delay (only a TimeProvider does), and
+    /// there is no duration floor. This is the exact case the old matcher let through.
+    /// </summary>
+    [Fact]
+    public void ShortCancellableDelay_WithoutTimeProvider_IsNowReported()
+    {
+        const string source = "class C { Task M(CancellationToken ct) => Task.Delay(50, ct); }";
+
+        var violations = RealSleepGuard.FindViolations([("Fixtures/Short.cs", source)]);
+
+        Assert.NotEmpty(violations);
+    }
+
+    /// <summary>
+    /// A bare 1-arg <c>Task.Delay(1)</c> — the old advance-yield idiom — is reported: no
+    /// TimeProvider argument, so it is a real (if tiny) wall-clock delay.
+    /// </summary>
+    [Fact]
+    public void BareDelay_NoTimeProvider_IsReported()
+    {
+        const string source = "class C { Task M() => Task.Delay(1); }";
+
+        var violations = RealSleepGuard.FindViolations([("Fixtures/Bare.cs", source)]);
+
+        Assert.NotEmpty(violations);
+    }
+
+    /// <summary>
+    /// <c>Task.Delay(60_000, CancellationToken.None)</c> is reported — no TimeProvider argument.
     /// </summary>
     [Fact]
     public void LongDelay_WithCancellationTokenNone_IsReported()
@@ -92,15 +119,61 @@ public sealed class RealSleepGuardTests
     }
 
     /// <summary>
-    /// Cancellation carve-out (real token): the same long <c>Task.Delay(60_000, ct)</c> driven by a
-    /// real <see cref="CancellationToken"/> is not reported — the test can cut the wait short.
+    /// Every <c>Thread.Sleep(...)</c> is reported regardless of duration — it has no
+    /// virtual-clock overload, so it is always a real wall-clock sleep.
     /// </summary>
     [Fact]
-    public void LongDelay_WithRealCancellationToken_IsNotReported()
+    public void ThreadSleep_ShortDuration_IsReported()
     {
-        const string source = "class C { Task M(CancellationToken ct) => Task.Delay(60_000, ct); }";
+        const string source = "class C { void M() => Thread.Sleep(10); }";
 
-        var violations = RealSleepGuard.FindViolations([("Fixtures/Real.cs", source)]);
+        var violations = RealSleepGuard.FindViolations([("Fixtures/Sleep.cs", source)]);
+
+        Assert.NotEmpty(violations);
+    }
+
+    /// <summary>
+    /// The sanctioned virtual delay: a 3-arg <c>Task.Delay(TimeSpan, TimeProvider, CancellationToken)</c>
+    /// is NOT reported — the only 3-argument overload carries a TimeProvider (the virtual-clock seam).
+    /// </summary>
+    [Fact]
+    public void Delay_WithTimeProviderAndToken_IsNotReported()
+    {
+        const string source =
+            "class C { Task M(TimeProvider tp, CancellationToken ct) => Task.Delay(TimeSpan.FromMilliseconds(50), tp, ct); }";
+
+        var violations = RealSleepGuard.FindViolations([("Fixtures/Virtual.cs", source)]);
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
+    /// The 2-arg <c>Task.Delay(TimeSpan, TimeProvider.System)</c> form is NOT reported — the
+    /// second argument is recognisably a TimeProvider, not a CancellationToken.
+    /// </summary>
+    [Fact]
+    public void Delay_WithTwoArgTimeProviderSystem_IsNotReported()
+    {
+        const string source =
+            "class C { Task M() => Task.Delay(TimeSpan.FromMilliseconds(200), TimeProvider.System); }";
+
+        var violations = RealSleepGuard.FindViolations([("Fixtures/VirtualTwoArg.cs", source)]);
+
+        Assert.Empty(violations);
+    }
+
+    /// <summary>
+    /// Slow-integration files are exempt by filename: their real waits run only behind
+    /// <c>SlowIntegration.SkipIfNotOptedIn()</c>. A <c>Thread.Sleep</c> in one of them is not
+    /// reported (mirrors the guard's own fixture self-exemption).
+    /// </summary>
+    [Fact]
+    public void RealIntegrationExemptFile_IsNotScanned()
+    {
+        const string source = "class C { void M() => Thread.Sleep(5000); }";
+
+        var violations = RealSleepGuard.FindViolations(
+            [("tests/VisualRelay.Tests/ProcessCaptureGracefulStopTests.cs", source)]);
 
         Assert.Empty(violations);
     }
@@ -136,45 +209,20 @@ public sealed class RealSleepGuardTests
     }
 
     /// <summary>
-    /// The live enforcing gate: every <c>*.cs</c> in the test project (excluding bin/obj)
-    /// is free of real sleeps. Now ENABLED — Part B of harness-no-real-sleeps-in-tests
-    /// made the suite sleep-free: the timing-sensitive watchdog tests were rewritten to
-    /// a 0-CPU block-forever child (Class A) or the pure ActivityWatchdog.DecideOutcome
-    /// decision driven by simulated time values (Class B), so no test embeds a real
-    /// shell sleep as a "won't-stop-on-its-own" stand-in. This fact keeps the suite that
-    /// way: any reintroduced real sleep flips the guard to a build failure.
+    /// The live enforcing gate: every always-on <c>*.cs</c> in the test project (excluding
+    /// bin/obj) is free of real sleeps. The matcher now flags EVERY <c>Thread.Sleep</c> and
+    /// every <c>Task.Delay</c> lacking a TimeProvider — any duration, cancellable or not — so
+    /// the only sanctioned delay is the virtual-clock form <c>Task.Delay(ts, timeProvider, ct)</c>.
+    /// Timing-sensitive supervision facts are driven on a ManualTimeProvider (the watchdog loop,
+    /// cpu-sample cadence, and trace poll all read the injected clock); advance-yield loops use
+    /// <c>Task.Yield()</c> (a pure scheduler yield, not a wall-clock wait). Any reintroduced real
+    /// sleep flips the guard to a build failure.
     ///
-    /// ALLOWLIST — legitimate real-process waits that remain by design (each entry
-    /// carries a one-line justification; new entries must be reviewed):
-    ///
-    /// 1. SwivalSubagentRunnerWatchdogTests.RunAsync_TotallySilentProcess_*
-    ///    — real-process smoke: spawns a blocking child and waits for the watchdog
-    ///    to deliver SIGKILL; the kill path cannot be exercised via decision seam.
-    ///
-    /// 2. SwivalSubagentRunnerWatchdogTests.RunAsync_SilentCpuBurn_*
-    ///    — real-process smoke: verifies CPU-pulse detection on a live child;
-    ///    CPU sampling against a real OS process tree is seam-exempt.
-    ///
-    /// 3. ActivityWatchdogSocketWedgeTests.ProcessCapture_SyntheticWedge_*
-    ///    — real-process smoke: socket-wedge scenario with ProcessCapture
-    ///    integration; real pipeline from child spawn through watchdog to kill.
-    ///
-    /// 4. CliWatchdogTests.Returns124_* — end-to-end TimeoutWatchdog tests that
-    ///    verify real SIGKILL escalation; the CliWatchdog is a separate
-    ///    process-based tool, not ActivityWatchdog.
-    ///
-    /// 5. SwivalSubagentRunnerWatchdogTests retry/output-capture/NonzeroExit facts
-    ///    — test retry, output capture, and nonzero-exit handling through the
-    ///    full SwivalSubagentRunner pipeline; these behaviors live above the
-    ///    watchdog's decision seam and cannot be tested in isolation.
-    ///
-    /// 6. SandboxedTestRunnerReapTests / SwivalSubagentRunnerTests
-    ///    — real process lifecycle (reap, stdout/stdin pumps) through sandbox
-    ///    and swival runners; pipeline-integration tests, not watchdog-decision.
-    ///
-    /// 7. Virtualized watchdog tests use Task.Delay(1) in advance-yield loops
-    ///    to cooperatively yield to thread-pool pump continuations; each delay
-    ///    is 1 ms (&lt; the 1 000 ms gate threshold) and is harmless.
+    /// The genuine OS-semantics facts (real kill escalation, setpgid reap, SIGINT trap, socket
+    /// wedge) keep their real processes and windows but run only behind
+    /// <c>SlowIntegration.SkipIfNotOptedIn()</c>; their files are exempt by filename via
+    /// <c>RealSleepGuard.RealIntegrationExemptFileNames</c> and each has an always-on
+    /// virtual-clock sibling asserting the same decision logic.
     /// </summary>
     [Fact]
     public void AllTestProjectCsFiles_AreSleepFree()

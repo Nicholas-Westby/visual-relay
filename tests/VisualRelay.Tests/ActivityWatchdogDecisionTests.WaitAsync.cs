@@ -28,29 +28,6 @@ public sealed partial class ActivityWatchdogDecisionTests
             }
         }, stop);
 
-    // Wedge-sample pump emulating a BURSTY working agent: a CPU burst (busy sample)
-    // then several idle samples, repeating — so sustained-idle never reaches a full
-    // window. The token is a PARAMETER (not a captured `using` local) so the pump
-    // owns no disposable it could outlive (mirrors StartCpuPulsePump).
-    private static Task StartBurstyWedgePump(
-        ActivityWatchdog watchdog, int windowMs, CancellationToken stop, TimeProvider? timeProvider = null) =>
-        Task.Run(async () =>
-        {
-            var tp = timeProvider ?? TimeProvider.System;
-            while (!stop.IsCancellationRequested)
-            {
-                watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
-                    SubtreeIdle: false, BackendSocketEstablished: true)); // CPU burst
-                for (var i = 0; i < 3 && !stop.IsCancellationRequested; i++)
-                {
-                    watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
-                        SubtreeIdle: true, BackendSocketEstablished: true)); // idle between bursts
-                    try { await Task.Delay(TimeSpan.FromMilliseconds(windowMs / 8), tp, stop); }
-                    catch (OperationCanceledException) { return; }
-                }
-            }
-        }, stop);
-
     // Wedge-sample pump emulating a SUSTAINED-idle wedge: only idle samples (socket
     // up), refreshed so the verdict never goes stale. Token is a parameter, as above.
     private static Task StartIdleWedgePump(
@@ -98,7 +75,7 @@ public sealed partial class ActivityWatchdogDecisionTests
         for (var i = 0; i < 200 && !watchdogTask.IsCompleted; i++)
         {
             time.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            await Task.Yield();
         }
         var result = await watchdogTask;
         await pumpCts.CancelAsync();
@@ -132,22 +109,25 @@ public sealed partial class ActivityWatchdogDecisionTests
             absoluteCeilingMs: 0, kill, timeProvider: time);
 
         watchdog.Pulse("trace");
-        watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: false, BackendSocketEstablished: true));
-
-        using var pumpCts = new CancellationTokenSource();
-        var pump = StartCpuPulsePump(watchdog, pumpCts.Token, time);
 
         using var stopCts = new CancellationTokenSource();
         var watchdogTask = watchdog.WaitAsync(stopCts.Token);
-        for (var i = 0; i < 120 && !watchdogTask.IsCompleted; i++)
+        // Inline cpu pump: a pulse + BUSY wedge sample once per sub-window step, so the
+        // inactivity deadline and the sustained-idle clock are BOTH continuously reset —
+        // exactly what a real cpu pump does, but with deterministic ordering against the
+        // virtual clock (no background task racing time advancement). Because a pulse
+        // lands within every `step` (< window), the watchdog can never observe a full
+        // window of silence or sustained-idleness whenever its loop reads the clock.
+        // Twelve steps carry it across three full inactivity windows.
+        const int step = inactivityMs / 4;
+        for (var i = 0; i < 12 && !watchdogTask.IsCompleted; i++)
         {
-            time.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            watchdog.Pulse("cpu");
+            watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: false, BackendSocketEstablished: true));
+            time.Advance(TimeSpan.FromMilliseconds(step));
+            await Task.Yield();
         }
-        await pumpCts.CancelAsync();
-        await pump;
         await stopCts.CancelAsync();
-        time.Advance(TimeSpan.FromMilliseconds(200));
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.Disarmed, result.Outcome);
@@ -177,22 +157,24 @@ public sealed partial class ActivityWatchdogDecisionTests
 
         watchdog.Pulse("trace"); // early real output, then trace freezes
 
-        using var pumpCts = new CancellationTokenSource();
-        var cpuPump = StartCpuPulsePump(watchdog, pumpCts.Token, time);
-        var samplePump = StartBurstyWedgePump(watchdog, inactivityMs, pumpCts.Token, time);
-
         using var stopCts = new CancellationTokenSource();
         var watchdogTask = watchdog.WaitAsync(stopCts.Token);
-        for (var i = 0; i < 240 && !watchdogTask.IsCompleted; i++)
+        // Bursty inline pump: a cpu pulse every step keeps the ordinary deadline alive;
+        // the wedge sample is mostly IDLE but bursts BUSY every third step, so the
+        // sustained-idle clock never reaches a full window (a working agent between model
+        // turns). Deterministic against the virtual clock — the busy burst lands within
+        // every window, so the wedge gate's sustained-idle requirement is never met, no
+        // matter when the loop reads the clock. Sixteen steps cross four windows.
+        const int step = inactivityMs / 4;
+        for (var i = 0; i < 16 && !watchdogTask.IsCompleted; i++)
         {
-            time.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            watchdog.Pulse("cpu");
+            watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
+                SubtreeIdle: i % 3 != 0, BackendSocketEstablished: true));
+            time.Advance(TimeSpan.FromMilliseconds(step));
+            await Task.Yield();
         }
-        await pumpCts.CancelAsync();
-        await cpuPump;
-        await samplePump;
         await stopCts.CancelAsync();
-        time.Advance(TimeSpan.FromMilliseconds(200));
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.Disarmed, result.Outcome);
@@ -227,7 +209,7 @@ public sealed partial class ActivityWatchdogDecisionTests
         for (var i = 0; i < 200 && !watchdogTask.IsCompleted; i++)
         {
             time.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            await Task.Yield();
         }
         var result = await watchdogTask;
 
@@ -280,7 +262,7 @@ public sealed partial class ActivityWatchdogDecisionTests
         for (var i = 0; i < 120 && !watchdogTask.IsCompleted; i++)
         {
             time.Advance(TimeSpan.FromMilliseconds(50));
-            await Task.Delay(1);
+            await Task.Yield();
         }
         var result = await watchdogTask;
 
