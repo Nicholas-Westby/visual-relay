@@ -22,7 +22,7 @@ public sealed partial class SandboxedTestRunner(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var (fileName, args) = ResolveLaunch(command, rootPath);
-        var env = SwivalSubagentRunner.BuildSandboxEnvironment(config);
+        var env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —

@@ -156,6 +156,72 @@ public sealed partial class Installer5LauncherTests
         Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
     }
 
+    // ── 6. User-env snapshot capture ─────────────────────────────────────
+
+    /// <summary>
+    /// Launcher captures the caller's pre-devshell environment via env -0 into a
+    /// snapshot file, gated on VISUAL_RELAY_NIX_REENTRY not being set. The stubbed
+    /// nix copies the snapshot to a known location so the test can assert the file
+    /// exists, is nonempty, and contains a marker var set in the test harness.
+    /// </summary>
+    [Fact]
+    public async Task Launcher_CapturesUserEnvSnapshot()
+    {
+        var testBody = """
+            STUB_DIR="/tmp/.vr-test-snap-stub-bin"
+            KNOWN_SNAP="/tmp/.vr-test-snap-known"
+            rm -rf "$STUB_DIR" "$KNOWN_SNAP"
+            mkdir -p "$STUB_DIR"
+
+            # Stub nix: copies the snapshot file to a known location before exiting.
+            cat > "$STUB_DIR/nix" << 'X' && chmod +x "$STUB_DIR/nix"
+            #!/bin/bash
+            # The launcher creates the snapshot under TMPDIR/.vr-run-$$/user-env
+            # Copy it to a known location for assertions.
+            for d in /tmp/.vr-run-*; do
+                if [[ -f "$d/user-env" ]]; then
+                    cp "$d/user-env" /tmp/.vr-test-snap-known
+                fi
+            done
+            exit 0
+            X
+
+            # Run the launcher with a marker var set and nix reentry empty.
+            VR_TEST_MARKER="snapshot-test-value" \
+                VISUAL_RELAY_NIX_REENTRY= \
+                TMPDIR=/tmp \
+                PATH="$STUB_DIR:/usr/bin:/bin" \
+                bash "$LAUNCHER" gen-backend-config /dev/null 2>/dev/null || true
+
+            # Assert snapshot file exists and is nonempty.
+            if [[ ! -f "$KNOWN_SNAP" ]]; then
+                echo "FAIL: snapshot file not created" >&2
+                rm -rf "$STUB_DIR" "$KNOWN_SNAP"; exit 1
+            fi
+
+            if [[ ! -s "$KNOWN_SNAP" ]]; then
+                echo "FAIL: snapshot file is empty" >&2
+                rm -rf "$STUB_DIR" "$KNOWN_SNAP"; exit 1
+            fi
+
+            # Assert marker var is present in snapshot (NUL-delimited; grep treats
+            # NUL as non-newline so it matches the marker within the binary stream).
+            if ! grep -qa 'VR_TEST_MARKER=snapshot-test-value' "$KNOWN_SNAP"; then
+                echo "FAIL: VR_TEST_MARKER not found in snapshot" >&2
+                xxd "$KNOWN_SNAP" | head -20 >&2
+                rm -rf "$STUB_DIR" "$KNOWN_SNAP"; exit 1
+            fi
+
+            rm -rf "$STUB_DIR" "$KNOWN_SNAP"
+            """;
+
+        var (exitCode, _, stderr) =
+            await RunLauncherTestAsync("snap-capture", testBody);
+        if (!string.IsNullOrEmpty(stderr))
+            Assert.Fail($"Launcher snapshot-capture test failed:\n{stderr}");
+        Assert.Equal(0, exitCode);
+    }
+
     /// <summary>Stubs dotnet to append garbage to the running launcher, then
     /// asserts clean exit. Before the function-wrap fix bash would resume parsing
     /// after the edit and hit a syntax error; after the fix all control flow is

@@ -124,7 +124,7 @@ public sealed partial class SwivalSubagentRunner
             var arguments = BuildPromptArguments(attemptInvocation, resolvedCommands, correctivePriorOutput, correctiveShapeError, attempt, reportFile);
 
             var (fileName, launchArguments) = BuildLaunchTarget(arguments, skipDirs, attemptInvocation);
-            var sandboxEnv = BuildSandboxEnvironment(_config);
+            var sandboxEnv = BuildTargetCommandEnvironment(_config);
             var processTimeout = absoluteCeilingMs <= 0
                 ? Timeout.InfiniteTimeSpan
                 : TimeSpan.FromMilliseconds(absoluteCeilingMs);

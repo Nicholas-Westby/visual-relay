@@ -1,3 +1,4 @@
+using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -39,5 +40,26 @@ public sealed partial class SwivalSubagentRunner
         }
 
         return env;
+    }
+
+    /// <summary>
+    /// Builds the target-repo command environment by starting from the
+    /// pre-devshell user snapshot (when available), then applying VR's sandbox
+    /// overrides on top. When no snapshot exists — packaged/brew installs, or
+    /// the env var is absent — falls back to returning the VR overrides alone
+    /// (the current process env is the base, matching existing behavior).
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string> BuildTargetCommandEnvironment(
+        RelayConfig config, IEnvironmentAccessor? accessor = null)
+    {
+        var snapshot = UserEnvSnapshot.Load(accessor);
+        if (snapshot is null)
+            return BuildSandboxEnvironment(config);
+
+        var merged = new Dictionary<string, string>(snapshot);
+        foreach (var kvp in BuildSandboxEnvironment(config))
+            merged[kvp.Key] = kvp.Value;
+
+        return merged;
     }
 }
