@@ -175,7 +175,10 @@ public sealed partial class SplitGuardVerificationTests
         // RelayDriverTests facts into RelayDriverRerunTests (3) and
         // RelayDriverManifestTests (4); all three prefixes tracked below, count
         // unchanged.
-        const int baseline = 171;
+        // Bumped 171→174 on 2026-07-09: verify-signature-in-flag-reason added
+        // 3 [Fact]s to RelayDriverBaselineVerifyTests (stable-failure, differing-
+        // failure, reason-flows-to-review).
+        const int baseline = 174;
 
         string[] prefixes =
         [

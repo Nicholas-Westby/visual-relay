@@ -14,10 +14,10 @@ public sealed partial class RelayDriver
     /// NOTE: the event reports the RAW authoritative-gate verdict; at stage 10 a task can
     /// still go green via baseline-exclusion of pre-existing failures, so a green task
     /// legitimately having a <c>check:"red"</c> stage-9 <c>verify_result</c> is not a contradiction.
-    /// Returns the persisted full-output artifact PATH (or null when the write failed) so the
-    /// caller can hand it to the next Fix-verify agent prompt (read-the-complete-log breadcrumb).
+    /// Returns a tuple of (output-file-path, check, tree-hash, distilled-reason) so
+    /// callers can embed the verify signature into flag reasons without re-computing.
     /// </summary>
-    private async Task<string?> PublishVerifyResultAsync(
+    private async Task<(string? OutputFile, string Check, string TreeHash, string Reason)> PublishVerifyResultAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayStageDefinition stage, int attempt, RelayConfig config,
         TestRunResult testResult, IReadOnlyList<string> manifest,
@@ -55,7 +55,7 @@ public sealed partial class RelayDriver
                 ["outputFile"] = outputFile ?? string.Empty
             }), cancellationToken);
 
-        return outputFile;
+        return (outputFile, check, treeHash, reason);
     }
 
     /// <summary>

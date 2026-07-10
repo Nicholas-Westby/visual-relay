@@ -41,7 +41,9 @@ public sealed class RelayDriverVerifyFixConvergenceGuardTests
         Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
         Assert.NotNull(outcome.Reason);
         Assert.Contains("after 3 fix-verify", outcome.Reason!, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("non-convergent", outcome.Reason!, StringComparison.OrdinalIgnoreCase);
+        // All failures are identical (ScriptedTestRunner returns same output each
+        // run) → the identical-failure advisory is expected diagnostic enrichment.
+        Assert.Contains("identical failure across all attempts", outcome.Reason!, StringComparison.OrdinalIgnoreCase);
         // All 3 fix-verify runs ran (no early bail at run 2).
         var fixVerifyStarts = sink.Events.Where(e => e is { EventName: "stage_start", StageNumber: 11 }).ToList();
         Assert.Equal(3, fixVerifyStarts.Count);
