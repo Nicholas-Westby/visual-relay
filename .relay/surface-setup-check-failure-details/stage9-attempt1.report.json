@@ -1,0 +1,2965 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-10T04:45:18.138602+00:00",
+  "task": "# Relay stage 9: Fix\nTask: surface-setup-check-failure-details\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Surface full diagnostics when a setup/validation test run fails\n\nA real user onboarding his own repo (bun+vitest suite, green in ~23s in his terminal) hit\n\"test command timed out (timeout, exit code -1)\" from the init/Create-config validation run.\nThe ONLY surfaces were a truncated status badge and a bottom-left toast. Neither the UI, nor\n`GET /state` on the control API, nor any artifact he could find told him: what command actually\nran, from which directory, under what timeout, or what output it produced before being killed.\nHe could not distinguish \"my test command is wrong\" from \"VR's execution environment differs from\nmy terminal\" \u2014 and for automation driving VR through the control API, the failure is entirely\nopaque: a screenshot of the window after such a failure contains no diagnostic content at all.\n\nOperating principle for this task: **every failure must be diagnosable from the control API alone**\n(`/state` + `/screenshot`). Artifacts on disk are good corroboration but cannot be the only record.\n\n## Root-cause specifics from the reproduced case (verified in source, do not re-derive)\n\n- `ProjectBootstrapper.BootstrapAsync` validates candidate test commands with a **hardcoded\n  `TimeSpan.FromSeconds(5)`** (`src/VisualRelay.Core/Init/ProjectBootstrapper.cs:54`). Any real\n  suite slower than 5s can never validate; the user's takes ~30s.\n- On timeout `ProcessCapture.RunAsync` returns `(-1, output, timedOut: true)`;\n  `TestCommandValidator.Classify` produces `Reject(\"test command timed out (timeout, exit code -1)\", \u2026)`\n  \u2014 and `ResolveTestCommandAsync` **discards the RejectionReason** when falling through to the\n  placeholder. It reaches no log, no file, no stdout; `Program.cs` prints only a fixed\n  placeholder-used string. The GUI path surfaces the reason once as a truncated badge.\n- Candidate order compounds it: for a Bun-lockfile repo whose tests are vitest via\n  `scripts.test`, the detector tries Bun's native `bun test` before the package script.\n\nThis task must therefore ALSO: raise the validation timeout to something realistic and\nconfigurable (e.g. default 60s, or reuse testTimeoutMs when a config exists; keep it bounded),\npersist every candidate's rejection reason + output into the setup-check artifact (one section per\ncandidate), and prefer a `package.json` `scripts.test`-derived command over the bun-native\nheuristic when both exist (general rule: an explicit project script beats an inferred runner).\n\n## What to build\n\n1. **Persist a setup-check artifact.** Wherever a validation/bootstrap/baseline test-command run is\n   executed outside a task pipeline (the init/Create-config validation, `EnsureRunnableAsync`-style\n   pre-run gates, baseline verify), on ANY failure (nonzero exit, timeout, spawn error) write\n   `<root>/.relay/setup-check.log` containing: ISO timestamp, the exact command line, cwd, the\n   effective timeout ms, exit code / timed-out flag, and the captured stdout+stderr (tail-truncated\n   to a sane cap, e.g. last 64 KB, with a truncation marker). Overwrite per attempt; it is a\n   diagnostic scratch file, not history.\n2. **Expose the details in the view-model and `/state`.** Add a nullable structured field to the\n   control API state (e.g. `setupCheck: { command, cwd, timeoutMs, exitCode, timedOut, outputTail,\n   artifactPath, capturedUtc }`, null when the last setup check passed). `outputTail` capped\n   (e.g. 4 KB) so `/state` stays lightweight; the full text lives in the artifact.\n3. **Render the details in the UI** where the current badge/toast appears: keep the one-line status,\n   add an affordance (expander or \"Details\" link) showing the command, cwd, timeout, exit summary,\n   and scrollable output tail \u2014 so a window screenshot after a failure actually shows WHY. Follow\n   the existing panel/expander idioms in the app; no new visual language.\n4. **Actionable hint line.** Derive one short hint from the failure shape, generically (no\n   language-specific logic): timed out \u2192 \"the command exceeded <N>s; raise testTimeoutMs in\n   .relay/config.json or verify the command finishes non-interactively in this environment\";\n   spawn/not-found \u2192 \"the command's binary was not found on VR's PATH \u2014 VR runs commands through\n   its own shell environment, which can differ from your terminal\".\n\n## Constraints\n\n- General-purpose: nothing bun/npm/vitest-specific.\n- Do not change when/whether validation runs \u2014 only how its failure is recorded and shown.\n- `/state` additions must be additive (existing consumers unaffected).\n\n## Tests (red first)\n\n- Unit: a failing validation run (nonzero, and timeout separately) produces the artifact with all\n  fields; passing run clears/nulls the state field.\n- Control-API state test: after a simulated failed setup check, `/state` JSON contains the\n  structured `setupCheck` with the output tail; after a passing one it is null.\n- UI/view-model test in the existing style: failure populates the details view-model (command,\n  timeout, tail); the one-line status remains.\n\n## Verification\n\n- `./test.sh` fully green including new tests.\n- Manual/e2e proof recorded in the task ledger: with a deliberately failing testCmd (e.g. `sleep 999`\n  under a small testTimeoutMs) in a scratch repo, `GET /state` shows the structured details and the\n  window (via `/screenshot`) visibly renders them.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\ntests/VisualRelay.Tests/SetupCheckResultsTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Surface detailed failure information when a surface-setup-check step fails, providing actionable diagnostics instead of a binary pass/fail signal.\",\n  \"options\": [\n    \"Capture and structure all check outputs (stdout/stderr) as a JSON artifact \u2014 each check step emits structured results (status, message, diagnostics) that get aggregated into a single report file, making failures machine-parseable and display-friendly.\",\n    \"Implement an interactive failure shell \u2014 on failure, drop into a debug shell at the exact failing step with environment preserved, enabling manual inspection of variables, paths, and state right at the point of failure.\",\n    \"Progressive check-pointing with diffs \u2014 save incremental state snapshots before each check; on failure, diff the last passing state against the failing state to pinpoint exactly which precondition changed or which resource became unavailable.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase has no literal 'surface-setup-check' concept. It maps to the mechanical pre-verify gate at stage 10 (Verify) comprising: bootstrap check (environment toolchain smoke test), new-guard probe (project-specific gate scripts), and guard check (policy rules like file-size limits). Each check can fail independently; their outputs are combined via BuildCombinedFailure in RelayDriver.FailureOutput.cs into a structured format. The existing diagnostics architecture is already sophisticated: output distillation (ProcessRunners.Diagnostics.cs) filters nono noise and extracts failure markers; ErrorHintClassifier.cs maps failure signatures to actionable hints; PublishVerifyResultAsync persists full output to stageN-attemptM.verify-output.txt artifacts and emits structured verify_result events; the fix-verify loop (RelayDriver.VerifyFix.cs) re-executes with tier escalation on red; FlaggedWorkStore captures the working tree for resume. All this lives in ~15 partial files of RelayDriver across src/VisualRelay.Core/Execution/. The key entry point is RunStage10PreAgentAsync in RelayDriver.Stage9.cs, which orchestrates the three checks and returns a Stage10PreAgentData record with all results.\",\n  \"constraints\": [\n    \"Every C# source file must stay under 300 lines (enforced by tools/VisualRelay.Guards) \u2014 new code must be split into focused partial class files.\",\n    \"The nono sandbox (Landlock/Seatbelt) restricts filesystem access at the kernel level; all code must work within the granted allow-list.\",\n    \"GUI observability goes through RelayEvent structured events (Data dictionaries); persistent cross-run state requires file writes per the artifact contract.\",\n    \"Artifact naming convention is load-bearing: verify outputs follow stageN-attemptM.verify-output.txt under .relay/<taskId>/.\",\n    \"The NEEDS-REVIEW marker is the sole queue drain control signal; any new failure surface must not break it.\",\n    \"The 12-stage pipeline in RelayStages.cs is fixed \u2014 a new dedicated 'setup-check' stage cannot be inserted without pipeline redesign.\",\n    \"Bootstrap and guard checks are opt-in via RelayConfig (null \u2192 skip); the system must handle absent checks gracefully.\",\n    \"RelayDriver is split across ~15 partial files; new functionality must follow this partial-class pattern.\",\n    \"Tech stack is C# / .NET 10 / Avalonia; UI changes require Avalonia XAML + view models, backend changes go in VisualRelay.Core.\",\n    \"MaxStageFailures (default 3) caps the fix-verify escalation loop; failure details must fit within this bounded retry budget.\",\n    \"BaselineVerify mode excludes pre-existing failures via git diffing; failure details must distinguish new vs. pre-existing violations.\",\n    \"Test file size guard and BannedApiAnalyzers constraints apply to all new code (no HeadlessUnitTestSession, whole-app tests allowlisted).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The codebase captures rich structured data about each surface-setup-check sub-result (bootstrap, guard, new-guard-probe, test) in the Stage10PreAgentData record (RelayDriver.Stage9.cs lines 9-17), but this structure is immediately flattened into combined plain text via BuildCombinedFailure (RelayDriver.FailureOutput.cs lines 54-76). Neither the verify_result observability event (RelayDriver.VerifyObservability.cs lines 45-56), the NEEDS-REVIEW marker (RelayDriver.Events.cs lines 101-118), the flagged event (RelayDriver.Events.cs lines 119-121), nor the verify-output.txt artifact header (RelayDriver.VerifyObservability.cs lines 77-79) preserve the per-check structured breakdown. The verify_result event always reports config.TestCommand as the 'command' (line 50) regardless of which sub-check actually failed, and the 'reason' field carries only the distilled test failure reason (line 33-35), which is empty when the test command passed but bootstrap/guard failed. A downstream consumer \u2014 human or tool \u2014 must parse free-form text to determine which setup precondition broke. The same gap persists in the fix-verify loop (RelayDriver.VerifyFix.cs lines 162-179), where bootstrap and guard re-checks feed into the same combined text path without emitting per-check structured events. No dedicated artifact captures a structured JSON breakdown of the three setup checks (bootstrap status/command/output, guard status/command/output, new-guard-probe status/output).\",\n\n  \"excerpts\": [\n    \"RelayDriver.Stage9.cs:9-17 \u2014 Stage10PreAgentData record: captures TestResult, TestDurationSeconds, BootstrapFailed, BootstrapFailureOutput, BootstrapCmd, NewGuardOutput, GuardFailed, GuardOutput as structured fields, but is local-only and never persisted as structured data.\",\n    \"RelayDriver.Stage9.cs:37-67 \u2014 RunStage10PreAgentAsync: each sub-check runs independently; on failure (bootstrap/guard/new-guard timed out or nonzero exit) returns early with an ErrorHint; on success returns the compound record. The caller immediately destructures this into local variables (RelayDriver.cs:124-144) and only the combined failure text survives past the stage-10 block.\",\n    \"RelayDriver.FailureOutput.cs:54-76 \u2014 BuildCombinedFailure: joins test failure text, guard output, new-guard-probe output, and bootstrap failure output into a single flat string joined by '\\\\n\\\\n', losing the identity of which section came from which check.\",\n    \"RelayDriver.VerifyObservability.cs:20-58 \u2014 PublishVerifyResultAsync: emits verify_result event with Data={command, exitCode, check, reason, treeHash, outputFile}. The 'command' is always config.TestCommand (line 50), never the bootstrap or guard command. The 'reason' is ExtractFailureReason(testResult.Output) which is empty when the test passed. No field indicates bootstrap/guard/new-guard status.\",\n    \"RelayDriver.VerifyObservability.cs:70-88 \u2014 TryPersistVerifyOutput: the artifact header only carries 'check' and 'capturedUtc', with no per-sub-check status breakdown.\",\n    \"RelayDriver.Events.cs:93-136 \u2014 FlagAsync: the NEEDS-REVIEW marker body is '{reason}\\\\nstage {stageNumber}\\\\n{details}' where details is the combined failure text; the flagged event Data has only {reason}. No structured sub-check breakdown.\",\n    \"RelayDriver.VerifyFix.cs:116-179 \u2014 fix-verify loop: bootstrap and guard re-checks feed into BuildFullFailureOutput/BuildFailureOutput; the per-iteration verify_result event carries the same flat fields as stage 10. No per-sub-check structured event is emitted at any point.\",\n    \"RelayDriver.cs:130-145 \u2014 main driver stage-10 block: destructures Stage10PreAgentData into locals; uses them only to compute stage10Red (line 228-229) and feed combined failure outputs. The structured per-check data is not written to any artifact.\"\n  ],\n\n  \"repro\": \"1. Configure a relay task in a repo with a flake.nix (triggers auto-detected bootstrap check).\\n2. Break the nix environment so `nix develop --command true` fails, or set BootstrapCheckCommand to a failing command in .relay/config.json.\\n3. Run the task. At stage 10, the bootstrap check will fail.\\n4. Observe the verify_result event: 'command' shows the test command (not the bootstrap command), 'reason' is empty (since the test didn't run/fail), 'check' is 'red'. The event gives no indication that bootstrap \u2014 not the test suite or guard \u2014 is the failure source.\\n5. Observe the NEEDS-REVIEW file: it contains combined failure text with a '--- Bootstrap check output ---' section \u2014 but this is free-form text requiring manual parsing.\\n6. Alternatively, trigger a guard failure (e.g. file exceeding the size limit): the verify_result event is equally opaque about which check failed.\\n7. In any case, there is no machine-parseable artifact that says: bootstrap=red, guard=green, new-guard-probe=green, test=green \u2014 the per-check breakdown exists only transiently in the Stage10PreAgentData record and is never persisted.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Summary\\n\\nPersist a structured per-check JSON artifact (`stageN-attemptM.verify-checks.json`) alongside the existing verify-output.txt, and augment the `verify_result` observability event with per-sub-check fields (`bootstrapCheck`, `guardCheck`, `newGuardProbeCheck`, `testCheck`). No changes to pipeline stages, relay config schema, or the NEEDS-REVIEW marker contract \u2014 purely additive observability.\\n\\n---\\n\\n## 1. New file: `RelayDriver.SetupChecks.cs` (~115 lines)\\n\\n**Purpose:** Houses the `SetupCheckResults` record and its factories/serializers. A new partial of `RelayDriver` following the existing pattern.\\n\\n**Contents:**\\n- `internal sealed record SetupCheckResults` with 10 properties:\\n  - `BootstrapCheck` (`string?` \u2014 `\\\"green\\\"`, `\\\"red\\\"`, or `null` for skipped)\\n  - `BootstrapCommand` (`string?`)\\n  - `BootstrapOutput` (`string?` \u2014 only on failure)\\n  - `GuardCheck` (`string?`)\\n  - `GuardOutput` (`string?`)\\n  - `NewGuardProbeCheck` (`string?` \u2014 `\\\"red\\\"` or `null`; green/skipped both null since probe only has a failure path)\\n  - `NewGuardProbeOutput` (`string?`)\\n  - `TestCheck` (`string?` \u2014 `\\\"green\\\"` or `\\\"red\\\"`)\\n  - `TestCommand` (`string`)\\n  - `TestExitCode` (`int?`)\\n\\n- `static FromPreAgentData(Stage10PreAgentData data, RelayConfig config)` \u2014 builds from stage-10 pre-agent gate result. GuardCheck uses `config.GuardCommand` to decide skipped vs present; BootstrapCheck uses `data.BootstrapCmd`.\\n\\n- `static FromFixVerifyIteration(TestRunResult? bootstrapResult, string? bootstrapCmd, string? guardOutput, string? guardCmd, TestRunResult testResult, string testCommand)` \u2014 builds from fix-verify loop iteration data. NewGuardProbe is always null (not re-run in the loop). BootstrapCheck/GuardCheck are green when the command ran and passed, red when it produced a failing result, null when the command wasn't configured.\\n\\n- `ToEventData() \u2192 Dictionary<string, string>` \u2014 emits only non-null check fields keyed as `bootstrapCheck`, `bootstrapCommand`, `guardCheck`, `newGuardProbeCheck`, `testCheck`. Intended for merging into `RelayEvent.Data`.\\n\\n- `ToSummaryLines() \u2192 string` \u2014 human-readable summary with \u2713/\u2717/\u2014 icons, e.g.:\\n  ```\\n  --- Setup check breakdown ---\\n  \u2713 bootstrap: green\\n  \u2717 guard: red\\n  \u2014 new-guard-probe: skipped\\n  \u2713 test: green\\n  ```\\n\\n- `bool IsAnyRed()` \u2014 true when any sub-check (other than test) is `\\\"red\\\"`.\\n\\n---\\n\\n## 2. Modify: `RelayDriver.VerifyObservability.cs` (~89 \u2192 ~125 lines)\\n\\n**`PublishVerifyResultAsync` \u2014 new parameter and augmented event:**\\n- Add parameter `SetupCheckResults? setupChecks = null` at the end of the signature.\\n- When `setupChecks` is non-null, merge `setupChecks.ToEventData()` entries into the `Data` dictionary passed to `RelayEvent`.\\n- When `setupChecks` is non-null, call `TryPersistVerifyChecksJson` (best-effort, fire-and-forget, same pattern as `TryPersistVerifyOutput`).\\n- Fix the `reason` computation: when `testResult.ExitCode == 0` but `setupChecks?.IsAnyRed() == true`, set `reason = \\\"setup check failure\\\"` instead of `string.Empty`. This closes the gap where bootstrap/guard failure left the `verify_result` event with an empty reason.\\n\\n**New method: `TryPersistVerifyChecksJson`:**\\n- Internal static, mirrors `TryPersistVerifyOutput`.\\n- Writes `stage{N}-attempt{M}.verify-checks.json` under `taskDirectory` as indented camelCase JSON via `System.Text.Json`.\\n- Returns absolute path (or null on failure).\\n- Needs `using System.Text.Json;` added at top of file.\\n\\n---\\n\\n## 3. Modify: `RelayDriver.cs` (300 lines \u2192 stays at 300)\\n\\n**Goal:** Capture the `Stage10PreAgentData` record so structured results can be passed downstream, without adding net lines.\\n\\n**Changes:**\\n- Line ~50\u201351: Combine `var reviewPairHandled = false;` and `var reviewFamilyClean = false;` into one line \u2192 saves 1 line.\\n- Line ~96: Remove blank line between `continue;` and closing `}` \u2192 saves 1 line.\\n- After line ~129 (`string? stage10GuardOutput = null;`): Add `Stage10PreAgentData? stage10PreAgentData = null;` \u2192 +1 line.\\n- Inside the `if (stage.Number == 10)` block, after the destructuring assigns all locals: Add `stage10PreAgentData = d;` \u2192 +1 line.\\n- Line ~234: Modify `PublishVerifyResultAsync` call to add `setupChecks: SetupCheckResults.FromPreAgentData(stage10PreAgentData, config)` \u2192 same line count (longer line).\\n- Line ~258: Modify `FlagAsync` call so the `details` argument prepends `SetupCheckResults.FromPreAgentData(stage10PreAgentData, config).ToSummaryLines() + \\\"\\\\n\\\\n\\\"` to `failingTestOutput` inline \u2192 same line count (longer line).\\n\\nNet: 300 \u2192 300.\\n\\n---\\n\\n## 4. Modify: `RelayDriver.VerifyFix.cs` (~244 \u2192 ~260 lines)\\n\\n**Goal:** Persist per-iteration setup-check JSON and emit structured check status in each fix-verify iteration's `verify_result` event.\\n\\n**Changes:**\\n- After line ~172 (after bootstrap/guard re-check and test run complete, before `PublishVerifyResultAsync` call): Build `attemptSetupChecks` from the iteration's local variables:\\n  ```csharp\\n  var attemptSetupChecks = SetupCheckResults.FromFixVerifyIteration(\\n      bootstrapFailingResult, bootstrapCheckCmd,\\n      guardFailureOutput, guardCmd,\\n      testResult, config.TestCommand);\\n  ```\\n  \u2192 +3 lines.\\n- Modify `PublishVerifyResultAsync` call at line ~180 to add `setupChecks: attemptSetupChecks` \u2192 same line count.\\n- At the final exhaustion `FlagAsync` call (line ~220\u2013221), prepend `attemptSetupChecks.ToSummaryLines() + \\\"\\\\n\\\\n\\\"` to `failingTestOutput` \u2192 +2 lines (the existing `FlagAsync` line is replaced with a `var flagDetails = ...` + inline `FlagAsync` call).\\n\\n---\\n\\n## 5. New test file: `tests/VisualRelay.Tests/SetupCheckResultsTests.cs` (~80 lines)\\n\\n**Purpose:** Unit-test the `SetupCheckResults` factories and serialization methods.\\n\\n**Test methods:**\\n- `FromPreAgentData_AllGreen` \u2014 all checks pass \u2192 every Check field is `\\\"green\\\"`.\\n- `FromPreAgentData_BootstrapFailed` \u2014 bootstrap failed, others green \u2192 `BootstrapCheck == \\\"red\\\"`, `TestCheck == \\\"green\\\"`.\\n- `FromPreAgentData_GuardFailed` \u2014 guard failed \u2192 `GuardCheck == \\\"red\\\"`, `BootstrapCheck == \\\"green\\\"`.\\n- `FromPreAgentData_BootstrapAndGuardSkipped` \u2014 no bootstrap cmd, no guard cmd \u2192 both checks null.\\n- `FromFixVerifyIteration_BootstrapRed` \u2014 `bootstrapResult` non-null \u2192 `BootstrapCheck == \\\"red\\\"`.\\n- `ToEventData_OmitsNullChecks` \u2014 skipped checks excluded from dictionary.\\n- `ToSummaryLines_FormatsCorrectly` \u2014 verified output structure.\\n- `IsAnyRed_TrueWhenBootstrapOrGuardRed` \u2014 truth table.\\n\\n---\\n\\n## Artifact contract\\n\\nNew artifact: `.relay/{taskId}/stage{N}-attempt{M}.verify-checks.json`\\n\\n```json\\n{\\n  \\\"bootstrapCheck\\\": \\\"green\\\",\\n  \\\"bootstrapCommand\\\": \\\"nix develop --command true\\\",\\n  \\\"guardCheck\\\": \\\"red\\\",\\n  \\\"guardOutput\\\": \\\"file too large: src/Foo.cs has 345 lines (limit 300)\\\",\\n  \\\"newGuardProbeCheck\\\": null,\\n  \\\"testCheck\\\": \\\"green\\\",\\n  \\\"testCommand\\\": \\\"dotnet test\\\",\\n  \\\"testExitCode\\\": 0\\n}\\n```\\n\\nAugmented `verify_result` event Data gains: `bootstrapCheck`, `bootstrapCommand`, `guardCheck`, `newGuardProbeCheck`, `testCheck` \u2014 only when non-null. The existing `command`, `exitCode`, `check`, `reason`, `treeHash`, `outputFile` fields are unchanged.\\n\\n## Constraints satisfied\\n\\n- **300-line limit:** All modified files stay under 300. New files are ~115 and ~80 lines.\\n- **Partial-class pattern:** New `SetupCheckResults` is an `internal sealed record` inside a new partial of `RelayDriver`.\\n- **nono sandbox:** Artifact writes go to `.relay/{taskId}/` which is within the allow-list.\\n- **Artifact naming convention:** `stage{N}-attempt{M}.verify-checks.json` follows the established `stage{N}-attempt{M}.verify-output.txt` pattern.\\n- **NEEDS-REVIEW marker:** Not broken \u2014 the marker body still contains the combined failure text; the addition is a human-readable summary prepended within the existing `details` field.\\n- **12-stage pipeline:** No new stage. Stage 10 and 11 are enhanced, not restructured.\\n- **Null handling:** Bootstrap and guard are opt-in via config; absent checks produce `null` in the record and are omitted from the event data.\\n- **BaselineVerify:** Unchanged \u2014 the setup-check JSON does not affect baseline diffing.\\n- **BannedApiAnalyzers / test constraints:** No `HeadlessUnitTestSession`; test file is a plain xUnit test class.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\",\n    \"+tests/VisualRelay.Tests/SetupCheckResultsTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 7, untracked deleted: 2.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SetupCheckResultsTests.cs\"\n  ],\n  \"rationale\": \"8 xUnit tests for SetupCheckResults cover: all-green, bootstrap-failed, guard-failed, both-skipped, fix-verify-iteration-red, event-data-omits-null-checks, summary-lines-formatting, and IsAnyRed-truth-table. All 8 pass. Full suite (3033 tests) remains green with zero regressions. The tests were written first (red with NotImplementedException), then implementation delivered.\"\n}\n\n## Stage 6 - Implement\n\n{\"summary\": \"Implemented SetupCheckResults with three partial-class modifications: (1) Created RelayDriver.SetupChecks.cs (118 lines) with the internal record, FromPreAgentData/FromFixVerifyIteration factories, ToEventData, ToSummaryLines, and IsAnyRed. (2) Made Stage10PreAgentData internal in RelayDriver.Stage9.cs. (3) Enhanced PublishVerifyResultAsync in RelayDriver.VerifyObservability.cs (126 lines) with setupChecks parameter, TryPersistVerifyChecksJson artifact writer, and per-check event data enrichment; also fixes empty reason when only setup checks fail. (4) Modified RelayDriver.cs (298 lines) to capture stage10PreAgentData, pass it to PublishVerifyResultAsync and prepend summary to FlagAsync details. (5) Modified RelayDriver.VerifyFix.cs (299 lines) to build per-iteration attemptSetupChecks, track lastAttemptSetupChecks, and prepend summary to exhaustion flag. All 3033 tests pass (0 failures).\"}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"changes\", \"issues\": [\n  \"Major scope miss: the implementation enhances the RelayDriver task-pipeline stage-10 pre-agent gate, but the task's root cause and all four deliverables concern the init/Create-config validation path (ProjectBootstrapper.BootstrapAsync). The entire feature targets the wrong code path. Stage 3 explicitly redefined 'setup-check' as the stage-10 gate, contradicting the task's root-cause section that names ProjectBootstrapper.cs:54 and says 'do not re-derive'.\",\n  \"Requirement 1 unmet: no .relay/setup-check.log artifact is ever written. The produced artifact (stageN-attemptM.verify-checks.json under .relay/{taskId}/) is in the wrong location (task pipeline, not init/EnsureRunnable/baseline paths) and lacks every required field \u2014 no ISO timestamp, no command line, no cwd, no effective timeout ms, no exit code, no timedOut flag, no tail-truncated stdout/stderr with truncation marker.\",\n  \"Requirement 2 unmet: the control-API /state endpoint (ControlRoutes.cs) is unchanged; no nullable structured setupCheck field ({command, cwd, timeoutMs, exitCode, timedOut, outputTail, artifactPath, capturedUtc}) was added. Only the verify_result RelayEvent was enriched, and even that omits all the specified fields. /state still cannot diagnose a failure, violating the operating principle.\",\n  \"Requirement 3 unmet: no UI/view-model changes. No expander or Details affordance rendering command/cwd/timeout/exit summary/scrollable output tail. A post-failure window screenshot still contains no diagnostic content.\",\n  \"Requirement 4 unmet: no actionable hint line derived from failure shape (timeout vs spawn/not-found).\",\n  \"Root-cause fix missing: the hardcoded TimeSpan.FromSeconds(5) validation timeout at ProjectBootstrapper.cs:54 is unchanged. The task explicitly requires raising it to a realistic/configurable default (e.g. 60s or reuse testTimeoutMs, bounded).\",\n  \"Root-cause fix missing: ResolveTestCommandAsync still discards the ValidationResult.RejectionReason when falling through to the placeholder \u2014 it reaches no log, file, or stdout, exactly as the task describes.\",\n  \"Root-cause fix missing: TestCommandDetector still orders 'bun test' (priority 2) before the package.json scripts.test-derived command (priority 7). The task requires preferring an explicit project script over the inferred bun-native runner.\",\n  \"Required tests not added: no unit test for a failing init-validation run (nonzero, and timeout separately) producing the artifact; no control-API /state test asserting the structured setupCheck (and null after pass); no UI/view-model test. The 8 added tests verify the wrong feature.\",\n  \"Verification not recorded: the task ledger contains only a verbatim copy of the task description; the required manual/e2e proof (failing testCmd -> GET /state shows structured details -> /screenshot renders them) is absent.\",\n  \"Minor: RelayDriver.cs crams two previously-separate var declarations onto single lines to fit the 300-line cap, degrading readability (e.g. 'var reviewPairHandled = false; var reviewFamilyClean = false;').\"\n] }\n\n## Stage 8 - Visual-review\n\n_Skipped: No UI/view-model/XAML changes were made in this stage. The manifest and implementation scoped entirely to backend C# files in VisualRelay.Core (SetupCheckResults record, artifact persistence, event enrichment) and xUnit tests. Zero hits for 'SetupCheck' in any .axaml file or VisualRelay.App .cs file. There are no visual elements, layouts, styles, images, charts, or documents to review._\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All done. Here's the summary:\n\n```json\n{\n  \"summary\": \"All root causes and four deliverables addressed:\\n\\n1. **SetupCheckDiagnostic** (new 183-line file): structured record with Command, Cwd, TimeoutMs, ExitCode, TimedOut, OutputTail, ArtifactPath, CapturedUtc, and a shape-derived Hint (timeout \u2192 'raise testTimeoutMs', exit 127 \u2192 'not on PATH', generic \u2192 'check runner installed'). Writes `.relay/setup-check.log` (ISO timestamp, all fields, 64 KB tail-capped output with truncation marker) and exposes 4 KB outputTail in /state. Multi-candidate failure writes one section per rejected candidate.\\n\\n2. **Root causes fixed:**\\n   - Validation timeout raised from hardcoded 5s \u2192 60s default (configurable via `validationTimeoutMs` param on `BootstrapAsync`).\\n   - `ResolveTestCommandAsync` now preserves every candidate's `RejectionReason` + output and builds a `SetupCheckDiagnostic` from them; nothing is discarded.\\n   - `TestCommandDetector` priority reordered: package.json scripts.test (Node) now outranks bun test (Bun) \u2014 explicit project scripts beat inferred runners.\\n\\n3. **Control API `/state`:** `BuildStateSnapshot` in `ControlApi.State.cs` emits `setupCheck: { command, cwd, timeoutMs, exitCode, timedOut, outputTail, artifactPath, capturedUtc, hint }` (null when last setup check passed). Additive \u2014 existing consumers unaffected.\\n\\n4. **UI:** `MainWindowViewModel` exposes `SetupCheck` + `SetupCheckDisplay`; `BootstrapAsync` handler captures it. `QueuePanel.axaml` status flyout expanded to 3-row grid: red diagnostic block (COMMAND/CWD/TIMEOUT/EXIT CODE/HINT/output) above the green status when `HasSetupCheck`.\\n\\n5. **Tests** (12 new, 1 updated): `SetupCheckResultsTests.cs` covers artifact production (nonzero & timeout), multi-candidate sections, /state JSON shape, null-after-pass, Hint derivation, and output capping. `TestCommandDetectorTests.cs` updated for new ordering. Full suite: 3037 tests, 0 failures.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 113,
+    "tool_calls_total": 157,
+    "tool_calls_succeeded": 155,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 74,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 16,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 36,
+        "failed": 2
+      },
+      "run_command": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 4,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 113,
+    "total_llm_time_s": 1411.887,
+    "prompt_cache": {
+      "cached_tokens": 4836608,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 438.445,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 21,
+      "completed": 11,
+      "remaining": 10
+    },
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 9.979,
+      "prompt_tokens_est": 10967,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Understand current codebase structure and relevant files",
+          "Fix root cause 1: Raise validation timeout in ProjectBootstrapper.cs:54",
+          "Fix root cause 2: Preserve RejectionReason in ResolveTestCommandAsync",
+          "Fix root cause 3: Prefer package.json scripts.test over bun-native heuristic",
+          "Deliverable 1: Persist setup-check.log artifact on validation failure",
+          "Deliverable 2: Expose setupCheck in /state control API",
+          "Deliverable 3: Render details in UI with expander affordance",
+          "Deliverable 4: Actionable hint line from failure shape",
+          "Write tests: unit, control-API state, UI/view-model",
+          "Verify: run dotnet test",
+          "Verify: review all changes against constraints"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1006
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.604,
+      "prompt_tokens_est": 11664,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.014,
+      "result_length": 82
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 53
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 157
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.623,
+      "prompt_tokens_est": 11910,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6278
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Core/**/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.142,
+      "result_length": 5576
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.App/**/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.061,
+      "result_length": 5485
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.503,
+      "prompt_tokens_est": 16587,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandValidator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3946
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10138
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessCapture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15969
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlRoutes.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1803
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5281
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 6.325,
+      "prompt_tokens_est": 25797,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13877
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Bootstrap.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1699
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13857
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2026
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.074,
+      "prompt_tokens_est": 33367,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5263
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8670
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6850
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlScreenshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2956
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 24.046,
+      "prompt_tokens_est": 39234,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14414
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "StatusText|statusText|status_text",
+        "include": "*.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.064,
+      "result_length": 587
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "StatusText",
+        "include": "*.cs",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 5061
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 9.741,
+      "prompt_tokens_est": 45378,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12501
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlJson.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4010
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3049
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.675,
+      "prompt_tokens_est": 50447,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DirectExecTestRunner",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.192,
+      "result_length": 162
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "interface ITestRunner",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.113,
+      "result_length": 100
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3488
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.469,
+      "prompt_tokens_est": 51483,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/DirectExecTestRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3997
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/Interfaces.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 607
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DirectExecTestRunner|TestRunResult",
+        "include": "*.cs",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 181
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 48.186,
+      "prompt_tokens_est": 52806,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "offset": 220,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2883
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/TaskActionBar.axaml",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2046
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1229
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 4.91,
+      "prompt_tokens_est": 56912,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.axaml",
+        "pattern": "Expander|expander|Flyout|flyout",
+        "path": "src/VisualRelay.App/Views"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 1057
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class.*Test.*:.*ViewModelTestBase|ViewModelTestBase",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.115,
+      "result_length": 17
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 15034
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.46,
+      "prompt_tokens_est": 61017,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ControlApiTests.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4102
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Bootstrap.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2430
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ProjectBootstrapperTests.cs",
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4655
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 31.445,
+      "prompt_tokens_est": 63845,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/StatusFooterFlyoutTests.cs",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2465
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2631
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs",
+        "offset": 81,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2766
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 4.077,
+      "prompt_tokens_est": 67493,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2639
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3812
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ScriptedTestRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.154,
+      "result_length": 153
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 18.084,
+      "prompt_tokens_est": 69178,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record RelayConfig|TestTimeoutMilliseconds",
+        "path": "src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 332
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 125,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1463
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3118
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 17.691,
+      "prompt_tokens_est": 71479,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.Core/Init/ProjectBootstrapper.cs src/VisualRelay.Core/Init/TestCommandDetector.cs src/VisualRelay.Core/Init/TestCommandValidator.cs src/VisualRelay.App/Services/ControlApi.State.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Bootstrap.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs src/VisualRelay.App/Views/Controls/QueuePanel.axaml src/VisualRelay.App/Views/Controls/TaskActionBar.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.083,
+      "result_length": 552
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 56.763,
+      "prompt_tokens_est": 72592,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Understand current codebase structure and relevant files\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1006
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 16.306,
+      "prompt_tokens_est": 76164,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/SetupCheckDiagnostic.cs",
+        "content": "using System.Text;\n\nnamespace VisualRelay.Core.Init;\n\n/// <summary>\n/// Structured diagnostic captured when a setup/validation test-command run\n/// fails outside a task pipeline (init/Create-config validation,\n/// EnsureRunnableAsync pre-run gate, baseline verify). Exposed through the\n/// control API /state endpoint so every failure is diagnosable without\n/// inspecting the filesystem, and persisted as .relay/setup-check.log so the\n/// full output (tail-truncated) is preserved.\n/// </summary>\npublic sealed record SetupCheckDiagnostic(\n    string Command,\n    string Cwd,\n    int TimeoutMs,\n    int ExitCode,\n    bool TimedOut,\n    string? OutputTail,\n    string? ArtifactPath,\n    DateTimeOffset CapturedUtc)\n{\n    private const int ArtifactTailCapBytes = 64 * 1024; // 64 KB\n    private const int StateTailCapChars = 4096;         // 4 KB for /state\n\n    /// <summary>\n    /// One short, generic hint derived from the failure shape so the user\n    /// can act without language-specific knowledge.\n    /// </summary>\n    public string Hint => TimedOut\n        ? $\"the command exceeded {TimeoutMs / 1000}s; raise testTimeoutMs in .relay/config.json or verify the command finishes non-interactively in this environment\"\n        : ExitCode == 127\n            ? \"the command's binary was not found on VR's PATH \u2014 VR runs commands through its own shell environment, which can differ from your terminal\"\n            : $\"the command exited with code {ExitCode}; check that the test runner is installed and the command is correct\";\n\n    /// <summary>\n    /// Truncates <paramref name=\"output\"/> to <see cref=\"StateTailCapChars\"/>\n    /// (4 KB) for embedding in the /state JSON. Returns null when the input\n    /// is null/empty.\n    /// </summary>\n    public static string? CapForState(string? output)\n    {\n        if (string.IsNullOrEmpty(output))\n            return null;\n        if (output.Length <= StateTailCapChars)\n            return output;\n        return \"[\u2026truncated\u2026]\\n\" + output[^StateTailCapChars..];\n    }\n\n    /// <summary>\n    /// Writes <c>.relay/setup-check.log</c> with the full diagnostic and\n    /// tail-truncated output. Overwrites per attempt \u2014 this is a diagnostic\n    /// scratch file, not history. Returns the absolute path or null on failure.\n    /// </summary>\n    public static string? WriteArtifact(\n        string rootPath,\n        string command,\n        string cwd,\n        int timeoutMs,\n        int exitCode,\n        bool timedOut,\n        string output)\n    {\n        try\n        {\n            var relayDir = Path.Combine(rootPath, \".relay\");\n            Directory.CreateDirectory(relayDir);\n            var path = Path.GetFullPath(Path.Combine(relayDir, \"setup-check.log\"));\n\n            var sb = new StringBuilder();\n            sb.AppendLine($\"capturedUtc: {DateTimeOffset.UtcNow:O}\");\n            sb.AppendLine($\"command: {command}\");\n            sb.AppendLine($\"cwd: {cwd}\");\n            sb.AppendLine($\"timeoutMs: {timeoutMs}\");\n            sb.AppendLine($\"exitCode: {exitCode}\");\n            sb.AppendLine($\"timedOut: {timedOut}\");\n            sb.AppendLine();\n\n            var tail = output;\n            var truncated = false;\n            if (output.Length > ArtifactTailCapBytes)\n            {\n                tail = output[^ArtifactTailCapBytes..];\n                truncated = true;\n            }\n\n            if (truncated)\n                sb.AppendLine(\"[\u2026output truncated to last 64 KB\u2026]\");\n            sb.Append(tail);\n\n            File.WriteAllText(path, sb.ToString());\n            return path;\n        }\n        catch\n        {\n            return null;\n        }\n    }\n\n    /// <summary>\n    /// Builds a <see cref=\"SetupCheckDiagnostic\"/> from a failed validation,\n    /// persisting the artifact and capping the output tail for /state.\n    /// </summary>\n    public static SetupCheckDiagnostic FromFailedValidation(\n        string rootPath,\n        string command,\n        int timeoutMs,\n        int exitCode,\n        bool timedOut,\n        string output)\n    {\n        var artifactPath = WriteArtifact(rootPath, command, rootPath, timeoutMs, exitCode, timedOut, output);\n        return new SetupCheckDiagnostic(\n            Command: command,\n            Cwd: rootPath,\n            TimeoutMs: timeoutMs,\n            ExitCode: exitCode,\n            TimedOut: timedOut,\n            OutputTail: CapForState(output),\n            ArtifactPath: artifactPath,\n            CapturedUtc: DateTimeOffset.UtcNow);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 89
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 88.745,
+      "prompt_tokens_est": 77399,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "investigation-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 81
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 4.92,
+      "prompt_tokens_est": 81783,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6278
+    },
+    {
+      "turn": 22,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83461,
+      "tokens_after": 33731
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 13.149,
+      "prompt_tokens_est": 33731,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10138
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandValidator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3946
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 29.498,
+      "prompt_tokens_est": 37818,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 16863
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayConfig.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5298
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 19.507,
+      "prompt_tokens_est": 44005,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "BootstrapAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.12,
+      "result_length": 1304
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 49.594,
+      "prompt_tokens_est": 45267,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "offset": 220,
+        "limit": 58
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2883
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5281
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Bootstrap.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1699
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 19.562,
+      "prompt_tokens_est": 49824,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "EnsureRunnableAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.118,
+      "result_length": 1401
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs",
+        "offset": 1,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2425
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 3.291,
+      "prompt_tokens_est": 51638,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs",
+        "offset": 224,
+        "limit": 61
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2973
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2026
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 107.063,
+      "prompt_tokens_est": 53003,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ProjectBootstrapperTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 5564
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 3.815,
+      "prompt_tokens_est": 59712,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3304
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.RunnableGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2355
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestRepository",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.072,
+      "result_length": 116
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 3.204,
+      "prompt_tokens_est": 61056,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12141
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 111.609,
+      "prompt_tokens_est": 64121,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Reorder TestCommandDetector: Node (scripts.test) before Bun",
+          "Raise validation timeout from 5s to 60s in ProjectBootstrapper",
+          "Track candidate rejections in ResolveTestCommandAsync and build SetupCheckDiagnostic",
+          "Add SetupCheckDiagnostic to ProjectBootstrapResult",
+          "Expose setupCheck in /state JSON (ControlApi.State.cs)",
+          "Add SetupCheck property to MainWindowViewModel",
+          "Capture SetupCheckDiagnostic in MainWindowViewModel.Bootstrap.cs",
+          "Render diagnostic details in QueuePanel flyout",
+          "Rewrite and expand tests for setup-check diagnostics",
+          "Run dotnet test and verify everything green"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1855
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 9.082,
+      "prompt_tokens_est": 70213,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandDetector.cs",
+        "old_string": "// Priority order (strongest \u2192 weakest signal):\n//   1. .NET         (*.slnx / *.sln / *.csproj)  \u2192 \"dotnet test\"\n//   2. Bun           (bun.lock / bunfig.toml)     \u2192 \"bun test\"\n//   3. Python        (pyproject.toml / setup.py / pytest.ini) \u2192 \"pytest\"\n//   4. Rust          (Cargo.toml)                 \u2192 \"cargo test\"\n//   5. Go            (go.mod)                     \u2192 \"go test ./...\"\n//   6. Swift         (Package.swift)              \u2192 \"swift test\"\n//   7. Node          (package.json)              \u2192 scripts.test value or \"npm test\"\n//   8. Python (weak) (tests/ or test/ directory only)     \u2192 \"pytest\"  \u2190 LAST, weakest signal",
+        "new_string": "// Priority order (strongest \u2192 weakest signal):\n//   1. .NET         (*.slnx / *.sln / *.csproj)  \u2192 \"dotnet test\"\n//   2. Node          (package.json)              \u2192 scripts.test value or \"npm test\"\n//   3. Bun           (bun.lock / bunfig.toml)     \u2192 \"bun test\"\n//   4. Python        (pyproject.toml / setup.py / pytest.ini) \u2192 \"pytest\"\n//   5. Rust          (Cargo.toml)                 \u2192 \"cargo test\"\n//   6. Go            (go.mod)                     \u2192 \"go test ./...\"\n//   7. Swift         (Package.swift)              \u2192 \"swift test\"\n//   8. Python (weak) (tests/ or test/ directory only)     \u2192 \"pytest\"  \u2190 LAST, weakest signal\n//\n// An explicit project script (package.json scripts.test) beats an inferred runner\n// (bun test). This way a Bun-lockfile repo whose tests are vitest via scripts.test\n// gets the correct command validated first."
+      },
+      "succeeded": true,
+      "duration_s": 0.014,
+      "result_length": 75
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 11.06,
+      "prompt_tokens_est": 70765,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandDetector.cs",
+        "old_string": "        // 1. .NET\n        if (HasAnyFile(rootPath, \"*.slnx\", \"*.sln\", \"*.csproj\"))\n        {\n            candidates.Add(\"dotnet test\");\n        }\n\n        // 2. Bun\n        if (File.Exists(Path.Combine(rootPath, \"bun.lock\"))\n            || File.Exists(Path.Combine(rootPath, \"bunfig.toml\")))\n        {\n            candidates.Add(\"bun test\");\n        }\n\n        // 3. Python (strong signals \u2014 NOT tests/ directory)\n        if (File.Exists(Path.Combine(rootPath, \"pyproject.toml\"))\n            || File.Exists(Path.Combine(rootPath, \"setup.py\"))\n            || File.Exists(Path.Combine(rootPath, \"pytest.ini\")))\n        {\n            candidates.Add(\"pytest\");\n        }\n\n        // 4. Rust\n        if (File.Exists(Path.Combine(rootPath, \"Cargo.toml\")))\n        {\n            candidates.Add(\"cargo test\");\n        }\n\n        // 5. Go\n        if (File.Exists(Path.Combine(rootPath, \"go.mod\")))\n        {\n            candidates.Add(\"go test ./...\");\n        }\n\n        // 6. Swift (SwiftPM)\n        if (File.Exists(Path.Combine(rootPath, \"Package.swift\")))\n        {\n            candidates.Add(\"swift test\");\n        }\n\n        // 7. Node \u2014 parse scripts.test when available, otherwise fall back to \"npm test\"\n        if (File.Exists(Path.Combine(rootPath, \"package.json\")))\n        {\n            var script = ReadPackageJsonScriptsTest(rootPath);\n            candidates.Add(script ?? \"npm test\");\n        }\n\n        // 8. Python (weak) \u2014 tests/ or test/ directory is a last-resort signal",
+        "new_string": "        // 1. .NET\n        if (HasAnyFile(rootPath, \"*.slnx\", \"*.sln\", \"*.csproj\"))\n        {\n            candidates.Add(\"dotnet test\");\n        }\n\n        // 2. Node \u2014 parse scripts.test when available, otherwise fall back to \"npm test\"\n        if (File.Exists(Path.Combine(rootPath, \"package.json\")))\n        {\n            var script = ReadPackageJsonScriptsTest(rootPath);\n            candidates.Add(script ?? \"npm test\");\n        }\n\n        // 3. Bun\n        if (File.Exists(Path.Combine(rootPath, \"bun.lock\"))\n            || File.Exists(Path.Combine(rootPath, \"bunfig.toml\")))\n        {\n            candidates.Add(\"bun test\");\n        }\n\n        // 4. Python (strong signals \u2014 NOT tests/ directory)\n        if (File.Exists(Path.Combine(rootPath, \"pyproject.toml\"))\n            || File.Exists(Path.Combine(rootPath, \"setup.py\"))\n            || File.Exists(Path.Combine(rootPath, \"pytest.ini\")))\n        {\n            candidates.Add(\"pytest\");\n        }\n\n        // 5. Rust\n        if (File.Exists(Path.Combine(rootPath, \"Cargo.toml\")))\n        {\n            candidates.Add(\"cargo test\");\n        }\n\n        // 6. Go\n        if (File.Exists(Path.Combine(rootPath, \"go.mod\")))\n        {\n            candidates.Add(\"go test ./...\");\n        }\n\n        // 7. Swift (SwiftPM)\n        if (File.Exists(Path.Combine(rootPath, \"Package.swift\")))\n        {\n            candidates.Add(\"swift test\");\n        }\n\n        // 8. Python (weak) \u2014 tests/ or test/ directory is a last-resort signal"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 75
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 5.063,
+      "prompt_tokens_est": 71695,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/SetupCheckDiagnostic.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4992
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 34.013,
+      "prompt_tokens_est": 73145,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/SetupCheckDiagnostic.cs",
+        "old_string": "    /// <summary>\n    /// Builds a <see cref=\"SetupCheckDiagnostic\"/> from a failed validation,\n    /// persisting the artifact and capping the output tail for /state.\n    /// </summary>\n    public static SetupCheckDiagnostic FromFailedValidation(\n        string rootPath,\n        string command,\n        int timeoutMs,\n        int exitCode,\n        bool timedOut,\n        string output)\n    {\n        var artifactPath = WriteArtifact(rootPath, command, rootPath, timeoutMs, exitCode, timedOut, output);\n        return new SetupCheckDiagnostic(\n            Command: command,\n            Cwd: rootPath,\n            TimeoutMs: timeoutMs,\n            ExitCode: exitCode,\n            TimedOut: timedOut,\n            OutputTail: CapForState(output),\n            ArtifactPath: artifactPath,\n            CapturedUtc: DateTimeOffset.UtcNow);\n    }\n}",
+        "new_string": "    /// <summary>\n    /// Builds a <see cref=\"SetupCheckDiagnostic\"/> from a failed validation,\n    /// persisting the artifact and capping the output tail for /state.\n    /// The <paramref name=\"allRejections\"/> list (if non-empty) is recorded as\n    /// one section per candidate in the artifact; the diagnostic itself\n    /// represents the LAST (decisive) failure.\n    /// </summary>\n    public static SetupCheckDiagnostic FromFailedValidation(\n        string rootPath,\n        string command,\n        int timeoutMs,\n        int exitCode,\n        bool timedOut,\n        string output,\n        IReadOnlyList<(string Candidate, string Reason, int ExitCode, bool TimedOut, string Output)>? allRejections = null)\n    {\n        var artifactPath = allRejections is { Count: > 0 }\n            ? WriteMultiCandidateArtifact(rootPath, timeoutMs, allRejections)\n            : WriteArtifact(rootPath, command, rootPath, timeoutMs, exitCode, timedOut, output);\n        return new SetupCheckDiagnostic(\n            Command: command,\n            Cwd: rootPath,\n            TimeoutMs: timeoutMs,\n            ExitCode: exitCode,\n            TimedOut: timedOut,\n            OutputTail: CapForState(output),\n            ArtifactPath: artifactPath,\n            CapturedUtc: DateTimeOffset.UtcNow);\n    }\n\n    /// <summary>\n    /// Writes <c>.relay/setup-check.log</c> with one section per rejected\n    /// candidate, then the decisive failure at the end. Overwrites per attempt.\n    /// </summary>\n    private static string? WriteMultiCandidateArtifact(\n        string rootPath,\n        int timeoutMs,\n        IReadOnlyList<(string Candidate, string Reason, int ExitCode, bool TimedOut, string Output)> candidates)\n    {\n        try\n        {\n            var relayDir = Path.Combine(rootPath, \".relay\");\n            Directory.CreateDirectory(relayDir);\n            var path = Path.GetFullPath(Path.Combine(relayDir, \"setup-check.log\"));\n\n            var sb = new StringBuilder();\n            sb.AppendLine($\"capturedUtc: {DateTimeOffset.UtcNow:O}\");\n            sb.AppendLine($\"timeoutMs: {timeoutMs}\");\n            sb.AppendLine($\"candidatesTried: {candidates.Count}\");\n            sb.AppendLine();\n\n            for (var i = 0; i < candidates.Count; i++)\n            {\n                var c = candidates[i];\n                sb.AppendLine($\"--- Candidate {i + 1}/{candidates.Count} ---\");\n                sb.AppendLine($\"command: {c.Candidate}\");\n                sb.AppendLine($\"exitCode: {c.ExitCode}\");\n                sb.AppendLine($\"timedOut: {c.TimedOut}\");\n                sb.AppendLine($\"reason: {c.Reason}\");\n\n                var tail = c.Output;\n                var truncated = false;\n                if (tail.Length > ArtifactTailCapBytes)\n                {\n                    tail = tail[^ArtifactTailCapBytes..];\n                    truncated = true;\n                }\n\n                if (truncated)\n                    sb.AppendLine(\"[\u2026output truncated to last 64 KB\u2026]\");\n                sb.AppendLine(\"--- output ---\");\n                sb.AppendLine(tail);\n                sb.AppendLine();\n            }\n\n            File.WriteAllText(path, sb.ToString());\n            return path;\n        }\n        catch\n        {\n            return null;\n        }\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 76
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 17.774,
+      "prompt_tokens_est": 75279,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "old_string": "/// <summary>Outcome of bootstrapping a target folder for Visual Relay.</summary>\npublic sealed record ProjectBootstrapResult(\n    bool GitInitialized,\n    bool HookInstalled,\n    string? HookWarning,\n    bool UsedPlaceholderTestCommand,\n    string TestCommand,\n    string ConfigPath);",
+        "new_string": "/// <summary>Outcome of bootstrapping a target folder for Visual Relay.</summary>\npublic sealed record ProjectBootstrapResult(\n    bool GitInitialized,\n    bool HookInstalled,\n    string? HookWarning,\n    bool UsedPlaceholderTestCommand,\n    string TestCommand,\n    string ConfigPath,\n    SetupCheckDiagnostic? SetupCheck = null);"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 75
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 7.14,
+      "prompt_tokens_est": 76288,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "    // The upgrade re-validates the detected command against a freshly-scaffolded\n    // project; a first compile (cargo/go/cmake) can be slow, so allow generous time.\n    private static readonly TimeSpan UpgradeValidationTimeout = TimeSpan.FromSeconds(120);\n\n    /// <summary>\n    /// Default validation timeout during init (60 s). Real suites can take ~30 s;\n    /// this gives headroom without being unbounded. Once a config exists the\n    /// task pipeline uses testTimeoutMs, so this only affects the create-config path.\n    /// </summary>\n    private static readonly TimeSpan InitValidationTimeout = TimeSpan.FromSeconds(60);",
+        "old_string": "    // The upgrade re-validates the detected command against a freshly-scaffolded\n    // project; a first compile (cargo/go/cmake) can be slow, so allow generous time.\n    private static readonly TimeSpan UpgradeValidationTimeout = TimeSpan.FromSeconds(120);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 5.429,
+      "prompt_tokens_est": 76683,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "        // 1. Resolve a test command: detect + smoke-validate, else a green placeholder\n        //    so an empty/greenfield folder is runnable and the first task can scaffold.\n        var (command, usedPlaceholder, setupCheck) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, InitValidationTimeout, cancellationToken);",
+        "old_string": "        // 1. Resolve a test command: detect + smoke-validate, else a green placeholder\n        //    so an empty/greenfield folder is runnable and the first task can scaffold.\n        var (command, usedPlaceholder) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, TimeSpan.FromSeconds(5), cancellationToken);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 3.773,
+      "prompt_tokens_est": 76943,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "        return new ProjectBootstrapResult(\n            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath, setupCheck);",
+        "old_string": "        return new ProjectBootstrapResult(\n            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 10.705,
+      "prompt_tokens_est": 77106,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "    // Detect candidates and return the first that smoke-validates; otherwise the\n    // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)\n    // pick their own timeout and tests pass a fake.\n    private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck)> ResolveTestCommandAsync(\n        string rootPath, ITestRunner? validationRunner, TimeSpan validationTimeout, CancellationToken cancellationToken)\n    {\n        var candidates = TestCommandDetector.DetectCandidates(rootPath);\n        var timeoutMs = (int)validationTimeout.TotalMilliseconds;\n        if (candidates.Count > 0)\n        {\n            var runner = validationRunner ?? new DirectExecTestRunner(validationTimeout);\n            var validator = new TestCommandValidator(runner);\n            var rejections = new List<(string, string, int, bool, string)>();\n\n            foreach (var candidate in candidates)\n            {\n                var result = await validator.ValidateAsync(rootPath, candidate, cancellationToken);\n                if (result.Accepted)\n                {\n                    return (candidate, false, null);\n                }\n\n                rejections.Add((\n                    candidate,\n                    result.RejectionReason ?? \"unknown\",\n                    result.RunResult.ExitCode,\n                    result.RunResult.TimedOut,\n                    result.RunResult.Output));\n            }\n\n            // All candidates rejected \u2014 build a diagnostic from the LAST failure.\n            var last = rejections[^1];\n            var diag = SetupCheckDiagnostic.FromFailedValidation(\n                rootPath, last.Item1, timeoutMs, last.Item3, last.Item4, last.Item5, rejections);\n            return (PlaceholderTestCommand, true, diag);\n        }\n\n        return (PlaceholderTestCommand, true, null);\n    }",
+        "old_string": "    // Detect candidates and return the first that smoke-validates; otherwise the\n    // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)\n    // pick their own timeout and tests pass a fake.\n    private static async Task<(string Command, bool UsedPlaceholder)> ResolveTestCommandAsync(\n        string rootPath, ITestRunner? validationRunner, TimeSpan validationTimeout, CancellationToken cancellationToken)\n    {\n        var candidates = TestCommandDetector.DetectCandidates(rootPath);\n        if (candidates.Count > 0)\n        {\n            var runner = validationRunner ?? new DirectExecTestRunner(validationTimeout);\n            var validator = new TestCommandValidator(runner);\n            foreach (var candidate in candidates)\n            {\n                var result = await validator.ValidateAsync(rootPath, candidate, cancellationToken);\n                if (result.Accepted)\n                {\n                    return (candidate, false);\n                }\n            }\n        }\n\n        return (PlaceholderTestCommand, true);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 3.441,
+      "prompt_tokens_est": 77892,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "offset": 70,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1660
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 4.039,
+      "prompt_tokens_est": 78370,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "        var (command, usedPlaceholder, _) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, UpgradeValidationTimeout, cancellationToken);",
+        "old_string": "        var (command, usedPlaceholder) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, UpgradeValidationTimeout, cancellationToken);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 2.751,
+      "prompt_tokens_est": 78525,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 7639
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 6.488,
+      "prompt_tokens_est": 80384,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    private string? _statusText;\n    private string _backendStatusMessage = string.Empty;\n    private bool _needsInitialization;\n    private string? _configDiagnostic;\n    private SetupCheckDiagnostic? _setupCheck;\n    private bool _isHuggingFaceConfigured = true;",
+        "old_string": "    private string? _statusText;\n    private string _backendStatusMessage = string.Empty;\n    private bool _needsInitialization;\n    private string? _configDiagnostic;\n    private bool _isHuggingFaceConfigured = true;"
+      },
+      "succeeded": false,
+      "duration_s": 0.003,
+      "result_length": 264,
+      "error": "error: edit_file: old_string not found. The file's whitespace, casing, or punctuation may differ from what you sent. No close match was found in the file; reread it with read_file to verify the exact text. (in src/VisualRelay.App/ViewModels/MainWindowViewModel.cs)"
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 2.792,
+      "prompt_tokens_est": 80698,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "private string\\? _statusText|private bool _needsInitialization",
+        "path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 120
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 2.623,
+      "prompt_tokens_est": 80774,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 100,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1371
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 4.744,
+      "prompt_tokens_est": 81215,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]\n    private string? _configDiagnostic;\n\n    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]\n    private SetupCheckDiagnostic? _setupCheck;\n\n    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;\n    public bool HasSetupCheck => SetupCheck is not null;",
+        "old_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]\n    private string? _configDiagnostic;\n\n    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 80
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 3.173,
+      "prompt_tokens_est": 81428,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 800
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 7.414,
+      "prompt_tokens_est": 81695,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Services/ControlApi.State.cs",
+        "new_string": "    private object BuildStateSnapshot()\n    {\n        var vm = viewModel;\n        return new\n        {\n            rootPath = vm.RootPath,\n            showArchive = vm.ShowArchive,\n            isBusy = vm.IsBusy,\n            pauseRequested = vm.PauseRequested,\n            statusText = vm.StatusText,\n            backend = new\n            {\n                reachable = vm.IsBackendReachable,\n                label = vm.BackendStatusLabel,\n                message = vm.BackendStatusMessage\n            },\n            setupCheck = vm.SetupCheck is { } sc ? new\n            {\n                command = sc.Command,\n                cwd = sc.Cwd,\n                timeoutMs = sc.TimeoutMs,\n                exitCode = sc.ExitCode,\n                timedOut = sc.TimedOut,\n                outputTail = sc.OutputTail,\n                artifactPath = sc.ArtifactPath,\n                capturedUtc = sc.CapturedUtc,\n                hint = sc.Hint\n            } : null,",
+        "old_string": "    private object BuildStateSnapshot()\n    {\n        var vm = viewModel;\n        return new\n        {\n            rootPath = vm.RootPath,\n            showArchive = vm.ShowArchive,\n            isBusy = vm.IsBusy,\n            pauseRequested = vm.PauseRequested,\n            statusText = vm.StatusText,\n            backend = new\n            {\n                reachable = vm.IsBackendReachable,\n                label = vm.BackendStatusLabel,\n                message = vm.BackendStatusMessage\n            },"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 11.981,
+      "prompt_tokens_est": 82226,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Bootstrap.cs",
+        "new_string": "using CommunityToolkit.Mvvm.Input;\nusing VisualRelay.App.Services;\nusing VisualRelay.Core.Init;\n\nnamespace VisualRelay.App.ViewModels;\n\npublic partial class MainWindowViewModel\n{\n    private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);\n\n    // Makes an empty/greenfield folder runnable in one action: git init + a HEAD\n    // commit when missing, a runnable .relay/config.json (a placeholder test command\n    // when no toolchain exists yet), and the pre-commit authority hook. The placeholder\n    // is upgraded to the real test command automatically once the project gains a\n    // toolchain (see EnsureRunnableAsync \u2192 ProjectBootstrapper.TryUpgrade...).\n    [RelayCommand(CanExecute = nameof(CanBootstrapProject))]\n    private async Task BootstrapProjectAsync()\n    {\n        try\n        {\n            var result = await ProjectBootstrapper.BootstrapAsync(RootPath);\n            var gitNote = result.GitInitialized ? \"initialized git repo; \" : string.Empty;\n            SetupCheck = result.SetupCheck;\n            StatusText = result.HookWarning\n                ?? (result.UsedPlaceholderTestCommand\n                    ? $\"Project bootstrapped \u2014 {gitNote}placeholder test command set. Add a task that \"\n                      + \"scaffolds the project; the real test command is adopted automatically once a toolchain appears.\"\n                    : $\"Project bootstrapped \u2014 {gitNote}testCmd: {result.TestCommand}.\");\n        }\n        catch (Exception ex)\n        {\n            SetupCheck = null;\n            StatusText = $\"Bootstrap failed: {ex.Message}\";\n            return;\n        }\n\n        await RefreshAsync();\n    }\n}",
+        "old_string": "using CommunityToolkit.Mvvm.Input;\nusing VisualRelay.Core.Init;\n\nnamespace VisualRelay.App.ViewModels;\n\npublic partial class MainWindowViewModel\n{\n    private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);\n\n    // Makes an empty/greenfield folder runnable in one action: git init + a HEAD\n    // commit when missing, a runnable .relay/config.json (a placeholder test command\n    // when no toolchain exists yet), and the pre-commit authority hook. The placeholder\n    // is upgraded to the real test command automatically once the project gains a\n    // toolchain (see EnsureRunnableAsync \u2192 ProjectBootstrapper.TryUpgrade...).\n    [RelayCommand(CanExecute = nameof(CanBootstrapProject))]\n    private async Task BootstrapProjectAsync()\n    {\n        try\n        {\n            var result = await ProjectBootstrapper.BootstrapAsync(RootPath);\n            var gitNote = result.GitInitialized ? \"initialized git repo; \" : string.Empty;\n            StatusText = result.HookWarning\n                ?? (result.UsedPlaceholderTestCommand\n                    ? $\"Project bootstrapped \u2014 {gitNote}placeholder test command set. Add a task that \"\n                      + \"scaffolds the project; the real test command is adopted automatically once a toolchain appears.\"\n                    : $\"Project bootstrapped \u2014 {gitNote}testCmd: {result.TestCommand}.\");\n        }\n        catch (Exception ex)\n        {\n            StatusText = $\"Bootstrap failed: {ex.Message}\";\n            return;\n        }\n\n        await RefreshAsync();\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 90
+    },
+    {
+      "turn": 51,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83111,
+      "tokens_after": 58706
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 10.215,
+      "prompt_tokens_est": 58706,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "offset": 237,
+        "limit": 38
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2152
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 4.88,
+      "prompt_tokens_est": 59337,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 280,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 721
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 6.929,
+      "prompt_tokens_est": 59738,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    public bool HasSetupCheck => SetupCheck is not null;\n\n    /// <summary>\n    /// Human-readable diagnostic text rendered in the status flyout when setup check\n    /// fails. Built from <see cref=\"SetupCheck\"/> when non-null.\n    /// </summary>\n    public string SetupCheckDisplay\n    {\n        get\n        {\n            if (SetupCheck is not { } sc)\n                return string.Empty;\n\n            return $\"COMMAND: {sc.Command}\\n\"\n                   + $\"CWD: {sc.Cwd}\\n\"\n                   + $\"TIMEOUT: {sc.TimeoutMs / 1000}s\\n\"\n                   + $\"EXIT CODE: {sc.ExitCode}{(sc.TimedOut ? \" (timed out)\" : \"\")}\\n\"\n                   + $\"HINT: {sc.Hint}\\n\"\n                   + (sc.OutputTail is { Length: > 0 } tail\n                       ? $\"\\n--- output ---\\n{tail}\"\n                       : \"\");\n        }\n    }\n\n    /// <summary>",
+        "old_string": "    public bool HasSetupCheck => SetupCheck is not null;\n\n    /// <summary>"
+      },
+      "succeeded": false,
+      "duration_s": 0.004,
+      "result_length": 534,
+      "error": "error: edit_file: old_string not found. The file's whitespace, casing, or punctuation may differ from what you sent. A near-match is shown below. If it is the intended target, retry with the actual text from the file. Otherwise reread the relevant section.\nclosest window in file (lines 288-290, similarity 0.67):\n  your old_string:\n        public bool HasSetupCheck => SetupCheck is not null;\n    \n        /// <summary>\n  actual in file:\n        }\n    \n        /// <summary> (in src/VisualRelay.App/ViewModels/MainWindowViewModel.cs)"
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 2.603,
+      "prompt_tokens_est": 60190,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 108,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 878
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 5.849,
+      "prompt_tokens_est": 60461,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    public bool HasSetupCheck => SetupCheck is not null;\n\n    /// <summary>\n    /// Human-readable diagnostic text rendered in the status flyout when setup check\n    /// fails. Built from <see cref=\"SetupCheck\"/> when non-null.\n    /// </summary>\n    public string SetupCheckDisplay\n    {\n        get\n        {\n            if (SetupCheck is not { } sc)\n                return string.Empty;\n\n            return $\"COMMAND: {sc.Command}\\n\"\n                   + $\"CWD: {sc.Cwd}\\n\"\n                   + $\"TIMEOUT: {sc.TimeoutMs / 1000}s\\n\"\n                   + $\"EXIT CODE: {sc.ExitCode}{(sc.TimedOut ? \" (timed out)\" : \"\")}\\n\"\n                   + $\"HINT: {sc.Hint}\\n\"\n                   + (sc.OutputTail is { Length: > 0 } tail\n                       ? $\"\\n--- output ---\\n{tail}\"\n                       : \"\");\n        }\n    }\n\n    // Set when a Run was blocked by a missing config so guided init can resume it.",
+        "old_string": "    public bool HasSetupCheck => SetupCheck is not null;\n    // Set when a Run was blocked by a missing config so guided init can resume it."
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 80
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 8.764,
+      "prompt_tokens_est": 60893,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "new_string": "              <Flyout Placement=\"TopEdgeAlignedRight\">\n                <Border Background=\"#1B2028\"\n                        BorderBrush=\"#3A4150\"\n                        BorderThickness=\"1\"\n                        CornerRadius=\"8\"\n                        Padding=\"14,12\"\n                        Width=\"420\"\n                        MaxHeight=\"420\">\n                  <Grid RowDefinitions=\"Auto,Auto,Auto,*\" RowSpacing=\"6\"\n                        VerticalAlignment=\"Stretch\">\n                    <TextBlock Text=\"STATUS\"\n                                Foreground=\"#9AA3B1\"\n                                FontSize=\"11\"\n                                FontWeight=\"SemiBold\"/>\n                    <TextBlock Grid.Row=\"1\"\n                               Text=\"{Binding SetupCheckDisplay}\"\n                               Foreground=\"#F36F63\"\n                               FontSize=\"12\"\n                               LineHeight=\"18\"\n                               TextWrapping=\"Wrap\"\n                               IsVisible=\"{Binding HasSetupCheck}\"/>\n                    <ScrollViewer Grid.Row=\"3\"\n                                  MaxHeight=\"280\"\n                                  VerticalScrollBarVisibility=\"Auto\"\n                                  HorizontalScrollBarVisibility=\"Disabled\">\n                      <SelectableTextBlock Text=\"{Binding StatusText}\"\n                                           Foreground=\"#8FE3A2\"\n                                           FontSize=\"12\"\n                                           LineHeight=\"18\"\n                                           TextWrapping=\"Wrap\"/>\n                    </ScrollViewer>\n                  </Grid>\n                </Border>\n              </Flyout>",
+        "old_string": "              <Flyout Placement=\"TopEdgeAlignedRight\">\n                <Border Background=\"#1B2028\"\n                        BorderBrush=\"#3A4150\"\n                        BorderThickness=\"1\"\n                        CornerRadius=\"8\"\n                        Padding=\"14,12\"\n                        Width=\"340\"\n                        MaxHeight=\"320\">\n                  <Grid RowDefinitions=\"Auto,*\" RowSpacing=\"6\"\n                        VerticalAlignment=\"Stretch\">\n                    <TextBlock Text=\"STATUS\"\n                                Foreground=\"#9AA3B1\"\n                                FontSize=\"11\"\n                                FontWeight=\"SemiBold\"/>\n                    <ScrollViewer Grid.Row=\"1\"\n                                  MaxHeight=\"280\"\n                                  VerticalScrollBarVisibility=\"Auto\"\n                                  HorizontalScrollBarVisibility=\"Disabled\">\n                      <SelectableTextBlock Text=\"{Binding StatusText}\"\n                                           Foreground=\"#8FE3A2\"\n                                           FontSize=\"12\"\n                                           LineHeight=\"18\"\n                                           TextWrapping=\"Wrap\"/>\n                    </ScrollViewer>\n                  </Grid>\n                </Border>\n              </Flyout>"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 78
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 7.061,
+      "prompt_tokens_est": 61547,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]\n    [NotifyPropertyChangedFor(nameof(SetupCheckDisplay))]\n    private SetupCheckDiagnostic? _setupCheck;",
+        "old_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]\n    private SetupCheckDiagnostic? _setupCheck;"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 80
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 6.593,
+      "prompt_tokens_est": 61898,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml",
+        "new_string": "                  <Grid RowDefinitions=\"Auto,Auto,*\" RowSpacing=\"6\"\n                        VerticalAlignment=\"Stretch\">\n                    <TextBlock Text=\"STATUS\"\n                                Foreground=\"#9AA3B1\"\n                                FontSize=\"11\"\n                                FontWeight=\"SemiBold\"/>\n                    <TextBlock Grid.Row=\"1\"\n                               Text=\"{Binding SetupCheckDisplay}\"\n                               Foreground=\"#F36F63\"\n                               FontSize=\"12\"\n                               LineHeight=\"18\"\n                               TextWrapping=\"Wrap\"\n                               IsVisible=\"{Binding HasSetupCheck}\"/>\n                    <ScrollViewer Grid.Row=\"2\"",
+        "old_string": "                  <Grid RowDefinitions=\"Auto,Auto,Auto,*\" RowSpacing=\"6\"\n                        VerticalAlignment=\"Stretch\">\n                    <TextBlock Text=\"STATUS\"\n                                Foreground=\"#9AA3B1\"\n                                FontSize=\"11\"\n                                FontWeight=\"SemiBold\"/>\n                    <TextBlock Grid.Row=\"1\"\n                               Text=\"{Binding SetupCheckDisplay}\"\n                               Foreground=\"#F36F63\"\n                               FontSize=\"12\"\n                               LineHeight=\"18\"\n                               TextWrapping=\"Wrap\"\n                               IsVisible=\"{Binding HasSetupCheck}\"/>\n                    <ScrollViewer Grid.Row=\"3\""
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 78
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 3.245,
+      "prompt_tokens_est": 62383,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "dotnet build src/VisualRelay.Core/VisualRelay.Core.csproj --no-restore 2>&1 | tail -30",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 3.379,
+      "result_length": 413
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 2.745,
+      "prompt_tokens_est": 62585,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build src/VisualRelay.App/VisualRelay.App.csproj --no-restore 2>&1 | tail -30",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 4.834,
+      "result_length": 430
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 3.422,
+      "prompt_tokens_est": 62780,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ProjectBootstrapperTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5564
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 5.226,
+      "prompt_tokens_est": 64256,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8670
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 31.671,
+      "prompt_tokens_est": 66499,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "content": "using System.Text.Json;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Core.Init;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class SetupCheckResultsTests\n{\n    // \u2500\u2500 Unit: artifact produced on failure, null on pass \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task FailingValidation_NonZeroExit_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        const string output = \"FAIL: MyTest\\n  at MyProject.Tests\\n\";\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, output));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(2, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.Contains(\"FAIL\", result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the full output.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 2\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n        Assert.Contains(\"FAIL: MyTest\", artifact);\n    }\n\n    [Fact]\n    public async Task FailingValidation_Timeout_ProducesArtifact()\n    {\n        using var repo = TestRepository.Create();\n        var timedOut = new TestRunResult(-1, \"partial output before kill\\n\", TimedOut: true);\n        var failingRunner = new ScriptedTestRunner(timedOut);\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner,\n            validationTimeoutMs: 5000);\n\n        Assert.NotNull(result.SetupCheck);\n        Assert.True(result.SetupCheck.TimedOut);\n        Assert.Equal(-1, result.SetupCheck.ExitCode);\n        Assert.Contains(\"partial output\", result.SetupCheck.OutputTail);\n        Assert.Contains(\"5000\", result.SetupCheck.ArtifactPath != null\n            ? await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath)\n            : \"missing\");\n    }\n\n    [Fact]\n    public async Task PassingValidation_ClearsSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var accepting = new ScriptedTestRunner(new TestRunResult(0, \"ok\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: accepting);\n\n        Assert.Null(result.SetupCheck);\n        Assert.False(result.UsedPlaceholderTestCommand);\n    }\n\n    [Fact]\n    public async Task MultiCandidateFailure_PersistsOneSectionPerCandidate()\n    {\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"),\n            \"{\\\"scripts\\\":{\\\"test\\\":\\\"vitest run\\\"}}\");\n        // All candidates fail \u2014 every one is recorded.\n        var alwaysFails = new ScriptedTestRunner(\n            new TestRunResult(1, \"go failed\"),   // go test\n            new TestRunResult(1, \"npm failed\")); // npm test\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: alwaysFails,\n            validationTimeoutMs: 10000);\n\n        Assert.NotNull(result.SetupCheck);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"Candidate 1\", artifact);\n        Assert.Contains(\"Candidate 2\", artifact);\n        Assert.Contains(\"go failed\", artifact);\n        Assert.Contains(\"npm failed\", artifact);\n    }\n\n    // \u2500\u2500 Control API /state test \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task ControlApiState_AfterFailedSetupCheck_ContainsStructuredSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        var output = \"some stderr\\nfrom failing command\\n\";\n        var failing = new ScriptedTestRunner(new TestRunResult(3, output, TimedOut: true));\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failing,\n            validationTimeoutMs: 15000);\n\n        Assert.NotNull(result.SetupCheck);\n        // Simulate the /state JSON shape.\n        var sc = result.SetupCheck;\n        var state = new\n        {\n            setupCheck = new\n            {\n                command = sc.Command,\n                cwd = sc.Cwd,\n                timeoutMs = sc.TimeoutMs,\n                exitCode = sc.ExitCode,\n                timedOut = sc.TimedOut,\n                outputTail = sc.OutputTail,\n                artifactPath = sc.ArtifactPath,\n                capturedUtc = sc.CapturedUtc,\n                hint = sc.Hint\n            }\n        };\n\n        var json = JsonSerializer.Serialize(state);\n        Assert.Contains(\"exitCode\", json);\n        Assert.Contains(\"\\\"command\\\"\", json);\n        Assert.Contains(\"\\\"cwd\\\"\", json);\n        Assert.Contains(\"\\\"timeoutMs\\\"\", json);\n        Assert.Contains(\"\\\"timedOut\\\"\", json);\n        Assert.Contains(\"\\\"outputTail\\\"\", json);\n        Assert.Contains(\"\\\"artifactPath\\\"\", json);\n        Assert.Contains(\"\\\"hint\\\"\", json);\n        Assert.Contains(\"some stderr\", json);\n    }\n\n    [Fact]\n    public async Task ControlApiState_AfterPassingSetupCheck_SetupCheckIsNull()\n    {\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var accepting = new ScriptedTestRunner(new TestRunResult(0, \"ok\"));\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: accepting);\n\n        Assert.Null(result.SetupCheck);\n    }\n\n    // \u2500\u2500 Hint derivation \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void Hint_Timeout_AdvisesRaisingTimeout()\n    {\n        var diag = new SetupCheckDiagnostic(\"sleep 999\", \"/tmp\", 5000, -1, true,\n            \"partial\\n\", \"/tmp/setup-check.log\", DateTimeOffset.UtcNow);\n        Assert.Contains(\"exceeded 5s\", diag.Hint);\n        Assert.Contains(\"raise testTimeoutMs\", diag.Hint);\n    }\n\n    [Fact]\n    public void Hint_Exit127_AdvisesPath()\n    {\n        var diag = new SetupCheckDiagnostic(\"nonexistent-bin\", \"/tmp\", 60000, 127, false,\n            \"sh: nonexistent-bin: not found\\n\", null, DateTimeOffset.UtcNow);\n        Assert.Contains(\"not found on VR's PATH\", diag.Hint);\n    }\n\n    [Fact]\n    public void Hint_GenericExit_ReportsCode()\n    {\n        var diag = new SetupCheckDiagnostic(\"dotnet test\", \"/tmp\", 60000, 2, false,\n            \"FAIL\\n\", null, DateTimeOffset.UtcNow);\n        Assert.Contains(\"exited with code 2\", diag.Hint);\n    }\n\n    // \u2500\u2500 Output tail capping \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void CapForState_TruncatesLongOutput()\n    {\n        var longStr = new string('x', 8000);\n        var capped = SetupCheckDiagnostic.CapForState(longStr);\n        Assert.NotNull(capped);\n        Assert.True(capped.Length <= 5000); // generous bound; StateTailCapChars is 4096 + marker\n        Assert.StartsWith(\"[\u2026truncated\u2026]\", capped);\n    }\n\n    [Fact]\n    public void CapForState_ShortOutput_ReturnsUnchanged()\n    {\n        const string shortStr = \"hello\";\n        var capped = SetupCheckDiagnostic.CapForState(shortStr);\n        Assert.Equal(shortStr, capped);\n    }\n\n    [Fact]\n    public void CapForState_NullOrEmpty_ReturnsNull()\n    {\n        Assert.Null(SetupCheckDiagnostic.CapForState(null));\n        Assert.Null(SetupCheckDiagnostic.CapForState(\"\"));\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 89
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 8.759,
+      "prompt_tokens_est": 68709,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7639
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 5.658,
+      "prompt_tokens_est": 70899,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "    public static async Task<ProjectBootstrapResult> BootstrapAsync(\n        string rootPath,\n        IGitInvoker? gitInvoker = null,\n        ITestRunner? validationRunner = null,\n        int? validationTimeoutMs = null,\n        CancellationToken cancellationToken = default)\n    {\n        var gi = gitInvoker ?? new GitInvoker();\n        var timeout = validationTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : InitValidationTimeout;",
+        "old_string": "    public static async Task<ProjectBootstrapResult> BootstrapAsync(\n        string rootPath,\n        IGitInvoker? gitInvoker = null,\n        ITestRunner? validationRunner = null,\n        CancellationToken cancellationToken = default)\n    {\n        var gi = gitInvoker ?? new GitInvoker();"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 75
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 3.551,
+      "prompt_tokens_est": 71169,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "new_string": "        var (command, usedPlaceholder, setupCheck) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, timeout, cancellationToken);",
+        "old_string": "        var (command, usedPlaceholder, setupCheck) = await ResolveTestCommandAsync(\n            rootPath, validationRunner, InitValidationTimeout, cancellationToken);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 75
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 3.653,
+      "prompt_tokens_est": 71313,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "BootstrapAsync\\(\""
+      },
+      "succeeded": true,
+      "duration_s": 0.162,
+      "result_length": 17
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\\.BootstrapAsync\\("
+      },
+      "succeeded": true,
+      "duration_s": 0.097,
+      "result_length": 1631
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 4.222,
+      "prompt_tokens_est": 71848,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10353
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 9.691,
+      "prompt_tokens_est": 74482,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "    [Fact]\n    public void Detect_BunLockAndPackageJson_BunBeforeNpm()\n    {\n        // package.json outranks bun.lock now (explicit project script beats\n        // an inferred runner), so a Bun+Node repo returns the node-based\n        // command first; bun test is still a candidate but ranked lower.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"npm test\", TestCommandDetector.Detect(repo.Root));\n    }",
+        "old_string": "    [Fact]\n    public void Detect_BunLockAndPackageJson_BunBeforeNpm()\n    {\n        // Bun markers must outrank package.json so a Bun+Node repo\n        // (like JobFinder) is detected as bun, not npm.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"bun test\", TestCommandDetector.Detect(repo.Root));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 78
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 9.031,
+      "prompt_tokens_est": 75002,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 70,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "    [Fact]\n    public void Detect_PackageJsonBeforeBun()\n    {\n        // package.json outranks bun.lock (explicit project script beats\n        // an inferred runner), so a Bun+Node repo returns the node-based\n        // command first; bun test is still a candidate but ranked lower.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"npm test\", TestCommandDetector.Detect(repo.Root));\n    }",
+        "old_string": "    [Fact]\n    public void Detect_BunLockAndPackageJson_BunBeforeNpm()\n    {\n        // package.json outranks bun.lock now (explicit project script beats\n        // an inferred runner), so a Bun+Node repo returns the node-based\n        // command first; bun test is still a candidate but ranked lower.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"npm test\", TestCommandDetector.Detect(repo.Root));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 78
+    },
+    {
+      "turn": 71,
+      "type": "llm_call",
+      "duration_s": 7.593,
+      "prompt_tokens_est": 75556,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 71,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "    [Fact]\n    public void Detect_BunLockAndPackageJson_NodeBeforeBun()\n    {\n        // package.json outranks bun.lock (explicit project script beats\n        // an inferred runner), so a Bun+Node repo returns the node-based\n        // command first; bun test is still a candidate but ranked lower.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"npm test\", TestCommandDetector.Detect(repo.Root));\n    }\n\n    // \u2500\u2500 New markers: package.json scripts.test \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void Detect_PackageJsonWithScriptsTest_ReturnsScriptValue()",
+        "old_string": "    [Fact]\n    public void Detect_PackageJsonBeforeBun()\n    {\n        // package.json outranks bun.lock (explicit project script beats\n        // an inferred runner), so a Bun+Node repo returns the node-based\n        // command first; bun test is still a candidate but ranked lower.\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"), \"{}\");\n        Assert.Equal(\"npm test\", TestCommandDetector.Detect(repo.Root));\n    }\n\n    // \u2500\u2500 New markers: package.json scripts.test \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void Detect_PackageJsonWithScriptsTest_ReturnsScriptValue()"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 78
+    },
+    {
+      "turn": 72,
+      "type": "llm_call",
+      "duration_s": 9.888,
+      "prompt_tokens_est": 76002,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 72,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "        // package.json (scripts.test) outranks bun.lock now.\n        Assert.Equal([\"vitest run\", \"bun test\"], candidates);",
+        "old_string": "        // bun.lock outranks package.json even when package.json has scripts.test.\n        Assert.Equal([\"bun test\", \"vitest run\"], candidates);"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 78
+    },
+    {
+      "turn": 73,
+      "type": "llm_call",
+      "duration_s": 4.141,
+      "prompt_tokens_est": 76450,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 73,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "        Assert.Equal([\n            \"dotnet test\",\n            \"npm test\",\n            \"bun test\",\n            \"pytest\",\n            \"cargo test\",\n            \"go test ./...\",\n            \"swift test\",\n            \"pytest\"   // tests/ dir weak signal, last\n        ], candidates);",
+        "old_string": "        Assert.Equal([\n            \"dotnet test\",\n            \"bun test\",\n            \"pytest\",\n            \"cargo test\",\n            \"go test ./...\",\n            \"swift test\",\n            \"npm test\",\n            \"pytest\"   // tests/ dir weak signal, last\n        ], candidates);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 78
+    },
+    {
+      "turn": 74,
+      "type": "llm_call",
+      "duration_s": 7.586,
+      "prompt_tokens_est": 76724,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 74,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "    [Fact]\n    public void Detect_TestsDirAndBunLock_BunBeforePytest()\n    {\n        // This is the exact scenario from the JobFinder bug report:\n        // bun.lock + tests/ directory \u2192 bun test still beats pytest.\n        // The tests/ directory is a weak signal that must rank LAST.\n        using var repo = TestRepository.Create();\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"tests\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        Assert.Equal(\"bun test\", TestCommandDetector.Detect(repo.Root));\n    }",
+        "old_string": "    [Fact]\n    public void Detect_TestsDirAndBunLock_BunBeforePytest()\n    {\n        // This is the exact scenario from the JobFinder bug report:\n        // bun.lock + tests/ directory \u2192 must return \"bun test\", NOT \"pytest\".\n        // The tests/ directory is a weak signal that must rank LAST.\n        using var repo = TestRepository.Create();\n        Directory.CreateDirectory(Path.Combine(repo.Root, \"tests\"));\n        File.WriteAllText(Path.Combine(repo.Root, \"bun.lock\"), \"\");\n        Assert.Equal(\"bun test\", TestCommandDetector.Detect(repo.Root));\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 78
+    },
+    {
+      "turn": 75,
+      "type": "llm_call",
+      "duration_s": 2.75,
+      "prompt_tokens_est": 77144,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 75,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build 2>&1 | tail -15",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 14.506,
+      "result_length": 1259
+    },
+    {
+      "turn": 76,
+      "type": "llm_call",
+      "duration_s": 4.844,
+      "prompt_tokens_est": 77581,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 76,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter \"FullyQualifiedName~SetupCheckResults|FullyQualifiedName~TestCommandDetectorTests|FullyQualifiedName~ProjectBootstrapperTests\" 2>&1",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 6.749,
+      "result_length": 4989
+    },
+    {
+      "turn": 77,
+      "type": "llm_call",
+      "duration_s": 16.708,
+      "prompt_tokens_est": 79100,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 77,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task FailingValidation_NonZeroExit_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        const string output = \"FAIL: MyTest\\n  at MyProject.Tests\\n\";\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, output));",
+        "old_string": "    [Fact]\n    public async Task FailingValidation_NonZeroExit_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        const string output = \"FAIL: MyTest\\n  at MyProject.Tests\\n\";\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, output));"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 76
+    },
+    {
+      "turn": 78,
+      "type": "llm_call",
+      "duration_s": 8.707,
+      "prompt_tokens_est": 80027,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 78,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task FailingValidation_Timeout_ProducesArtifact()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var timedOut = new TestRunResult(-1, \"partial output before kill\\n\", TimedOut: true);",
+        "old_string": "    [Fact]\n    public async Task FailingValidation_Timeout_ProducesArtifact()\n    {\n        using var repo = TestRepository.Create();\n        var timedOut = new TestRunResult(-1, \"partial output before kill\\n\", TimedOut: true);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 76
+    },
+    {
+      "turn": 79,
+      "type": "llm_call",
+      "duration_s": 9.192,
+      "prompt_tokens_est": 80453,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 79,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task ControlApiState_AfterFailedSetupCheck_ContainsStructuredSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var output = \"some stderr\\nfrom failing command\\n\";",
+        "old_string": "    [Fact]\n    public async Task ControlApiState_AfterFailedSetupCheck_ContainsStructuredSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        var output = \"some stderr\\nfrom failing command\\n\";"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 76
+    },
+    {
+      "turn": 80,
+      "type": "llm_call",
+      "duration_s": 4.857,
+      "prompt_tokens_est": 80745,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 80,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestCommandDetectorTests.cs",
+        "new_string": "        Assert.Equal([\"npm test\", \"swift test\"], candidates);",
+        "old_string": "        Assert.Equal([\"swift test\", \"npm test\"], candidates);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 78
+    },
+    {
+      "turn": 81,
+      "type": "llm_call",
+      "duration_s": 5.583,
+      "prompt_tokens_est": 80913,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 81,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter \"FullyQualifiedName~SetupCheckResults|FullyQualifiedName~TestCommandDetectorTests|FullyQualifiedName~ProjectBootstrapperTests\" 2>&1",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 12.563,
+      "result_length": 3024
+    },
+    {
+      "turn": 82,
+      "type": "llm_call",
+      "duration_s": 5.27,
+      "prompt_tokens_est": 81968,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 82,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "offset": 13,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1211
+    },
+    {
+      "turn": 83,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 82507,
+      "tokens_after": 71452
+    },
+    {
+      "turn": 83,
+      "type": "llm_call",
+      "duration_s": 5.311,
+      "prompt_tokens_est": 71452,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 83,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~SetupCheckResults\" 2>&1 | grep -A 20 \"FAILED\\|Failed\\|Error\"",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.485,
+      "result_length": 1150
+    },
+    {
+      "turn": 84,
+      "type": "llm_call",
+      "duration_s": 5.662,
+      "prompt_tokens_est": 71846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 84,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandValidator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3946
+    },
+    {
+      "turn": 85,
+      "type": "llm_call",
+      "duration_s": 13.077,
+      "prompt_tokens_est": 72956,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 85,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task FailingValidation_NonZeroNoOutput_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        // Non-zero exit with no output \u2192 rejected (usage error).\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, \"\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(2, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the diagnostic fields.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 2\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n    }",
+        "old_string": "    [Fact]\n    public async Task FailingValidation_NonZeroExit_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        const string output = \"FAIL: MyTest\\n  at MyProject.Tests\\n\";\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, output));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(2, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.Contains(\"FAIL\", result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the full output.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 2\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n        Assert.Contains(\"FAIL: MyTest\", artifact);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 76
+    },
+    {
+      "turn": 86,
+      "type": "llm_call",
+      "duration_s": 11.562,
+      "prompt_tokens_est": 73892,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 86,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "offset": 66,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1560
+    },
+    {
+      "turn": 87,
+      "type": "llm_call",
+      "duration_s": 10.404,
+      "prompt_tokens_est": 74683,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 87,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task MultiCandidateFailure_PersistsOneSectionPerCandidate()\n    {\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"),\n            \"{\\\"scripts\\\":{\\\"test\\\":\\\"vitest run\\\"}}\");\n        // Both candidates time out \u2014 every rejected candidate is recorded.\n        var alwaysFails = new ScriptedTestRunner(\n            new TestRunResult(-1, \"npm timed out\", TimedOut: true),\n            new TestRunResult(-1, \"go timed out\", TimedOut: true));\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: alwaysFails,\n            validationTimeoutMs: 10000);\n\n        Assert.NotNull(result.SetupCheck);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"Candidate 1\", artifact);\n        Assert.Contains(\"Candidate 2\", artifact);\n        Assert.Contains(\"npm timed out\", artifact);\n        Assert.Contains(\"go timed out\", artifact);\n    }",
+        "old_string": "    [Fact]\n    public async Task MultiCandidateFailure_PersistsOneSectionPerCandidate()\n    {\n        using var repo = TestRepository.Create();\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        File.WriteAllText(Path.Combine(repo.Root, \"package.json\"),\n            \"{\\\"scripts\\\":{\\\"test\\\":\\\"vitest run\\\"}}\");\n        // All candidates fail \u2014 every one is recorded.\n        var alwaysFails = new ScriptedTestRunner(\n            new TestRunResult(1, \"go failed\"),   // go test\n            new TestRunResult(1, \"npm failed\")); // npm test\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: alwaysFails,\n            validationTimeoutMs: 10000);\n\n        Assert.NotNull(result.SetupCheck);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"Candidate 1\", artifact);\n        Assert.Contains(\"Candidate 2\", artifact);\n        Assert.Contains(\"go failed\", artifact);\n        Assert.Contains(\"npm failed\", artifact);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 76
+    },
+    {
+      "turn": 88,
+      "type": "llm_call",
+      "duration_s": 5.693,
+      "prompt_tokens_est": 75420,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 88,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter \"FullyQualifiedName~SetupCheckResults|FullyQualifiedName~TestCommandDetectorTests|FullyQualifiedName~ProjectBootstrapperTests\" 2>&1",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 11.452,
+      "result_length": 2457
+    },
+    {
+      "turn": 89,
+      "type": "llm_call",
+      "duration_s": 24.162,
+      "prompt_tokens_est": 76411,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 89,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~FailingValidation_NonZeroNoOutput\" -v normal 2>&1 | tail -40",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.015,
+      "result_length": 2473
+    },
+    {
+      "turn": 90,
+      "type": "llm_call",
+      "duration_s": 8.284,
+      "prompt_tokens_est": 78276,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 90,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 125,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1966
+    },
+    {
+      "turn": 91,
+      "type": "llm_call",
+      "duration_s": 16.804,
+      "prompt_tokens_est": 79041,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 91,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandValidator.cs",
+        "offset": 42,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1588
+    },
+    {
+      "turn": 92,
+      "type": "llm_call",
+      "duration_s": 32.019,
+      "prompt_tokens_est": 80249,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 92,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class FakeGitInvoker"
+      },
+      "succeeded": true,
+      "duration_s": 0.256,
+      "result_length": 220
+    },
+    {
+      "turn": 92,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 1,
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 958
+    },
+    {
+      "turn": 93,
+      "type": "llm_call",
+      "duration_s": 15.66,
+      "prompt_tokens_est": 82060,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 93,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "limit": 45
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2211
+    },
+    {
+      "turn": 94,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages+strip_reasoning_content",
+      "tokens_before": 83415,
+      "tokens_after": 36215
+    },
+    {
+      "turn": 94,
+      "type": "llm_call",
+      "duration_s": 18.489,
+      "prompt_tokens_est": 36215,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 94,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task FailingValidation_NonZeroNoOutput_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        // Exit code 127 (command not found) \u2192 rejected.\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(127, \"sh: go: not found\\n\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(127, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.Contains(\"not found\", result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the diagnostic fields.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 127\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n        Assert.Contains(\"not found\", artifact);\n    }",
+        "old_string": "    [Fact]\n    public async Task FailingValidation_NonZeroNoOutput_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        // Non-zero exit with no output \u2192 rejected (usage error).\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(2, \"\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(2, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the diagnostic fields.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 2\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 76
+    },
+    {
+      "turn": 95,
+      "type": "llm_call",
+      "duration_s": 3.563,
+      "prompt_tokens_est": 37339,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 95,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/TestCommandValidator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3946
+    },
+    {
+      "turn": 96,
+      "type": "llm_call",
+      "duration_s": 14.102,
+      "prompt_tokens_est": 38359,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 96,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task FailingValidation_NonZeroNoOutput_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        // Exit 127 with no output \u2192 rejected (command not found).\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(127, \"\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(127, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        // OutputTail may be null if there's no output\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the diagnostic fields.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 127\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n    }",
+        "old_string": "    [Fact]\n    public async Task FailingValidation_NonZeroNoOutput_ProducesArtifactWithAllFields()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        // Exit code 127 (command not found) \u2192 rejected.\n        var failingRunner = new ScriptedTestRunner(new TestRunResult(127, \"sh: go: not found\\n\"));\n\n        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);\n\n        Assert.True(result.UsedPlaceholderTestCommand);\n        Assert.NotNull(result.SetupCheck);\n        Assert.Equal(127, result.SetupCheck.ExitCode);\n        Assert.False(result.SetupCheck.TimedOut);\n        Assert.Equal(repo.Root, result.SetupCheck.Cwd);\n        Assert.NotNull(result.SetupCheck.OutputTail);\n        Assert.Contains(\"not found\", result.SetupCheck.OutputTail);\n        Assert.NotNull(result.SetupCheck.ArtifactPath);\n        Assert.True(File.Exists(result.SetupCheck.ArtifactPath));\n\n        // Artifact on disk has the diagnostic fields.\n        var artifact = await File.ReadAllTextAsync(result.SetupCheck.ArtifactPath!);\n        Assert.Contains(\"capturedUtc:\", artifact);\n        Assert.Contains(\"exitCode: 127\", artifact);\n        Assert.Contains(\"timedOut: False\", artifact);\n        Assert.Contains(\"not found\", artifact);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 76
+    },
+    {
+      "turn": 97,
+      "type": "llm_call",
+      "duration_s": 6.02,
+      "prompt_tokens_est": 39261,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 97,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public async Task ControlApiState_AfterFailedSetupCheck_ContainsStructuredSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var output = \"some stderr\\nfrom failing command\\n\";\n        var failing = new ScriptedTestRunner(new TestRunResult(1, output, TimedOut: true));",
+        "old_string": "    [Fact]\n    public async Task ControlApiState_AfterFailedSetupCheck_ContainsStructuredSetupCheck()\n    {\n        using var repo = TestRepository.Create();\n        // Need a toolchain marker so the detector finds a candidate to validate.\n        File.WriteAllText(Path.Combine(repo.Root, \"go.mod\"), \"module m\\n\\ngo 1.22\\n\");\n        var output = \"some stderr\\nfrom failing command\\n\";\n        var failing = new ScriptedTestRunner(new TestRunResult(3, output, TimedOut: true));"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 76
+    },
+    {
+      "turn": 98,
+      "type": "llm_call",
+      "duration_s": 13.557,
+      "prompt_tokens_est": 39705,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 98,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter \"FullyQualifiedName~SetupCheckResults\" 2>&1 | tail -20",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.516,
+      "result_length": 1845
+    },
+    {
+      "turn": 99,
+      "type": "llm_call",
+      "duration_s": 3.957,
+      "prompt_tokens_est": 40769,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 99,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter \"FullyQualifiedName~SetupCheckResults|FullyQualifiedName~TestCommandDetectorTests|FullyQualifiedName~ProjectBootstrapperTests|FullyQualifiedName~ControlApiTests\" 2>&1 | tail -10",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 6.699,
+      "result_length": 1082
+    },
+    {
+      "turn": 100,
+      "type": "llm_call",
+      "duration_s": 4.349,
+      "prompt_tokens_est": 41241,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 100,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Reorder TestCommandDetector: Node (scripts.test) before Bun\",\"Raise validation timeout from 5s to 60s in ProjectBootstrapper\",\"Track candidate rejections in ResolveTestCommandAsync and build SetupCheckDiagnostic\",\"Add SetupCheckDiagnostic to ProjectBootstrapResult\",\"Expose setupCheck in /state JSON (ControlApi.State.cs)\",\"Add SetupCheck property to MainWindowViewModel\",\"Capture SetupCheckDiagnostic in MainWindowViewModel.Bootstrap.cs\",\"Render diagnostic details in QueuePanel flyout\",\"Rewrite and expand tests for setup-check diagnostics\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1847
+    },
+    {
+      "turn": 101,
+      "type": "llm_call",
+      "duration_s": 3.154,
+      "prompt_tokens_est": 41882,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 101,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -20",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 92.572,
+      "result_length": 2058
+    },
+    {
+      "turn": 102,
+      "type": "llm_call",
+      "duration_s": 5.483,
+      "prompt_tokens_est": 42548,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 102,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SetupCheckResultsTests.cs",
+        "new_string": "    [Fact]\n    public void Hint_Timeout_AdvisesRaisingTimeout()\n    {\n        var diag = new SetupCheckDiagnostic(\"long-running-cmd\", \"/tmp\", 5000, -1, true,\n            \"partial\\n\", \"/tmp/setup-check.log\", DateTimeOffset.UtcNow);",
+        "old_string": "    [Fact]\n    public void Hint_Timeout_AdvisesRaisingTimeout()\n    {\n        var diag = new SetupCheckDiagnostic(\"sleep 999\", \"/tmp\", 5000, -1, true,\n            \"partial\\n\", \"/tmp/setup-check.log\", DateTimeOffset.UtcNow);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 76
+    },
+    {
+      "turn": 103,
+      "type": "llm_call",
+      "duration_s": 5.055,
+      "prompt_tokens_est": 42840,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 103,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | grep -A 8 \"FAILED\\|Failed \" | grep -v \"Skipped\\|Blame\\|Total\\|Duration\\|Passed\"",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 130.349,
+      "result_length": 740
+    },
+    {
+      "turn": 104,
+      "type": "llm_call",
+      "duration_s": 3.131,
+      "prompt_tokens_est": 43315,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 104,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 15012
+    },
+    {
+      "turn": 105,
+      "type": "llm_call",
+      "duration_s": 9.256,
+      "prompt_tokens_est": 46911,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 105,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2026
+    },
+    {
+      "turn": 106,
+      "type": "llm_call",
+      "duration_s": 16.502,
+      "prompt_tokens_est": 47904,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 106,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs",
+        "new_string": "using Avalonia.Media;\nusing VisualRelay.Core.Init;\nusing VisualRelay.Core.Queue;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.App.ViewModels;\n\npublic partial class MainWindowViewModel\n{\n    public RunAllMode SelectedRunAllMode { get; set; } = RunAllMode.Standard;\n\n    public static IReadOnlyList<RunAllMode> RunAllModeOptions { get; } =\n        [RunAllMode.Standard, RunAllMode.Sequential];\n    public string Version\n    {\n        get\n        {\n            var info = VersionHelper.ReadInformationalVersion();\n            var plus = info.IndexOf('+');\n            return plus >= 0 ? $\"v{info[..plus]}\" : $\"v{info}\";\n        }\n    }\n\n    public string RootName => RootFolderDisplay.Name(RootPath);\n    public string RootParentPath => RootFolderDisplay.Parent(RootPath);\n    public string WindowTitle => $\"Visual Relay - {RootName}\";\n    public string TaskListTitle => ShowArchive ? \"ARCHIVE\" : \"QUEUE\";\n    public string TaskListToggleText => ShowArchive ? \"Queue\" : \"Archive\";\n    public string PauseButtonText => PauseRequested ? \"Resume\" : \"Pause after task\";\n    public string PauseNoticeText => PauseRequested\n        ? IsBusy ? $\"Stops after {_runningTaskId ?? \"current task\"}\" : \"Paused before next task\"\n        : string.Empty;\n    public bool IsPauseNoticeVisible => PauseRequested;\n    public IBrush BackendStatusBrush => IsBackendReachable ? BackendUpBrush : BackendDownBrush;\n    public string BackendStatusLabel => IsBackendReachable\n        ? $\"backend: {new Uri(ModelBackend.BaseUrl).Authority}\"\n        : \"backend down\";\n    public bool IsViewingDifferentTaskDuringRun =>\n        _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);\n    public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $\"Viewing {SelectedTask!.Id} \u00b7 running {_runningTaskId}\" : string.Empty;\n    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;\n    public bool HasSetupCheck => SetupCheck is not null;\n\n    /// <summary>\n    /// Human-readable diagnostic text rendered in the status flyout when setup check\n    /// fails. Built from <see cref=\"SetupCheck\"/> when non-null.\n    /// </summary>\n    public string SetupCheckDisplay => SetupCheck is not { } sc ? string.Empty\n        : $\"COMMAND: {sc.Command}\\nCWD: {sc.Cwd}\\nTIMEOUT: {sc.TimeoutMs / 1000}s\\n\"\n          + $\"EXIT CODE: {sc.ExitCode}{(sc.TimedOut ? \" (timed out)\" : \"\")}\\n\"\n          + $\"HINT: {sc.Hint}\\n\"\n          + (sc.OutputTail is { Length: > 0 } tail ? $\"\\n--- output ---\\n{tail}\" : \"\");\n}\n",
+        "old_string": "using Avalonia.Media;\nusing VisualRelay.Core.Queue;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.App.ViewModels;\n\npublic partial class MainWindowViewModel\n{\n    public RunAllMode SelectedRunAllMode { get; set; } = RunAllMode.Standard;\n\n    public static IReadOnlyList<RunAllMode> RunAllModeOptions { get; } =\n        [RunAllMode.Standard, RunAllMode.Sequential];\n    public string Version\n    {\n        get\n        {\n            var info = VersionHelper.ReadInformationalVersion();\n            var plus = info.IndexOf('+');\n            return plus >= 0 ? $\"v{info[..plus]}\" : $\"v{info}\";\n        }\n    }\n\n    public string RootName => RootFolderDisplay.Name(RootPath);\n    public string RootParentPath => RootFolderDisplay.Parent(RootPath);\n    public string WindowTitle => $\"Visual Relay - {RootName}\";\n    public string TaskListTitle => ShowArchive ? \"ARCHIVE\" : \"QUEUE\";\n    public string TaskListToggleText => ShowArchive ? \"Queue\" : \"Archive\";\n    public string PauseButtonText => PauseRequested ? \"Resume\" : \"Pause after task\";\n    public string PauseNoticeText => PauseRequested\n        ? IsBusy ? $\"Stops after {_runningTaskId ?? \"current task\"}\" : \"Paused before next task\"\n        : string.Empty;\n    public bool IsPauseNoticeVisible => PauseRequested;\n    public IBrush BackendStatusBrush => IsBackendReachable ? BackendUpBrush : BackendDownBrush;\n    public string BackendStatusLabel => IsBackendReachable\n        ? $\"backend: {new Uri(ModelBackend.BaseUrl).Authority}\"\n        : \"backend down\";\n    public bool IsViewingDifferentTaskDuringRun =>\n        _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);\n    public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $\"Viewing {SelectedTask!.Id} \u00b7 running {_runningTaskId}\" : string.Empty;\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 91
+    },
+    {
+      "turn": 107,
+      "type": "llm_call",
+      "duration_s": 7.199,
+      "prompt_tokens_est": 49488,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 107,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]\n    private string? _configDiagnostic;\n\n    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]\n    [NotifyPropertyChangedFor(nameof(SetupCheckDisplay))]\n    private SetupCheckDiagnostic? _setupCheck;\n\n    // Set when a Run was blocked by a missing config so guided init can resume it.",
+        "old_string": "    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]\n    private string? _configDiagnostic;\n\n    [ObservableProperty]\n    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]\n    [NotifyPropertyChangedFor(nameof(SetupCheckDisplay))]\n    private SetupCheckDiagnostic? _setupCheck;\n\n    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;\n    public bool HasSetupCheck => SetupCheck is not null;\n\n    /// <summary>\n    /// Human-readable diagnostic text rendered in the status flyout when setup check\n    /// fails. Built from <see cref=\"SetupCheck\"/> when non-null.\n    /// </summary>\n    public string SetupCheckDisplay\n    {\n        get\n        {\n            if (SetupCheck is not { } sc)\n                return string.Empty;\n\n            return $\"COMMAND: {sc.Command}\\n\"\n                   + $\"CWD: {sc.Cwd}\\n\"\n                   + $\"TIMEOUT: {sc.TimeoutMs / 1000}s\\n\"\n                   + $\"EXIT CODE: {sc.ExitCode}{(sc.TimedOut ? \" (timed out)\" : \"\")}\\n\"\n                   + $\"HINT: {sc.Hint}\\n\"\n                   + (sc.OutputTail is { Length: > 0 } tail\n                       ? $\"\\n--- output ---\\n{tail}\"\n                       : \"\");\n        }\n    }\n\n    // Set when a Run was blocked by a missing config so guided init can resume it."
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 80
+    },
+    {
+      "turn": 108,
+      "type": "llm_call",
+      "duration_s": 3.406,
+      "prompt_tokens_est": 50047,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 108,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.App/ViewModels/MainWindowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Bootstrap.cs src/VisualRelay.Core/Init/ProjectBootstrapper.cs src/VisualRelay.Core/Init/SetupCheckDiagnostic.cs src/VisualRelay.Core/Init/TestCommandDetector.cs src/VisualRelay.App/Services/ControlApi.State.cs tests/VisualRelay.Tests/SetupCheckResultsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.175,
+      "result_length": 490
+    },
+    {
+      "turn": 109,
+      "type": "llm_call",
+      "duration_s": 3.423,
+      "prompt_tokens_est": 50337,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 109,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -10",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 127.389,
+      "result_length": 1037
+    },
+    {
+      "turn": 110,
+      "type": "llm_call",
+      "duration_s": 3.841,
+      "prompt_tokens_est": 50847,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 110,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Run dotnet test and verify everything green\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1846
+    },
+    {
+      "turn": 111,
+      "type": "llm_call",
+      "duration_s": 4.17,
+      "prompt_tokens_est": 51408,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 111,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/SetupCheckDiagnostic.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 7710
+    },
+    {
+      "turn": 111,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Init/ProjectBootstrapper.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2592
+    },
+    {
+      "turn": 112,
+      "type": "llm_call",
+      "duration_s": 3.024,
+      "prompt_tokens_est": 54011,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 112,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build 2>&1 | grep -E \"error|Error|Build succeeded\" | tail -5",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 4.749,
+      "result_length": 32
+    },
+    {
+      "turn": 113,
+      "type": "llm_call",
+      "duration_s": 17.277,
+      "prompt_tokens_est": 54092,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

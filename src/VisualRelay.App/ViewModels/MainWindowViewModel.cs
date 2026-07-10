@@ -114,7 +114,11 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(HasConfigDiagnostic))]
     private string? _configDiagnostic;
 
-    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasSetupCheck))]
+    [NotifyPropertyChangedFor(nameof(SetupCheckDisplay))]
+    private SetupCheckDiagnostic? _setupCheck;
+
     // Set when a Run was blocked by a missing config so guided init can resume it.
     private string? _pendingRunTaskId;
     [ObservableProperty]

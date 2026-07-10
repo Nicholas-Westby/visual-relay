@@ -11,7 +11,8 @@ public sealed record ProjectBootstrapResult(
     string? HookWarning,
     bool UsedPlaceholderTestCommand,
     string TestCommand,
-    string ConfigPath);
+    string ConfigPath,
+    SetupCheckDiagnostic? SetupCheck = null);
 
 /// <summary>
 /// One-shot "make this folder runnable by Visual Relay" routine. Detects (or
@@ -37,6 +38,13 @@ public static class ProjectBootstrapper
     private static readonly TimeSpan UpgradeValidationTimeout = TimeSpan.FromSeconds(120);
 
     /// <summary>
+    /// Default validation timeout during init (60 s). Real suites can take ~30 s;
+    /// this gives headroom without being unbounded. Once a config exists the
+    /// task pipeline uses testTimeoutMs, so this only affects the create-config path.
+    /// </summary>
+    private static readonly TimeSpan InitValidationTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>
     /// Makes <paramref name="rootPath"/> runnable by Visual Relay. Idempotent and
     /// safe on an established repo (never injects a commit when HEAD already exists).
     /// </summary>
@@ -44,14 +52,16 @@ public static class ProjectBootstrapper
         string rootPath,
         IGitInvoker? gitInvoker = null,
         ITestRunner? validationRunner = null,
+        int? validationTimeoutMs = null,
         CancellationToken cancellationToken = default)
     {
         var gi = gitInvoker ?? new GitInvoker();
+        var timeout = validationTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : InitValidationTimeout;
 
         // 1. Resolve a test command: detect + smoke-validate, else a green placeholder
         //    so an empty/greenfield folder is runnable and the first task can scaffold.
-        var (command, usedPlaceholder) = await ResolveTestCommandAsync(
-            rootPath, validationRunner, TimeSpan.FromSeconds(5), cancellationToken);
+        var (command, usedPlaceholder, setupCheck) = await ResolveTestCommandAsync(
+            rootPath, validationRunner, timeout, cancellationToken);
 
         // 2. Write .relay/config.json (also writes .relay/.gitignore; detects guard/format).
         var configPath = RelayConfigWriter.Write(rootPath, command);
@@ -64,7 +74,7 @@ public static class ProjectBootstrapper
         var hook = await HookInstaller.InstallAsync(rootPath, cancellationToken, gi);
 
         return new ProjectBootstrapResult(
-            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath);
+            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath, setupCheck);
     }
 
     /// <summary>
@@ -86,7 +96,7 @@ public static class ProjectBootstrapper
             return false;
         }
 
-        var (command, usedPlaceholder) = await ResolveTestCommandAsync(
+        var (command, usedPlaceholder, _) = await ResolveTestCommandAsync(
             rootPath, validationRunner, UpgradeValidationTimeout, cancellationToken);
         if (usedPlaceholder)
         {
@@ -100,24 +110,40 @@ public static class ProjectBootstrapper
     // Detect candidates and return the first that smoke-validates; otherwise the
     // placeholder. The runner/timeout are injectable so callers (init vs. upgrade)
     // pick their own timeout and tests pass a fake.
-    private static async Task<(string Command, bool UsedPlaceholder)> ResolveTestCommandAsync(
+    private static async Task<(string Command, bool UsedPlaceholder, SetupCheckDiagnostic? SetupCheck)> ResolveTestCommandAsync(
         string rootPath, ITestRunner? validationRunner, TimeSpan validationTimeout, CancellationToken cancellationToken)
     {
         var candidates = TestCommandDetector.DetectCandidates(rootPath);
+        var timeoutMs = (int)validationTimeout.TotalMilliseconds;
         if (candidates.Count > 0)
         {
             var runner = validationRunner ?? new DirectExecTestRunner(validationTimeout);
             var validator = new TestCommandValidator(runner);
+            var rejections = new List<(string, string, int, bool, string)>();
+
             foreach (var candidate in candidates)
             {
                 var result = await validator.ValidateAsync(rootPath, candidate, cancellationToken);
                 if (result.Accepted)
                 {
-                    return (candidate, false);
+                    return (candidate, false, null);
                 }
+
+                rejections.Add((
+                    candidate,
+                    result.RejectionReason ?? "unknown",
+                    result.RunResult.ExitCode,
+                    result.RunResult.TimedOut,
+                    result.RunResult.Output));
             }
+
+            // All candidates rejected — build a diagnostic from the LAST failure.
+            var last = rejections[^1];
+            var diag = SetupCheckDiagnostic.FromFailedValidation(
+                rootPath, last.Item1, timeoutMs, last.Item3, last.Item4, last.Item5, rejections);
+            return (PlaceholderTestCommand, true, diag);
         }
 
-        return (PlaceholderTestCommand, true);
+        return (PlaceholderTestCommand, true, null);
     }
 }

@@ -56,6 +56,7 @@ public sealed partial class RelayDriver
         var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;
 
         var runsExecuted = 0;
+        SetupCheckResults? lastAttemptSetupChecks = null;
         var verifySignatures = new List<(string Reason, string OutputPath)>();
         for (var run = 1; run <= maxRuns; run++)
         {
@@ -178,7 +179,12 @@ public sealed partial class RelayDriver
             var attemptFullOutput = check == "red"
                 ? BuildFullFailureOutput(testResult, guardFailureOutput, bootstrapFailingResult is not null, bootstrapFailingResult?.Output)
                 : null;
-            var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput);
+            var attemptSetupChecks = SetupCheckResults.FromFixVerifyIteration(
+                bootstrapFailingResult, bootstrapCheckCmd,
+                guardFailureOutput, guardCmd,
+                testResult, config.TestCommand);
+            lastAttemptSetupChecks = attemptSetupChecks;
+            var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
             // Record verify failure signature for enriched flag reasons.
             if (check == "red" && !string.IsNullOrWhiteSpace(verifyReason))
@@ -257,8 +263,9 @@ public sealed partial class RelayDriver
                 }
             }
         }
+        var flagDetails = (lastAttemptSetupChecks?.ToSummaryLines() + "\n\n") + failingTestOutput;
         var finalOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
-            exhaustReason, failingTestOutput, statusEntries, cancellationToken);
+            exhaustReason, flagDetails, statusEntries, cancellationToken);
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
 

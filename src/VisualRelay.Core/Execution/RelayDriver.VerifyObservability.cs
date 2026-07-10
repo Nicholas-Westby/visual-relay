@@ -1,3 +1,4 @@
+using System.Text.Json;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -27,12 +28,13 @@ public sealed partial class RelayDriver
         // trimmed tail the fix-verify prompt shows it. Null (the default) persists
         // testResult.Output — the right content for a green gate, or any caller whose only
         // failure source is the test command itself.
-        string? combinedFailureOutput = null)
+        string? combinedFailureOutput = null,
+        SetupCheckResults? setupChecks = null)
     {
         var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
         var reason = testResult.ExitCode != 0
             ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output)
-            : string.Empty;
+            : setupChecks?.IsAnyRed() == true ? "setup check failure" : string.Empty;
         // NOTE: WorkingTreeHash fingerprints only the manifest files' contents — a coarse
         // signal, acceptable for observability (and for the Task 2 convergence guard).
         var treeHash = WorkingTreeHash(rootPath, manifest);
@@ -42,18 +44,29 @@ public sealed partial class RelayDriver
         var outputFile = TryPersistVerifyOutput(
             taskDirectory, stage.Number, attempt, check, combinedFailureOutput ?? testResult.Output);
 
+        // Persist structured per-check JSON artifact alongside the verify output.
+        if (setupChecks is not null)
+            TryPersistVerifyChecksJson(taskDirectory, stage.Number, attempt, setupChecks);
+
+        var data = new Dictionary<string, string>
+        {
+            ["command"] = config.TestCommand,
+            ["exitCode"] = testResult.ExitCode.ToString(),
+            ["check"] = check,
+            ["reason"] = reason,
+            ["treeHash"] = treeHash,
+            ["outputFile"] = outputFile ?? string.Empty
+        };
+        if (setupChecks is not null)
+        {
+            foreach (var (k, v) in setupChecks.ToEventData())
+                data[k] = v;
+        }
+
         await _dependencies.EventSink.PublishAsync(new RelayEvent(
             DateTimeOffset.UtcNow, "info", "verify_result", runId, rootPath, taskId,
             stage.Number, stage.Tier, Attempt: attempt,
-            Data: new Dictionary<string, string>
-            {
-                ["command"] = config.TestCommand,
-                ["exitCode"] = testResult.ExitCode.ToString(),
-                ["check"] = check,
-                ["reason"] = reason,
-                ["treeHash"] = treeHash,
-                ["outputFile"] = outputFile ?? string.Empty
-            }), cancellationToken);
+            Data: data), cancellationToken);
 
         return (outputFile, check, treeHash, reason);
     }
@@ -79,6 +92,30 @@ public sealed partial class RelayDriver
                 $"# check: {check}{Environment.NewLine}" +
                 $"# capturedUtc: {DateTimeOffset.UtcNow:O}  bytes: {output.Length}{Environment.NewLine}{Environment.NewLine}";
             File.WriteAllText(path, header + output);
+            return path;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Writes the structured per-check breakdown to
+    /// <c>stage{N}-attempt{M}.verify-checks.json</c> under the task directory, returning
+    /// the ABSOLUTE path (or null on failure). Mirrors <c>TryPersistVerifyOutput</c>
+    /// so every failure is machine-diagnosable from a single artifact directory.
+    /// </summary>
+    internal static string? TryPersistVerifyChecksJson(
+        string taskDirectory, int stageNum, int attempt, SetupCheckResults setupChecks)
+    {
+        try
+        {
+            var path = Path.GetFullPath(
+                Path.Combine(taskDirectory, $"stage{stageNum}-attempt{attempt}.verify-checks.json"));
+            var json = JsonSerializer.Serialize(setupChecks,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
+            File.WriteAllText(path, json);
             return path;
         }
         catch

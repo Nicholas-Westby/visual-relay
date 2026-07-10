@@ -1,4 +1,5 @@
 using Avalonia.Media;
+using VisualRelay.Core.Init;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -37,4 +38,16 @@ public partial class MainWindowViewModel
     public bool IsViewingDifferentTaskDuringRun =>
         _runningTaskId is not null && SelectedTask is not null && !string.Equals(SelectedTask.Id, _runningTaskId, StringComparison.Ordinal);
     public string ViewingRunContextText => IsViewingDifferentTaskDuringRun ? $"Viewing {SelectedTask!.Id} · running {_runningTaskId}" : string.Empty;
+    public bool HasConfigDiagnostic => ConfigDiagnostic is not null;
+    public bool HasSetupCheck => SetupCheck is not null;
+
+    /// <summary>
+    /// Human-readable diagnostic text rendered in the status flyout when setup check
+    /// fails. Built from <see cref="SetupCheck"/> when non-null.
+    /// </summary>
+    public string SetupCheckDisplay => SetupCheck is not { } sc ? string.Empty
+        : $"COMMAND: {sc.Command}\nCWD: {sc.Cwd}\nTIMEOUT: {sc.TimeoutMs / 1000}s\n"
+          + $"EXIT CODE: {sc.ExitCode}{(sc.TimedOut ? " (timed out)" : "")}\n"
+          + $"HINT: {sc.Hint}\n"
+          + (sc.OutputTail is { Length: > 0 } tail ? $"\n--- output ---\n{tail}" : "");
 }

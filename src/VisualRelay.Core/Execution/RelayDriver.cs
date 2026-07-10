@@ -47,8 +47,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var taskHash = string.Empty;
             var sessionCostUsd = 0d;
             var unknownCostStageCount = 0;
-            var reviewPairHandled = false;
-            var reviewFamilyClean = false;
+            var reviewPairHandled = false; var reviewFamilyClean = false;
             var fixVerifyHandled = false;
             var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4
             var implementationFrontLoaded = false;
@@ -91,8 +90,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     taskHash = pairState.TaskHash;
                     sessionCostUsd = pairState.SessionCostUsd;
                     unknownCostStageCount = pairState.UnknownCostStageCount;
-                    reviewFamilyClean = pairState.ReviewFamilyClean;
-                    reviewPairHandled = true;
+                    reviewPairHandled = true; reviewFamilyClean = pairState.ReviewFamilyClean;
                     continue;
                 }
                 // Skip Fix (9) on a clean/skipped review family (see SkipStages); before stage_start so a skip never flickers Running.
@@ -121,12 +119,10 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 {
                     // Stage 10: run mechanical tests BEFORE the agent.
                     TestRunResult? stage10TestResult = null;
-                    bool stage10BootstrapFailed = false;
-                    string? stage10BootstrapFailureOutput = null;
-                    string? stage10BootstrapCmd = null;
-                    string? stage10NewGuardOutput = null;
-                    bool stage10GuardFailed = false;
-                    string? stage10GuardOutput = null;
+                    bool stage10BootstrapFailed = false; string? stage10BootstrapFailureOutput = null;
+                    string? stage10BootstrapCmd = null; string? stage10NewGuardOutput = null;
+                    bool stage10GuardFailed = false; string? stage10GuardOutput = null;
+                    Stage10PreAgentData? stage10PreAgentData = null;
                     if (stage.Number == 10)
                     {
                         var (pre, errorHint) = await RunStage10PreAgentAsync(rootPath, runId, taskId, taskDirectory, config,
@@ -142,6 +138,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         stage10NewGuardOutput = pre.NewGuardOutput;
                         stage10GuardFailed = pre.GuardFailed;
                         stage10GuardOutput = pre.GuardOutput;
+                        stage10PreAgentData = pre;
                     }
 
                     if (stage.Number == 5 && config.SkipTestsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true)
@@ -231,7 +228,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         var stage10FullOutput = stage10Red
                             ? BuildFullFailureOutput(stage10TestResult, stage10GuardOutput, stage10BootstrapFailed, stage10BootstrapFailureOutput, stage10NewGuardOutput)
                             : null;
-                        var (stage10VerifyOutputPath, _, _, _) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage10TestResult!, manifest, cancellationToken, overrideCheck: stage10Red ? "red" : "green", combinedFailureOutput: stage10FullOutput);
+                        var (stage10VerifyOutputPath, _, _, _) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, attempt: 1, config, stage10TestResult!, manifest, cancellationToken, overrideCheck: stage10Red ? "red" : "green", combinedFailureOutput: stage10FullOutput, setupChecks: SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config));
                         check = stage10Red ? "red" : "green";
                         commitMessages = ReadStringArray(json, "commitMessages");
                         if (commitMessages.Count == 0)
@@ -255,7 +252,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 if (!config.EnableFixVerify)
                                 {
                                     var reason = newFailures is null || newFailures == "verify failed" ? "verify failed" : $"new test failures: {newFailures}";
-                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, failingTestOutput, statusEntries, cancellationToken);
+                                    var prefix = SetupCheckResults.FromPreAgentData(stage10PreAgentData!, config).ToSummaryLines() + "\n\n";
+                                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 10, reason, prefix + failingTestOutput, statusEntries, cancellationToken);
                                 }
 
                                 // Genuinely red — record stage 10, enter fix-verify loop.

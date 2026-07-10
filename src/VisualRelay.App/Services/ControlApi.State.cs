@@ -29,6 +29,18 @@ public sealed partial class ControlApi
                 label = vm.BackendStatusLabel,
                 message = vm.BackendStatusMessage
             },
+            setupCheck = vm.SetupCheck is { } sc ? new
+            {
+                command = sc.Command,
+                cwd = sc.Cwd,
+                timeoutMs = sc.TimeoutMs,
+                exitCode = sc.ExitCode,
+                timedOut = sc.TimedOut,
+                outputTail = sc.OutputTail,
+                artifactPath = sc.ArtifactPath,
+                capturedUtc = sc.CapturedUtc,
+                hint = sc.Hint
+            } : null,
             selectedTask = BuildSelectedTask(),
             tasks = vm.Tasks.Select(t => new
             {

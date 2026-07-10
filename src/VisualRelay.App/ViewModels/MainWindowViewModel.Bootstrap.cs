@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.Input;
+using VisualRelay.App.Services;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;
@@ -19,6 +20,7 @@ public partial class MainWindowViewModel
         {
             var result = await ProjectBootstrapper.BootstrapAsync(RootPath);
             var gitNote = result.GitInitialized ? "initialized git repo; " : string.Empty;
+            SetupCheck = result.SetupCheck;
             StatusText = result.HookWarning
                 ?? (result.UsedPlaceholderTestCommand
                     ? $"Project bootstrapped — {gitNote}placeholder test command set. Add a task that "
@@ -27,6 +29,7 @@ public partial class MainWindowViewModel
         }
         catch (Exception ex)
         {
+            SetupCheck = null;
             StatusText = $"Bootstrap failed: {ex.Message}";
             return;
         }

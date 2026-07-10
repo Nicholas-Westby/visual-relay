@@ -9,13 +9,17 @@ namespace VisualRelay.Core.Init;
 //
 // Priority order (strongest → weakest signal):
 //   1. .NET         (*.slnx / *.sln / *.csproj)  → "dotnet test"
-//   2. Bun           (bun.lock / bunfig.toml)     → "bun test"
-//   3. Python        (pyproject.toml / setup.py / pytest.ini) → "pytest"
-//   4. Rust          (Cargo.toml)                 → "cargo test"
-//   5. Go            (go.mod)                     → "go test ./..."
-//   6. Swift         (Package.swift)              → "swift test"
-//   7. Node          (package.json)              → scripts.test value or "npm test"
+//   2. Node          (package.json)              → scripts.test value or "npm test"
+//   3. Bun           (bun.lock / bunfig.toml)     → "bun test"
+//   4. Python        (pyproject.toml / setup.py / pytest.ini) → "pytest"
+//   5. Rust          (Cargo.toml)                 → "cargo test"
+//   6. Go            (go.mod)                     → "go test ./..."
+//   7. Swift         (Package.swift)              → "swift test"
 //   8. Python (weak) (tests/ or test/ directory only)     → "pytest"  ← LAST, weakest signal
+//
+// An explicit project script (package.json scripts.test) beats an inferred runner
+// (bun test). This way a Bun-lockfile repo whose tests are vitest via scripts.test
+// gets the correct command validated first.
 public static class TestCommandDetector
 {
     /// <summary>
@@ -38,14 +42,21 @@ public static class TestCommandDetector
             candidates.Add("dotnet test");
         }
 
-        // 2. Bun
+        // 2. Node — parse scripts.test when available, otherwise fall back to "npm test"
+        if (File.Exists(Path.Combine(rootPath, "package.json")))
+        {
+            var script = ReadPackageJsonScriptsTest(rootPath);
+            candidates.Add(script ?? "npm test");
+        }
+
+        // 3. Bun
         if (File.Exists(Path.Combine(rootPath, "bun.lock"))
             || File.Exists(Path.Combine(rootPath, "bunfig.toml")))
         {
             candidates.Add("bun test");
         }
 
-        // 3. Python (strong signals — NOT tests/ directory)
+        // 4. Python (strong signals — NOT tests/ directory)
         if (File.Exists(Path.Combine(rootPath, "pyproject.toml"))
             || File.Exists(Path.Combine(rootPath, "setup.py"))
             || File.Exists(Path.Combine(rootPath, "pytest.ini")))
@@ -53,29 +64,22 @@ public static class TestCommandDetector
             candidates.Add("pytest");
         }
 
-        // 4. Rust
+        // 5. Rust
         if (File.Exists(Path.Combine(rootPath, "Cargo.toml")))
         {
             candidates.Add("cargo test");
         }
 
-        // 5. Go
+        // 6. Go
         if (File.Exists(Path.Combine(rootPath, "go.mod")))
         {
             candidates.Add("go test ./...");
         }
 
-        // 6. Swift (SwiftPM)
+        // 7. Swift (SwiftPM)
         if (File.Exists(Path.Combine(rootPath, "Package.swift")))
         {
             candidates.Add("swift test");
-        }
-
-        // 7. Node — parse scripts.test when available, otherwise fall back to "npm test"
-        if (File.Exists(Path.Combine(rootPath, "package.json")))
-        {
-            var script = ReadPackageJsonScriptsTest(rootPath);
-            candidates.Add(script ?? "npm test");
         }
 
         // 8. Python (weak) — tests/ or test/ directory is a last-resort signal

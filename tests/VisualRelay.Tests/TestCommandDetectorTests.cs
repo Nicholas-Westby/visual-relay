@@ -56,14 +56,15 @@ public sealed class TestCommandDetectorTests
     }
 
     [Fact]
-    public void Detect_BunLockAndPackageJson_BunBeforeNpm()
+    public void Detect_BunLockAndPackageJson_NodeBeforeBun()
     {
-        // Bun markers must outrank package.json so a Bun+Node repo
-        // (like JobFinder) is detected as bun, not npm.
+        // package.json outranks bun.lock (explicit project script beats
+        // an inferred runner), so a Bun+Node repo returns the node-based
+        // command first; bun test is still a candidate but ranked lower.
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "bun.lock"), "");
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");
-        Assert.Equal("bun test", TestCommandDetector.Detect(repo.Root));
+        Assert.Equal("npm test", TestCommandDetector.Detect(repo.Root));
     }
 
     // ── New markers: package.json scripts.test ─────────────────────────
@@ -103,7 +104,7 @@ public sealed class TestCommandDetectorTests
     public void Detect_TestsDirAndBunLock_BunBeforePytest()
     {
         // This is the exact scenario from the JobFinder bug report:
-        // bun.lock + tests/ directory → must return "bun test", NOT "pytest".
+        // bun.lock + tests/ directory → bun test still beats pytest.
         // The tests/ directory is a weak signal that must rank LAST.
         using var repo = TestRepository.Create();
         Directory.CreateDirectory(Path.Combine(repo.Root, "tests"));
@@ -154,8 +155,8 @@ public sealed class TestCommandDetectorTests
 
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
 
-        // bun.lock outranks package.json even when package.json has scripts.test.
-        Assert.Equal(["bun test", "vitest run"], candidates);
+        // package.json (scripts.test) outranks bun.lock now.
+        Assert.Equal(["vitest run", "bun test"], candidates);
     }
 
     [Fact]
@@ -180,7 +181,7 @@ public sealed class TestCommandDetectorTests
         File.WriteAllText(Path.Combine(repo.Root, "Package.swift"), "// swift-tools-version:5.9");
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{}");
         var candidates = TestCommandDetector.DetectCandidates(repo.Root);
-        Assert.Equal(["swift test", "npm test"], candidates);
+        Assert.Equal(["npm test", "swift test"], candidates);
     }
 
     [Fact]
@@ -200,12 +201,12 @@ public sealed class TestCommandDetectorTests
 
         Assert.Equal([
             "dotnet test",
+            "npm test",
             "bun test",
             "pytest",
             "cargo test",
             "go test ./...",
             "swift test",
-            "npm test",
             "pytest"   // tests/ dir weak signal, last
         ], candidates);
     }

@@ -6,7 +6,7 @@ namespace VisualRelay.Core.Execution;
 public sealed partial class RelayDriver
 {
     // Combined result from the stage-10 pre-agent mechanical test gate.
-    private sealed record Stage10PreAgentData(
+    internal sealed record Stage10PreAgentData(
         TestRunResult TestResult,
         double TestDurationSeconds,
         bool BootstrapFailed,
