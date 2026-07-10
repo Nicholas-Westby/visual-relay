@@ -129,7 +129,17 @@ public sealed partial class RelayDriver
             if (File.Exists(dst) || Directory.Exists(dst)) continue;
             try
             {
-                OverlayIgnoredEntry(src, dst, isDirectory, thresholdBytes);
+                if (isDirectory)
+                {
+                    long copiedBytes = 0;
+                    OverlayIgnoredDirRecursive(
+                        src, dst, thresholdBytes, depth: 0, ref copiedBytes,
+                        runId, sourcePath, worktreeId);
+                }
+                else
+                {
+                    OverlayIgnoredFile(src, dst, thresholdBytes);
+                }
             }
             catch (Exception ex)
             {
@@ -159,33 +169,6 @@ public sealed partial class RelayDriver
     /// it the entry is SYMLINKED (avoids copying huge read-mostly deps like node_modules).
     /// </summary>
     private const long IgnoredOverlayCopyMaxBytes = 64L * 1024 * 1024;
-
-    /// <summary>
-    /// Overlays one top-level ignored entry from <paramref name="src"/> to
-    /// <paramref name="dst"/>: COPY when below <paramref name="thresholdBytes"/>,
-    /// otherwise SYMLINK. Directory size uses the early-exiting
-    /// <see cref="NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold"/> (never fully sizes
-    /// a multi-GB tree); a single file uses its length.
-    /// </summary>
-    private static void OverlayIgnoredEntry(string src, string dst, bool isDirectory, long thresholdBytes)
-    {
-        if (isDirectory)
-        {
-            if (!Directory.Exists(src)) return;
-            if (NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold(src, thresholdBytes))
-                Directory.CreateSymbolicLink(dst, src); // large dep → share via link
-            else
-                CopyDirectoryResilient(src, dst); // small → copy so writes stay isolated
-        }
-        else
-        {
-            if (!File.Exists(src)) return;
-            if (new FileInfo(src).Length >= thresholdBytes)
-                File.CreateSymbolicLink(dst, src);
-            else
-                File.Copy(src, dst, overwrite: false);
-        }
-    }
 
     /// <summary>VR/VCS-internal dirs the verify worktree manages itself — never symlinked.</summary>
     private static readonly IReadOnlySet<string> IgnoredOverlayExcludedNames =

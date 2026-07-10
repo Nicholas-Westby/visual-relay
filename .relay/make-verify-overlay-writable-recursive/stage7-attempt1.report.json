@@ -1,0 +1,701 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-10T00:37:21.446697+00:00",
+  "task": "# Relay stage 7: Review\nTask: make-verify-overlay-writable-recursive\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Make the verify-worktree ignored-content overlay recursive so dep dirs stay writable\n\nTwo real-world verify failures against JS repos (axios: node_modules 187 MB, npm layout; zod:\nnode_modules 985 MB, pnpm layout) show the \u226564 MB branch of the ignored-content overlay is broken\nfor any dependency dir a test runner writes into. Both repos' stage-10/11 verifies failed with\n`EPERM open <worktree>/node_modules/.vite-temp/vitest.config.*.timestamp-*.mjs` \u2014 vitest bundles a\ntemp config into `node_modules/.vite-temp/` at startup (standard vitest behavior, not repo-specific).\nThe implementation under verify was healthy; the snapshot itself cannot pass ANY vitest suite.\n\n## Diagnosed root cause (verified, do not re-derive)\n\n- `CreateVerifyWorktreeAsync` overlays each top-level git-ignored entry of the source repo into the\n  verify worktree via `OverlayIgnoredEntry` (`src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs`):\n  entries at/above `IgnoredOverlayCopyMaxBytes` (64 MB) become ONE whole-directory symlink back to\n  the source repo's real dir; smaller entries are copied by `CopyDirectoryResilient`\n  (`RelayDriver.VerifyWorktreeCopy.cs`).\n- A test-time write anywhere inside a whole-dir-symlinked entry resolves through the link to the\n  REAL repo path, which the always-on sandbox correctly refuses (writes are confined to the verify\n  cwd) \u2192 EPERM \u2192 verify red regardless of the change under test.\n- The file-copy branch's own doc comment already names this exact hazard as the reason small\n  entries are copied (\"a test that WRITES a git-ignored path stays inside the sandboxed cwd instead\n  of following a symlink OUT to the source (which nono --allow-cwd refuses \u2192 EPERM)\") \u2014 the \u226564 MB\n  branch reintroduces it wholesale.\n- The recent symlink-preservation change (`preserve-symlinks-in-verify-worktree-overlay`) fixed the\n  <64 MB copy branch dropping link entries; this task extends the same design to make the size\n  decision PER ENTRY, RECURSIVELY, instead of once for the whole top-level dir.\n\n## What to build\n\nReplace the single top-level copy-vs-symlink decision in `OverlayIgnoredEntry` with one recursive\noverlay walk that applies, per entry:\n\n1. **Symlink entry in the source** (file or dir) \u2192 recreate the link node exactly as the\n   symlink-preservation change does (never follow/traverse; relative targets verbatim; absolute\n   targets inside the overlaid source subtree rewritten to the destination; others verbatim).\n2. **Directory at/above the threshold** \u2192 single whole-dir symlink (read-mostly payload sharing,\n   e.g. pnpm's `.pnpm` store, a huge `vendor/` tree) \u2014 today's \u226564 MB behavior, now applied at any\n   depth so it captures the *bulk* without freezing the whole top-level dir.\n3. **Directory below the threshold** \u2192 create a REAL directory at the destination and recurse.\n4. **File** \u2192 copy (a file at/above the threshold may be symlinked, as today).\n\nEffect on the failing class: `node_modules` itself becomes a real, writable directory whose small\nchildren (`.bin` links, `.vite-temp`, `.cache`, lockfile metadata) are real/copied and writable in\nthe worktree, while huge payload subtrees (package trees, `.pnpm`) remain shared via links. A tool\nthat mkdirs/writes a new path under the dep root now succeeds inside the sandbox.\n\n- Directory sizing must keep using the early-exiting `NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold`\n  (never fully sizes a huge tree). The walk must remain resilient per entry (errors swallowed, never\n  abort worktree creation) and must never follow a link during traversal.\n- Recursion must be bounded: cap depth (e.g. 16) and total real-copied bytes per top-level entry\n  (reuse the existing threshold as the budget unit) so a pathological tree of millions of tiny files\n  cannot make overlay unbounded \u2014 on hitting a bound, fall back to symlinking the remaining subtree\n  and emit the existing `verify_overlay` advisory warn event with the entry and reason.\n- Cleanup (`CleanupVerifyWorktreeAsync`/`UnlinkOverlaySymlinks`) must handle link nodes at ANY depth\n  it may now encounter: never recursive-delete through a reparse point; targets outside the worktree\n  must survive teardown untouched. Extend the unlink pass (or prove the existing delete order safe)\n  and lock it in with a test.\n- `BuildOutputOverlaySkipNames` semantics are unchanged (still consulted for top-level entries only).\n- General-purpose only: no npm/pnpm/vitest-specific names or logic anywhere in the implementation.\n\n## Tests (extend the verify-worktree family; red first against current whole-dir-symlink behavior)\n\nUse the existing seam `CreateVerifyWorktreeForTestAsync(..., thresholdBytes)` with a tiny injected\nthreshold so no test writes large data:\n\n- **Writable dep root (the axios/zod case):** source has ignored `deps/` whose subdir `big/`\n  exceeds the injected threshold and sibling `small/` + file `meta.txt` do not. After overlay:\n  `deps` is a REAL dir, `deps/big` is a symlink, `deps/small/\u2026` and `deps/meta.txt` are real copies;\n  creating a new file `deps/newcache/x` in the worktree succeeds and does NOT appear in the source\n  repo's `deps/`.\n- **Nested link preservation:** `deps/small/.bin/tool -> ../pkg/tool` (relative) survives as a link\n  resolving inside the worktree copy.\n- **Bounded recursion fallback:** with a depth/budget bound forced low, a deep tree still overlays\n  (subtree symlinked) and the advisory event is emitted.\n- **Teardown safety at depth:** a nested dir symlink several levels down pointing at an outside\n  sentinel dir \u2014 sentinel intact after cleanup; worktree fully removed.\n- **Regression:** the existing top-level \u2265threshold whole-dir-symlink expectation is REPLACED by the\n  new recursive expectation \u2014 update the prior task's tests only where their assertions encoded the\n  old all-or-nothing behavior, keeping their safety intent (cycle, escape, dangling) fully covered.\n\n## Verification\n\n- `./test.sh` fully green including the new tests.\n- The writable-dep-root test demonstrably fails against the pre-change whole-dir-symlink behavior.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs\ntests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs\ntests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs\ntests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Replace the single top-level copy-vs-symlink decision in OverlayIgnoredEntry with a recursive per-entry walk: symlink entries are recreated as link nodes, directories \u2265 threshold become whole-dir symlinks, directories < threshold become real and recurse, files are copied. This lets dep roots like node_modules be real/writable directories while large payload subtrees remain shared symlinks, fixing EPERM from test runners (vitest, etc.) that write into deps. Recursion is bounded by depth (16) and byte budget per top-level entry; on overflow, symlink the subtree and emit advisory warn. Cleanup must handle links at any depth without traversing through reparse points.\",\n  \"options\": [\n    \"Option A \u2014 Single recursive function with bounded walk: Add a `OverlayIgnoredEntryRecursive` method that takes the current depth and accumulated copied bytes. Call it from the existing `OverlayIgnoredEntry` (which handles the top-level entry). The recursive variant uses `NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold` for directory sizing (early-exit), recreates symlinks verbatim, and falls back to a whole-dir symlink when depth > 16 or accumulated copied bytes > threshold. Cleanup extends `UnlinkOverlaySymlinks` to walk depth-first via `Directory.EnumerateFileSystemEntries` without following reparse points (using `FindFirstFileEx` or `SafeFileHandle` with `FILE_FLAG_OPEN_REPARSE_POINT`). Tests use the existing `CreateVerifyWorktreeForTestAsync(..., thresholdBytes)` seam with a tiny threshold; four new test methods cover: writable dep root, nested link preservation, bounded recursion fallback, and teardown safety at depth.\",\n    \"Option B \u2014 Queue-based iterative walk: Same per-entry logic but implemented with an explicit queue/stack instead of recursion, avoiding any risk of stack overflow from deeply nested trees. Each queue item carries (source path, dest path, depth, parent context). The main loop dequeues, classifies the entry, and enqueues children for directories below threshold. Fallback and bound checks identical to Option A. Easier to reason about control flow and bound enforcement; slightly more verbose setup. Same cleanup and test requirements.\",\n    \"Option C \u2014 Refactor into an overlay state machine: Extract a `RecursiveOverlayWalker` class that manages the walk state (depth, byte budget, skip-names filter). The walker yields `OverlayAction` values (CopyFile, CreateSymlink, RecurseInto, SymlinkSubtree) consumed by a driver loop. This isolates the decision logic from the I/O, making it unit-testable without creating real files. The existing `OverlayIgnoredEntry` becomes a thin shim that delegates to the walker. Cleanup and tests mirror the other options. Highest upfront refactor cost but cleanest separation for future policy changes.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Three implementation files must change. (1) `RelayDriver.VerifyWorktree.cs`: replace `OverlayIgnoredEntry` (line 170-188) with a recursive walk \u2014 `OverlayIgnoredEntryRecursive(src, dst, thresholdBytes, depth=0, copiedBytes=0)` \u2014 that for symlinks recreates via existing `RecreateSymlink`; for dirs \u2265 threshold creates a whole-dir symlink; for dirs < threshold creates a real dir and recurses; for files copies them. Bounds: depth \u2264 16, copiedBytes \u2264 threshold per top-level entry; fallback symlinks the subtree and emits `verify_overlay_skipped` warn. The top-level loop (line 124) stays unchanged; it calls `OverlayIgnoredEntry` which delegates to the recursive variant for dirs. `CopyDirectoryResilient` and `RecreateSymlink` in `VerifyWorktreeCopy.cs` are reused as-is. (2) `RelayDriver.VerifyWorktreeCleanup.cs`: `UnlinkOverlaySymlinks` (line 25-52) already handles links at any depth \u2014 it checks `ReparsePoint` before recursing, so nested dir symlinks are unlinked without traversal \u2014 no code change needed, but add a teardown-safety test to lock this in. (3) `NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold` (line 98) is reused as-is for per-directory sizing. Test changes: `VerifyWorktreeIgnoredOverlayCopyTests.cs` test 3 (`LargeIgnoredDir_IsSymlinked`) and `VerifyWorktreeIgnoredOverlayTests.cs` test 2 (`RemovesLinksOnly`) must update assertions: top-level `node_modules` becomes a real dir with only its large children symlinked. Four new tests added to `VerifyWorktreeIgnoredOverlayCopyTests` partial class: writable-dep-root, nested-link-preservation (coverable by existing test 5? no \u2014 new one with mixed large+small within same parent), bounded-recursion-fallback, teardown-safety-at-depth.\",\n  \"constraints\": [\n    \"No file edits during this research phase\",\n    \"No npm/pnpm/vitest-specific names or logic anywhere in implementation \u2014 general-purpose only\",\n    \"BuildOutputOverlaySkipNames semantics unchanged \u2014 still top-level only\",\n    \"Walk must be resilient per entry \u2014 errors swallowed, never abort worktree creation\",\n    \"Never follow a link during traversal \u2014 use reparse point detection (ReparsePoint flag)\",\n    \"Directory sizing must use NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold (early-exit, never fully sizes a huge tree)\",\n    \"Recursion bounds: max depth 16, byte budget per top-level entry = threshold (IgnoredOverlayCopyMaxBytes = 64 MB default)\",\n    \"On hitting a bound: fall back to symlinking the remaining subtree and emit verify_overlay advisory warn event with entry and reason\",\n    \"Cleanup (UnlinkOverlaySymlinks) must never recursive-delete through a reparse point \u2014 targets outside worktree must survive teardown untouched\",\n    \"Existing tests for cycle safety (test 6), escape (test 8), dangling (test 9), and symlink preservation (tests 5, 7) that use <threshold copy branch must remain passing without changes\",\n    \"Tests asserting top-level dirs \u2265threshold are whole-directory symlinks must be updated for recursive behavior\",\n    \"New tests must use CreateVerifyWorktreeForTestAsync(..., thresholdBytes) seam with tiny injected threshold\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The bug is the single all-or-nothing decision in `OverlayIgnoredEntry` (RelayDriver.VerifyWorktree.cs:170-188). When a top-level git-ignored directory (e.g. `node_modules`) exceeds `IgnoredOverlayCopyMaxBytes` (64 MB), the entire entry becomes ONE whole-directory symlink back to the source repo: `Directory.CreateSymbolicLink(dst, src)`. This means ANY write by a test runner anywhere inside that directory \u2014 including small writable children like `node_modules/.vite-temp/` that vitest creates at startup \u2014 resolves through the symlink to the REAL source repo path. The nono sandbox correctly blocks writes outside the verify cwd, producing `EPERM`. The `<64 MB` copy branch (`CopyDirectoryResilient`) already avoids this hazard (its doc comment explicitly names it: line 115-119) and even recreates symlinks within copied trees via `RecreateSymlink`. But the `\u226564 MB` branch reintroduces the hazard wholesale \u2014 freezing the entire top-level dir as an unwritable link \u2014 which makes any test suite that writes into a dependency dir (vitest, jest, pytest, etc.) fail at verify regardless of the change under test.\\n\\nThe needed change replaces this single top-level decision with a recursive per-entry walk. The top-level directory entry (e.g. `node_modules`) itself always becomes a REAL directory (never a symlink). Then each child is evaluated individually: symlinks are recreated via `RecreateSymlink`, subdirectories at/above threshold become whole-dir symlinks (capturing the read-mostly bulk like individual package dirs or the pnpm `.pnpm` store), subdirectories below threshold become real dirs and recurse, and files are copied. This makes `node_modules` a writable real directory while its massive children remain shared via links. `CopyDirectoryResilient`, `RecreateSymlink`, `DirectoryMeetsSizeThreshold`, and `UnlinkOverlaySymlinks` are all reusable as-is. Two existing tests (`LargeIgnoredDir_IsSymlinked` and `RemovesLinksOnly`) assert the old top-level symlink behavior and must be updated. Four new tests are needed: writable-dep-root, nested-link-preservation, bounded-recursion-fallback, and teardown-safety-at-depth.\",\n  \"excerpts\": [\n    \"RelayDriver.VerifyWorktree.cs:170-188 \u2014 OverlayIgnoredEntry: the binary decision. For a dir \u2265 threshold, calls Directory.CreateSymbolicLink(dst, src) \u2014 ONE whole-dir symlink. The entire node_modules becomes unwritable: any write inside resolves to the real source path, which nono blocks \u2192 EPERM.\",\n    \"RelayDriver.VerifyWorktree.cs:115-119 \u2014 the doc comment on the <threshold copy branch already names this exact hazard: 'a test that WRITES a git-ignored path stays inside the sandboxed cwd instead of following a symlink OUT to the source (which nono --allow-cwd refuses \u2192 EPERM)' \u2014 the \u226564 MB branch reintroduces it wholesale.\",\n    \"RelayDriver.VerifyWorktree.cs:124-152 \u2014 the caller loop in CreateVerifyWorktreeAsync: iterates top-level ignored entries, calls OverlayIgnoredEntry(src, dst, isDirectory, thresholdBytes) for each. The thresholdBytes parameter is already threaded from the test seam (CreateVerifyWorktreeForTestAsync).\",\n    \"RelayDriver.VerifyWorktreeCopy.cs:17-64 \u2014 CopyDirectoryResilient: already handles symlink recreation within copied trees via RecreateSymlink, never follows reparse points, resilient per entry. Reusable as-is for the recursive walk's <threshold directory branch.\",\n    \"RelayDriver.VerifyWorktreeCopy.cs:75-110 \u2014 RecreateSymlink: recreates link nodes with target rewriting (relative verbatim, absolute-internal rewritten, absolute-external verbatim). Never follows the link. Reusable as-is.\",\n    \"RelayDriver.VerifyWorktreeCleanup.cs:25-52 \u2014 UnlinkOverlaySymlinks: already handles links at ANY depth \u2014 checks FileAttributes.ReparsePoint before recursing into directories, unlinks symlink nodes without traversal. No code change needed; needs a teardown-safety-at-depth test to lock this in.\",\n    \"NonoRollbackSkipDirs.cs:98-170 \u2014 DirectoryMeetsSizeThreshold: early-exiting stack-based directory sizing, skips reparse points, never fully sizes a huge tree. Returns true once cumulative file bytes \u2265 threshold. Reusable as-is for per-child size checks.\",\n    \"VerifyWorktreeIgnoredOverlayCopyTests.cs:143-176 \u2014 Test 3 (LargeIgnoredDir_IsSymlinked): asserts node_modules is a top-level symlink (ReparsePoint). Must change: after the fix, node_modules itself is a real dir; only its large children are symlinked.\",\n    \"VerifyWorktreeIgnoredOverlayTests.cs:95-142 \u2014 Test 2 (RemovesLinksOnly): asserts node_modules is a top-level symlink reparse point. Must change for the same reason.\",\n    \"VerifyWorktreeIgnoredOverlayCopyTests.cs:28 \u2014 LowThresholdBytes = 4 KiB: the test seam already supports tiny injected thresholds so no test writes 64 MB.\",\n    \"RelayDriver.VerifyWorktree.cs:65-68 \u2014 CreateVerifyWorktreeForTestAsync: the public test seam that accepts thresholdBytes. Already supports the pattern new tests will use.\",\n    \"llm-tasks/make-verify-overlay-writable-recursive/make-verify-overlay-writable-recursive.md:1-47 \u2014 the full task spec: four rules (symlink\u2192recreate, dir\u2265threshold\u2192whole-dir-symlink, dir<threshold\u2192real+recurse, file\u2192copy), bounds (depth\u226416, byte budget per top-level entry), fallback (symlink subtree + advisory warn), cleanup safety, four new tests.\"\n  ],\n  \"repro\": \"1. Create a git repo with .gitignore containing 'deps/' and a tracked file 'src/main.cs' committed.\\n2. Create deps/big/ with a file padded to >64 MB (or use a test with LowThresholdBytes=4KiB and pad to 8 KiB). Create deps/small/nested/ with a tiny file and deps/meta.txt.\\n3. Run CreateVerifyWorktreeForTestAsync with the low threshold.\\n4. BEFORE the fix: deps/ is ONE whole-directory symlink (FileAttributes.ReparsePoint is true). Trying to write a new file deps/newcache/x.txt \u2192 EPERM (the write resolves to the source repo path, outside the sandbox cwd).\\n5. AFTER the fix: deps/ is a real directory. deps/big/ is a symlink (\u2265threshold). deps/small/\u2026 and deps/meta.txt are real copies. Writing deps/newcache/x.txt succeeds and does NOT appear in the source repo's deps/. The existing test ./test.sh VerifyWorktreeIgnoredOverlayCopy (minus tests 3 and the RemovesLinksOnly link assertion) passes; the new writable-dep-root test passes.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation Plan\\n\\n### Architecture\\nReplace the single top-level copy-vs-symlink binary decision in `OverlayIgnoredEntry` with a recursive per-entry walk. The top-level directory entry (e.g. `node_modules`) always becomes a REAL directory. Each child is then evaluated individually: symlink entries are recreated as link nodes, subdirectories at/above the threshold become whole-dir symlinks (sharing the read-mostly bulk), subdirectories below threshold become real dirs and recurse, and files are copied (or symlinked if \u2265 threshold).\\n\\nRecursion is bounded by depth (max 16) and a per-top-level-entry byte budget (the existing `thresholdBytes` parameter, default 64 MB). On hitting either bound the remaining subtree is symlinked and a `verify_overlay_skipped` warn event is emitted. The walk is resilient per entry (errors swallowed) and never follows reparse points during traversal.\\n\\n### File 1: `src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs`\\n\\n**Add constant** after `IgnoredOverlayCopyMaxBytes` (line 161):\\n```csharp\\nprivate const int MaxOverlayRecursionDepth = 16;\\n```\\n\\n**Replace `OverlayIgnoredEntry`** (lines 170-188) with two methods:\\n\\n1. A private non-static `OverlayIgnoredDirRecursive` that takes:\\n   - `srcDir`, `dstDir` \u2014 current source/dest directory paths\\n   - `thresholdBytes` \u2014 size threshold\\n   - `depth` \u2014 current recursion depth (0 = top-level entry)\\n   - `ref long copiedBytes` \u2014 running byte budget consumed\\n   - `topLevelSourceDir`, `topLevelDestDir` \u2014 top-level source/dest roots for symlink target rewriting\\n   - `runId`, `sourcePath`, `worktreeId` \u2014 for event publishing\\n\\n   Logic:\\n   - If `depth > MaxOverlayRecursionDepth`: symlink `dstDir` \u2192 `srcDir`, emit `verify_overlay_skipped` with reason `max_depth_exceeded`, return.\\n   - If `depth > 0 && copiedBytes >= thresholdBytes`: symlink, emit `verify_overlay_skipped` with `copy_budget_exhausted`, return.\\n   - If `depth > 0 && DirectoryMeetsSizeThreshold(srcDir, thresholdBytes)`: symlink, return (no event \u2014 this is the normal large-dir path).\\n   - Create `dstDir` as real directory.\\n   - Enumerate `srcDir` children via `new DirectoryInfo(srcDir).EnumerateFileSystemInfos()` (resilient).\\n   - For each child entry:\\n     - **Reparse point** (symlink): call a new private static `RecreateSymlinkAt(FileSystemInfo entry, string destPath, string topSourceDir, string topDestDir)` \u2014 identical to the existing `RecreateSymlink` target-rewriting logic but placing the link at `destPath` instead of `Path.Combine(destDir, entry.Name)`.\\n     - **Directory**: recurse with `depth + 1`.\\n     - **File**: if `file.Length >= thresholdBytes` \u2192 `File.CreateSymbolicLink(childDst, childSrc)`; else \u2192 `file.CopyTo(childDst)` and `copiedBytes += file.Length`.\\n   - Per-entry IO errors caught and swallowed.\\n\\n2. A private `EmitOverlaySkipAdvisory` helper (fire-and-forget, best-effort) that publishes a `verify_overlay_skipped` warn event with `[\\\"entry\\\"]` and `[\\\"reason\\\"]` data keys.\\n\\n**Update the caller loop** (lines 124-152): For each top-level ignored entry:\\n- If `isDirectory`: call `OverlayIgnoredDirRecursive` with `depth: 0`, `copiedBytes: 0`, and `topLevelSourceDir`/`topLevelDestDir` set to `src`/`dst`.\\n- If file: keep the existing simple logic (copy if < threshold, symlink if \u2265 threshold) \u2014 no recursion needed for files.\\n\\nThe existing try/catch around the call stays; the `catch` block still catches unexpected exceptions and publishes `verify_overlay_skipped`.\\n\\n### File 2: `tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs`\\n\\n**Update Test 3** (`LargeIgnoredDir_IsSymlinked`, lines 143-176):\\n- Old: asserts `node_modules` itself is a `ReparsePoint` (whole-dir symlink).\\n- New: assert `node_modules` is a REAL directory (NOT `ReparsePoint`). Assert `node_modules/dep` IS a `ReparsePoint` (the large child exceeds threshold \u2192 subdir symlink). Assert `node_modules/dep/blob.bin` is readable and has correct size through the link.\\n\\n### File 3: `tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs`\\n\\n**Update Test 2** (`RemovesLinksOnly`, lines 95-142):\\n- Old lines 120-123: assert `node_modules` is a `ReparsePoint`.\\n- New: assert `node_modules` is a real directory (NOT `ReparsePoint`). `node_modules/dep` is the symlink. Update comment on line 123. The source-survival assertions (lines 128-136) remain unchanged.\\n\\n### File 4: `+tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs`\\n\\nNew partial class file with four tests, all using `CreateVerifyWorktreeForTestAsync(..., LowThresholdBytes)`:\\n\\n**Test: WritableDepRoot** \u2014 The axios/zod case.\\n- Source: `deps/big/blob.bin` padded to `LowThresholdBytes * 2` (above threshold), `deps/small/nested/seed.txt` (tiny), `deps/meta.txt` (tiny).\\n- After overlay: `deps` is real dir (NOT ReparsePoint), `deps/big` is directory symlink (ReparsePoint), `deps/small/\u2026` and `deps/meta.txt` are real copies.\\n- Write `deps/newcache/x` in worktree \u2192 succeeds, does NOT appear in source `deps/`.\\n\\n**Test: NestedLinkPreservation** \u2014 Symlink within small subdir survives recursive walk.\\n- Source: `deps/small/.bin/tool -> ../pkg/tool` (relative symlink), `deps/small/pkg/tool` real file.\\n- After overlay: link present at worktree `deps/small/.bin/tool`, resolves to worktree's `deps/small/pkg/tool` (not source).\\n\\n**Test: BoundedRecursionFallback** \u2014 Deep/small-files tree exhausts budget.\\n- Source: deeply nested small dirs with many tiny files that cumulatively exceed `LowThresholdBytes`.\\n- After overlay: worktree created successfully. A `verify_overlay_skipped` warn event is published with reason `copy_budget_exhausted` (or `max_depth_exceeded`). The sub-tree beyond the bound is symlinked.\\n\\n**Test: TeardownSafetyAtDepth** \u2014 Dir symlink at depth survives cleanup.\\n- Source: `deps/a/b/c/out -> sentinelDir` (directory symlink pointing outside repo at depth 3). Sentinel has `guard.txt`.\\n- After overlay + cleanup: sentinel dir and `guard.txt` intact. Worktree fully removed. Assert `Directory.Exists(worktree)` is false.\\n\\n### Files NOT changed\\n- `RelayDriver.VerifyWorktreeCopy.cs` \u2014 `CopyDirectoryResilient` and `RecreateSymlink` reused as-is (the new walk does not call `CopyDirectoryResilient`; it has its own recursive logic. `RecreateSymlink` logic is replicated inline in `RecreateSymlinkAt` for the new calling convention).\\n- `RelayDriver.VerifyWorktreeCleanup.cs` \u2014 `UnlinkOverlaySymlinks` already handles links at any depth via `ReparsePoint` check before recursion. No code change needed; the new teardown test locks this in.\\n- `NonoRollbackSkipDirs.cs` \u2014 `DirectoryMeetsSizeThreshold` reused as-is for per-directory sizing.\\n- `BuildOutputOverlaySkipNames` \u2014 unchanged; still consulted top-level only.\\n\\n### Verification\\n- `./test.sh` fully green including all existing and new tests.\\n- The WritableDepRoot test demonstrably fails against the pre-change whole-dir-symlink behavior (writing to a symlinked `deps/` \u2192 EPERM or appears in source).\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs\",\n    \"tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs\",\n    \"+tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs\",\n    \"tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs\"\n  ],\n  \"rationale\": \"Four new tests added (writable dep root, nested link preservation, depth-budget fallback, teardown safety at depth) and two existing tests updated (LargeIgnoredDir + RemovesLinksOnly) to match the new recursive overlay behavior where top-level ignored dirs are now REAL/writable directories with only large children symlinked.\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Replaced the single top-level copy-vs-symlink decision in OverlayIgnoredEntry with a recursive per-entry walk (OverlayIgnoredDirRecursive) that makes top-level ignored dirs REAL/writable directories while evaluating each child individually: symlink entries recreated as links, dirs \u2265 threshold become whole-dir symlinks, dirs < threshold recurse, files copy (or symlink if large). Added bounds: MaxOverlayRecursionDepth=16 and per-entry byte budget = thresholdBytes. On bound hit, falls back to subtree symlink + verify_overlay_skipped warn event. EmitOverlaySkipAdvisory helper added for fire-and-forget event publishing. Implementation split to new partial RelayDriver.VerifyWorktreeRecursive.cs to stay under 300-line limit. Existing CopyDirectoryResilient and RecreateSymlink reused as-is. Three test files updated: VerifyWorktreeIgnoredOverlayCopyTests.cs (LargeIgnoredDir assertion changed from top-level-symlink to real-dir-with-symlinked-children), VerifyWorktreeIgnoredOverlayTests.cs (RemovesLinksOnly updated), and test body moved from Recursive.cs to Recursive2.cs to stay under 300-line limit. All 20 targeted + 2927 full-suite tests green.\" }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "My review is complete. The implementation correctly addresses the task: the recursive per-entry overlay walk makes top-level ignored dirs real/writable while large children remain symlinked, fixing the EPERM failure for test runners writing into dep dirs. All four spec rules, bounds, resilience, link-safety, and cleanup are correctly implemented, and the test suite (4 new + 2 updated + intact regression tests) covers the requirements. The build compiles successfully.\n\nThe one concrete finding: `CopyDirectoryResilient` is now dead code (no external callers \u2014 only its own self-recursive call and a stale doc reference in the cleanup file), despite the Stage 6 summary claiming it was \"reused as-is.\" This is a low-severity code-quality issue, not a correctness or safety defect.\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"Low: CopyDirectoryResilient (RelayDriver.VerifyWorktreeCopy.cs:17) is now dead code \u2014 the recursive walk replaced its functionality entirely, so it has no external callers (only its own self-recursive call at line 55). The Stage 6 summary claimed it was 'reused as-is' but it is unreachable. Consider removing it, and update the stale 'CopyDirectoryResilient link-preservation fix' reference in RelayDriver.VerifyWorktreeCleanup.cs:21 which now points at non-existent behavior. No functional/safety impact.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 29,
+    "tool_calls_total": 28,
+    "tool_calls_succeeded": 27,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "read_multiple_files": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 8,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 2,
+        "failed": 1
+      },
+      "think": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 29,
+    "total_llm_time_s": 782.533,
+    "prompt_cache": {
+      "cached_tokens": 969088,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 17.301,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 1,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.249,
+      "prompt_tokens_est": 10751,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && git status && echo \"===DIFFSTAT===\" && git diff --stat HEAD"
+      },
+      "succeeded": true,
+      "duration_s": 0.563,
+      "result_length": 1219
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.278,
+      "prompt_tokens_est": 11234,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeRecursive.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeCopy.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeCleanup.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 33188
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 7.031,
+      "prompt_tokens_est": 19133,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive2.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 33301
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 8.959,
+      "prompt_tokens_est": 26978,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && git diff HEAD -- tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.342,
+      "result_length": 1915
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 6.904,
+      "prompt_tokens_est": 27502,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 16376
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 69.904,
+      "prompt_tokens_est": 31347,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && git diff HEAD -- src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.329,
+      "result_length": 2660
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 7.393,
+      "prompt_tokens_est": 36690,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "OverlayIgnoredEntry|CopyDirectoryResilient|DirectoryMeetsSizeThreshold",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.521,
+      "result_length": 1597
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 43.62,
+      "prompt_tokens_est": 37216,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class InMemoryRelayEventSink"
+      },
+      "succeeded": true,
+      "duration_s": 0.456,
+      "result_length": 129
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 6.818,
+      "prompt_tokens_est": 40281,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 114,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1758
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 63.849,
+      "prompt_tokens_est": 40758,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Execution/NonoRollbackSkipDirs.cs",
+        "offset": 90,
+        "limit": 85
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3189
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 72.034,
+      "prompt_tokens_est": 45799,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "[Tt]reat.*[Ww]arning|[Ee]rrorAsWarning|WarningsAsErrors"
+      },
+      "succeeded": true,
+      "duration_s": 0.569,
+      "result_length": 17
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 128.296,
+      "prompt_tokens_est": 51232,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "review-checkpoint"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 76
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 20.052,
+      "prompt_tokens_est": 51273,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "label": "review-checkpoint",
+        "summary": "Reviewing task make-verify-overlay-writable-recursive. Implementation replaces single top-level copy-vs-symlink decision (old OverlayIgnoredEntry) with recursive walk.\n\nFILES REVIEWED:\n1. src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs (modified): Removed old OverlayIgnoredEntry method. Caller loop (line ~124) now: if isDirectory -> calls OverlayIgnoredDirRecursive(src,dst,thresholdBytes,depth:0,ref copiedBytes,runId,sourcePath,worktreeId); else -> OverlayIgnoredFile(src,dst,thresholdBytes). Try/catch still wraps with verify_overlay_skipped event using [\"entry\"]=name,[\"error\"]=ex.Message. IgnoredOverlayCopyMaxBytes=64MB, MaxOverlayRecursionDepth not here.\n\n2. src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeRecursive.cs (NEW, 151 lines): const MaxOverlayRecursionDepth=16. OverlayIgnoredFile (static, copy if <threshold else symlink). OverlayIgnoredDirRecursive(instance method): \n   - depth>16 -> Directory.CreateSymbolicLink(dst,src) + EmitOverlaySkipAdvisory(reason=\"max_depth_exceeded\"), return\n   - depth>0 && copiedBytes>=threshold -> symlink + advisory(reason=\"copy_budget_exhausted\"), return\n   - depth>0 && DirectoryMeetsSizeThreshold(srcDir,thresholdBytes) -> symlink, return (no event)\n   - CreateDirectory(dstDir)\n   - EnumerateFileSystemInfos; per entry: if ReparsePoint -> RecreateSymlink(entry,srcDir,dstDir); if DirectoryInfo -> recurse(depth+1); if FileInfo -> symlink if file.Length>=threshold else CopyTo + copiedBytes+=file.Length\n   - All IO in per-entry try/catch swallowed.\n   EmitOverlaySkipAdvisory: fire-and-forget _dependencies.EventSink.PublishAsync(...) with CancellationToken.None, [\"entry\"]=entry,[\"reason\"]=reason. Wrapped in try/catch.\n\n3. src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeCopy.cs (unchanged): CopyDirectoryResilient (still used by? grep shows only self-reference in copy branch + doc comment in cleanup). RecreateSymlink(entry,sourceDir,destDir): relative verbatim, absolute-internal prefix-swap, absolute-external verbatim. RecreateSymlink still used by the new recursive walk (line 99 of Recursive.cs calls RecreateSymlink(entry, srcDir, dstDir)).\n\n4. src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktreeCleanup.cs (unchanged): UnlinkOverlaySymlinks recursively unlinks reparse points without traversing, handles links at any depth.\n\n5. tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive.cs (NEW, 147 lines): Test 11 WritableDepRoot (deps/big symlink, deps/small+meta real, write deps/newcache/x succeeds, not in source). Test 12 NestedLinkPreservation (deps/small/.bin/tool -> ../pkg/tool, resolves inside worktree).\n\n6. tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Recursive2.cs (NEW, 200 lines): Test 13a DeeplyNested max_depth_exceeded (18 nested deps dirs). Test 13b BudgetExhausted copy_budget_exhausted (7 sib dirs each threshold/5 bytes). Test 14 TeardownSafetyAtDepth (deps/a/b/c/out -> outside sentinel, sentinel survives).\n\n7. tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.cs (modified): Test 3 renamed LargeIgnoredDir_HasSymlinkedChild, now asserts node_modules real dir + node_modules/dep symlink. Tests 1,2,4 unchanged.\n\n8. tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayTests.cs (modified): Test 2 RemovesLinksOnly updated: node_modules real dir, node_modules/dep symlink. Source survival assertions intact. Tests 1,3,4,5 unchanged.\n\nKEY FACTS:\n- InMemoryRelayEventSink.PublishAsync is synchronous (Task.CompletedTask) so fire-and-forget events appear in sink.Events synchronously \u2014 tests 13a/13b can assert on them.\n- NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold is internal static, early-exit, skips reparse points.\n- No WarningsAsErrors setting found.\n- CopyDirectoryResilient still exists but no longer called by the new walk (grep: only self-reference + doc comment). This is dead code but matches Stage 6 summary (\"reused as-is\" \u2014 though actually now unused).\n- Manifest lists 4 files; actual untracked also has Recursive2.cs (extra, to stay under 300-line limit per Stage 6).\n\nREMAINING TO VERIFY:\n- Run the targeted test command to confirm green.\n- Check whether fire-and-forget discarded Task in EmitOverlaySkipAdvisory could cause unobserved exceptions (best-effort, wrapped in try/catch, acceptable).\n- Confirm the cycle/escape/dangling regression tests still exist and pass (research mentioned tests 6,7,8,9 but I only saw tests 1-5 in the two files; need to find where they are)."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 43,
+      "error": "error: summary exceeds 4000 character limit"
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 9.856,
+      "prompt_tokens_est": 52452,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "label": "review-checkpoint",
+        "summary": "Reviewing make-verify-overlay-writable-recursive. Replaced single OverlayIgnoredEntry with recursive walk.\n\nREVIEWED FILES:\n1. RelayDriver.VerifyWorktree.cs (mod): removed OverlayIgnoredEntry. Caller loop: isDirectory->OverlayIgnoredDirRecursive(depth:0,ref copiedBytes); else->OverlayIgnoredFile. try/catch wraps with verify_overlay_skipped event.\n2. RelayDriver.VerifyWorktreeRecursive.cs (NEW,151L): MaxOverlayRecursionDepth=16. OverlayIgnoredFile(static). OverlayIgnoredDirRecursive(instance): depth>16->symlink+advisory(max_depth_exceeded); depth>0&&copiedBytes>=threshold->symlink+advisory(copy_budget_exhausted); depth>0&&DirectoryMeetsSizeThreshold->symlink(no event); CreateDirectory; EnumerateFileSystemInfos per-entry: ReparsePoint->RecreateSymlink; Dir->recurse(depth+1); File->symlink if>=threshold else CopyTo+copiedBytes+=. All IO per-entry try/catch swallowed. EmitOverlaySkipAdvisory: fire-and-forget PublishAsync with CancellationToken.None, try/catch wrapped.\n3. VerifyWorktreeCopy.cs (unchanged): CopyDirectoryResilient (now DEAD CODE - no longer called by walk, only self-ref+doc). RecreateSymlink(entry,sourceDir,destDir) still called by recursive walk line 99.\n4. VerifyWorktreeCleanup.cs (unchanged): UnlinkOverlaySymlinks handles links at any depth, no traverse.\n5. Recursive.cs (NEW,147L): T11 WritableDepRoot, T12 NestedLinkPreservation.\n6. Recursive2.cs (NEW,200L): T13a max_depth_exceeded(18 nested), T13b copy_budget_exhausted(7 sibs threshold/5), T14 TeardownSafetyAtDepth(sentinel survives).\n7. CopyTests.cs (mod): T3 renamed HasSymlinkedChild, node_modules real+dep symlink.\n8. OverlayTests.cs (mod): T2 RemovesLinksOnly updated, source survival intact.\n\nKEY FACTS:\n- InMemoryRelayEventSink.PublishAsync synchronous (Task.CompletedTask) -> fire-and-forget events appear synchronously, tests 13a/13b valid.\n- DirectoryMeetsSizeThreshold internal static early-exit.\n- No WarningsAsErrors.\n- CopyDirectoryResilient now dead code (Stage6 said \"reused as-is\" but actually unused).\n- Manifest lists 4 files; extra Recursive2.cs untracked (300-line limit).\n\nREMAINING: run targeted test cmd; find cycle/escape/dangling regression tests (research said tests 6,7,8,9 but only saw 1-5 in files)."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 85
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 7.031,
+      "prompt_tokens_est": 52846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/test.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 729
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 6.659,
+      "prompt_tokens_est": 53116,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "[Cc]ycle|[Ee]scape|[Dd]angling|RelativeSymlink|AbsoluteSymlink|OutsideSymlink|ExternalSymlink",
+        "path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.321,
+      "result_length": 9978
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 8.625,
+      "prompt_tokens_est": 55590,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Links.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/tests/VisualRelay.Tests/VerifyWorktreeIgnoredOverlayCopyTests.Warn.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 19917
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 92.982,
+      "prompt_tokens_est": 60275,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && NO_BUILD=1 ./test.sh VerifyWorktreeIgnoredOverlay 2>&1 | tail -40",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 6.176,
+      "result_length": 843
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 8.636,
+      "prompt_tokens_est": 67029,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~VerifyWorktreeIgnoredOverlay\" 2>&1 | tail -50",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 6.274,
+      "result_length": 3379
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 8.186,
+      "prompt_tokens_est": 67949,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "FilterToken|filter.*token|case.*Filter",
+        "path": "/Users/admin/Dev/temp-visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.098,
+      "result_length": 17
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 4.373,
+      "prompt_tokens_est": 68064,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "FullyQualifiedName~|TestCaseFilter|FilterToken|\"Filter\""
+      },
+      "succeeded": true,
+      "duration_s": 0.298,
+      "result_length": 287
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 6.48,
+      "prompt_tokens_est": 68169,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/tools/VisualRelay.Cli/TestRunner.cs",
+        "offset": 30,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1488
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 8.32,
+      "prompt_tokens_est": 68574,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/temp-visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --no-build --filter \"FullyQualifiedName~VerifyWorktreeIgnoredOverlay\" -- RunConfiguration.TreatNoTestsAsError=false 2>&1 | tail -60",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 0.797,
+      "result_length": 1946
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 111.656,
+      "prompt_tokens_est": 69155,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay/src",
+        "pattern": ": IRelayEventSink|implements IRelayEventSink|class.*EventSink"
+      },
+      "succeeded": true,
+      "duration_s": 0.13,
+      "result_length": 577
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 4.435,
+      "prompt_tokens_est": 76570,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Logging/FileRelayEventSink.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/temp-visual-relay/src/VisualRelay.Core/Logging/CompositeRelayEventSink.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4417
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 27.626,
+      "prompt_tokens_est": 77754,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me assess the fire-and-forget advisory. EmitOverlaySkipAdvisory does `_ = _dependencies.EventSink.PublishAsync(...)` with CancellationToken.None, wrapped in try/catch. \n\nIn tests: InMemoryRelayEventSink.PublishAsync is synchronous (Task.CompletedTask), so the event is recorded before the method returns \u2014 tests 13a/13b reliably observe it. Good.\n\nIn production: FileRelayEventSink.PublishAsync is also synchronous (Task.CompletedTask, appends under lock). CompositeRelayEventSink.PublishAsync awaits all children. ObservableRelayEventSink \u2014 let me think; it's `(Action<RelayEvent> onEvent)` \u2014 likely synchronous too. So in practice the fire-and-forget completes synchronously, and the discarded task is already completed. The risk of an unobserved faulting task is low because all known sinks complete synchronously and the try/catch around the call catches synchronous throws. Even if a sink returned a faulting task asynchronously, it would be unobserved but wouldn't crash (it's discarded). The try/catch wouldn't catch an async fault, but that's an edge case with the current sinks. This is a minor robustness observation, not a correctness bug. The existing caller-loop catch (line 144-161) uses `await` properly, but the recursive advisory uses fire-and-forget because the recursive method is synchronous (not async). That's the reason \u2014 OverlayIgnoredDirRecursive is sync, can't await. Acceptable design given all sinks are sync. Not blocking.\n\nNow dead code: CopyDirectoryResilient is now dead code. The Stage 6 summary claimed \"reused as-is\" but it's actually unused (only self-reference + doc). This is a real issue worth flagging \u2014 the manifest/plan said reuse it, but the implementation replaced its functionality with the inline recursive walk. Leaving dead code is a code-quality concern but not a correctness bug. Worth flagging as a minor issue.\n\nLet me also double check: does the recursive walk handle the case where a directory symlink entry should NOT be size-checked? Line 97 checks ReparsePoint FIRST and calls RecreateSymlink, continue \u2014 before the dir/file branches. So a dir symlink is never size-checked or recursed into. Good \u2014 matches \"symlink entry \u2192 recreate (never follow/traverse)\".\n\nOne more: the budget check `depth > 0 && copiedBytes >= thresholdBytes`. At depth 0 (top-level entry like node_modules), this is skipped, so the top-level dir is ALWAYS created as real and recursed. This is the core fix \u2014 node_modules becomes real/writable. Correct. The budget only bounds recursion INTO children, which is exactly the spec (\"total real-copied bytes per top-level entry\").\n\nThe max_depth test builds 18 levels of \"deps\" nesting. Depth 0 = top-level deps. The recursion goes depth 0,1,...,16, and at depth 17 (>16) the guard fires. 18 nested dirs means depths 0-17 exist, so depth 17 triggers. Test comment says \"depths 0..16 = 17 levels... At level 17 (>16) the depth guard fires.\" With 18 iterations creating deps/deps/.../deps (18 deep), the leaf is at depth 17 (0-indexed). Guard fires at depth 17. Consistent. Good.\n\nThe budget test: 7 siblings each threshold/5 bytes. After 5 siblings: 5*(threshold/5) = threshold bytes copied. 6th sibling: copiedBytes (=threshold) >= threshold \u2192 fires copy_budget_exhausted. Regardless of enumeration order, after 5 of the 7 are copied, budget exhausted, remaining trigger. With 7 siblings, at least 2 remain \u2192 at least one fires. Good robustness against enumeration order.\n\nVerdict: The implementation is correct and complete. The only issues are:\n1. CopyDirectoryResilient is now dead code (minor, code quality).\n2. Fire-and-forget advisory is acceptable given sync sinks (not a bug).\n\nNeither is a correctness blocker. The implementation matches the spec. I'll flag the dead code as a minor issue and pass overall, OR mark \"changes\" for the dead code. Given dead code isn't a correctness issue and the task said CopyDirectoryResilient \"reused as-is\" \u2014 but it's genuinely unused now. Let me verify once more it has no other callers.",
+        "next_thought_needed": true,
+        "thought_number": 1,
+        "total_thoughts": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 3.891,
+      "prompt_tokens_est": 79348,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CopyDirectoryResilient"
+      },
+      "succeeded": true,
+      "duration_s": 0.408,
+      "result_length": 419
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 14.384,
+      "prompt_tokens_est": 79474,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "next_thought_needed": false,
+        "thought": "Confirmed: CopyDirectoryResilient has no external callers \u2014 only its own recursive self-call (line 55) and a stale doc reference in Cleanup.cs (line 21). It is dead code now. The recursive walk replaced its functionality entirely (the walk has its own real-dir-create + recurse + per-file copy + symlink-recreate logic inline).\n\nThis is a code-quality issue, not a correctness bug. The task spec didn't explicitly forbid dead code, but leaving an entire method (with an elaborate doc comment) that's no longer reachable is sloppy and the Stage 6 summary's claim that it's \"reused as-is\" is inaccurate. However, this does not affect functionality, safety, tests, or the fix. \n\nFinal verdict assessment:\n- Core fix correct: top-level ignored dirs become real/writable, large children symlinked. \u2705\n- All 4 spec rules implemented per-entry. \u2705\n- Bounds (depth 16, byte budget per top-level entry) correct. \u2705\n- Never follows links during traversal. \u2705\n- Resilient per entry. \u2705\n- Cleanup safe at any depth (unchanged, locked by test). \u2705\n- BuildOutputOverlaySkipNames unchanged (top-level only). \u2705\n- All required tests present + 2 updated + regression tests intact. \u2705\n- Build compiles. \u2705\n- No project-specific names (general-purpose). \u2705\n\nThe dead code is the only real finding. It's minor \u2014 I'll classify the verdict as \"changes\" since there IS a concrete issue (dead code that should be removed or the stale doc reference updated), but it's low severity. Actually, the instruction is to classify issues. Dead code is a legitimate issue to flag. I'll go with \"changes\" and list the dead-code issue, plus note the stale comment reference. The fire-and-forget is not a bug.\n\nActually, reconsider: is leaving CopyDirectoryResilient a \"change required\" or just a noted issue? The review framework asks for verdict pass/changes with issues list. Since there's a concrete code-quality issue (dead code + misleading stale comment claiming reuse), I'll mark \"changes\" but keep it as a single low-severity issue. The functional implementation is sound.",
+        "thought_number": 2,
+        "total_thoughts": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 10.005,
+      "prompt_tokens_est": 80061,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

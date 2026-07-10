@@ -17,8 +17,8 @@ public sealed partial class RelayDriver
 
     /// <summary>
     /// Recursively removes EVERY symlink (reparse point) inside <paramref name="worktreePath"/>,
-    /// including symlinks nested inside COPIED directories (which can now contain
-    /// directory symlinks after the CopyDirectoryResilient link-preservation fix).
+    /// including symlinks nested inside directories created by the recursive overlay walk
+    /// (which can contain directory symlinks at any depth).
     /// Real directories are recursed into; reparse points are unlinked as nodes
     /// (never traversed). Best-effort per entry — never throws.
     /// </summary>

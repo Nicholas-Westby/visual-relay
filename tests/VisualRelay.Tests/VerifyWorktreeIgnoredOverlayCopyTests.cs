@@ -136,12 +136,13 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
     }
 
     // ───────────────────────────────────────────────────────────────────
-    // 3. A git-ignored dir ABOVE the (low) threshold is SYMLINKED — large
-    //    deps (node_modules) stay cheaply shared, not copied.
+    // 3. A git-ignored dir ABOVE the (low) threshold is recursively split:
+    //    the top-level dir itself is a REAL, writable directory; the large
+    //    child dep/ is a whole-dir symlink (cheaply shared, not copied).
     // ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public async Task CreateVerifyWorktree_LargeIgnoredDir_IsSymlinked()
+    public async Task CreateVerifyWorktree_LargeIgnoredDir_HasSymlinkedChild()
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-largedir-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -162,10 +163,23 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-largedir", "run-largedir", CancellationToken.None, LowThresholdBytes);
 
-            var nmLink = Path.Combine(worktree, "node_modules");
-            Assert.True(Directory.Exists(nmLink), "large ignored dir should be present in worktree");
-            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "large ignored dir must remain a SYMLINK (reparse point), not be copied");
+            // The top-level dir is now REAL (writable) — the recursive walk
+            // evaluates each child individually.
+            var nmDir = Path.Combine(worktree, "node_modules");
+            Assert.True(Directory.Exists(nmDir), "ignored dir should be present in worktree");
+            Assert.False(new DirectoryInfo(nmDir).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "top-level ignored dir must be a REAL directory after recursive overlay");
+
+            // The large child is a whole-dir symlink.
+            var depLink = Path.Combine(worktree, "node_modules", "dep");
+            Assert.True(Directory.Exists(depLink), "large child dep/ should be present");
+            Assert.True(new DirectoryInfo(depLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "large child dep/ must be a directory symlink (above threshold)");
+
+            // The blob is still readable and has the correct size through the link.
+            var blob = Path.Combine(depLink, "blob.bin");
+            Assert.True(File.Exists(blob));
+            Assert.Equal(LowThresholdBytes * 2, new FileInfo(blob).Length);
         }
         finally
         {

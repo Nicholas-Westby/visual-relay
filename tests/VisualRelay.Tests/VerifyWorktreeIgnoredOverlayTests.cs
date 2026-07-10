@@ -116,11 +116,17 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
                 root, "task-safety", "run-safety", CancellationToken.None, lowThreshold);
-            // Sanity: node_modules is present AND is a symlink (large → link).
-            var nmLink = Path.Combine(worktree, "node_modules");
-            Assert.True(Directory.Exists(nmLink));
-            Assert.True(new DirectoryInfo(nmLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
-                "above-threshold node_modules should be symlinked so this test exercises link-cleanup");
+            // Sanity: node_modules is present AND is a REAL directory (recursive
+            // overlay makes the top-level dir writable); the large child dep/ is
+            // symlinked so this test still exercises link-cleanup.
+            var nmDir = Path.Combine(worktree, "node_modules");
+            Assert.True(Directory.Exists(nmDir));
+            Assert.False(new DirectoryInfo(nmDir).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "node_modules must be a real directory after recursive overlay");
+            var depLink = Path.Combine(worktree, "node_modules", "dep");
+            Assert.True(Directory.Exists(depLink));
+            Assert.True(new DirectoryInfo(depLink).Attributes.HasFlag(FileAttributes.ReparsePoint),
+                "above-threshold dep/ should be symlinked so this test exercises link-cleanup");
 
             await driver.CleanupVerifyWorktreeForTestAsync(root, worktree, CancellationToken.None);
 
