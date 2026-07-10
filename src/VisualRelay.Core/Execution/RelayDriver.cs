@@ -53,7 +53,8 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             var implementationFrontLoaded = false;
             var firstStageToRun = 1;
             if (_options.Resume) LoadResumeState(taskDirectory, taskId, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
-            (previousSeal, taskHash, firstStageToRun) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, config, ledger, seals, previousSeal, taskHash, firstStageToRun, statusEntries, cancellationToken);
+            (previousSeal, taskHash, firstStageToRun, var commitGateOutcome) = await ValidateCommitGateResumeAsync(rootPath, taskDirectory, config, ledger, seals, previousSeal, taskHash, firstStageToRun, statusEntries, runId, taskId, cancellationToken);
+            if (commitGateOutcome is not null) return commitGateOutcome;
             var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);
             EnsureTaskInputHash(statusEntries, input.Markdown);
             (firstStageToRun, var flaggedOutcome) = await RestoreFlaggedWorkIfNeededAsync(rootPath, taskId, taskDirectory, firstStageToRun, ledger, statusEntries, cancellationToken);

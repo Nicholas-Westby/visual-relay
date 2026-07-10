@@ -10,10 +10,13 @@ public sealed partial class RelayDriver
 {
     /// <summary>
     /// Commit-gate resume validation: when stages 1–11 are Done and only stage 12
-    /// (Commit) failed, re-validate the gate test suite and the recorded tree hash.
+    /// (Commit) failed, re-validate the gate test suite ISOLATED and the recorded
+    /// tree hash. Uses the same <see cref="RunIsolatedVerifyAsync"/> as the normal
+    /// pipeline stages 10/11 and emits a <c>verify_result</c> event so the resumed
+    /// run's log is indistinguishable in shape from a normal run's.
     /// Extracted from RunTaskAsync to keep the main file under the 300-line guard.
     /// </summary>
-    private async Task<(string previousSeal, string taskHash, int firstStageToRun)> ValidateCommitGateResumeAsync(
+    private async Task<(string previousSeal, string taskHash, int firstStageToRun, RelayTaskOutcome? flaggedOutcome)> ValidateCommitGateResumeAsync(
         string rootPath,
         string taskDirectory,
         RelayConfig config,
@@ -23,6 +26,8 @@ public sealed partial class RelayDriver
         string taskHash,
         int firstStageToRun,
         List<StageStatusEntry> statusEntries,
+        string runId,
+        string taskId,
         CancellationToken cancellationToken)
     {
         if (_options.Resume && firstStageToRun == 12
@@ -35,18 +40,19 @@ public sealed partial class RelayDriver
                     .Where(l => !string.IsNullOrWhiteSpace(l)).ToList()
                 : new List<string>();
 
-            // Re-run the gate test suite.
-            bool gatePassed = false;
-            try
-            {
-                var testResult = await _dependencies.TestRunner.RunAsync(
-                    rootPath, config.TestCommand, cancellationToken);
-                gatePassed = testResult is { TimedOut: false, ExitCode: 0 };
-            }
-            catch
-            {
-                // Test runner failure → treat as gate failure.
-            }
+            // Run the isolated verify gate (same mechanism as stages 10/11).
+            var stage12 = RelayStages.All[11];
+            var (testResult, verifyMutations) = await RunIsolatedVerifyAsync(
+                rootPath, config, stageNumber: 12, attempt: 1, runId, taskId, cancellationToken);
+            await EmitMutatedTreeAdvisoryAsync(rootPath, runId, taskId, stage12, verifyMutations, cancellationToken);
+
+            bool gatePassed = testResult is { TimedOut: false, ExitCode: 0 };
+
+            // Emit verify_result event + artifact so the resumed run's log is
+            // indistinguishable from a normal pipeline run.
+            var (_, check, _, reason) = await PublishVerifyResultAsync(
+                rootPath, runId, taskId, taskDirectory, stage12, attempt: 1, config,
+                testResult, currentManifest, cancellationToken);
 
             // Re-validate the recorded stage-11 tree hash against the current worktree.
             var recordedTreeHash = string.Empty;
@@ -64,7 +70,17 @@ public sealed partial class RelayDriver
             var hashMatches = !string.IsNullOrEmpty(recordedTreeHash)
                 && string.Equals(currentHash, recordedTreeHash, StringComparison.Ordinal);
 
-            if (!gatePassed || !hashMatches)
+            if (!gatePassed)
+            {
+                // Test failed — flag with enriched reason from the verify output.
+                var enrichedReason = string.IsNullOrWhiteSpace(reason)
+                    ? "commit-gate verify failed" : reason;
+                var flaggedOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 12,
+                    enrichedReason, testResult.Output, statusEntries, cancellationToken);
+                return (previousSeal, taskHash, firstStageToRun, flaggedOutcome);
+            }
+
+            if (!hashMatches)
             {
                 firstStageToRun = 5;
 
@@ -107,7 +123,7 @@ public sealed partial class RelayDriver
             }
         }
 
-        return (previousSeal, taskHash, firstStageToRun);
+        return (previousSeal, taskHash, firstStageToRun, null);
     }
 
     /// <summary>
