@@ -150,7 +150,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         (previousSeal, taskHash) = await RecordStageAsync(
                             rootPath, runId, taskId, taskDirectory, stage,
                             "_Skipped: automated testing bypassed for this task._",
-                            "green", null, stopwatch, ledger, seals, statusEntries, manifest,
+                            "green", null, stopwatch.Elapsed, ledger, seals, statusEntries, manifest,
                             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                             cancellationToken);
                         continue;
@@ -258,7 +258,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                                 }
 
                                 // Genuinely red — record stage 10, enter fix-verify loop.
-                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
+                                (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost, stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                                 var (loopOutcome, prevSeal, tHash, costUsd, unknownCost) = await RunVerifyFixLoopAsync(rootPath, runId, taskId, taskDirectory, config, input, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, failingTestOutput, stage10VerifyOutputPath, stage10BootstrapCmd, config.GuardCommand, pinnedSwivalProfileContent, cancellationToken);
                                 if (loopOutcome is not null)
                                     return loopOutcome;
@@ -275,7 +275,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                             // Verify green: record stage 10, then skip Fix-verify (11).
                             (previousSeal, taskHash) = await RecordVerifyGreenSkipFixVerifyAsync(
                                 rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                                stopwatch, ledger, seals, statusEntries, manifest,
+                                stopwatch.Elapsed, ledger, seals, statusEntries, manifest,
                                 previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
                                 testDurationSeconds, cancellationToken);
                             fixVerifyHandled = true;
@@ -286,7 +286,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                 if ((stage.Number != 10 || !fixVerifyHandled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
-                        stopwatch, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
+                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                 }
             }
             return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);

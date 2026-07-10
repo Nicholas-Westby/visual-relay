@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using VisualRelay.Core.Costs;
 using VisualRelay.Core.Traces;
@@ -82,7 +81,7 @@ public sealed partial class RelayDriver
         string body,
         string? check,
         RelayCostEstimate? cost,
-        Stopwatch stopwatch,
+        TimeSpan elapsed,
         StringBuilder ledger,
         List<string> seals,
         List<StageStatusEntry> statusEntries,
@@ -104,15 +103,14 @@ public sealed partial class RelayDriver
         var seal = Hashing.Sha256Hex(previousSeal, stage.Number.ToString(), DateTimeOffset.UtcNow.ToString("O"), artifactHash, treeHash, check ?? string.Empty);
         seals.Add(SerializeSeal(stage.Number, artifactHash, treeHash, seal, check));
         await WriteArtifactsAsync(taskDirectory, taskId, ledger.ToString(), seals, cancellationToken);
-        stopwatch.Stop();
         var idx = stage.Number - 1;
         var alreadySkipped = idx >= 0 && idx < statusEntries.Count
             && "Skipped".Equals(statusEntries[idx].Status, StringComparison.OrdinalIgnoreCase);
         if (!alreadySkipped)
-            MarkStatusDone(statusEntries, stage, stopwatch.Elapsed, cost, check, testDurationSeconds);
+            MarkStatusDone(statusEntries, stage, elapsed, cost, check, testDurationSeconds);
         await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
         var status = idx >= 0 && idx < statusEntries.Count ? statusEntries[idx].Status : null;
-        await PublishStageDoneAsync(rootPath, runId, taskId, stage, stopwatch.Elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, status: status);
+        await PublishStageDoneAsync(rootPath, runId, taskId, stage, elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, status: status);
         return (seal, seal);
     }
 }

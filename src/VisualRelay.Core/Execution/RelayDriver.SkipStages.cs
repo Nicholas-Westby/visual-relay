@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Costs;
@@ -64,7 +63,7 @@ public sealed partial class RelayDriver
         MarkStatusSkipped(statusEntries, stage);
         return await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage,
             "_Skipped: review passed with no issues._", "green", null,
-            Stopwatch.StartNew(), ledger, seals, statusEntries, manifest,
+            TimeSpan.Zero, ledger, seals, statusEntries, manifest,
             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
             cancellationToken);
     }
@@ -78,18 +77,18 @@ public sealed partial class RelayDriver
     private async Task<(string PreviousSeal, string TaskHash)> RecordVerifyGreenSkipFixVerifyAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
         RelayStageDefinition verifyStage, string body, string? check, RelayCostEstimate? cost,
-        Stopwatch stopwatch, StringBuilder ledger, List<string> seals,
+        TimeSpan elapsed, StringBuilder ledger, List<string> seals,
         List<StageStatusEntry> statusEntries, IReadOnlyList<string> manifest,
         string previousSeal, string taskHash, double sessionCostUsd,
         int unknownCostStageCount, double? testDurationSeconds, CancellationToken cancellationToken)
     {
         (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
-            verifyStage, body, check, cost, stopwatch, ledger, seals, statusEntries, manifest,
+            verifyStage, body, check, cost, elapsed, ledger, seals, statusEntries, manifest,
             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
         var fixVerifyStage = RelayStages.All[10]; // Stage 11 — Fix-verify
         MarkStatusSkipped(statusEntries, fixVerifyStage);
         return await RecordStageAsync(rootPath, runId, taskId, taskDirectory, fixVerifyStage,
-            "_Skipped: Verify passed; nothing to fix._", "green", null, Stopwatch.StartNew(),
+            "_Skipped: Verify passed; nothing to fix._", "green", null, TimeSpan.Zero,
             ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd,
             unknownCostStageCount, cancellationToken);
     }

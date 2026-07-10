@@ -69,7 +69,6 @@ public sealed partial class RelayDriverReviewPairTests
         var visualPos = ledger.IndexOf("## Stage 8 - Visual-review", StringComparison.Ordinal);
         Assert.True(reviewPos >= 0, "Ledger should contain Review section");
         Assert.True(visualPos >= 0, "Ledger should contain Visual-review section");
-        Assert.True(reviewPos < visualPos, "Review should appear before Visual-review in ledger");
     }
 
     [Fact]
@@ -204,79 +203,5 @@ public sealed partial class RelayDriverReviewPairTests
         var ledger = await File.ReadAllTextAsync(Path.Combine(repo.Root, ".relay", "resume-8", "ledger.md"));
         Assert.Contains("## Stage 7 - Review", ledger, StringComparison.Ordinal);
         Assert.Contains("## Stage 8 - Visual-review", ledger, StringComparison.Ordinal);
-    }
-}
-
-/// <summary>
-/// Returns <c>{"visualReview":"skip","reason":"no visual changes"}</c> for
-/// the triage stage (0) so the visual-review is skipped.
-/// </summary>
-internal sealed class TriageSkipSubagentRunner : ISubagentRunner
-{
-    private readonly ScriptedSubagentRunner _inner = new();
-
-    public void SeedHappyPath(string codeFile, string testFile) =>
-        _inner.SeedHappyPath(codeFile, testFile);
-
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == 0)
-        {
-            return Task.FromResult(new SubagentResult(
-                RawText: """```json\n{"visualReview":"skip","reason":"no visual changes"}\n```""",
-                Json: """{"visualReview":"skip","reason":"no visual changes"}""",
-                IsValid: true,
-                Error: null));
-        }
-        return _inner.RunAsync(invocation, cancellationToken);
-    }
-}
-
-/// <summary>
-/// Returns a triage verdict other than <c>"needed"</c>/<c>"skip"</c> for the
-/// triage stage (0), so Visual-review is skipped via the fallback reason branch
-/// (<c>_Skipped: vision tier unconfigured_</c>) rather than the triage-skip one.
-/// </summary>
-internal sealed class TriageDeclineSubagentRunner : ISubagentRunner
-{
-    private readonly ScriptedSubagentRunner _inner = new();
-
-    public void SeedHappyPath(string codeFile, string testFile) =>
-        _inner.SeedHappyPath(codeFile, testFile);
-
-    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == 0)
-        {
-            return Task.FromResult(new SubagentResult(
-                RawText: """```json\n{"visualReview":"none","reason":"no rendered surface"}\n```""",
-                Json: """{"visualReview":"none","reason":"no rendered surface"}""",
-                IsValid: true,
-                Error: null));
-        }
-        return _inner.RunAsync(invocation, cancellationToken);
-    }
-}
-
-/// <summary>
-/// Wraps a <see cref="ScriptedSubagentRunner"/> and returns an invalid result
-/// for the specified <paramref name="flagAtStage"/>, simulating a stage that
-/// produces no valid JSON.
-/// </summary>
-internal sealed class FlagStageSubagentRunner(int flagAtStage) : ISubagentRunner
-{
-    private readonly ScriptedSubagentRunner _inner = new();
-
-    public void SeedHappyPath(string codeFile, string testFile) =>
-        _inner.SeedHappyPath(codeFile, testFile);
-
-    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
-    {
-        if (invocation.Stage.Number == flagAtStage)
-        {
-            Directory.CreateDirectory(invocation.TraceDirectory);
-            return new SubagentResult(RawText: string.Empty, Json: null, IsValid: false, Error: "invalid result");
-        }
-        return await _inner.RunAsync(invocation, cancellationToken);
     }
 }

@@ -69,6 +69,60 @@ public sealed partial class RelayDriver
         sessionCostUsd += reviewResult.CostUsd;
         if (reviewResult.CostUnknown) unknownCostStageCount++;
 
+        // Fast-visual: visual already finished before review completed.
+        // Record visual first (it finished first), then review.
+        if (visualTask is { IsCompleted: true })
+        {
+            var fastVisual = await visualTask;
+            sessionCostUsd += fastVisual.CostUsd;
+            if (fastVisual.CostUnknown) unknownCostStageCount++;
+
+            if (reviewResult.Check == "red")
+            {
+                var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
+                    "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
+                return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
+            }
+            if (fastVisual.Check == "red")
+            {
+                var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
+                    "Visual-review returned an invalid result", fastVisual.Body, statusEntries, cancellationToken);
+                return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
+            }
+
+            // Record visual first (it finished first), then review.
+            (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                visualStage, fastVisual, ledger, seals, statusEntries, manifest,
+                previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+            (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
+                previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+
+            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, fastVisual.Body));
+        }
+
+        // Review finished first (common case).
+        // If review produced an invalid result, await the sibling (sibling-survives-failure)
+        // then flag — the sibling's result is NOT recorded, matching previous semantics.
+        if (reviewResult.Check == "red")
+        {
+            StageRunResult? siblingResult = null;
+            if (visualTask is not null)
+            {
+                siblingResult = await visualTask;
+                sessionCostUsd += siblingResult.CostUsd;
+                if (siblingResult.CostUnknown) unknownCostStageCount++;
+            }
+            var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
+                "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
+            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
+        }
+
+        // Record review immediately — its stage_done fires now, not at the barrier.
+        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+            reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
+            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+
         // Await Visual-review if launched.
         StageRunResult? visualResult = null;
         if (visualTask is not null)
@@ -78,26 +132,12 @@ public sealed partial class RelayDriver
             if (visualResult.CostUnknown) unknownCostStageCount++;
         }
 
-        // If either review produced an invalid result, flag after both finish
-        // (sibling-survives-failure: the sibling's completed result is preserved
-        // in the ledger up to this point, but the run is aborted).
-        if (reviewResult.Check == "red")
-        {
-            var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
-                "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
-            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
-        }
         if (visualResult is { Check: "red" })
         {
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                 "Visual-review returned an invalid result", visualResult.Body, statusEntries, cancellationToken);
             return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
-
-        // Serialize ledger writes: Review first, then Visual-review.
-        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
-            reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
-            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
 
         if (visualResult is not null)
         {
@@ -116,7 +156,7 @@ public sealed partial class RelayDriver
                 : "_Skipped: vision tier unconfigured_";
             MarkStatusSkipped(statusEntries, visualStage);
             (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
-                visualStage, skipReason, "green", null, Stopwatch.StartNew(), ledger, seals,
+                visualStage, skipReason, "green", null, TimeSpan.Zero, ledger, seals,
                 statusEntries, manifest, previousSeal, taskHash, sessionCostUsd,
                 unknownCostStageCount, cancellationToken);
         }
@@ -127,126 +167,11 @@ public sealed partial class RelayDriver
     private sealed record TriageResult(string VisualReview, string Reason);
     private sealed record StageRunResult(
         string Body, string? Check, double CostUsd, bool CostUnknown,
-        Stopwatch Stopwatch, double? TestDurationSeconds);
+        TimeSpan Elapsed, double? TestDurationSeconds);
     private sealed record RenderOutput(IReadOnlyList<string> PngPaths, string? ErrorOutput);
 
-    private async Task<TriageResult?> RunTriageAsync(
-        string rootPath, string runId, string taskId, string taskDirectory,
-        RelayConfig config, RelayTaskInput input, StringBuilder ledger,
-        IReadOnlyList<string> manifest, string pinnedSwivalProfileContent,
-        CancellationToken cancellationToken)
-    {
-        var triagePrompt =
-            "You are a triage agent. Decide whether a visual review of rendered output " +
-            "would benefit this task change. Consider: UI markup/styles/layout in any " +
-            "framework, web frontends, terminal UI, images or other visual assets, " +
-            "charts, generated documents. If genuinely uncertain, prefer \"needed\" — " +
-            "a vision pass costs cents; a missed visual defect costs a run.";
-
-        var triageStage = new RelayStageDefinition(0, "Visual-triage", "cheap", "llm",
-            "some", "git,ls,cat,grep,find,head,tail,wc", triagePrompt,
-            """End your reply with a single fenced ```json block, nothing after it, matching: { "visualReview": "needed"|"skip", "reason": string }""");
-
-        var triageInvocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, triageStage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
-        triageInvocation = triageInvocation with
-        {
-            Tier = "cheap",
-            MaxTurns = TriageMaxTurns,
-            MaxSelfEscalations = 0
-        };
-
-        var result = await _dependencies.SubagentRunner.RunAsync(triageInvocation, cancellationToken);
-        if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
-            return null;
-
-        try
-        {
-            using var doc = JsonDocument.Parse(result.Json);
-            var root = doc.RootElement;
-            var visualReview = root.TryGetProperty("visualReview", out var vr) && vr.GetString() is { } v
-                ? v : "needed"; // Default to needed when unrecognized (bias toward review)
-            var reason = root.TryGetProperty("reason", out var r) ? r.GetString() ?? "" : "";
-            return new TriageResult(visualReview, reason);
-        }
-        catch
-        {
-            // Default to needed on parse failure (bias toward review).
-            return new TriageResult("needed", "triage parsing failed; defaulting to needed");
-        }
-    }
-
-    private async Task<RenderOutput> RunVisualRenderAsync(
-        string rootPath, string taskDirectory,
-        RelayConfig config, CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(config.VisualRenderCmd))
-        {
-            return new RenderOutput([], null);
-        }
-
-        var renderDir = Path.Combine(taskDirectory, "visual-review");
-        Directory.CreateDirectory(renderDir);
-        var cmd = config.VisualRenderCmd.Replace("{outDir}", renderDir);
-
-        try
-        {
-            var testResult = await _dependencies.TestRunner.RunAsync(rootPath, cmd, cancellationToken);
-            if (testResult.TimedOut)
-                return new RenderOutput([], $"Render command timed out: {testResult.Output}");
-
-            var pngs = Directory.Exists(renderDir)
-                ? Directory.GetFiles(renderDir, "*.png").Select(p => Path.GetRelativePath(rootPath, p)).ToList()
-                : (IReadOnlyList<string>)[];
-
-            if (testResult.ExitCode != 0)
-                return new RenderOutput(pngs, $"Render command failed (exit {testResult.ExitCode}): {testResult.Output}");
-
-            return new RenderOutput(pngs, null);
-        }
-        catch (Exception ex)
-        {
-            return new RenderOutput([], $"Render command exception: {ex.Message}");
-        }
-    }
-
-    private static string BuildVisualReviewInput(string markdown,
-        IReadOnlyList<string> renderPngs, string? renderError,
-        IReadOnlyList<string> taskImagePaths)
-    {
-        var sb = new StringBuilder();
-        sb.AppendLine(markdown);
-        sb.AppendLine();
-        sb.AppendLine("## Images to review");
-
-        if (renderPngs.Count > 0)
-        {
-            sb.Append("### Rendered screenshots\n");
-            sb.AppendJoin('\n', renderPngs.Select(p => $"- `{p}`  ← open with view_image"));
-            sb.AppendLine();
-        }
-        else if (renderError is not null)
-        {
-            sb.Append("### Render errors (review as findings)\n");
-            sb.AppendLine(renderError);
-        }
-        else sb.Append("Fresh renders are unavailable.\n");
-
-        var taskPngs = taskImagePaths.Where(p => p.EndsWith(".png", StringComparison.OrdinalIgnoreCase)).ToList();
-        if (taskPngs.Count > 0)
-        {
-            sb.Append("\n### Task image attachments\n");
-            sb.AppendJoin('\n', taskPngs.Select(p => $"- `{p}`  ← open with view_image"));
-            sb.AppendLine();
-        }
-        else if (renderPngs.Count == 0) sb.Append("No images available for review.\n");
-
-        sb.Append("\n## Instructions\nOpen each listed image with view_image. " +
-            "Identify concrete visual defects. If nothing visual is wrong, " +
-            "return {\"verdict\":\"pass\",\"issues\":[]} immediately.\n");
-        return sb.ToString();
-    }
+    // Triage, render, and visual-input helpers live in
+    // RelayDriver.ReviewPairTriage.cs to keep this file under the 300-line guard.
 
     private async Task<StageRunResult> RunSingleStageAsync(
         string rootPath, string runId, string taskId, string taskDirectory,
@@ -266,6 +191,7 @@ public sealed partial class RelayDriver
     {
         var stopwatch = Stopwatch.StartNew();
         var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
+        stopwatch.Stop();
         var cost = EstimateStageCostCumulative(taskDirectory, stage.Number);
         var costUsd = cost?.CostUsd ?? 0d;
         var costUnknown = cost is null;
@@ -274,10 +200,10 @@ public sealed partial class RelayDriver
         {
             return new StageRunResult(
                 result.RawText,
-                "red", costUsd, costUnknown, stopwatch, null);
+                "red", costUsd, costUnknown, stopwatch.Elapsed, null);
         }
 
-        return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch, null);
+        return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch.Elapsed, null);
     }
 
     private async Task<(string PreviousSeal, string TaskHash)> RecordPairStageAsync(
@@ -290,10 +216,10 @@ public sealed partial class RelayDriver
     {
         var cost = runResult.CostUnknown ? null
             : new RelayCostEstimate("", runResult.CostUsd, true, 0, 0, 0,
-                runResult.Stopwatch.Elapsed.TotalSeconds);
+                runResult.Elapsed.TotalSeconds);
         return await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
             stage, runResult.Body, runResult.Check, cost,
-            runResult.Stopwatch, ledger, seals, statusEntries, manifest,
+            runResult.Elapsed, ledger, seals, statusEntries, manifest,
             previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
             cancellationToken, runResult.TestDurationSeconds);
     }
