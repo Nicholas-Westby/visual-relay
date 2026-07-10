@@ -115,7 +115,8 @@ public sealed class VerifyWorktreeIgnoredOverlayTests
             await CommitAll(root, "seed");
 
             var worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-safety", "run-safety", CancellationToken.None, lowThreshold);
+                root, "task-safety", "run-safety", CancellationToken.None, lowThreshold,
+                cloneOverlay: false); // pins the FALLBACK's symlink-unlink cleanup path
             // Sanity: node_modules is present AND is a REAL directory (recursive
             // overlay makes the top-level dir writable); the large child dep/ is
             // symlinked so this test still exercises link-cleanup.

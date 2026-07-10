@@ -49,17 +49,19 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// TOP-LEVEL git-ignored entries of <paramref name="sourcePath"/> as (name, isDirectory)
+    /// Git-ignored entries of <paramref name="sourcePath"/> as (relative path, isDirectory)
     /// pairs, suitable for overlaying the source's runtime content into a verify worktree.
     /// Uses <c>--directory</c> so a FULLY-ignored dir collapses to <c>name/</c> (trailing
-    /// slash → directory); ignored files appear as plain paths. NESTED entries (those that
-    /// still contain a <c>/</c> after the trailing slash is trimmed — e.g.
-    /// <c>data/cache/</c>, the ignored part of a partially-tracked dir) are dropped: their
-    /// parent is partially checked out and overlaying it whole would conflict. VR/VCS
-    /// internal names and build-output dirs (see <see cref="BuildOutputOverlaySkipNames"/>)
-    /// are excluded.
+    /// slash → directory) — entries are therefore DISJOINT: a nested entry (e.g.
+    /// <c>packages/app/node_modules/</c>, the ignored part of a partially-tracked dir) is
+    /// listed only when none of its ancestors is itself ignored, so its parents exist in
+    /// the checkout. Nested entries are KEPT — dropping them broke per-package dependency
+    /// resolution in workspace layouts (pnpm's <c>packages/*/node_modules</c>). VR/VCS
+    /// internal names are excluded at ANY depth, and build-output dirs (see
+    /// <see cref="BuildOutputOverlaySkipNames"/>) are skipped whether top-level or nested
+    /// (an ignored FILE merely named like one is kept).
     /// </summary>
-    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> EnumerateTopLevelIgnoredEntriesAsync(
+    private async Task<IReadOnlyList<(string Name, bool IsDirectory)>> EnumerateOverlayIgnoredEntriesAsync(
         string sourcePath, CancellationToken cancellationToken)
     {
         var result = new List<(string, bool)>();
@@ -69,13 +71,15 @@ public sealed partial class RelayDriver
         {
             var isDirectory = raw.EndsWith('/');
             var name = isDirectory ? raw[..^1] : raw;
-            // Keep ONLY top-level entries (no path separator remains after trimming).
-            if (name.Length == 0 || name.Contains('/')) continue;
-            if (IgnoredOverlayExcludedNames.Contains(name)) continue;
+            if (name.Length == 0) continue;
+            var segments = name.Split('/');
+            if (segments.Any(IgnoredOverlayExcludedNames.Contains)) continue;
             // Build-output dirs are PATH-SENSITIVE (compilers bake the build path into
             // module caches / artifact DBs) and regenerable — OMIT them so the worktree
             // builds fresh at its own path instead of inheriting stale baked paths.
-            if (isDirectory && BuildOutputOverlaySkipNames.Contains(name)) continue;
+            // Applies to the dir itself and to anything beneath one.
+            var dirSegments = isDirectory ? segments : segments[..^1];
+            if (dirSegments.Any(BuildOutputOverlaySkipNames.Contains)) continue;
             result.Add((name, isDirectory));
         }
         return result;

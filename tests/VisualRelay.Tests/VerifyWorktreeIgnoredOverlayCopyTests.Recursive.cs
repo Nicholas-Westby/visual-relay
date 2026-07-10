@@ -38,7 +38,8 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-deproot", "run-deproot", CancellationToken.None, LowThresholdBytes);
+                root, "task-deproot", "run-deproot", CancellationToken.None, LowThresholdBytes,
+                cloneOverlay: false); // pins the recursive FALLBACK machinery
 
             // deps/ itself must be a REAL directory — NOT a reparse point.
             var depsDir = Path.Combine(worktree, "deps");

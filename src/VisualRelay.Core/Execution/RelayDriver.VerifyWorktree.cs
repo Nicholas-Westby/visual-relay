@@ -60,12 +60,14 @@ public sealed partial class RelayDriver
     /// goes through <see cref="RunIsolatedVerifyAsync"/>; tests use this to avoid
     /// making the private surface public. <paramref name="thresholdBytes"/> lets a test
     /// inject a LOW copy/symlink boundary so it need not write 64 MB to exercise the
-    /// large-entry (symlink) branch.
+    /// large-entry (symlink) branch. <paramref name="cloneOverlay"/> mirrors production
+    /// (clone-first) by default; passing <c>false</c> forces the recursive copy/symlink
+    /// FALLBACK so its machinery stays deterministically testable on APFS hosts.
     /// </summary>
     internal Task<string> CreateVerifyWorktreeForTestAsync(
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
-        long thresholdBytes = IgnoredOverlayCopyMaxBytes) =>
-        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes);
+        long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true) =>
+        CreateVerifyWorktreeAsync(sourcePath, worktreeId, runId, cancellationToken, thresholdBytes, cloneOverlay);
 
     /// <summary>TEST SEAM: drives the private <see cref="CleanupVerifyWorktreeAsync"/>.</summary>
     internal Task CleanupVerifyWorktreeForTestAsync(
@@ -81,7 +83,7 @@ public sealed partial class RelayDriver
     /// </summary>
     private async Task<string> CreateVerifyWorktreeAsync(
         string sourcePath, string worktreeId, string runId, CancellationToken cancellationToken,
-        long thresholdBytes = IgnoredOverlayCopyMaxBytes)
+        long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true)
     {
         var worktreePath = await PlanningWorktree.CreateAsync(
             sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker);
@@ -111,7 +113,13 @@ public sealed partial class RelayDriver
         // snapshot still omits everything git ignores — node_modules, .env, .venv,
         // dist, … — and the project's test command then can't resolve its deps or
         // read config, failing EVERY test on import. Mirror the source's git-ignored
-        // RUNTIME content into the worktree per top-level entry:
+        // RUNTIME content into the worktree per entry — TOP-LEVEL and NESTED (a pnpm
+        // workspace's packages/*/node_modules is nested; dropping it broke per-package
+        // resolution, e.g. tsc's TS2688 on types:["node"]):
+        //   • CLONE first (APFS copy-on-write, macOS): the whole entry becomes REAL
+        //     and WRITABLE at near-zero cost, so test-time writes AND unlinks stay in
+        //     the sandboxed cwd and realpath-based resolution never leaves the
+        //     snapshot. Unavailable (non-APFS/cross-volume/other OS) → fall back to:
         //   • SMALL entries (< threshold) are COPIED — real, writable, isolated files
         //     and dirs, so a test that WRITES a git-ignored path (e.g. TEST-TIMING.md,
         //     .test-tmp/) stays inside the sandboxed cwd instead of following a symlink
@@ -120,8 +128,9 @@ public sealed partial class RelayDriver
         //   • LARGE entries (>= threshold, e.g. node_modules) are SYMLINKED — copying
         //     hundreds of MB per verify attempt is wasteful and these are read-mostly.
         // Cleanup unlinks the symlinks first so neither git nor the recursive delete
-        // ever follows a link into the real tree; copies are worktree-local reals.
-        foreach (var (name, isDirectory) in await EnumerateTopLevelIgnoredEntriesAsync(sourcePath, cancellationToken))
+        // ever follows a link into the real tree; copies and clones are worktree-local
+        // reals.
+        foreach (var (name, isDirectory) in await EnumerateOverlayIgnoredEntriesAsync(sourcePath, cancellationToken))
         {
             var src = Path.Combine(sourcePath, name);
             var dst = Path.Combine(worktreePath, name);
@@ -129,6 +138,13 @@ public sealed partial class RelayDriver
             if (File.Exists(dst) || Directory.Exists(dst)) continue;
             try
             {
+                // A nested entry's parents are tracked dirs already present in the
+                // checkout; idempotent for top-level entries.
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+
+                if (cloneOverlay && TryCloneOverlayEntry(src, dst, sourcePath, worktreePath))
+                    continue;
+
                 if (isDirectory)
                 {
                     long copiedBytes = 0;

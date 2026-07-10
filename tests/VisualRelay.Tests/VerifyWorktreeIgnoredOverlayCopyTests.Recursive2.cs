@@ -39,7 +39,8 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-depth", "run-depth", CancellationToken.None, LowThresholdBytes);
+                root, "task-depth", "run-depth", CancellationToken.None, LowThresholdBytes,
+                cloneOverlay: false); // pins the recursive FALLBACK machinery
 
             // Worktree creation must still succeed.
             Assert.True(Directory.Exists(worktree), "worktree must be created");
@@ -105,7 +106,8 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-budget", "run-budget", CancellationToken.None, LowThresholdBytes);
+                root, "task-budget", "run-budget", CancellationToken.None, LowThresholdBytes,
+                cloneOverlay: false); // pins the recursive FALLBACK machinery
 
             Assert.True(Directory.Exists(worktree), "worktree must be created");
 

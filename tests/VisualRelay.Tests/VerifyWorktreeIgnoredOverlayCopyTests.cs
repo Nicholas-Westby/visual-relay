@@ -161,7 +161,8 @@ public sealed partial class VerifyWorktreeIgnoredOverlayCopyTests
             await CommitAll(root, "seed");
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(
-                root, "task-largedir", "run-largedir", CancellationToken.None, LowThresholdBytes);
+                root, "task-largedir", "run-largedir", CancellationToken.None, LowThresholdBytes,
+                cloneOverlay: false); // pins the recursive FALLBACK machinery
 
             // The top-level dir is now REAL (writable) — the recursive walk
             // evaluates each child individually.
