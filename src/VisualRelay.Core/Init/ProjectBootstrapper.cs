@@ -73,8 +73,12 @@ public static class ProjectBootstrapper
         // 4. Install the pre-commit authority hook now that a real repo exists.
         var hook = await HookInstaller.InstallAsync(rootPath, cancellationToken, gi);
 
+        // 5. Commit the .relay config files init wrote so they're tracked from the start.
+        var commitCheck = await SetupCommitHelper.TryCommitSetupFilesAsync(rootPath, gi, cancellationToken);
+
         return new ProjectBootstrapResult(
-            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath, setupCheck);
+            gitInitialized, hook.Installed, hook.Warning, usedPlaceholder, command, configPath,
+            commitCheck ?? setupCheck);
     }
 
     /// <summary>

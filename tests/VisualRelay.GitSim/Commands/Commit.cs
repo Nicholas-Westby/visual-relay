@@ -26,8 +26,44 @@ internal static partial class GitSimCommands
             return GitSimResult.Code(1, "error: committing is not possible because you have unmerged files.\n");
 
         var store = wt.Repo.Objects;
-        var treeSha = TreeBuilder.BuildTreeFromIndex(store, index);
+        var pathspecs = ctx.Pathspecs();
         var headSha = wt.ResolveHead();
+
+        string treeSha;
+        if (pathspecs.Count > 0)
+        {
+            // Pathspec commit: overlay the pathspec entries from the index onto
+            // HEAD. All OTHER paths stay frozen at their HEAD version — only the
+            // named pathspecs pick up staged changes. This matches real git's
+            // `git commit -- <paths>` semantics.
+            var entries = headSha is not null
+                ? TreeBuilder.FlattenTree(store, TreeBuilder.ResolveTreeSha(store, headSha) ?? headSha)
+                : new Dictionary<string, IndexEntry>(StringComparer.Ordinal);
+
+            foreach (var path in pathspecs)
+            {
+                var match = index.Stage0.FirstOrDefault(e =>
+                    string.Equals(e.Path, path, StringComparison.Ordinal));
+                if (match.Path is not null)
+                    entries[match.Path] = match.Entry;
+            }
+
+            treeSha = TreeBuilder.BuildTree(
+                store,
+                entries.Select(kvp => (kvp.Key, kvp.Value)).ToList());
+
+            // "Nothing to commit" check for the pathspec case: compare each
+            // pathspec entry in the tree against its HEAD counterpart.
+            if (!ctx.Has("--allow-empty")
+                && headSha is not null
+                && store.TryGetCommit(headSha, out var head)
+                && string.Equals(head.TreeSha, treeSha, StringComparison.Ordinal))
+                return GitSimResult.Code(1, "nothing to commit, working tree clean\n");
+        }
+        else
+        {
+            treeSha = TreeBuilder.BuildTreeFromIndex(store, index);
+        }
 
         if (ctx.PreCommitHook is not null)
         {
@@ -39,8 +75,8 @@ internal static partial class GitSimCommands
 
         if (!ctx.Has("--allow-empty")
             && headSha is not null
-            && store.TryGetCommit(headSha, out var head)
-            && string.Equals(head.TreeSha, treeSha, StringComparison.Ordinal))
+            && store.TryGetCommit(headSha, out var headCommit)
+            && string.Equals(headCommit.TreeSha, treeSha, StringComparison.Ordinal))
             return GitSimResult.Code(1, "nothing to commit, working tree clean\n");
 
         var when = wt.Repo.NextTimestamp();

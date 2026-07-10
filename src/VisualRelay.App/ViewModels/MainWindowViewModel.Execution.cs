@@ -205,6 +205,14 @@ public partial class MainWindowViewModel
             StatusText = hookResult.Warning;
         }
 
+        // Commit the .relay config files init wrote so they're tracked from the start.
+        var commitCheck = await SetupCommitHelper.TryCommitSetupFilesAsync(RootPath, gitInvoker);
+        if (commitCheck is not null)
+        {
+            SetupCheck = commitCheck;
+            StatusText = $"Config written but setup commit was rejected by the repo's pre-commit hook — see {commitCheck.ArtifactPath ?? ".relay/setup-check.log"}. The files are in place; resolve the hook, then commit them manually.";
+        }
+
         await RefreshAsync();
 
         if (_pendingRunTaskId is { } pending)

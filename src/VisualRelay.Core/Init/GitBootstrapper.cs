@@ -57,10 +57,9 @@ public static class GitBootstrapper
             return; // HEAD already resolves
         }
 
-        // Stage whatever is present (e.g. the .relay config the bootstrapper just
-        // wrote) and seal an initial commit. --allow-empty guarantees a commit even
-        // for a truly empty folder, so HEAD always resolves afterwards.
-        await gi.RunAsync(rootPath, ["add", "-A"], cancellationToken);
+        // An empty initial commit guarantees HEAD resolves so worktrees can be
+        // created. The .relay config files are committed later by the setup-commit
+        // helper so they land with a distinct, meaningful message.
         var commit = await gi.RunAsync(
             rootPath,
             ["commit", "--allow-empty", "-m", "chore: initialize repository (visual-relay bootstrap)"],
