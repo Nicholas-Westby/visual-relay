@@ -45,12 +45,24 @@ public partial class App : Application
 
             // Localhost HTTP control surface so an operator can drive the app
             // from curl exactly as if clicking its buttons (loopback-only;
-            // honors each command's enabled state). A startup failure (e.g. port
-            // in use) is swallowed inside ControlServer.Start — never blocks the
-            // app. Stop it on exit so the socket is released.
+            // honors each command's enabled state). When VR_CONTROL_PORT was
+            // explicitly set, a bind conflict throws (fail-fast: the control
+            // API is load-bearing). Otherwise a bind conflict is surfaced as
+            // a persistent banner in the main window.
             var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
             _controlServer = new ControlServer(new ControlApi(viewModel, window), options);
-            _controlServer.Start();
+            try
+            {
+                _controlServer.Start();
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"vr-control: fatal — {ex.Message}");
+                Environment.Exit(1);
+            }
+            viewModel.ControlApiUnavailableBanner = !_controlServer.IsAvailable
+                ? $"Control API unavailable — port {options.Port} in use by another process"
+                : null;
             desktop.Exit += (_, _) =>
             {
                 _controlServer?.Stop();

@@ -21,7 +21,8 @@ public sealed class ScreenshotAndStateTests
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token);
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token,
+            InstanceId: "ks-" + Guid.NewGuid().ToString("N"));
         var handler = ControlServer.BuildHandler(api, options);
 
         var context = new DefaultHttpContext
@@ -99,6 +100,7 @@ public sealed class ScreenshotAndStateTests
         var body = await reader.ReadToEndAsync();
         using var doc = JsonDocument.Parse(body);
         Assert.True(doc.RootElement.TryGetProperty("commands", out _));
+        Assert.True(doc.RootElement.TryGetProperty("instanceId", out _), "/state must include instanceId");
     }
 }
 
@@ -117,7 +119,8 @@ public sealed class CommandTests
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token);
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token,
+            InstanceId: "ks-" + Guid.NewGuid().ToString("N"));
         var handler = ControlServer.BuildHandler(api, options);
 
         var context = new DefaultHttpContext

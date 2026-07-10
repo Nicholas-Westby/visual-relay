@@ -213,6 +213,11 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     private string? _backendStatusMessage;
 
+    // Banner: "Control API unavailable — port <N> in use by another process".
+    // App.axaml.cs sets it from ControlServer.IsAvailable after Start().
+    [ObservableProperty]
+    private string? _controlApiUnavailableBanner;
+
     public void UseFolderPicker(IFolderPicker folderPicker)
     {
         _folderPicker = folderPicker;
@@ -287,9 +292,7 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Injectable environment accessor. When null (default), all env reads route
-    /// through the real process environment. Set only by tests to inject a
-    /// <c>DictionaryEnvironmentAccessor</c> without touching any process-global static.
+    /// Injectable environment accessor for test injection (null = real process env).
     /// </summary>
     public IEnvironmentAccessor? EnvironmentAccessor { get; init; }
 

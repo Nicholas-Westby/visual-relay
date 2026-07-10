@@ -24,7 +24,11 @@ public sealed class ControlServerKestrelHandlerTests
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
         var api = new ControlApi(vm, window);
-        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token);
+        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: token,
+            InstanceId: "h-" + Guid.NewGuid().ToString("N"),
+            Pid: Environment.ProcessId,
+            StartedUtc: DateTime.UtcNow.ToString("o"),
+            Version: "0.0-hdlr-test");
         var handler = ControlServer.BuildHandler(api, options);
 
         var context = new DefaultHttpContext
@@ -78,6 +82,18 @@ public sealed class ControlServerKestrelHandlerTests
         using var doc = await ReadJsonBodyAsync(context);
         Assert.Equal("ok", doc.RootElement.GetProperty("status").GetString());
         Assert.Equal("Visual Relay", doc.RootElement.GetProperty("app").GetString());
+
+        // Instance identity fields.
+        Assert.True(doc.RootElement.TryGetProperty("pid", out var pid), "/health must include pid");
+        Assert.True(pid.GetInt32() > 0, "pid must be a positive integer");
+        Assert.True(doc.RootElement.TryGetProperty("startedUtc", out var startedUtc), "/health must include startedUtc");
+        Assert.False(string.IsNullOrEmpty(startedUtc.GetString()), "startedUtc must be non-empty");
+        Assert.True(doc.RootElement.TryGetProperty("version", out var version), "/health must include version");
+        Assert.False(string.IsNullOrEmpty(version.GetString()), "version must be non-empty");
+        Assert.True(doc.RootElement.TryGetProperty("controlPort", out var controlPort), "/health must include controlPort");
+        Assert.Equal(0, controlPort.GetInt32());
+        Assert.True(doc.RootElement.TryGetProperty("instanceId", out var instanceId), "/health must include instanceId");
+        Assert.False(string.IsNullOrEmpty(instanceId.GetString()), "instanceId must be non-empty");
     }
 
     // ── Token auth ──────────────────────────────────────────────────────

@@ -11,7 +11,9 @@ namespace VisualRelay.App.Services;
 /// prompt and the surface is not remotely reachable). Kestrel manages its
 /// own accept loop internally; ControlApi marshals every VM/window touch
 /// onto the UI thread. A startup failure (e.g. port in use) is caught and
-/// logged — it never crashes or blocks app startup.
+/// logged — unless <see cref="ControlServerOptions.PortWasExplicitlySet"/>
+/// is true, in which case the exception is re-thrown so the caller can fail
+/// fast.
 /// </summary>
 public sealed partial class ControlServer(ControlApi api, ControlServerOptions options) : IDisposable
 {
@@ -22,9 +24,15 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
     public int BoundPort => _boundPort;
 
     /// <summary>
-    /// Starts the server if enabled. Never throws: a bind/start failure is
-    /// caught and reported to stderr/Console so app startup always continues.
-    /// On success, writes one confirmation line to Console.
+    /// True when the control server successfully started and is listening.
+    /// False when disabled, not yet started, or the bind/start failed.
+    /// </summary>
+    public bool IsAvailable => _app is not null;
+
+    /// <summary>
+    /// Starts the server if enabled. When <see cref="ControlServerOptions.PortWasExplicitlySet"/>
+    /// is true, a bind/start failure throws rather than silently disabling the
+    /// control API. On success, writes one confirmation line to Console.
     /// </summary>
     public void Start()
     {
@@ -58,6 +66,7 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
             if (_boundPort == 0) _boundPort = options.Port;
 
             _app = app;
+            options.ControlPort = _boundPort;
 
             Console.Error.WriteLine($"vr-control: listening on http://127.0.0.1:{_boundPort}");
         }
@@ -65,6 +74,11 @@ public sealed partial class ControlServer(ControlApi api, ControlServerOptions o
         {
             Console.Error.WriteLine($"vr-control: failed to start ({ex.Message}); control API disabled");
             _app = null;
+            if (options.PortWasExplicitlySet)
+            {
+                throw new InvalidOperationException(
+                    $"Control API could not bind port {options.Port}: {ex.Message}", ex);
+            }
         }
     }
 

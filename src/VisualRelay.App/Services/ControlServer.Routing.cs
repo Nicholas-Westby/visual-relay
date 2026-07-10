@@ -55,13 +55,20 @@ public sealed partial class ControlServer
 
         if (path == ControlRoutes.Health.Path && method == ControlRoutes.Health.Method)
         {
-            await WriteJsonAsync(context, Json.Object(("status", "ok"), ("app", "Visual Relay")));
+            await WriteJsonAsync(context, Json.Object(
+                ("status", "ok"),
+                ("app", "Visual Relay"),
+                ("pid", options.Pid),
+                ("startedUtc", options.StartedUtc),
+                ("version", options.Version),
+                ("controlPort", options.ControlPort),
+                ("instanceId", options.InstanceId!)));
             return;
         }
 
         if (path == ControlRoutes.State.Path && method == ControlRoutes.State.Method)
         {
-            var json = await api.BuildStateJsonAsync();
+            var json = await api.BuildStateJsonAsync(options.InstanceId);
             await WriteJsonAsync(context, json);
             return;
         }

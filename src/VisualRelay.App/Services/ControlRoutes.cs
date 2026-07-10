@@ -18,11 +18,11 @@ public static class ControlRoutes
 
     public static readonly RouteInfo Health = new(
         "GET", "/health", "/health",
-        "Liveness check: {\"status\":\"ok\",\"app\":\"Visual Relay\"}.");
+        "Liveness check with instance identity: {\"status\":\"ok\",\"app\":\"Visual Relay\",\"pid\":...,\"startedUtc\":...,\"version\":...,\"controlPort\":...,\"instanceId\":...}.");
 
     public static readonly RouteInfo State = new(
         "GET", "/state", "/state",
-        "Full state snapshot: rootPath, isBusy, tasks[], stages[], commands enabled map.");
+        "Full state snapshot: instanceId, rootPath, isBusy, tasks[], stages[], commands enabled map.");
 
     public static readonly RouteInfo Screenshot = new(
         "GET", "/screenshot", "/screenshot[?path=…]",

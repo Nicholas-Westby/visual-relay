@@ -59,12 +59,57 @@ public sealed class ControlServerOptionsTests
 
         Assert.Equal("s3cret", options.Token);
     }
+
+    [Theory]
+    [InlineData("9100", true)]
+    [InlineData("1", true)]
+    [InlineData(null, false)]
+    [InlineData("", false)]
+    public void PortWasExplicitlySet_WhenPortEnvSet_IsTrue(string? portValue, bool expected)
+    {
+        var env = new DictionaryEnvironmentAccessor();
+        if (portValue is not null)
+            env["VR_CONTROL_PORT"] = portValue;
+
+        var options = ControlServerOptions.FromEnvironment(env);
+
+        Assert.Equal(expected, options.PortWasExplicitlySet);
+    }
+
+    [Fact]
+    public void InstanceId_FromEnvironment_IsNonEmptyAndEndsWithProcessId()
+    {
+        var env = new DictionaryEnvironmentAccessor();
+
+        var options = ControlServerOptions.FromEnvironment(env);
+
+        Assert.NotNull(options.InstanceId);
+        Assert.NotEmpty(options.InstanceId);
+        Assert.EndsWith("-" + Environment.ProcessId, options.InstanceId);
+    }
 }
 
 [Collection("Headless")]
 public sealed class ControlServerTests
 {
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
+
+    private static (MainWindowViewModel, MainWindow, ControlApi) NewServerDeps()
+    {
+        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
+        var window = new MainWindow { DataContext = vm };
+        return (vm, window, new ControlApi(vm, window));
+    }
+
+    private static ControlServerOptions NewTestOptions(
+        int Port = 0, string? Token = null, bool PortWasExplicitlySet = false,
+        string? InstanceId = null)
+    {
+        return new ControlServerOptions(Enabled: true, Port: Port, Token: Token,
+            PortWasExplicitlySet: PortWasExplicitlySet, InstanceId: InstanceId,
+            Pid: Environment.ProcessId, StartedUtc: DateTime.UtcNow.ToString("o"),
+            Version: "0.0-test");
+    }
 
     /// <summary>
     /// Invokes the control API handler directly via <see cref="DefaultHttpContext"/>
@@ -101,24 +146,18 @@ public sealed class ControlServerTests
         return context;
     }
 
-    /// <summary>
-    /// The ONE real-socket smoke test that proves Kestrel binds on port 0
-    /// and serves a request. Uses BoundPort to eliminate the GetFreePort
-    /// TOCTOU. All other integration tests run in-memory via DefaultHttpContext.
-    /// </summary>
     [AvaloniaFact]
     public async Task KestrelSmokeTest_BindsOnPort0_AndServesHealth()
     {
-        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: 0, Token: null));
+        var (vm, window, api) = NewServerDeps();
+        var server = new ControlServer(api, NewTestOptions(Port: 0,
+            InstanceId: "smoke-" + Guid.NewGuid().ToString("N") + "-" + Environment.ProcessId));
 
         server.Start();
         try
         {
             var port = server.BoundPort;
-            Assert.True(port > 0, "BoundPort must reflect the OS-assigned port when Port=0.");
+            Assert.True(port > 0);
 
             var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -128,26 +167,29 @@ public sealed class ControlServerTests
             using var doc = JsonDocument.Parse(body);
             Assert.Equal("ok", doc.RootElement.GetProperty("status").GetString());
             Assert.Equal("Visual Relay", doc.RootElement.GetProperty("app").GetString());
+            Assert.True(doc.RootElement.TryGetProperty("pid", out var pid));
+            Assert.True(pid.GetInt32() > 0);
+            Assert.True(doc.RootElement.TryGetProperty("startedUtc", out var su));
+            Assert.False(string.IsNullOrEmpty(su.GetString()));
+            Assert.True(doc.RootElement.TryGetProperty("version", out var ver));
+            Assert.False(string.IsNullOrEmpty(ver.GetString()));
+            Assert.True(doc.RootElement.TryGetProperty("controlPort", out var cp));
+            Assert.Equal(port, cp.GetInt32());
+            Assert.True(doc.RootElement.TryGetProperty("instanceId", out var iid));
+            Assert.EndsWith("-" + Environment.ProcessId, iid.GetString());
         }
-        finally
-        {
-            server.Stop();
-        }
+        finally { server.Stop(); }
     }
 
     [AvaloniaFact]
     public async Task Token_WhenConfigured_RejectsMissingHeaderWith401_AndAcceptsMatch()
     {
-        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
-        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: "letmein");
+        var (_, _, api) = NewServerDeps();
+        var options = NewTestOptions(Token: "letmein");
 
-        // No header → 401.
         var noTok = await InvokeAsync(api, options, "GET", "/health");
         Assert.Equal(401, noTok.Response.StatusCode);
 
-        // Correct token → 200.
         var ok = await InvokeAsync(api, options, "GET", "/health", token: "letmein");
         Assert.Equal(200, ok.Response.StatusCode);
     }
@@ -155,15 +197,11 @@ public sealed class ControlServerTests
     [AvaloniaFact]
     public async Task StateAndCommand_RoundTrip_GatesDisabledCommandWith409()
     {
-        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
-        var options = new ControlServerOptions(Enabled: true, Port: 0, Token: null);
+        var (_, _, api) = NewServerDeps();
+        var options = NewTestOptions();
 
-        // /state returns the snapshot with the commands map.
         var stateCtx = await InvokeAsync(api, options, "GET", "/state");
         Assert.Equal(200, stateCtx.Response.StatusCode);
-
         stateCtx.Response.Body.Position = 0;
         using (var reader = new StreamReader(stateCtx.Response.Body, Encoding.UTF8, leaveOpen: true))
         {
@@ -172,53 +210,33 @@ public sealed class ControlServerTests
             Assert.True(doc.RootElement.TryGetProperty("commands", out _));
         }
 
-        // A disabled command (run-selected with no selection) → 409.
         var disabledCtx = await InvokeAsync(api, options, "POST", "/command/run-selected");
         Assert.Equal(409, disabledCtx.Response.StatusCode);
 
-        // A safe enabled command (pause-toggle) → 200.
         var okCtx = await InvokeAsync(api, options, "POST", "/command/pause-toggle");
         Assert.Equal(200, okCtx.Response.StatusCode);
     }
 
-    /// <summary>
-    /// Verifies that the shared headless test app disables the vr-control listener via
-    /// the process environment variable the App reads on boot (VR_CONTROL_DISABLE=1).
-    /// This is a deterministic in-process assertion that no listener will start.
-    /// </summary>
     [AvaloniaFact]
     public void HeadlessApp_DisablesControlServer_ViaProcessEnv()
     {
         var options = ControlServerOptions.FromEnvironment(new ProcessEnvironmentAccessor());
-        Assert.False(options.Enabled,
-            "Headless test app must disable the vr-control listener (VR_CONTROL_DISABLE=1) so booting the App in tests starts no leaked listener.");
+        Assert.False(options.Enabled);
     }
 
-    /// <summary>
-    /// Verifies that ControlServer releases its Kestrel socket when Dispose() is
-    /// called, so a fresh TcpListener can bind the same port immediately after disposal.
-    /// </summary>
     [AvaloniaFact]
     public async Task ControlServer_Dispose_ReleasesListener()
     {
-        var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
-        var window = new MainWindow { DataContext = vm };
-        var api = new ControlApi(vm, window);
-
-        var server = new ControlServer(api, new ControlServerOptions(Enabled: true, Port: 0, Token: null));
+        var (_, _, api) = NewServerDeps();
+        var server = new ControlServer(api, NewTestOptions());
         server.Start();
 
         var port = server.BoundPort;
         Assert.True(port > 0);
 
-        // Confirm it is listening before dispose.
         var response = await Client.GetAsync($"http://127.0.0.1:{port}/health");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
-        // Dispose must release the port so a fresh TcpListener can bind it. The
-        // accept-loop task finishes its socket teardown asynchronously, so re-probe
-        // the bind and YIELD (a scheduler turn, not a wall-clock sleep) between tries —
-        // the bind succeeds the instant the port is free.
         server.Dispose();
 
         const int maxRetries = 2_000;
@@ -228,20 +246,55 @@ public sealed class ControlServerTests
             {
                 using var probe = new TcpListener(IPAddress.Loopback, port);
                 probe.Start();
-                Assert.True(probe.Server.IsBound,
-                    "Dispose() must release the listener's port so a fresh TcpListener can bind the same port.");
+                Assert.True(probe.Server.IsBound);
                 probe.Stop();
                 return;
             }
             catch (SocketException)
             {
-                if (attempt < maxRetries - 1)
-                    await Task.Yield();
+                if (attempt < maxRetries - 1) await Task.Yield();
             }
         }
+        Assert.Fail($"Dispose() did not release port {port} within {maxRetries} rebind attempts.");
+    }
 
-        Assert.Fail(
-            $"Dispose() did not release port {port} within {maxRetries} rebind attempts. " +
-            "The accept-loop task may not have completed socket teardown.");
+    [AvaloniaFact]
+    public async Task BindConflict_WithExplicitPort_Throws()
+    {
+        using var occupier = new TcpListener(IPAddress.Loopback, 0);
+        occupier.Start();
+        var occupiedPort = ((IPEndPoint)occupier.LocalEndpoint).Port;
+
+        var (_, _, api) = NewServerDeps();
+        var options = NewTestOptions(Port: occupiedPort, PortWasExplicitlySet: true);
+        var server = new ControlServer(api, options);
+
+        var ex = Assert.ThrowsAny<Exception>(() => server.Start());
+        Assert.Contains("port", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.False(server.IsAvailable);
+    }
+    /// VR_CONTROL_PORT explicitly set → bind conflict throws. Without it,
+    /// startup continues banner-only.
+    [AvaloniaFact]
+    public async Task BindConflict_WithoutExplicitPort_DoesNotThrow_AndIsAvailableIsFalse()
+    {
+        using var occupier = new TcpListener(IPAddress.Loopback, 0);
+        occupier.Start();
+        var occupiedPort = ((IPEndPoint)occupier.LocalEndpoint).Port;
+
+        var (vm, _, api) = NewServerDeps();
+        var options = NewTestOptions(Port: occupiedPort);
+        var server = new ControlServer(api, options);
+
+        var ex = Record.Exception(() => server.Start());
+        Assert.Null(ex);
+        Assert.False(server.IsAvailable);
+
+        // VM banner property exists for the main window's persistent error bar.
+        vm.ControlApiUnavailableBanner = server.IsAvailable
+            ? null
+            : $"Control API unavailable — port {options.Port} in use by another process";
+        Assert.NotNull(vm.ControlApiUnavailableBanner);
+        Assert.Contains(options.Port.ToString(), vm.ControlApiUnavailableBanner);
     }
 }

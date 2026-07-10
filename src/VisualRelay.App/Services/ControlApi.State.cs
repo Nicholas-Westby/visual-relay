@@ -9,15 +9,18 @@ public sealed partial class ControlApi
     /// state: root/archive/busy/pause/status, backend reachability, the selected
     /// task, the task list, the stage board, and a per-command enabled map
     /// computed from each command's CanExecute (the same gate the UI buttons use).
+    /// When <paramref name="instanceId"/> is non-null it is included as a top-level
+    /// field so every state response carries instance identity.
     /// </summary>
-    public Task<string> BuildStateJsonAsync() =>
-        Dispatcher.UIThread.InvokeAsync(() => Json.Serialize(BuildStateSnapshot())).GetTask();
+    public Task<string> BuildStateJsonAsync(string? instanceId = null) =>
+        Dispatcher.UIThread.InvokeAsync(() => Json.Serialize(BuildStateSnapshot(instanceId))).GetTask();
 
-    private object BuildStateSnapshot()
+    private object BuildStateSnapshot(string? instanceId = null)
     {
         var vm = viewModel;
         return new
         {
+            instanceId,
             rootPath = vm.RootPath,
             showArchive = vm.ShowArchive,
             isBusy = vm.IsBusy,
