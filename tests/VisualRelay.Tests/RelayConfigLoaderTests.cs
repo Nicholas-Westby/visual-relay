@@ -26,7 +26,7 @@ public sealed partial class RelayConfigLoaderTests
 
         Assert.Equal("llm-tasks", config.TasksDir);
         Assert.Equal("dotnet test", config.TestCommand);
-        Assert.Equal("bun test {files}", config.TestFileCommand);
+        Assert.Equal("dotnet test", config.TestFileCommand);
         Assert.Equal(["logs/app.log"], config.LogSources);
         Assert.False(config.EnableFixVerify);
         Assert.True(config.BaselineVerify);
@@ -294,4 +294,5 @@ public sealed partial class RelayConfigLoaderTests
         Assert.Equal(RelayConfigStatus.Loaded, result.Status);
         Assert.False(result.Config.DownshiftOnEarlyImplementation);
     }
+
 }

@@ -8,7 +8,7 @@ public static partial class RelayConfigLoader
         new(
             TasksDir: "llm-tasks",
             TestCommand: testCommand,
-            TestFileCommand: "bun test {files}",
+            TestFileCommand: testCommand,
             LogSources: logSources ?? [],
             TierProfiles: new Dictionary<string, string>
             {

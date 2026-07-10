@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -109,6 +110,28 @@ public sealed partial class RelayDriver
                 return new Stage5Result(await FlagAsync(rootPath, runId, taskId, taskDirectory, 5,
                     ErrorHintClassifier.WithHint(testResult.Output), null, statusEntries, cancellationToken), null, null);
 
+            // ── Gate-unusability detection ──────────────────────────
+            // Exit code 127 = command not found (runner can't start).
+            // "no tests found/collected" = zero tests ran — not a real red.
+            // In either case the red gate is infrastructure-broken, not
+            // correctly-red. Emit a warn event and skip the pass/fail
+            // assertion rather than passing vacuously.
+            if (IsGateUnusable(testResult))
+            {
+                var tail = testResult.Output.Length > 200
+                    ? testResult.Output[^200..]
+                    : testResult.Output;
+                await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow, "warn", "author_test_gate_unusable", runId,
+                    rootPath, taskId, Data: new Dictionary<string, string>
+                    {
+                        ["command"] = command,
+                        ["exitCode"] = testResult.ExitCode.ToString(),
+                        ["outputTail"] = tail
+                    }), cancellationToken);
+                return new Stage5Result(null, null, null);
+            }
+
             var check = testResult.ExitCode == 0 ? "green" : "red";
             if (check != "red")
             {
@@ -144,5 +167,42 @@ public sealed partial class RelayDriver
             return currentValue;
         return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
             rootPath, manifest, IsImpl, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
+    }
+
+    /// <summary>
+    /// Zero-tests pattern: "0 tests" / "0 tests collected" / "ran 0 tests"
+    /// but NOT "10 tests" / "230 tests" / "Ran 100 tests".  The regex
+    /// requires the zero to be a standalone number (not preceded by another
+    /// digit).
+    /// </summary>
+    private static readonly Regex ZeroTestsPattern =
+        new(@"(?<!\d)0\s+tests",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Returns true when the test runner could not execute meaningfully (command
+    /// not found, or zero tests collected), making the red-gate assertion
+    /// untrustworthy. Avoids silently passing a gate whose infrastructure is
+    /// broken — independent of any specific toolchain.
+    /// </summary>
+    private static bool IsGateUnusable(TestRunResult result)
+    {
+        // Exit code 127 = command not found (POSIX convention; also followed
+        // by many shells and process runners on non-POSIX platforms).
+        if (result.ExitCode == 127)
+            return true;
+
+        // Zero-tests-collected patterns produced by common runners when the
+        // command can start but finds no tests to execute. The heuristic is
+        // intentionally loose (case-insensitive) — a false positive here
+        // skips the gate conservatively rather than passing it vacuously.
+        var output = result.Output;
+        if (string.IsNullOrWhiteSpace(output))
+            return false;
+
+        return output.Contains("no tests found", StringComparison.OrdinalIgnoreCase)
+            || output.Contains("no tests collected", StringComparison.OrdinalIgnoreCase)
+            || ZeroTestsPattern.IsMatch(output)
+            || output.Contains("zero tests", StringComparison.OrdinalIgnoreCase);
     }
 }

@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayDriverStage5Tests
+public sealed partial class RelayDriverStage5Tests
 {
     // ═══════════════════════════════════════════════════════════════
     // stage-5 manifest merge: new test files added to manifest
