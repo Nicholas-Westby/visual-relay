@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-10T20:48:20.575638+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: live-card-progress-and-succinct-stage-label\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Make the queue card's progress live and its running-stage label succinct\n\nTwo card defects observed by the maintainer during a real run, both diagnosed in source:\n\n1. **The progress bar only moves on Refresh.** The card binds\n   `ProgressFraction => Math.Clamp(Task.CompletedStageCount / 12.0, 0, 1)`\n   (src/VisualRelay.App/ViewModels/TaskRowViewModel.cs:103). `CompletedStageCount` comes from\n   `RunMetrics` attached when the task LIST is loaded from disk\n   (src/VisualRelay.Core/Tasks/RelayTaskRepository.cs:243-253, RunMetrics.CompletedStageCount =\n   Stages.Count of the last recorded run) \u2014 so during a live run the value is frozen (and on a\n   task's FIRST run it is 0 throughout). Stage events during the run call\n   `TaskRowViewModel.MarkRunning(...)` but nothing recomputes the fraction, `UpdateTask(...)`'s\n   notification list omits `ProgressFraction`, and the `12.0` denominator is a hardcoded stage\n   count. Net effect: the bar looks static/absent until a full task-list reload (the Refresh\n   button) republishes metrics.\n2. **The running-status line grows into an unreadable \"Stage 01 & Stage 02 & Stage 03 & \u2026\".**\n   `MainWindowViewModel.LiveState.cs:157` does `_runningStageNumbers[taskId].Add(stageNumber)` on\n   every stage START and never removes entries when a stage completes \u2014 the set is \"every stage\n   that has ever started this run\", not \"stages running now\". `RunningStepLabel`\n   (TaskRowViewModel.cs:66-70) then joins the WHOLE set with `\" & \"` as soon as Count > 1 and\n   drops the stage NAMES entirely; the card clips it with `TextTrimming=\"CharacterEllipsis\"`\n   (QueuePanel.axaml MetricsLine block). The multi-entry form was presumably meant for the\n   genuinely concurrent Review \u2225 Visual-review pair (stages 7+8), which is the only legitimate\n   concurrency in the pipeline.\n\nNote: `report-review-pair-stages-independently` (landing just before this task) makes each pair\nstage publish its own completion \u2014 consume those per-stage signals here; do not re-derive pair\nstate.\n\n## What to build\n\n1. **Live progress.** Track per-running-task completed-stage count in the view-model layer from\n   the same stage lifecycle events that drive `UpdateRunningStage`/stage completion, and have the\n   card's fraction prefer the LIVE count while the task is running (falling back to the last-run\n   `RunMetrics` when idle). Notify `ProgressFraction` on every stage completion (and include it in\n   `UpdateTask`'s notification list). Derive the denominator from the actual pipeline stage list\n   (`RelayStages`) instead of the literal `12.0`, counting Skipped stages as progressed so the bar\n   still reaches full on runs with skipped stages.\n2. **Truthful running set.** Remove a stage from `_runningStageNumbers[taskId]` when that stage\n   completes (Done/Skipped/Flagged), so the set means \"in flight right now\". After this, the\n   multi-entry case can ONLY be a genuinely concurrent group.\n3. **Succinct label.** Redesign `RunningStepLabel`:\n   - Single stage (the overwhelmingly common case, unchanged shape): `Stage 07 \u00b7 Review`.\n   - Concurrent stages: one compact segment such as `Stages 07+08 \u00b7 Review \u2225 Visual-review` \u2014\n     numbers joined with `+`, names joined with `\u2225` (or a similarly compact separator), never the\n     unbounded `\" & \"` chain, and never nameless numbers. Completed stages are the progress bar's\n     job \u2014 the label must never enumerate them.\n   - Keep `Starting task` / `Planning\u2026` behaviors as they are.\n4. No new bindings/markup complexity in QueuePanel.axaml beyond what the label/fraction changes\n   require; MaxLines/trimming stay as a safety net, but the designed content must fit a typical\n   card width without relying on it.\n\n## Tests (red first)\n\n- Stage-completion event removes the stage from the running set: drive start(7), start(8),\n  complete(8) \u2192 label shows `Stage 07 \u00b7 Review`; complete(7) \u2192 label leaves the multi form.\n- Concurrent form: start(7)+start(8) \u2192 label matches the compact pair format (numbers + names,\n  no \" & \").\n- Live fraction: sequence of stage completions raises `ProgressFraction` monotonically WITHOUT\n  any task-list reload, with PropertyChanged raised for `ProgressFraction` each time; idle rows\n  fall back to RunMetrics-derived fraction.\n- Denominator: fraction uses the RelayStages count (assert full bar when all stages incl. a\n  Skipped one are done), not 12.0 (guard against the literal reappearing).\n- `UpdateTask` notifies `ProgressFraction`.\n\n## Verification\n\n- `./test.sh` fully green including the new tests.\n- Ledger note: with a real (or simulated) run, the card's bar visibly advances at stage\n  boundaries with no Refresh click, and the running label never exceeds the pair form.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the detailed descriptions (the filesystem is outside `.swival/` scope, so I'm working from the thorough problem description you provided), here is my analysis and solution options.\n\n---\n\n## Analysis\n\nThere are **two defects** rooted in the view-model and state-tracking layers, and the fix touches three aspects: progress tracking, running-stage set management, and the label renderer. The task input gives extremely detailed line-level context, so I can frame options concretely despite not reading the source.\n\n### Defect 1: Frozen progress\n- `CompletedStageCount` is sourced from `RunMetrics` (disk-snapshot), not from live in-memory stage events.\n- `12.0` is hardcoded instead of using the actual pipeline stage count.\n- `ProgressFraction` is never notified during `MarkRunning` / stage-completion paths.\n\n### Defect 2: Unbounded running-stage set\n- `_runningStageNumbers` is append-only (adds on start, never removes on completion).\n- The label joins the whole set with `\" & \"`, producing unreadable chains.\n\n---\n\n## Solution Options\n\n### Option A: Separate live counter + reactive label (recommended)\n\nIntroduce a mutable `_liveCompletedStageCount` on `TaskRowViewModel` that gets incremented on every stage-completion event (Done/Skipped/Flagged). `ProgressFraction` then becomes a derived property:\n- If task is running: `_liveCompletedStageCount / RelayStages.Count` (skipped stages count as progressed).\n- If idle: the existing `RunMetrics.CompletedStageCount / RelayStages.Count`.\n\n`_runningStageNumbers` is modified to remove entries on stage completion (not just start). The label becomes a computed string that switches on cardinality of the running set.\n\n**Pros:** Clear separation of concerns (live vs. persisted), minimal new state, fits naturally into existing event flow. Tests map 1:1 to the described scenarios.\n\n**Cons:** Need to ensure `_liveCompletedStageCount` resets properly between runs of the same task row.\n\n### Option B: Reactive pipeline using a per-task stage tracker\n\nIntroduce a `RunningStageTracker` helper object per running task that maintains both `_completedStageIndices` (for the fraction) and `_runningStageIndices` (for the label). Both are `ObservableCollection`-like, and the card reacts via bindings. The tracker subscribes to the stage lifecycle events and self-resets on task start.\n\n**Pros:** Very clean separation \u2014 the view-model delegates all live-stage bookkeeping. Easy to unit-test independently.\n\n**Cons:** More ceremony (new class, DI wiring or factory), somewhat over-engineered for what amounts to a counter and a small set. Risks being harder to review than Option A.\n\n### Option C: Inline fix with a computed re-evaluation pass\n\nKeep the existing `RunMetrics`-based fraction but add a post-stage-completion hook that recomputes `ProgressFraction` from the live `_runningStageNumbers` set (i.e., fraction = \"stages that are no longer in the running set\" / total). Fix the denominator to use `RelayStages.Count`. Remove from `_runningStageNumbers` on completion. Derive the label the same way.\n\n**Pros:** Minimal structural change \u2014 no new fields. Reuses existing data structures.\n\n**Cons:** Conflates two semantics (running set vs. completed set) into one source of truth, which is error-prone (e.g., a skipped stage is never \"running\" so it'd look completed before it starts). The implicit \"completed = total - running\" breaks if a task starts but hasn't had all stages registered yet. Less testable.\n\n---\n\n### Recommendation\n\n**Option A** best matches the task description's requirements:\n- \"Track per-running-task completed-stage count in the view-model layer\" \u2192 the `_liveCompletedStageCount` field.\n- \"Derive the denominator from the actual pipeline stage list\" \u2192 `RelayStages.Count`.\n- \"Remove a stage from `_runningStageNumbers[taskId]` when that stage completes\" \u2192 the set fix.\n- \"Redesign `RunningStepLabel`\" \u2192 switch on set size (0 \u2192 \"Planning\u2026\", 1 \u2192 single form, 2+ \u2192 pair form).\n\nThe four test scenarios (completion-removes-from-running-set, concurrent label, monotonic fraction, denominator correctness) all map directly to this approach.\n\n```json\n{\n  \"summary\": \"Two defects exist: (1) the progress bar is frozen because CompletedStageCount comes from disk-snapshotted RunMetrics rather than live in-memory events, and the 12.0 denominator is hardcoded; (2) _runningStageNumbers is append-only, causing the running-status label to enumerate every stage that ever started as an unbounded 'Stage 01 & Stage 02 & \u2026' chain. The fix needs to add a mutable live-completed-stage counter, remove entries from the running set on stage completion, derive the fraction denominator from the actual pipeline stage list (RelayStages), redesign the label for single-stage (Stage 07 \u00b7 Review) and genuinely-concurrent-pair (Stages 07+08 \u00b7 Review \u2225 Visual-review) forms, wire PropertyChanged notifications for ProgressFraction, and write red-first tests covering all of the above.\",\n  \"options\": [\n    \"Option A: Introduce a _liveCompletedStageCount field on TaskRowViewModel, incremented on each stage-completion event (Done/Skipped/Flagged). ProgressFraction uses live count / RelayStages.Count when running, falls back to RunMetrics when idle. Remove stage from _runningStageNumbers on completion. Redesign RunningStepLabel to switch on set size. Minimal new state, best testability, best alignment with described defects.\",\n    \"Option B: Create a RunningStageTracker helper class per running task that maintains both completed-index and running-index sets via observable collections. The view-model delegates all live-stage tracking to the tracker. Cleaner separation but more ceremony (new class, potential DI wiring).\",\n    \"Option C: Inline fix \u2014 recompute ProgressFraction after each stage completion as (RelayStages.Count - remaining running stages) / RelayStages.Count, remove from _runningStageNumbers on completion. Reuses existing data but conflates completed vs. running semantics, breaking for skipped/never-started stages.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 5,
+    "tool_calls_total": 5,
+    "tool_calls_succeeded": 2,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 2,
+        "failed": 1
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 2
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 5,
+    "total_llm_time_s": 27.377,
+    "prompt_cache": {
+      "cached_tokens": 21248,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.003,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.716,
+      "prompt_tokens_est": 4950,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/temp-visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.016,
+      "prompt_tokens_est": 5064,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 154,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.axaml",
+        "path": "/Users/admin/Dev/temp-visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 154,
+      "error": "error: Path '/Users/admin/Dev/temp-visual-relay' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.739,
+      "prompt_tokens_est": 5309,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 121,
+      "error": "error: Path '.' resolves to /Users/admin/Dev/temp-visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 1.95,
+      "prompt_tokens_est": 5407,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 18.957,
+      "prompt_tokens_est": 5484,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Media;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.App.ViewModels;
@@ -25,6 +26,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     private int? _runningStageNumber;
     private string? _runningStageName;
     private HashSet<int>? _allRunningStageNumbers;
+    private int _liveCompletedStageCount;
     private string? _planningLabel;
     private string _runningElapsedLabel = string.Empty;
     private string _rewriteElapsedLabel = string.Empty;
@@ -46,6 +48,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         OnPropertyChanged(nameof(StateLabel));
         OnPropertyChanged(nameof(ReviewReason));
         OnPropertyChanged(nameof(MetricsLine));
+        OnPropertyChanged(nameof(ProgressFraction));
         NotifyVisualStateChanged();
     }
     public string Id => Task.Id;
@@ -64,10 +67,12 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
             ? $"Rewriting · {_rewriteElapsedLabel}"
             : Task.MetricsLine;
     public string RunningStepLabel => _allRunningStageNumbers is { Count: > 1 } all
-        ? string.Join(" & ", all.OrderBy(n => n).Select(n => $"Stage {n:00}"))
+        ? $"Stages {string.Join("+", all.OrderBy(n => n).Select(n => $"{n:00}"))} · {string.Join(" ∥ ", all.OrderBy(n => n).Select(n => RelayStages.All[n - 1].Name))}"
         : _runningStageNumber is { } number
             ? $"Stage {number:00} · {_runningStageName ?? "Running"}"
-            : "Starting task";
+            : _allRunningStageNumbers is not null
+                ? "Running task"
+                : "Starting task";
     public string RunningElapsedLabel
     {
         get => _runningElapsedLabel;
@@ -100,7 +105,9 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
     public IBrush CardBorderBrush => IsRunning ? RunningBorderBrush : WaitingBorderBrush;
     public Thickness CardBorderThickness => IsRunning ? new Thickness(2) : new Thickness(1);
     public BoxShadows CardShadow => IsSelected ? NoShadow : IsRunning ? RunningShadow : NoShadow;
-    public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 12.0, 0, 1);
+    public double ProgressFraction => IsRunning
+        ? Math.Clamp(_liveCompletedStageCount / (double)RelayStages.All.Count, 0, 1)
+        : Math.Clamp(Task.CompletedStageCount / (double)RelayStages.All.Count, 0, 1);
 
     public bool IsSelected
     {
@@ -123,6 +130,7 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
             {
                 OnPropertyChanged(nameof(StateLabel));
                 OnPropertyChanged(nameof(MetricsLine));
+                OnPropertyChanged(nameof(ProgressFraction));
                 NotifyVisualStateChanged();
             }
         }
@@ -163,13 +171,21 @@ public sealed class TaskRowViewModel(RelayTaskItem task) : ViewModelBase
         OnPropertyChanged(nameof(PhaseLabel));
     }
 
+    internal void RecordStageCompleted(int stageNumber)
+    {
+        _liveCompletedStageCount++;
+        OnPropertyChanged(nameof(ProgressFraction));
+    }
+
     public void MarkIdle()
     {
+        _liveCompletedStageCount = 0;
         _runningStageNumber = null;
         _runningStageName = null;
         _runningElapsedLabel = string.Empty;
         _rewriteElapsedLabel = string.Empty;
         _planningLabel = null;
+        _allRunningStageNumbers = null;
         _planned = false;
         IsRunning = false;
         OnPropertyChanged(nameof(RunningStepLabel));

@@ -81,6 +81,8 @@ public partial class MainWindowViewModel
                     : stage?.Name;
                 UpdateRunningStage(taskId, stageNumber, stageName ?? stage?.Name);
             }
+            else if (relayEvent is { EventName: "stage_done" or "flagged", TaskId: { } doneTaskId } && _runningTaskIds.Contains(doneTaskId))
+                CompleteRunningStage(doneTaskId, stageNumber);
         }
     }
 
@@ -254,7 +256,6 @@ public partial class MainWindowViewModel
             events = [];
             _liveEventsByTask[taskId] = events;
         }
-
         return events;
     }
 

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Queue;
 using VisualRelay.Domain;
 
@@ -157,19 +158,31 @@ public partial class MainWindowViewModel
         _runningStageNumbers[taskId].Add(stageNumber);
         _runningStageNames[taskId] = stageName;
 
-        // Update the task row directly — ApplyRunningTaskToRows refreshes all
-        // running rows, but we want an immediate update for this specific task.
         var task = Tasks.FirstOrDefault(t => t.Id == taskId);
         if (task is not null)
-        {
             task.MarkRunning(stageNumber, stageName, _runningStageNumbers.GetValueOrDefault(taskId));
-        }
 
-        // If this is the followed task, update detail pane context too.
         if (string.Equals(taskId, _runningTaskId, StringComparison.Ordinal))
-        {
             NotifyRunningTaskContextChanged();
-        }
+    }
+
+    private void CompleteRunningStage(string taskId, int stageNumber)
+    {
+        if (!_runningTaskIds.Contains(taskId))
+            return;
+        _runningStageNumbers.GetValueOrDefault(taskId)?.Remove(stageNumber);
+
+        var task = Tasks.FirstOrDefault(t => t.Id == taskId);
+        if (task is null)
+            return;
+
+        task.RecordStageCompleted(stageNumber);
+
+        var numbers = _runningStageNumbers.GetValueOrDefault(taskId);
+        if (numbers is { Count: > 0 })
+            task.MarkRunning(numbers.Max(), RelayStages.All[numbers.Max() - 1].Name, numbers);
+        else
+            task.MarkRunning(null, null, new HashSet<int>());
     }
 
     private void ClearRunningTask(string taskId)
@@ -184,9 +197,7 @@ public partial class MainWindowViewModel
             task.MarkIdle();
 
         if (string.Equals(_runningTaskId, taskId, StringComparison.Ordinal))
-        {
             _runningTaskId = null;
-        }
 
         NotifyRunningTaskContextChanged();
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
@@ -194,19 +205,11 @@ public partial class MainWindowViewModel
 
     /// <summary>
     /// One per-second refresh of every "elapsed while running" label — running
-    /// task rows plus the active stage card. Extracted from the 1-second
-    /// DispatcherTimer's tick so tests can seed a past start and call it directly
-    /// (no real wall-clock wait). Runs on the UI thread (the timer already ticks
-    /// there). Cost is a handful of label assignments per second.
+    /// task rows plus the active stage card. Runs on the UI thread.
     /// </summary>
     public void UpdateRunningElapsedLabels()
     {
         var now = DateTimeOffset.UtcNow;
-
-        // Update the overall elapsed for every currently-running task row: the
-        // task's own active time (sum of its stage segments + the live stage),
-        // NOT the wall-clock since planning — so it reconciles with the stage cards
-        // and excludes idle queue-wait.
         foreach (var taskId in _runningTaskIds)
         {
             if (_taskElapsed.TryGetValue(taskId, out var elapsed))
@@ -217,7 +220,6 @@ public partial class MainWindowViewModel
             }
         }
 
-        // Update elapsed for every currently-rewriting task row.
         foreach (var taskId in _rewritingTaskIds)
         {
             if (_rewriteStartedAt.TryGetValue(taskId, out var startedAt))
@@ -228,15 +230,9 @@ public partial class MainWindowViewModel
             }
         }
 
-        // Let the toolbar stopwatch binding see the latest elapsed every tick.
         OnPropertyChanged(nameof(SelectedTaskRewriteElapsed));
-
-        // Update the active stage card's elapsed (each running stage tracks its
-        // own start, set on stage_start; non-running stages are a no-op).
         foreach (var stage in Stages)
-        {
             stage.RefreshElapsed(now);
-        }
     }
 
     private void ApplyRunningTaskToRows()

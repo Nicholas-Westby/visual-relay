@@ -1,0 +1,564 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-10T20:54:06.394739+00:00",
+  "task": "# Relay stage 4: Plan\nTask: live-card-progress-and-succinct-stage-label\nWorking directory: /Users/admin/Dev/temp-visual-relay\n\n## Task input\n# Make the queue card's progress live and its running-stage label succinct\n\nTwo card defects observed by the maintainer during a real run, both diagnosed in source:\n\n1. **The progress bar only moves on Refresh.** The card binds\n   `ProgressFraction => Math.Clamp(Task.CompletedStageCount / 12.0, 0, 1)`\n   (src/VisualRelay.App/ViewModels/TaskRowViewModel.cs:103). `CompletedStageCount` comes from\n   `RunMetrics` attached when the task LIST is loaded from disk\n   (src/VisualRelay.Core/Tasks/RelayTaskRepository.cs:243-253, RunMetrics.CompletedStageCount =\n   Stages.Count of the last recorded run) \u2014 so during a live run the value is frozen (and on a\n   task's FIRST run it is 0 throughout). Stage events during the run call\n   `TaskRowViewModel.MarkRunning(...)` but nothing recomputes the fraction, `UpdateTask(...)`'s\n   notification list omits `ProgressFraction`, and the `12.0` denominator is a hardcoded stage\n   count. Net effect: the bar looks static/absent until a full task-list reload (the Refresh\n   button) republishes metrics.\n2. **The running-status line grows into an unreadable \"Stage 01 & Stage 02 & Stage 03 & \u2026\".**\n   `MainWindowViewModel.LiveState.cs:157` does `_runningStageNumbers[taskId].Add(stageNumber)` on\n   every stage START and never removes entries when a stage completes \u2014 the set is \"every stage\n   that has ever started this run\", not \"stages running now\". `RunningStepLabel`\n   (TaskRowViewModel.cs:66-70) then joins the WHOLE set with `\" & \"` as soon as Count > 1 and\n   drops the stage NAMES entirely; the card clips it with `TextTrimming=\"CharacterEllipsis\"`\n   (QueuePanel.axaml MetricsLine block). The multi-entry form was presumably meant for the\n   genuinely concurrent Review \u2225 Visual-review pair (stages 7+8), which is the only legitimate\n   concurrency in the pipeline.\n\nNote: `report-review-pair-stages-independently` (landing just before this task) makes each pair\nstage publish its own completion \u2014 consume those per-stage signals here; do not re-derive pair\nstate.\n\n## What to build\n\n1. **Live progress.** Track per-running-task completed-stage count in the view-model layer from\n   the same stage lifecycle events that drive `UpdateRunningStage`/stage completion, and have the\n   card's fraction prefer the LIVE count while the task is running (falling back to the last-run\n   `RunMetrics` when idle). Notify `ProgressFraction` on every stage completion (and include it in\n   `UpdateTask`'s notification list). Derive the denominator from the actual pipeline stage list\n   (`RelayStages`) instead of the literal `12.0`, counting Skipped stages as progressed so the bar\n   still reaches full on runs with skipped stages.\n2. **Truthful running set.** Remove a stage from `_runningStageNumbers[taskId]` when that stage\n   completes (Done/Skipped/Flagged), so the set means \"in flight right now\". After this, the\n   multi-entry case can ONLY be a genuinely concurrent group.\n3. **Succinct label.** Redesign `RunningStepLabel`:\n   - Single stage (the overwhelmingly common case, unchanged shape): `Stage 07 \u00b7 Review`.\n   - Concurrent stages: one compact segment such as `Stages 07+08 \u00b7 Review \u2225 Visual-review` \u2014\n     numbers joined with `+`, names joined with `\u2225` (or a similarly compact separator), never the\n     unbounded `\" & \"` chain, and never nameless numbers. Completed stages are the progress bar's\n     job \u2014 the label must never enumerate them.\n   - Keep `Starting task` / `Planning\u2026` behaviors as they are.\n4. No new bindings/markup complexity in QueuePanel.axaml beyond what the label/fraction changes\n   require; MaxLines/trimming stay as a safety net, but the designed content must fit a typical\n   card width without relying on it.\n\n## Tests (red first)\n\n- Stage-completion event removes the stage from the running set: drive start(7), start(8),\n  complete(8) \u2192 label shows `Stage 07 \u00b7 Review`; complete(7) \u2192 label leaves the multi form.\n- Concurrent form: start(7)+start(8) \u2192 label matches the compact pair format (numbers + names,\n  no \" & \").\n- Live fraction: sequence of stage completions raises `ProgressFraction` monotonically WITHOUT\n  any task-list reload, with PropertyChanged raised for `ProgressFraction` each time; idle rows\n  fall back to RunMetrics-derived fraction.\n- Denominator: fraction uses the RelayStages count (assert full bar when all stages incl. a\n  Skipped one are done), not 12.0 (guard against the literal reappearing).\n- `UpdateTask` notifies `ProgressFraction`.\n\n## Verification\n\n- `./test.sh` fully green including the new tests.\n- Ledger note: with a real (or simulated) run, the card's bar visibly advances at stage\n  boundaries with no Refresh click, and the running label never exceeds the pair form.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Two defects exist: (1) the progress bar is frozen because CompletedStageCount comes from disk-snapshotted RunMetrics rather than live in-memory events, and the 12.0 denominator is hardcoded; (2) _runningStageNumbers is append-only, causing the running-status label to enumerate every stage that ever started as an unbounded 'Stage 01 & Stage 02 & \u2026' chain. The fix needs to add a mutable live-completed-stage counter, remove entries from the running set on stage completion, derive the fraction denominator from the actual pipeline stage list (RelayStages), redesign the label for single-stage (Stage 07 \u00b7 Review) and genuinely-concurrent-pair (Stages 07+08 \u00b7 Review \u2225 Visual-review) forms, wire PropertyChanged notifications for ProgressFraction, and write red-first tests covering all of the above.\",\n  \"options\": [\n    \"Option A: Introduce a _liveCompletedStageCount field on TaskRowViewModel, incremented on each stage-completion event (Done/Skipped/Flagged). ProgressFraction uses live count / RelayStages.Count when running, falls back to RunMetrics when idle. Remove stage from _runningStageNumbers on completion. Redesign RunningStepLabel to switch on set size. Minimal new state, best testability, best alignment with described defects.\",\n    \"Option B: Create a RunningStageTracker helper class per running task that maintains both completed-index and running-index sets via observable collections. The view-model delegates all live-stage tracking to the tracker. Cleaner separation but more ceremony (new class, potential DI wiring).\",\n    \"Option C: Inline fix \u2014 recompute ProgressFraction after each stage completion as (RelayStages.Count - remaining running stages) / RelayStages.Count, remove from _runningStageNumbers on completion. Reuses existing data but conflates completed vs. running semantics, breaking for skipped/never-started stages.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Codebase survey complete. Two defects confirmed:\\n\\n1. **Frozen progress bar**: `TaskRowViewModel.cs:103` computes `ProgressFraction` from `Task.CompletedStageCount`, which is populated only at task-list-load time by `RelayTaskRepository.AttachRunMetrics` \u2192 `ReadTaskMetric` \u2192 `TaskRunMetric.CompletedStageCount` (disk-snapshotted `.Stages.Count`). No live stage event updates it. The denominator `12.0` is hardcoded, not derived from `RelayStages.All.Count`. `UpdateTask()` (line 42-50) omits `ProgressFraction` from its notification list. `MarkRunning()` does not touch the completed count.\\n\\n2. **Append-only running set**: `MainWindowViewModel.LiveState.cs:157` adds stage numbers to `_runningStageNumbers[taskId]` on every `stage_start`, and `Helpers.cs:71-85` (`UpdateRunningTask`) only processes `stage_start` \u2014 it completely ignores `stage_done` events. No code ever removes an entry when a stage completes (Done/Skipped/Flagged). The set thus accumulates every stage that has ever started. `RunningStepLabel` (TaskRowViewModel.cs:66-70) joins the whole set with `\\\" & \\\"` when Count > 1 and drops stage names entirely, producing the unreadable `\\\"Stage 01 & Stage 02 & \u2026\\\"` chain.\\n\\nStage events flow: `RelayDriver` \u2192 `IRelayEventSink` \u2192 `ObservableRelayEventSink` (dispatcher-post) \u2192 `HandleRelayEvent` \u2192 `UpdateRunningTask`. The `stage_done` event carries a `status` key in Data (Done/Skipped/Flagged) set by `RecordStageAsync` \u2192 `PublishStageDoneAsync`. Skipped stages do publish `stage_done{status:Skipped}`, so counting them as progressed is valid. `RelayStages.All` (RelayStages.cs) is the authoritative 12-stage pipeline list from `VisualRelay.Core.Execution`. The genuinely concurrent pair is Review (7) \u2225 Visual-review (8), which is the only case that should ever produce a multi-entry running set after the fix.\\n\\nExisting tests live in `tests/VisualRelay.Tests/TaskRowViewModelTests.cs` (unit tests with `NewTask()` helper) and `MainWindowViewModelTests.cs` (integration via `TestRepository`). The refresh-button tests in `RefreshButtonDuringRunTests.cs` show the pattern for driving `RestoreRunningTaskState`/live events through the VM.\\n\\nRequired changes for each build spec:\\n- **Live progress**: Add `_liveCompletedStageCount` field to `TaskRowViewModel`, incremented on each stage-completion event. `ProgressFraction` uses live count / `RelayStages.All.Count` when `IsRunning`, falls back to `Task.CompletedStageCount` when idle. Denominator must count Skipped stages as progressed so the bar reaches full. Notify `ProgressFraction` on stage completion and in `UpdateTask`.\\n- **Truthful running set**: In `UpdateRunningTask` (Helpers.cs), process `stage_done`/`flagged` events to remove `stageNumber` from `_runningStageNumbers[taskId]`, making the set represent only in-flight stages.\\n- **Succinct label**: Redesign `RunningStepLabel` \u2014 single stage keeps `Stage 07 \u00b7 Review`; concurrent stages use `Stages 07+08 \u00b7 Review \u2225 Visual-review` (numbers joined with `+`, names with `\u2225`); never enumerate completed stages; keep `Starting task`/`Planning\u2026` unchanged.\\n- **No new bindings**: `QueuePanel.axaml` already binds `ProgressFraction` and `MetricsLine`/`RunningStepLabel`; the label design must fit a typical card width without relying on `TextTrimming=\\\"CharacterEllipsis\\\"`.\",\n  \"constraints\": [\n    \"Must not introduce new bindings or markup complexity in QueuePanel.axaml beyond what the label/fraction changes require\",\n    \"MaxLines/TextTrimming may stay as safety net, but designed content must fit a typical card width without relying on them\",\n    \"Must consume per-stage completion signals from the report-review-pair-stages-independently change (stages 7+8 publish their own completions) \u2014 do not re-derive pair state\",\n    \"The multi-entry form must ONLY be reachable for genuinely concurrent groups (Review \u2225 Visual-review pair, stages 7+8), never for accumulated completed stages\",\n    \"Skipped stages must count as progressed for the bar denominator so runs with skipped stages still reach full bar\",\n    \"RunningStepLabel must never enumerate completed stages \u2014 that's the progress bar's job\",\n    \"Must use RelayStages.All.Count (from VisualRelay.Core.Execution) for the denominator, not the literal 12.0\",\n    \"Existing tests must remain green after changes\",\n    \"New tests must be written red-first per spec (before implementation changes)\",\n    \"Tests: stage-completion removes from running set, concurrent pair-format label, live fraction monotonic via PropertyChanged without task-list reload, denominator uses RelayStages.All.Count not 12.0, UpdateTask notifies ProgressFraction\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Two defects confirmed through source-code causal chains. (1) Frozen progress bar: ProgressFraction (TaskRowViewModel.cs:103) reads CompletedStageCount from the RelayTaskItem record, populated only at task-list-load time by AttachRunMetrics (RelayTaskRepository.cs:243-253) which reads disk-snapshotted TaskRunMetric.Stages.Count (RunMetrics.cs:45). No live stage event increments a completed-stage counter; MarkRunning (line 131) fires RunningStepLabel/MetricsLine but never ProgressFraction; UpdateTask (line 42) omits ProgressFraction from its notification list. The 12.0 denominator is hardcoded. Net: bar appears static/absent until a full task-list reload. (2) Append-only running set: UpdateRunningTask (Helpers.cs:71-85) only handles stage_start events; stage_done and flagged events are ignored. UpdateRunningStage (LiveState.cs:157) unconditionally Adds stage numbers to _runningStageNumbers[taskId] but never Removes them. RunningStepLabel (TaskRowViewModel.cs:66-70) joins the entire set with ' & ' when Count > 1, dropping stage names entirely. Net: label grows into 'Stage 01 & Stage 02 & \u2026' chain after every sequential stage.\",\n  \"excerpts\": [\n    \"TaskRowViewModel.cs:103: public double ProgressFraction => Math.Clamp(Task.CompletedStageCount / 12.0, 0, 1);\",\n    \"TaskRowViewModel.cs:42-50: UpdateTask() notifies NeedsReview/StateLabel/ReviewReason/MetricsLine but omits ProgressFraction.\",\n    \"TaskRowViewModel.cs:131-141: MarkRunning() notifies RunningStepLabel/MetricsLine/PhaseLabel but never ProgressFraction.\",\n    \"RelayTaskRepository.cs:243-253: AttachRunMetrics sets CompletedStageCount = metric.CompletedStageCount from disk snapshot.\",\n    \"RunMetrics.cs:45: public int CompletedStageCount => Stages.Count; // Stages from disk, not live.\",\n    \"MainWindowViewModel.Helpers.cs:71-85: UpdateRunningTask only matches 'stage_start' (line 76); stage_done/flagged are not handled.\",\n    \"MainWindowViewModel.LiveState.cs:157: _runningStageNumbers[taskId].Add(stageNumber); // append-only, never Remove()d.\",\n    \"TaskRowViewModel.cs:66-70: RunningStepLabel joins _allRunningStageNumbers with ' & ' when Count > 1, drops names entirely.\",\n    \"QueuePanel.axaml:115-116: MetricsLine TextBlock has MaxLines='1' TextTrimming='CharacterEllipsis' as a safety net, not design intent.\",\n    \"RelayStages.cs:7-25: RelayStages.All is the authoritative 12-stage pipeline list; only stages 7 (Review) and 8 (Visual-review) form a genuinely concurrent pair.\"\n  ],\n  \"repro\": \"1. Start a task run. Observe the progress bar stays at 0% (or frozen at the previous run's count) as stages complete \u2014 it only advances after clicking Refresh. 2. Watch the running-status label during a run: after stage 1 completes and stage 2 starts, it reads 'Stage 01 & Stage 02' (wrong \u2014 stage 1 is done). By stage 5 it becomes 'Stage 01 & Stage 02 & Stage 03 & Stage 04 & Stage 05', clipped by ellipsis. The label should only ever show the currently-running stage(s), which is 'Stage 07 \u00b7 Review' for a single stage or 'Stages 07+08 \u00b7 Review \u2225 Visual-review' for the concurrent pair.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"plan\": \"## Implementation Plan\\n\\n### 1. `src/VisualRelay.App/ViewModels/TaskRowViewModel.cs` \u2014 Live progress + succinct label\\n\\n**Add `using VisualRelay.Core.Execution;`** at top so `RelayStages.All` is accessible.\\n\\n**Add field** `private int _liveCompletedStageCount;` after the existing private fields (around line 28).\\n\\n**Replace `ProgressFraction` (line 103)** with a dual-path computed property:\\n```csharp\\npublic double ProgressFraction => IsRunning\\n    ? Math.Clamp(_liveCompletedStageCount / (double)RelayStages.All.Count, 0, 1)\\n    : Math.Clamp(Task.CompletedStageCount / (double)RelayStages.All.Count, 0, 1);\\n```\\n- When running: live counter / `RelayStages.All.Count`.\\n- When idle: disk-snapshotted `Task.CompletedStageCount` / `RelayStages.All.Count`.\\n- Denominator always derived from the pipeline; the literal `12.0` is gone.\\n\\n**Replace `RunningStepLabel` (lines 66-70)** with:\\n```csharp\\npublic string RunningStepLabel => _allRunningStageNumbers is { Count: > 1 } all\\n    ? $\\\"Stages {string.Join(\\\"+\\\", all.OrderBy(n => n).Select(n => $\\\"{n:00}\\\"))} \u00b7 {string.Join(\\\" \u2225 \\\", all.OrderBy(n => n).Select(n => RelayStages.All[n - 1].Name))}\\\"\\n    : _runningStageNumber is { } number\\n        ? $\\\"Stage {number:00} \u00b7 {_runningStageName ?? \\\"Running\\\"}\\\"\\n        : _allRunningStageNumbers is not null\\n            ? \\\"Running task\\\"\\n            : \\\"Starting task\\\";\\n```\\n- Single stage: unchanged `Stage NN \u00b7 Name`.\\n- Concurrent pair (the only legit multi-entry case after fix): `Stages 07+08 \u00b7 Review \u2225 Visual-review`.\\n- Empty set while running (transient between stages): `\\\"Running task\\\"`.\\n- Never-started: `\\\"Starting task\\\"`.\\n- Stage names come from `RelayStages.All` \u2014 no need for a new per-stage-name dictionary.\\n\\n**Add method `RecordStageCompleted`:**\\n```csharp\\ninternal void RecordStageCompleted(int stageNumber)\\n{\\n    _liveCompletedStageCount++;\\n    OnPropertyChanged(nameof(ProgressFraction));\\n}\\n```\\n\\n**In `MarkRunning` (line 131):** add `OnPropertyChanged(nameof(ProgressFraction));` after the existing notifications (because `IsRunning` flips to true \u2192 the computed path switches from idle to live count; the bar must re-read immediately).\\n\\n**In `MarkIdle` (line 166):** add `_liveCompletedStageCount = 0;` before the existing code so the next run starts fresh.\\n\\n**In `UpdateTask` (line 42):** add `OnPropertyChanged(nameof(ProgressFraction));` to the notification list so task-list reloads also refresh the bar.\\n\\n---\\n\\n### 2. `src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs` \u2014 Wire stage_done/flagged into running-state\\n\\n**In `UpdateRunningTask` (lines 71-85):** after the existing `if (relayEvent is { EventName: \\\"stage_start\\\", ... })` block, add an `else if` clause:\\n```csharp\\nelse if (relayEvent is { EventName: \\\"stage_done\\\" or \\\"flagged\\\", TaskId: { } taskId } &&\\n         _runningTaskIds.Contains(taskId))\\n{\\n    CompleteRunningStage(taskId, stageNumber);\\n}\\n```\\nThis is the ONLY new event handling \u2014 the `stage_start` path is unchanged.\\n\\n---\\n\\n### 3. `src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs` \u2014 `CompleteRunningStage` method\\n\\n**Add new private method `CompleteRunningStage`** (anywhere in the partial class, logically near `UpdateRunningStage`):\\n```csharp\\nprivate void CompleteRunningStage(string taskId, int stageNumber)\\n{\\n    if (!_runningTaskIds.Contains(taskId))\\n        return;\\n\\n    _runningStageNumbers.GetValueOrDefault(taskId)?.Remove(stageNumber);\\n\\n    var task = Tasks.FirstOrDefault(t => t.Id == taskId);\\n    if (task is null)\\n        return;\\n\\n    task.RecordStageCompleted(stageNumber);\\n\\n    // Re-apply the now-truthful running set so the label updates immediately.\\n    var numbers = _runningStageNumbers.GetValueOrDefault(taskId);\\n    if (numbers is { Count: > 0 })\\n    {\\n        var maxStage = numbers.Max();\\n        task.MarkRunning(maxStage, RelayStages.All[maxStage - 1].Name, numbers);\\n    }\\n    else\\n    {\\n        // Running set is empty (between stages) \u2014 keep IsRunning true but clear\\n        // the stage info so the label reads \\\"Running task\\\".\\n        task.MarkRunning(null, null, new HashSet<int>());\\n    }\\n}\\n```\\n- Removes the completed/flagged stage from `_runningStageNumbers` \u2192 truthful in-flight set.\\n- Increments the live completed-stage counter on the row (notifies `ProgressFraction`).\\n- Calls `MarkRunning` with the updated set so `RunningStepLabel` updates immediately.\\n\\n**Also, in `UpdateRunningStage` (line 152):** the existing `_runningStageNames[taskId] = stageName;` line (158) is still used by `ApplyRunningTaskToRows` for the single-name fallback, so leave it. After the fix, the multi-entry label path uses `RelayStages.All` names instead, but the single-name dictionary is still harmless and used by the restore path.\\n\\n---\\n\\n### 4. `tests/VisualRelay.Tests/TaskRowViewModelTests.cs` \u2014 New unit tests (red-first)\\n\\nAdd the following test methods **before** making implementation changes (red-first):\\n\\n#### a. `ProgressFraction_UsesRelayStagesDenominator`\\n- Create a row with `CompletedStageCount = 12`.\\n- Assert `ProgressFraction == 1.0` (12/12).\\n- Create a row with `CompletedStageCount = 6`.\\n- Assert `ProgressFraction == 6.0 / RelayStages.All.Count`.\\n- Guard: assert denominator is NOT the literal `12` by verifying the fraction changes if the test were run against a pipeline with a different count (pragmatically: assert the denominator reference is `RelayStages.All.Count` by verifying `ProgressFraction` with a count equal to `RelayStages.All.Count` gives 1.0).\\n\\n#### b. `ProgressFraction_UsesLiveCountWhenRunning`\\n- Create a row with `CompletedStageCount = 0`.\\n- `MarkRunning()` \u2192 now running, live count is 0 \u2192 `ProgressFraction == 0`.\\n- Call `RecordStageCompleted(1)`, `RecordStageCompleted(2)`, ... up to `RelayStages.All.Count`.\\n- Observe `PropertyChanged` fires for `ProgressFraction` each time.\\n- At the end, `ProgressFraction == 1.0`.\\n\\n#### c. `ProgressFraction_FallsBackToRunMetricsWhenIdle`\\n- Create row with `CompletedStageCount = 6`.\\n- Assert `ProgressFraction == 6.0 / RelayStages.All.Count`.\\n- `MarkRunning()`, call `RecordStageCompleted` three times \u2192 live count 3 \u2192 `ProgressFraction == 3.0 / RelayStages.All.Count`.\\n- `MarkIdle()` \u2192 reverts to idle path \u2192 `ProgressFraction == 6.0 / RelayStages.All.Count`.\\n\\n#### d. `RunningStepLabel_SingleStage`\\n- `MarkRunning(stageNumber: 7, stageName: \\\"Review\\\", allRunningStageNumbers: new HashSet<int>{7})`.\\n- Assert `RunningStepLabel == \\\"Stage 07 \u00b7 Review\\\"`.\\n\\n#### e. `RunningStepLabel_ConcurrentPair`\\n- `MarkRunning(stageNumber: 8, stageName: \\\"Visual-review\\\", allRunningStageNumbers: new HashSet<int>{7, 8})`.\\n- Assert label uses `+` for numbers and `\u2225` for names.\\n- Assert label does NOT contain `\\\" & \\\"`.\\n- Assert label contains both stage names.\\n\\n#### f. `RunningStepLabel_EmptySetWhileRunning`\\n- `MarkRunning(null, null, new HashSet<int>())`.\\n- Assert label is `\\\"Running task\\\"` (not `\\\"Starting task\\\"`).\\n\\n#### g. `UpdateTask_NotifiesProgressFraction`\\n- Create row, subscribe to `PropertyChanged`, call `UpdateTask` with a new `RelayTaskItem`.\\n- Assert `ProgressFraction` was among the notified properties.\\n\\n#### h. `RecordStageCompleted_RaisesPropertyChangedForProgressFraction`\\n- Create row, `MarkRunning()`, subscribe to `PropertyChanged`.\\n- Call `RecordStageCompleted(1)`.\\n- Assert `ProgressFraction` was raised.\\n\\n---\\n\\n### 5. `tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs` \u2014 Integration tests (red-first)\\n\\n#### a. `StageDoneEvent_RemovesStageFromRunningSet`\\n- Set up: create repo, write config, create active task, load VM.\\n- `RestoreRunningTaskState(taskId, 7, \\\"Review\\\")` \u2192 sets running set to {7}.\\n- Dispatch `StageStart(taskId, 8, ...)` \u2192 running set becomes {7, 8}, label shows pair.\\n- Dispatch `StageDone(taskId, 8, ...)` \u2192 stage 8 should be REMOVED from the running set, label shows single `Stage 07 \u00b7 Review`.\\n- Dispatch `StageDone(taskId, 7, ...)` \u2192 running set empty, label shows `\\\"Running task\\\"`.\\n\\n#### b. `ConcurrentPairLabel_CompactFormat`\\n- `RestoreRunningTaskState(taskId, 7, \\\"Review\\\")`.\\n- Dispatch `StageStart(taskId, 8, ...)`.\\n- Assert `RunningStepLabel` contains `\\\"07+08\\\"` (numbers joined with `+`).\\n- Assert `RunningStepLabel` contains `\\\"Review\\\"` and `\\\"Visual-review\\\"` joined with `\\\" \u2225 \\\"`.\\n- Assert `RunningStepLabel` does NOT contain `\\\" & \\\"`.\\n\\n#### c. `LiveProgressFraction_IncrementsOnStageDone`\\n- Set up repo with active task, load VM.\\n- `RestoreRunningTaskState(taskId, 1, \\\"Ideate\\\")`.\\n- Subscribe to `PropertyChanged` on the task row.\\n- Dispatch `StageDone` for stages 1\u20136 sequentially.\\n- Assert `ProgressFraction` was raised after each `StageDone`.\\n- Assert `ProgressFraction` at end equals `6.0 / RelayStages.All.Count`.\\n\\n---\\n\\n### No changes needed in QueuePanel.axaml\\n- The existing `Value=\\\"{Binding ProgressFraction}\\\"` binding (line 125) and `MetricsLine` binding (line 111) continue to work \u2014 they just get live values now.\\n- `MaxLines=\\\"1\\\"` / `TextTrimming=\\\"CharacterEllipsis\\\"` stay as safety nets.\\n\\n---\\n\\n### No changes to `RelayStages.All` or `RelayTaskItem` or `RunMetrics`\\n- The denominator is read directly from the immutable static list; no new fields needed.\\n\\n---\\n\\n### Verification\\n- `./test.sh` must pass all existing + new tests.\\n- The literal `12.0` must not appear in `TaskRowViewModel.cs` after the change.\",\n  \"manifest\": [\n    \"src/VisualRelay.App/ViewModels/TaskRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs\",\n    \"tests/VisualRelay.Tests/TaskRowViewModelTests.cs\",\n    \"tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 13,
+    "tool_calls_total": 31,
+    "tool_calls_succeeded": 29,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "outline": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 15,
+        "failed": 2
+      },
+      "grep": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 13,
+    "total_llm_time_s": 148.975,
+    "prompt_cache": {
+      "cached_tokens": 410112,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 2.11,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.95,
+      "prompt_tokens_est": 7315,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 42
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.682,
+      "prompt_tokens_est": 7488,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8799
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14414
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12316
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9786
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.457,
+      "prompt_tokens_est": 18291,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TaskRowViewModelTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12283
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/QueuePanel.axaml"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 72,
+      "error": "error: path does not exist: \"src/VisualRelay.App/Views/QueuePanel.axaml\""
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/RelayTaskRepository.cs",
+        "offset": 240,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 879
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Tasks/RunMetrics.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 70,
+      "error": "error: path does not exist: \"src/VisualRelay.Core/Tasks/RunMetrics.cs\""
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.425,
+      "prompt_tokens_est": 21813,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "QueuePanel",
+        "include": "*.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.092,
+      "result_length": 481
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CompletedStageCount"
+      },
+      "succeeded": true,
+      "duration_s": 0.999,
+      "result_length": 50117
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RunMetrics|class TaskRunMetric"
+      },
+      "succeeded": true,
+      "duration_s": 0.379,
+      "result_length": 17
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.265,
+      "prompt_tokens_est": 36577,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*QueuePanel*"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 211
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/RunMetrics*"
+      },
+      "succeeded": true,
+      "duration_s": 0.062,
+      "result_length": 36
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "offset": 200,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3816
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 7.44,
+      "prompt_tokens_est": 37676,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Views/Controls/QueuePanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15393
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RunMetrics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2462
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2303
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.928,
+      "prompt_tokens_est": 42160,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayEventTestDispatch",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.151,
+      "result_length": 121
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class TestRepository",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.119,
+      "result_length": 116
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TaskCardRenderTests.cs",
+        "offset": 140,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3791
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.005,
+      "prompt_tokens_est": 43228,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayEventTestDispatch.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4206
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/ViewModelBase.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 174
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.122,
+      "prompt_tokens_est": 44380,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 50,
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "limit": 150
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7189
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.742,
+      "prompt_tokens_est": 46264,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 14076
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 65.411,
+      "prompt_tokens_est": 49603,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ApplyRunningTaskToRows",
+        "include": "*.cs",
+        "path": "src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.017,
+      "result_length": 428
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class StageStatusEntry|class StageRowViewModel",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.161,
+      "result_length": 365
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 15.044,
+      "prompt_tokens_est": 54802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "pre-plan research done"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 81
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 31.505,
+      "prompt_tokens_est": 55980,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
