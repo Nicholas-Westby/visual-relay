@@ -233,6 +233,7 @@ public partial class MainWindowViewModel : ViewModelBase
         LoadObsidianBridgeSettings();
         LoadDiagnosticsSettings();
         _ = LoadSandboxPathsAsync(); // fire async — nono calls are subprocesses
+        PopulateModelCostRows();
 
         // RefreshAsync now also probes the backend, so probe directly only when
         // there is no root to refresh. Non-blocking either way: the probe runs
