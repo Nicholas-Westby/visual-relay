@@ -1,0 +1,257 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T18:25:15.637752+00:00",
+  "task": "# Relay stage 4: Plan\nTask: 03-survive-display-sleep-at-launch\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Survive a sleeping display at app launch\n\n## Problem\n\nLaunching Visual Relay while the Mac's display is asleep crashes the process before the window ever exists:\n\n```\nUnhandled exception. System.InvalidOperationException: Avalonia.Native was not able to start the RenderTimer. Native error code is: -6661\n   at Avalonia.Native.AvaloniaNativeRenderTimer.EnsureRegistered()\n   ...\n   at Avalonia.AppBuilder.Setup()\n   at Avalonia.AppBuilder.SetupWithLifetime(IApplicationLifetime lifetime)\n   at Avalonia.ClassicDesktopStyleApplicationLifetimeExtensions.StartWithClassicDesktopLifetime(...)\n   at VisualRelay.App.Program.Main(String[] args)\n```\n\nThe process exits with SIGABRT (exit code 134). This was reproduced deterministically on 2026-07-12: two launches with the display asleep both crashed identically; a launch immediately after waking the display succeeded.\n\nThis matters because Visual Relay is routinely launched unattended \u2014 the self-development relaunch loop rebuilds and restarts the app via the control API, often while nobody is at the machine and the display has gone to sleep. Every such relaunch dies until a human wakes the screen.\n\nScope of the defect, established experimentally:\n\n- **Launch-time only.** A running instance survives display sleep indefinitely: with the display forced off (`pmset displaysleepnow`), an already-running app kept its process alive and its control API answering `/health` with 200 continuously, and prior instances have run across overnight display sleeps for days.\n- **macOS only.** Avalonia's macOS render timer is a CoreVideo display link; error `-6661` is `kCVReturnInvalidArgument`, returned when there is no active display to attach to. Windows/Linux backends do not have this failure mode.\n- **Waking the display fixes it.** `caffeinate -u -t 3` (declares user activity, which lights the display; ships with macOS) followed by a launch succeeds; the display then re-sleeps on its normal power-management schedule.\n\n## Root cause\n\n`Main` in `src/VisualRelay.App/Program.cs` runs Avalonia setup unconditionally:\n\n```csharp\n[STAThread]\npublic static void Main(string[] args) => BuildAvaloniaApp()\n    .StartWithClassicDesktopLifetime(args);\n```\n\n`AppBuilder.Setup()` creates the CVDisplayLink-backed render timer during platform initialization, and there is no guard for the display being asleep. Retrying `StartWithClassicDesktopLifetime` after a failed setup is not safe (Avalonia's locator holds partially-initialized static state), so the failure must be prevented *before* Avalonia initialization begins, not caught after.\n\n## Fix\n\nAdd a macOS-only pre-flight gate in `Main`, before `BuildAvaloniaApp()`, that waits until a display link can be created \u2014 waking the display to make that happen promptly.\n\n### 1. Testable wait loop (new file `src/VisualRelay.App/DisplayReadyGate.cs`)\n\nA small static class whose loop logic takes injected seams so tests never touch real hardware:\n\n```csharp\ninternal static class DisplayReadyGate\n{\n    /// <summary>\n    /// Returns true when the display became ready within the attempt budget\n    /// (or was ready immediately); false when the budget was exhausted.\n    /// probe() returns a CoreVideo result code (0 = success);\n    /// wake() requests a display wake; delay() sleeps between attempts.\n    /// </summary>\n    internal static bool WaitUntilReady(\n        Func<int> probe, Action wake, Action delay, int maxAttempts)\n}\n```\n\nBehavior: if the first `probe()` returns 0, return true without calling `wake`. Otherwise loop: `wake()`, `delay()`, `probe()` \u2014 up to `maxAttempts` total probes; return false when all fail. No timers or clocks inside the loop; pacing lives entirely in the injected `delay`.\n\n### 2. Real adapters (same file)\n\n- Probe: P/Invoke CoreVideo directly \u2014\n\n  ```csharp\n  [DllImport(\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\")]\n  private static extern int CVDisplayLinkCreateWithActiveCGDisplays(out IntPtr displayLink);\n\n  [DllImport(\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\")]\n  private static extern void CVDisplayLinkRelease(IntPtr displayLink);\n  ```\n\n  The probe calls create, releases the link when the result is 0 (non-zero results return `IntPtr.Zero` and must not be released), and returns the result code. This is the same call Avalonia's render timer depends on, so probe success is the exact readiness condition.\n- Wake: start `/usr/bin/caffeinate` with arguments `-u -t 5` via `Process.Start`, best-effort (swallow launch failures, do not wait for exit).\n- Delay: `Thread.Sleep(TimeSpan.FromSeconds(5))`.\n- Entry point used by `Main`: a `public static void EnsureDisplayReady()` that is a no-op unless `OperatingSystem.IsMacOS()`, calls `WaitUntilReady(probe, wake, delay, maxAttempts: 24)`, writes one `Console.Error.WriteLine` per retry round (so the launcher log shows why startup is waiting) and a final line when giving up.\n\n### 3. Wire into `Main` (`src/VisualRelay.App/Program.cs`)\n\n```csharp\n[STAThread]\npublic static void Main(string[] args)\n{\n    DisplayReadyGate.EnsureDisplayReady();\n    BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);\n}\n```\n\nWhen the gate gives up (headless Mac with no display at all, or graphics stack genuinely broken), proceed into Avalonia anyway so the existing loud crash is preserved \u2014 the gate must never convert a hard failure into a silent hang or a swallowed error. Keep the \"don't use Avalonia APIs before AppMain\" constraint from the file's comment: the gate uses only BCL + P/Invoke.\n\n## Rejected approaches \u2014 do not do these\n\n- Do NOT catch the `InvalidOperationException` from `StartWithClassicDesktopLifetime` and re-call it \u2014 Avalonia setup is not re-entrant after a failed initialization.\n- Do NOT wrap the launch in `caffeinate -d` (prevent display sleep) at the launcher/script level \u2014 that keeps the user's monitors on around the clock, which is the operational problem that motivated this task.\n- Do NOT switch Avalonia rendering modes or add Avalonia options to dodge the display link; the platform default rendering path stays as-is.\n- Do NOT touch the `visual-relay` bootstrap script.\n\n## Tests\n\nNew file `tests/VisualRelay.Tests/DisplayReadyGateTests.cs`, exercising `WaitUntilReady` purely through the injected seams (no CoreVideo, no processes, platform-independent):\n\n- probe immediately 0 \u2192 returns true, `wake` never called, exactly one probe.\n- probe returns -6661 twice then 0 \u2192 returns true, `wake` called twice, delays interleaved (record call order in a list and assert the `probe/wake/delay` sequence).\n- probe always -6661 with `maxAttempts: 3` \u2192 returns false after exactly 3 probes.\n- `wake` throwing must not abort the loop (the failure is swallowed and the loop continues probing).\n\n`EnsureDisplayReady` itself is a thin adapter and is exercised implicitly on macOS dev machines at every app start; do not write a test that P/Invokes CoreVideo or spawns caffeinate.\n\n## Constraints\n\n- `dotnet build VisualRelay.slnx` must succeed; all existing tests must pass.\n- No behavior change on Windows/Linux (`EnsureDisplayReady` is a guarded no-op).\n- No new NuGet dependencies.\n- If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove tests to satisfy it.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\"summary\":\"Three approaches to a macOS pre-flight gate that waits for an active display before Avalonia initialization: (A) injected-seam loop with CoreVideo P/Invoke probe and caffeinate wake \u2014 testable, precise, and preserves crash-on-failure; (B) caffeinate-only pre-flight \u2014 simpler but unreliable and not testable; (C) IOKit power-state watcher \u2014 more complex with no benefit over the direct CoreVideo check. Option A is recommended as it exactly matches the crash condition and is fully unit-testable.\",\n\"options\":[\"Option A: DisplayReadyGate via CoreVideo P/Invoke + caffeinate + injected-seam retry loop (prescribed approach)\",\"Option B: Single pre-flight caffeinate call without CoreVideo verification\",\"Option C: IOKit-based display power-state poll loop\"]}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is a .NET 10 (net10.0) Avalonia 12.0.5 desktop app at /Users/nicholaswestby/Dev/visual-relay/. The entry point is src/VisualRelay.App/Program.cs (25 lines), where `Main` calls `BuildAvaloniaApp().StartWithClassicDesktopLifetime(args)` unconditionally on line 11-12. There is an existing macOS platform-specific pattern in `MacDockIcon.cs`: `internal static class`, P/Invoke to native libraries, `OperatingSystem.IsMacOS()` guard, best-effort semantics \u2014 exactly the pattern to follow for `DisplayReadyGate.cs`. The test project at tests/VisualRelay.Tests/ uses xUnit v3 with parallel collections, and platform-specific tests use `Assert.Skip(...)` with `[Fact]` (no Avalonia dependency needed for DisplayReadyGateTests since the seams are pure C# with no UI). A `TestModuleInitializer` redirects XDG_CONFIG_HOME to a temp dir at assembly load. `SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline()` (baseline=175) tracks [Fact] counts across ~30 oversized-file families but would NOT capture a standalone 4-fact test file \u2264300 lines (new `DisplayReadyGateTests`). `FileSizeGuard` enforces \u2264300 lines per file. No new NuGet dependencies are allowed. `BannedSymbols.txt` forbids `HeadlessUnitTestSession` and `AvaloniaTestFrameworkAttribute`. The project uses `VisualRelay.slnx` solution file. The test project already has a project reference to `src/VisualRelay.App`, so new tests in that project have access to `DisplayReadyGate` (which would be `internal`).\",\n  \"constraints\": [\n    \"dotnet build VisualRelay.slnx must succeed with no errors\",\n    \"All existing tests must pass \u2014 no regressions\",\n    \"No behavior change on Windows/Linux \u2014 EnsureDisplayReady() must be a guarded no-op via OperatingSystem.IsMacOS()\",\n    \"No new NuGet dependencies allowed in any project\",\n    \"The gate must never convert a hard failure into a silent hang or swallowed error \u2014 when all retries exhaust, proceed into Avalonia so the existing loud crash is preserved\",\n    \"Must not use Avalonia APIs before AppMain \u2014 gate uses only BCL + P/Invoke\",\n    \"New files must be \u2264300 lines (FileSizeGuard enforcement)\",\n    \"DisplayReadyGateTests has ~4 [Fact]s and is a standalone file \u2264300 lines, so it does NOT affect the SplitGuardVerificationTests oversized-family baseline (baseline=175)\",\n    \"MacDockIcon.cs provides the exact P/Invoke + best-effort pattern to follow for DisplayReadyGate.cs (internal static class, OperatingSystem.IsMacOS() guard)\",\n    \"Test methods in DisplayReadyGateTests use plain [Fact] (not [AvaloniaFact]) since the injected-seam tests need no Avalonia headless session\",\n    \"Do NOT catch InvalidOperationException from StartWithClassicDesktopLifetime and re-call it \u2014 Avalonia setup is not re-entrant\",\n    \"Do NOT wrap launch in caffeinate -d at the launcher/script level\",\n    \"Do NOT switch Avalonia rendering modes or add options to dodge the display link\",\n    \"Do NOT touch the visual-relay bootstrap script\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The crash is deterministic and well-understood. Launching Visual Relay on macOS while the display is asleep causes Avalonia's CVDisplayLink-backed render timer to fail during AppBuilder.Setup() with native error -6661 (kCVReturnInvalidArgument), because CoreVideo's CVDisplayLinkCreateWithActiveCGDisplays requires at least one active display. The process dies with SIGABRT (exit code 134) before any window appears.\\n\\nEntry point: src/VisualRelay.App/Program.cs, lines 11-12 \u2014 Main unconditionally calls BuildAvaloniaApp().StartWithClassicDesktopLifetime(args). There is no guard between process start and Avalonia platform initialization. The file's own comment (lines 7-9) warns not to use Avalonia or SynchronizationContext-reliant APIs before AppMain, which constrains any fix to BCL + P/Invoke only.\\n\\nExisting pattern to follow: src/VisualRelay.App/MacDockIcon.cs \u2014 an internal static class with OperatingSystem.IsMacOS() guard, P/Invoke to native macOS frameworks, best-effort semantics (swallows interop failures), and no new NuGet dependencies. The DisplayReadyGate should follow the same conventions.\\n\\nWhat needs to be built:\\n1. New file src/VisualRelay.App/DisplayReadyGate.cs \u2014 an internal static class with:\\n   - A testable WaitUntilReady(Func<int> probe, Action wake, Action delay, int maxAttempts) loop that probes readiness (0=success, nonzero=failure), calls wake+delay between failures, returns true on first success or false when maxAttempts exhaust.\\n   - Real adapters: probe via P/Invoke CVDisplayLinkCreateWithActiveCGDisplays/CVDisplayLinkRelease from CoreVideo.framework; wake via Process.Start of /usr/bin/caffeinate -u -t 5 (best-effort, don't wait for exit); delay via Thread.Sleep(5000).\\n   - Public EnsureDisplayReady() \u2014 guarded no-op on non-macOS; on macOS calls WaitUntilReady with maxAttempts=24 (~2 min), logs each retry round to Console.Error, and when the gate gives up logs a final line then proceeds (preserving the existing crash).\\n2. Wire into Program.Main: call DisplayReadyGate.EnsureDisplayReady() before BuildAvaloniaApp().\\n3. New file tests/VisualRelay.Tests/DisplayReadyGateTests.cs \u2014 4 [Fact] tests exercising WaitUntilReady purely through injected seams (no CoreVideo, no processes): probe-immediately-0, probe-returns-0-after-two-failures, all-attempts-fail, wake-throws-doesnt-abort-loop.\\n\\nConstraints confirmed:\\n- No new NuGet dependencies (DisplayReadyGate uses only BCL + P/Invoke, tests use only xUnit).\\n- No behavior change on Windows/Linux (EnsureDisplayReady is guarded no-op).\\n- Gate must proceed to Avalonia on exhaustion (preserves existing crash).\\n- Test project already has a ProjectReference to src/VisualRelay.App, so internal access is available.\\n- DisplayReadyGateTests is \u2264300 lines and standalone, so it does NOT affect the SplitGuardVerificationTests.FactCount_AcrossOversizedFiles_MatchesBaseline ratchet (baseline=175).\",\n  \"excerpts\": [\n    \"src/VisualRelay.App/Program.cs:11-12 \u2014 Main invokes Avalonia setup unconditionally: `public static void Main(string[] args) => BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);`\",\n    \"src/VisualRelay.App/Program.cs:7-9 \u2014 Comment forbids pre-AppMain Avalonia usage: `// Initialization code. Don't use any Avalonia, third-party APIs or any // SynchronizationContext-reliant code before AppMain is called: things aren't initialized // yet and stuff might break.`\",\n    \"src/VisualRelay.App/MacDockIcon.cs \u2014 Existing macOS P/Invoke pattern: internal static class, OperatingSystem.IsMacOS() guard, DllImport to native framework, best-effort (swallows failures). Provides the structural template for DisplayReadyGate.cs.\",\n    \"llm-tasks/03-survive-display-sleep-at-launch/03-survive-display-sleep-at-launch.md:7-9 \u2014 Crash trace: `Unhandled exception. System.InvalidOperationException: Avalonia.Native was not able to start the RenderTimer. Native error code is: -6661 at Avalonia.Native.AvaloniaNativeRenderTimer.EnsureRegistered()`\",\n    \"llm-tasks/03-survive-display-sleep-at-launch/03-survive-display-sleep-at-launch.md:24 \u2014 Scope: `macOS only. Avalonia's macOS render timer is a CoreVideo display link; error -6661 is kCVReturnInvalidArgument, returned when there is no active display to attach to.`\",\n    \"llm-tasks/03-survive-display-sleep-at-launch/03-survive-display-sleep-at-launch.md:37 \u2014 Root cause: `Retrying StartWithClassicDesktopLifetime after a failed setup is not safe (Avalonia's locator holds partially-initialized static state), so the failure must be prevented before Avalonia initialization begins, not caught after.`\",\n    \"tests/VisualRelay.Tests/SplitGuardVerificationTests.cs:184 \u2014 Fact-count ratchet baseline=175 would NOT include a new standalone DisplayReadyGateTests.cs \u2264300 lines.\",\n    \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj:48 \u2014 Test project already references src/VisualRelay.App, granting internal access to DisplayReadyGate.\"\n  ],\n  \"repro\": \"On a macOS machine:\\n1. Force the display to sleep: `pmset displaysleepnow`\\n2. Immediately launch Visual Relay: `dotnet run --project src/VisualRelay.App`\\n3. Observe: Unhandled exception. System.InvalidOperationException: Avalonia.Native was not able to start the RenderTimer. Native error code is: -6661. Process exits with SIGABRT (exit code 134).\\n4. Wake the display (e.g. `caffeinate -u -t 3`) and launch again \u2014 succeeds.\\n\\nThis was deterministically reproduced on 2026-07-12: two launches with display asleep both crashed identically; a launch immediately after waking succeeded.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Plan\n\n### Step 1 \u2014 Create `src/VisualRelay.App/DisplayReadyGate.cs`\n\nNew internal static class following the `MacDockIcon.cs` pattern (internal static class, macOS-guarded no-op, P/Invoke, best-effort).\n\n**Public surface:**\n\n- `public static void EnsureDisplayReady()` \u2014 the entry point called from `Main`. Guarded no-op when `!OperatingSystem.IsMacOS()`. On macOS, calls `WaitUntilReady` with:\n  - `probe`: a private static method that P/Invokes `CVDisplayLinkCreateWithActiveCGDisplays` / `CVDisplayLinkRelease` from CoreVideo.framework and returns the native result code (`0` = success).\n  - `wake`: a private static method that starts `/usr/bin/caffeinate -u -t 5` via `Process.Start`, best-effort (try/catch, does not wait for exit).\n  - `delay`: `() => Thread.Sleep(TimeSpan.FromSeconds(5))`.\n  - `maxAttempts`: 24 (~2 minutes total budget).\n  - On each retry round, writes to `Console.Error.WriteLine` explaining why startup is waiting. If all attempts fail, writes a final \"giving up\" line and returns (allowing the existing Avalonia crash to fire).\n\n**Testable core:**\n\n```csharp\ninternal static bool WaitUntilReady(\n    Func<int> probe, Action wake, Action delay, int maxAttempts)\n```\n\nLogic:\n1. Call `probe()`. If `== 0`, return `true` immediately.\n2. For `maxAttempts - 1` more rounds: `wake()`, `delay()`, `probe()`. If any probe returns `0`, return `true`.\n3. Return `false` when all probes returned non-zero.\n4. If `wake()` throws, catch and continue (the failure is swallowed; the loop keeps probing).\n\n**P/Invoke declarations** (private, in the class):\n\n```csharp\n[DllImport(\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\")]\nprivate static extern int CVDisplayLinkCreateWithActiveCGDisplays(out IntPtr displayLink);\n\n[DllImport(\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\")]\nprivate static extern void CVDisplayLinkRelease(IntPtr displayLink);\n```\n\nThe probe method calls `CVDisplayLinkCreateWithActiveCGDisplays`, releases the link only when the result is `0` (non-zero results mean `out` was not populated, so `IntPtr.Zero` must not be released), and returns the result code.\n\n**Constraints:** No Avalonia APIs. No new NuGet dependencies. \u2264300 lines.\n\n---\n\n### Step 2 \u2014 Modify `src/VisualRelay.App/Program.cs`\n\nInsert `DisplayReadyGate.EnsureDisplayReady();` before `BuildAvaloniaApp()` in `Main`:\n\n```csharp\n[STAThread]\npublic static void Main(string[] args)\n{\n    DisplayReadyGate.EnsureDisplayReady();\n    BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);\n}\n```\n\nFile goes from 25 to 27 lines. The existing comment about not using Avalonia APIs before `AppMain` still holds \u2014 the gate uses only BCL + P/Invoke.\n\n---\n\n### Step 3 \u2014 Create `tests/VisualRelay.Tests/DisplayReadyGateTests.cs`\n\nFour `[Fact]` tests exercising `WaitUntilReady` purely through injected seams:\n\n1. **`ProbeImmediatelyZero_ReturnsTrueWithoutWake`** \u2014 probe returns `0` on first call \u2192 returns `true`, `wake` never called, exactly 1 probe.\n2. **`ProbeFailsTwiceThenZero_ReturnsTrueAfterTwoWakes`** \u2014 probe returns `-6661`, `-6661`, `0` \u2192 returns `true`; `wake` called twice; record call order in a `List<string>` and assert the `probe/wake/delay/probe/wake/delay/probe` sequence.\n3. **`ProbeAlwaysFails_ReturnsFalseAfterMaxAttempts`** \u2014 probe always returns `-6661`, `maxAttempts: 3` \u2192 returns `false` after exactly 3 probes (and 2 wake/delay cycles).\n4. **`WakeThrows_DoesNotAbortLoop`** \u2014 `wake` throws `InvalidOperationException` every time, probe returns `-6661`, `-6661`, `0` \u2192 returns `true` (loop survives the thrown exceptions and still discovers the display).\n\nEach test constructs inline lambda seams \u2014 no CoreVideo, no processes, no platform dependency. Tests use plain `[Fact]` (not `[AvaloniaFact]`).\n\nFile \u2264300 lines. Does not affect the `SplitGuardVerificationTests` baseline (175) \u2014 `DisplayReadyGateTests` is not in the oversized-family prefix list.\n\n---\n\n### Step 4 \u2014 Build and verify\n\n```bash\ndotnet build VisualRelay.slnx\ndotnet test tests/VisualRelay.Tests\n```\n\nAll existing tests must pass. The file-size guard (`AllTestCsFiles_AreAtMost300Lines`) must pass for the new files.\n\n---\n\n```json\n{\n  \"plan\": \"### Step 1 \u2014 Create `src/VisualRelay.App/DisplayReadyGate.cs`\\n\\nNew internal static class following the `MacDockIcon.cs` pattern (internal static class, macOS-guarded no-op, P/Invoke, best-effort).\\n\\n**Public surface:**\\n\\n- `public static void EnsureDisplayReady()` \u2014 the entry point called from `Main`. Guarded no-op when `!OperatingSystem.IsMacOS()`. On macOS, calls `WaitUntilReady` with:\\n  - `probe`: a private static method that P/Invokes `CVDisplayLinkCreateWithActiveCGDisplays` / `CVDisplayLinkRelease` from CoreVideo.framework and returns the native result code (`0` = success).\\n  - `wake`: a private static method that starts `/usr/bin/caffeinate -u -t 5` via `Process.Start`, best-effort (try/catch, does not wait for exit).\\n  - `delay`: `() => Thread.Sleep(TimeSpan.FromSeconds(5))`.\\n  - `maxAttempts`: 24 (~2 minutes total budget).\\n  - On each retry round, writes to `Console.Error.WriteLine` explaining why startup is waiting. If all attempts fail, writes a final \\\"giving up\\\" line and returns (allowing the existing Avalonia crash to fire).\\n\\n**Testable core:**\\n\\n```csharp\\ninternal static bool WaitUntilReady(\\n    Func<int> probe, Action wake, Action delay, int maxAttempts)\\n```\\n\\nLogic:\\n1. Call `probe()`. If `== 0`, return `true` immediately.\\n2. For `maxAttempts - 1` more rounds: `wake()`, `delay()`, `probe()`. If any probe returns `0`, return `true`.\\n3. Return `false` when all probes returned non-zero.\\n4. If `wake()` throws, catch and continue (the failure is swallowed; the loop keeps probing).\\n\\n**P/Invoke declarations** (private, in the class):\\n\\n```csharp\\n[DllImport(\\\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\\\")]\\nprivate static extern int CVDisplayLinkCreateWithActiveCGDisplays(out IntPtr displayLink);\\n\\n[DllImport(\\\"/System/Library/Frameworks/CoreVideo.framework/CoreVideo\\\")]\\nprivate static extern void CVDisplayLinkRelease(IntPtr displayLink);\\n```\\n\\nThe probe method calls `CVDisplayLinkCreateWithActiveCGDisplays`, releases the link only when the result is `0` (non-zero results mean `out` was not populated, so `IntPtr.Zero` must not be released), and returns the result code.\\n\\n**Constraints:** No Avalonia APIs. No new NuGet dependencies. \u2264300 lines.\\n\\n---\\n\\n### Step 2 \u2014 Modify `src/VisualRelay.App/Program.cs`\\n\\nInsert `DisplayReadyGate.EnsureDisplayReady();` before `BuildAvaloniaApp()` in `Main`:\\n\\n```csharp\\n[STAThread]\\npublic static void Main(string[] args)\\n{\\n    DisplayReadyGate.EnsureDisplayReady();\\n    BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);\\n}\\n```\\n\\nFile goes from 25 to 27 lines. The existing comment about not using Avalonia APIs before `AppMain` still holds \u2014 the gate uses only BCL + P/Invoke.\\n\\n---\\n\\n### Step 3 \u2014 Create `tests/VisualRelay.Tests/DisplayReadyGateTests.cs`\\n\\nFour `[Fact]` tests exercising `WaitUntilReady` purely through injected seams:\\n\\n1. **`ProbeImmediatelyZero_ReturnsTrueWithoutWake`** \u2014 probe returns `0` on first call \u2192 returns `true`, `wake` never called, exactly 1 probe.\\n2. **`ProbeFailsTwiceThenZero_ReturnsTrueAfterTwoWakes`** \u2014 probe returns `-6661`, `-6661`, `0` \u2192 returns `true`; `wake` called twice; record call order in a `List<string>` and assert the `probe/wake/delay/probe/wake/delay/probe` sequence.\\n3. **`ProbeAlwaysFails_ReturnsFalseAfterMaxAttempts`** \u2014 probe always returns `-6661`, `maxAttempts: 3` \u2192 returns `false` after exactly 3 probes (and 2 wake/delay cycles).\\n4. **`WakeThrows_DoesNotAbortLoop`** \u2014 `wake` throws `InvalidOperationException` every time, probe returns `-6661`, `-6661`, `0` \u2192 returns `true` (loop survives the thrown exceptions and still discovers the display).\\n\\nEach test constructs inline lambda seams \u2014 no CoreVideo, no processes, no platform dependency. Tests use plain `[Fact]` (not `[AvaloniaFact]`).\\n\\nFile \u2264300 lines. Does not affect the `SplitGuardVerificationTests` baseline (175) \u2014 `DisplayReadyGateTests` is not in the oversized-family prefix list.\\n\\n---\\n\\n### Step 4 \u2014 Build and verify\\n\\n```bash\\ndotnet build VisualRelay.slnx\\ndotnet test tests/VisualRelay.Tests\\n```\\n\\nAll existing tests must pass. The file-size guard (`AllTestCsFiles_AreAtMost300Lines`) must pass for the new files.\",\n  \"manifest\": [\n    \"+src/VisualRelay.App/DisplayReadyGate.cs\",\n    \"src/VisualRelay.App/Program.cs\",\n    \"+tests/VisualRelay.Tests/DisplayReadyGateTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 5,
+    "tool_calls_total": 12,
+    "tool_calls_succeeded": 12,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 5,
+    "total_llm_time_s": 49.088,
+    "prompt_cache": {
+      "cached_tokens": 59392,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.302,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.308,
+      "prompt_tokens_est": 7740,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 981
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/MacDockIcon.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5500
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/VisualRelay.App.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1648
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.131,
+      "result_length": 5877
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.211,
+      "prompt_tokens_est": 11653,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2557
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15473
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/WindowsLaunchTargetTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2735
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.208,
+      "prompt_tokens_est": 17298,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/BannedSymbols.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1921
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestModuleInitializer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1473
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "InternalsVisibleTo",
+        "path": "src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.045,
+      "result_length": 194
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 6.473,
+      "prompt_tokens_est": 18343,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/Properties/AssemblyInfo.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 181
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "VisualRelay.slnx"
+      },
+      "succeeded": true,
+      "duration_s": 0.12,
+      "result_length": 16
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 29.888,
+      "prompt_tokens_est": 18747,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
