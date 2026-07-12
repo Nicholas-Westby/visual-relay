@@ -1,7 +1,5 @@
 using System.Globalization;
-using System.Text.RegularExpressions;
 using VisualRelay.App.ViewModels;
-using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Tests;
 

@@ -28,10 +28,10 @@ public sealed class DesignDataTests
     }
 
     /// <summary>
-    /// <see cref="DesignData.Main.SelectedTask"/> must stay null so the
+    /// <see cref="DesignData.Main"/>'s <c>SelectedTask</c> must stay null so the
     /// previewer never triggers <c>SelectTaskAsync</c>, which reads the
     /// fabricated markdown path from disk and writes the failure into
-    /// <see cref="MainWindowViewModel.StatusText"/>, polluting every preview.
+    /// <c>MainWindowViewModel.StatusText</c>, polluting every preview.
     /// </summary>
     [Fact]
     public void Main_LeavesSelectedTaskNull_SoPreviewsDoNoDiskIo()

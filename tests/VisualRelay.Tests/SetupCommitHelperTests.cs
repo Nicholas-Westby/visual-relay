@@ -1,6 +1,5 @@
 using VisualRelay.Core.Init;
 using VisualRelay.GitSim;
-using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -187,7 +186,7 @@ public sealed class SetupCommitHelperTests
     }
 
     [Fact]
-    public async Task EnsureGitignore_DriverRunPrep_WritesButDoesNotCommit()
+    public void EnsureGitignore_DriverRunPrep_WritesButDoesNotCommit()
     {
         using var repo = TestRepository.Create();
         // Simulate hand-written .relay/config.json without .relay/.gitignore.

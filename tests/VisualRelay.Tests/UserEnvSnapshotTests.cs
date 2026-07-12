@@ -1,5 +1,4 @@
 using System.Text;
-using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
@@ -16,7 +15,7 @@ public sealed class UserEnvSnapshotTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var f in _tempFiles) { try { File.Delete(f); } catch { } }
+        foreach (var f in _tempFiles) { try { File.Delete(f); } catch { /* best-effort temp-file cleanup */ } }
     }
 
     // ── UserEnvSnapshot.Load ──

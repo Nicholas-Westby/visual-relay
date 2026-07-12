@@ -94,19 +94,19 @@ public sealed class ControlServerTests
 {
     private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromSeconds(5) };
 
-    private static (MainWindowViewModel, MainWindow, ControlApi) NewServerDeps()
+    private static (MainWindowViewModel, ControlApi) NewServerDeps()
     {
         var vm = new MainWindowViewModel(new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = Path.GetTempPath() });
         var window = new MainWindow { DataContext = vm };
-        return (vm, window, new ControlApi(vm, window));
+        return (vm, new ControlApi(vm, window));
     }
 
     private static ControlServerOptions NewTestOptions(
-        int Port = 0, string? Token = null, bool PortWasExplicitlySet = false,
-        string? InstanceId = null)
+        int port = 0, string? token = null, bool portWasExplicitlySet = false,
+        string? instanceId = null)
     {
-        return new ControlServerOptions(Enabled: true, Port: Port, Token: Token,
-            PortWasExplicitlySet: PortWasExplicitlySet, InstanceId: InstanceId,
+        return new ControlServerOptions(Enabled: true, Port: port, Token: token,
+            PortWasExplicitlySet: portWasExplicitlySet, InstanceId: instanceId,
             Pid: Environment.ProcessId, StartedUtc: DateTime.UtcNow.ToString("o"),
             Version: "0.0-test");
     }
@@ -149,9 +149,9 @@ public sealed class ControlServerTests
     [AvaloniaFact]
     public async Task KestrelSmokeTest_BindsOnPort0_AndServesHealth()
     {
-        var (vm, window, api) = NewServerDeps();
-        var server = new ControlServer(api, NewTestOptions(Port: 0,
-            InstanceId: "smoke-" + Guid.NewGuid().ToString("N") + "-" + Environment.ProcessId));
+        var (_, api) = NewServerDeps();
+        var server = new ControlServer(api, NewTestOptions(port: 0,
+            instanceId: "smoke-" + Guid.NewGuid().ToString("N") + "-" + Environment.ProcessId));
 
         server.Start();
         try
@@ -184,8 +184,8 @@ public sealed class ControlServerTests
     [AvaloniaFact]
     public async Task Token_WhenConfigured_RejectsMissingHeaderWith401_AndAcceptsMatch()
     {
-        var (_, _, api) = NewServerDeps();
-        var options = NewTestOptions(Token: "letmein");
+        var (_, api) = NewServerDeps();
+        var options = NewTestOptions(token: "letmein");
 
         var noTok = await InvokeAsync(api, options, "GET", "/health");
         Assert.Equal(401, noTok.Response.StatusCode);
@@ -197,7 +197,7 @@ public sealed class ControlServerTests
     [AvaloniaFact]
     public async Task StateAndCommand_RoundTrip_GatesDisabledCommandWith409()
     {
-        var (_, _, api) = NewServerDeps();
+        var (_, api) = NewServerDeps();
         var options = NewTestOptions();
 
         var stateCtx = await InvokeAsync(api, options, "GET", "/state");
@@ -227,7 +227,7 @@ public sealed class ControlServerTests
     [AvaloniaFact]
     public async Task ControlServer_Dispose_ReleasesListener()
     {
-        var (_, _, api) = NewServerDeps();
+        var (_, api) = NewServerDeps();
         var server = new ControlServer(api, NewTestOptions());
         server.Start();
 
@@ -259,34 +259,34 @@ public sealed class ControlServerTests
     }
 
     [AvaloniaFact]
-    public async Task BindConflict_WithExplicitPort_Throws()
+    public void BindConflict_WithExplicitPort_Throws()
     {
         using var occupier = new TcpListener(IPAddress.Loopback, 0);
         occupier.Start();
         var occupiedPort = ((IPEndPoint)occupier.LocalEndpoint).Port;
 
-        var (_, _, api) = NewServerDeps();
-        var options = NewTestOptions(Port: occupiedPort, PortWasExplicitlySet: true);
+        var (_, api) = NewServerDeps();
+        var options = NewTestOptions(port: occupiedPort, portWasExplicitlySet: true);
         var server = new ControlServer(api, options);
 
-        var ex = Assert.ThrowsAny<Exception>(() => server.Start());
+        var ex = Assert.ThrowsAny<Exception>(server.Start);
         Assert.Contains("port", ex.Message, StringComparison.OrdinalIgnoreCase);
         Assert.False(server.IsAvailable);
     }
     /// VR_CONTROL_PORT explicitly set → bind conflict throws. Without it,
     /// startup continues banner-only.
     [AvaloniaFact]
-    public async Task BindConflict_WithoutExplicitPort_DoesNotThrow_AndIsAvailableIsFalse()
+    public void BindConflict_WithoutExplicitPort_DoesNotThrow_AndIsAvailableIsFalse()
     {
         using var occupier = new TcpListener(IPAddress.Loopback, 0);
         occupier.Start();
         var occupiedPort = ((IPEndPoint)occupier.LocalEndpoint).Port;
 
-        var (vm, _, api) = NewServerDeps();
-        var options = NewTestOptions(Port: occupiedPort);
+        var (vm, api) = NewServerDeps();
+        var options = NewTestOptions(port: occupiedPort);
         var server = new ControlServer(api, options);
 
-        var ex = Record.Exception(() => server.Start());
+        var ex = Record.Exception(server.Start);
         Assert.Null(ex);
         Assert.False(server.IsAvailable);
 

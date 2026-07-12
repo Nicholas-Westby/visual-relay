@@ -9,21 +9,13 @@ namespace VisualRelay.Tests;
 /// timing-sensitive pair-orchestration tests can control which sibling finishes
 /// first in the Review (7) / Visual-review (8) pair.
 /// </summary>
-internal sealed class DelayedSubagentRunner : ISubagentRunner
+internal sealed class DelayedSubagentRunner(
+    ISubagentRunner inner, Dictionary<int, int> stageDelaysMs) : ISubagentRunner
 {
-    private readonly ISubagentRunner _inner;
-    private readonly Dictionary<int, int> _stageDelaysMs;
-
-    public DelayedSubagentRunner(ISubagentRunner inner, Dictionary<int, int> stageDelaysMs)
-    {
-        _inner = inner;
-        _stageDelaysMs = stageDelaysMs;
-    }
-
     public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
-        if (_stageDelaysMs.TryGetValue(invocation.Stage.Number, out var delayMs))
+        if (stageDelaysMs.TryGetValue(invocation.Stage.Number, out var delayMs))
             await Task.Delay(TimeSpan.FromMilliseconds(delayMs), TimeProvider.System, cancellationToken);
-        return await _inner.RunAsync(invocation, cancellationToken);
+        return await inner.RunAsync(invocation, cancellationToken);
     }
 }

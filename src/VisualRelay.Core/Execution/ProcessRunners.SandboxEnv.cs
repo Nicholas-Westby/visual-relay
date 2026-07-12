@@ -83,7 +83,7 @@ public sealed partial class SwivalSubagentRunner
         var dict = new Dictionary<string, string>();
         foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
         {
-            if (entry.Key is string key && entry.Value is string value)
+            if (entry is { Key: string key, Value: string value })
                 dict[key] = value;
         }
         return dict;

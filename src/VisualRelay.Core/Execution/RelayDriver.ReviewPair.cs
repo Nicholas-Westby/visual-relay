@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using VisualRelay.Core.Costs;
 using VisualRelay.Domain;
 
@@ -106,10 +105,9 @@ public sealed partial class RelayDriver
         // then flag — the sibling's result is NOT recorded, matching previous semantics.
         if (reviewResult.Check == "red")
         {
-            StageRunResult? siblingResult = null;
             if (visualTask is not null)
             {
-                siblingResult = await visualTask;
+                var siblingResult = await visualTask;
                 sessionCostUsd += siblingResult.CostUsd;
                 if (siblingResult.CostUnknown) unknownCostStageCount++;
             }

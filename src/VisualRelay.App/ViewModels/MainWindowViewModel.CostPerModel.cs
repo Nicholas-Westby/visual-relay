@@ -131,10 +131,13 @@ public partial class MainWindowViewModel
     private static string FormatRate(double rate) =>
         "$" + rate.ToString("0.######", CultureInfo.InvariantCulture) + " per 1M tokens";
 
-    private static string FormatRateRelativeToInput(double effective, double input) =>
-        effective == input
-            ? FormatRate(effective) + " (same as input)"
-            : FormatRate(effective);
+    private static string FormatRateRelativeToInput(double effective, double input)
+    {
+        var formatted = FormatRate(effective);
+        return formatted == FormatRate(input)
+            ? formatted + " (same as input)"
+            : formatted;
+    }
 
     // ── Window display helpers ───────────────────────────────────────────
 

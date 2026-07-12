@@ -6,7 +6,6 @@ namespace VisualRelay.Tests;
 public sealed class RelayDriverBaselineVerifyTests
 {
     private const string MochaNotFound = "sh: line 1: mocha: command not found\n";
-    private const string JestNotFound = "sh: line 1: jest: command not found\n";
     [Fact]
     public async Task BaselineVerify_True_PreExistingFailure_DoesNotFlag()
     {

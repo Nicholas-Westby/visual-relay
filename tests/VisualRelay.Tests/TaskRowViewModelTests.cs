@@ -206,15 +206,15 @@ public sealed class TaskRowViewModelTests
     public void ProgressFraction_UsesRelayStagesDenominator()
     {
         var d = (double)RelayStages.All.Count;
+        var half = RelayStages.All.Count / 2;
         Assert.Equal(1.0, new TaskRowViewModel(NewTask(RelayStages.All.Count)).ProgressFraction, precision: 6);
-        Assert.Equal((RelayStages.All.Count / 2) / d, new TaskRowViewModel(NewTask(RelayStages.All.Count / 2)).ProgressFraction, precision: 6);
+        Assert.Equal(half / d, new TaskRowViewModel(NewTask(half)).ProgressFraction, precision: 6);
     }
 
     [Fact]
     public void ProgressFraction_UsesLiveCountWhenRunning()
     {
-        var d = (double)RelayStages.All.Count;
-        var row = new TaskRowViewModel(NewTask(0));
+        var row = new TaskRowViewModel(NewTask());
         Assert.Equal(0.0, row.ProgressFraction);
         row.MarkRunning();
         Assert.Equal(0.0, row.ProgressFraction);
@@ -252,7 +252,7 @@ public sealed class TaskRowViewModelTests
     [Fact]
     public void RecordStageCompleted_RaisesPropertyChangedForProgressFraction()
     {
-        var row = new TaskRowViewModel(NewTask(0)); row.MarkRunning();
+        var row = new TaskRowViewModel(NewTask()); row.MarkRunning();
         var changed = new List<string>();
         row.PropertyChanged += (_, e) => changed.Add(e.PropertyName ?? "");
         row.RecordStageCompleted(1);
@@ -263,7 +263,7 @@ public sealed class TaskRowViewModelTests
     public void RunningStepLabel_SingleStage()
     {
         var row = new TaskRowViewModel(NewTask());
-        row.MarkRunning(7, "Review", new HashSet<int> { 7 });
+        row.MarkRunning(7, "Review", [7]);
         Assert.Equal("Stage 07 · Review", row.RunningStepLabel);
     }
 
@@ -271,7 +271,7 @@ public sealed class TaskRowViewModelTests
     public void RunningStepLabel_ConcurrentPair()
     {
         var row = new TaskRowViewModel(NewTask());
-        row.MarkRunning(8, "Visual-review", new HashSet<int> { 7, 8 });
+        row.MarkRunning(8, "Visual-review", [7, 8]);
         var label = row.RunningStepLabel;
         Assert.DoesNotContain(" & ", label, StringComparison.Ordinal);
         Assert.Contains("+", label, StringComparison.Ordinal);

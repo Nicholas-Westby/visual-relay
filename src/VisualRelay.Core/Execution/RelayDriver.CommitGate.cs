@@ -50,7 +50,7 @@ public sealed partial class RelayDriver
 
             // Emit verify_result event + artifact so the resumed run's log is
             // indistinguishable from a normal pipeline run.
-            var (_, check, _, reason) = await PublishVerifyResultAsync(
+            var (_, _, _, reason) = await PublishVerifyResultAsync(
                 rootPath, runId, taskId, taskDirectory, stage12, attempt: 1, config,
                 testResult, currentManifest, cancellationToken);
 

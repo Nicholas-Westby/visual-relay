@@ -1,5 +1,4 @@
 using CommunityToolkit.Mvvm.Input;
-using VisualRelay.App.Services;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;

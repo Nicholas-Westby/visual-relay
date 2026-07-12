@@ -64,7 +64,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             if (isReAdded) runStartData["fresh"] = "prior state archived (re-added task)";
             await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, "info", "run_start", runId, rootPath, taskId, Data: runStartData), cancellationToken);
             await WarnTestFileCmdAsync(config, runId, rootPath, taskId, cancellationToken);
-            Init.RelayGitignoreWriter.EnsureWritten(rootPath);
+            RelayGitignoreWriter.EnsureWritten(rootPath);
             IReadOnlySet<string>? preRunUntracked = await CapturePreRunUntrackedAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
             var runBaseSha = await CaptureRunBaseShaAsync(rootPath, taskDirectory, forceFresh: isReAdded, cancellationToken);
 

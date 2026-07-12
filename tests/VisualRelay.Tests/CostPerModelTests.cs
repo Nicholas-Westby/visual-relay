@@ -1,6 +1,5 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Configuration;
-using VisualRelay.Core.Costs;
 
 namespace VisualRelay.Tests;
 
@@ -157,7 +156,9 @@ public sealed partial class CostPerModelTests
             .OrderBy(k => k, StringComparer.Ordinal).ToList();
 
         var vm2 = new MainWindowViewModel();
-        vm2.PopulateModelCostRows(null);
+        // Explicit null must take the same path as the parameterless call.
+        IReadOnlyDictionary<string, string>? explicitNull = null;
+        vm2.PopulateModelCostRows(explicitNull);
         var cards2 = vm2.ModelCostRows.Select(r => r.ModelKey)
             .OrderBy(k => k, StringComparer.Ordinal).ToList();
 

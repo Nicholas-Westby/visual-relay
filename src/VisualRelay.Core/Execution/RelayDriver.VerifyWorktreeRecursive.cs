@@ -52,7 +52,7 @@ public sealed partial class RelayDriver
         // --- bounds -----------------------------------------------------------
         if (depth > MaxOverlayRecursionDepth)
         {
-            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { }
+            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { /* best-effort fallback symlink — the skip advisory below still fires */ }
             EmitOverlaySkipAdvisory(runId, sourcePath, worktreeId,
                 Path.GetFileName(srcDir), "max_depth_exceeded");
             return;
@@ -60,7 +60,7 @@ public sealed partial class RelayDriver
 
         if (depth > 0 && copiedBytes >= thresholdBytes)
         {
-            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { }
+            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { /* best-effort fallback symlink — the skip advisory below still fires */ }
             EmitOverlaySkipAdvisory(runId, sourcePath, worktreeId,
                 Path.GetFileName(srcDir), "copy_budget_exhausted");
             return;
@@ -70,7 +70,7 @@ public sealed partial class RelayDriver
         // (normal large-child path — no event, this is expected).
         if (depth > 0 && NonoRollbackSkipDirs.DirectoryMeetsSizeThreshold(srcDir, thresholdBytes))
         {
-            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { }
+            try { Directory.CreateSymbolicLink(dstDir, srcDir); } catch { /* best-effort share of a large child — skipping it never aborts the walk */ }
             return;
         }
 

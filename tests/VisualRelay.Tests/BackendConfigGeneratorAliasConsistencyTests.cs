@@ -11,7 +11,7 @@ public sealed class BackendConfigGeneratorAliasConsistencyTests
     /// <summary>
     /// (1) Every tier alias in <see cref="BackendConfigGenerator.Chains"/> has a
     ///     <see cref="BackendConfigGenerator.DefaultTierResolution"/> entry.
-    /// (2) Every <see cref="DefaultTierResolution"/> value has a
+    /// (2) Every <see cref="BackendConfigGenerator.DefaultTierResolution"/> value has a
     ///     <see cref="RelayPricing.Default"/> entry.
     /// (3) No tier alias appears as a pricing key (concrete models only).
     /// (4) The balanced/cheap tier-alias names must match the swival profile.

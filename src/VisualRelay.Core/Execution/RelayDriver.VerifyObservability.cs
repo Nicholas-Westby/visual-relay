@@ -102,11 +102,13 @@ public sealed partial class RelayDriver
 
     /// <summary>
     /// Writes the structured per-check breakdown to
-    /// <c>stage{N}-attempt{M}.verify-checks.json</c> under the task directory, returning
-    /// the ABSOLUTE path (or null on failure). Mirrors <c>TryPersistVerifyOutput</c>
-    /// so every failure is machine-diagnosable from a single artifact directory.
+    /// <c>stage{N}-attempt{M}.verify-checks.json</c> under the task directory.
+    /// Best-effort mirror of <see cref="TryPersistVerifyOutput"/>: the path is not
+    /// consumed by anything (unlike the verify-output path, which rides the
+    /// verify_result event), so a persistence failure is swallowed, never failing
+    /// the verify.
     /// </summary>
-    internal static string? TryPersistVerifyChecksJson(
+    private static void TryPersistVerifyChecksJson(
         string taskDirectory, int stageNum, int attempt, SetupCheckResults setupChecks)
     {
         try
@@ -116,11 +118,10 @@ public sealed partial class RelayDriver
             var json = JsonSerializer.Serialize(setupChecks,
                 new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase, WriteIndented = true });
             File.WriteAllText(path, json);
-            return path;
         }
         catch
         {
-            return null;
+            // Best-effort artifact — a write failure must not fail the verify.
         }
     }
 }
