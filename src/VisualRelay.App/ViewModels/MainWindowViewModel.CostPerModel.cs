@@ -145,7 +145,7 @@ public partial class MainWindowViewModel
             var tz = TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId);
             var start = ConvertWindowTimeToLocalDisplay(window.StartLocal, tz);
             var end = ConvertWindowTimeToLocalDisplay(window.EndLocal, tz);
-            return $"{start} – {end} your time — {window.Multiplier.ToString("0.#", CultureInfo.InvariantCulture)}× peak pricing";
+            return $"{start} – {end} {LocalTimeZoneLabel()} — {window.Multiplier.ToString("0.#", CultureInfo.InvariantCulture)}× peak pricing";
         }
         catch
         {
@@ -153,6 +153,33 @@ public partial class MainWindowViewModel
             var end = window.EndLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
             return $"{start} – {end} in {window.TimeZoneId} — {window.Multiplier.ToString("0.#", CultureInfo.InvariantCulture)}× peak pricing";
         }
+    }
+
+    /// <summary>Human-readable local time zone for the peak-window headline,
+    /// e.g. "Pacific Time (Los Angeles)". Derived from
+    /// <see cref="TimeZoneInfo.Local"/>.DisplayName rather than .Id because the
+    /// Id can be a POSIX alias like "PST8PDT" (observed as the macOS system
+    /// zone), while the ICU-backed DisplayName resolves the alias to a proper
+    /// generic name.</summary>
+    internal static string LocalTimeZoneLabel() =>
+        StripUtcOffsetPrefix(TimeZoneInfo.Local.DisplayName);
+
+    /// <summary>Removes the leading "(UTC±HH:MM) " / "(UTC) " chunk from a
+    /// TimeZoneInfo.DisplayName. Returns the input unchanged when the prefix is
+    /// absent or nothing would remain after stripping.</summary>
+    internal static string StripUtcOffsetPrefix(string displayName)
+    {
+        if (displayName.StartsWith("(UTC", StringComparison.Ordinal))
+        {
+            var close = displayName.IndexOf(')');
+            if (close >= 0)
+            {
+                var stripped = displayName[(close + 1)..].TrimStart();
+                if (stripped.Length > 0)
+                    return stripped;
+            }
+        }
+        return displayName;
     }
 
     private static string BuildWindowSourceNote(RateWindow window)

@@ -97,7 +97,7 @@ public sealed partial class CostPerModelTests
         var flash = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
         var w = flash.Windows[0];
         Assert.Matches(
-            @"^\d{1,2}:\d{2} [AP]M – \d{1,2}:\d{2} [AP]M your time — 2× peak pricing$",
+            @"^\d{1,2}:\d{2} [AP]M – \d{1,2}:\d{2} [AP]M .+ — 2× peak pricing$",
             w.Headline);
     }
 
@@ -113,7 +113,7 @@ public sealed partial class CostPerModelTests
     }
 
     [Fact]
-    public void PopulateModelCostRows_WindowHeadline_NeverContainsPlatformTimezoneId()
+    public void PopulateModelCostRows_WindowHeadline_UsesLocalZoneLabel()
     {
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
@@ -121,8 +121,21 @@ public sealed partial class CostPerModelTests
         var flash = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
         foreach (var w in flash.Windows)
         {
-            Assert.DoesNotContain(TimeZoneInfo.Local.Id, w.Headline, StringComparison.Ordinal);
+            Assert.Contains(MainWindowViewModel.LocalTimeZoneLabel(), w.Headline, StringComparison.Ordinal);
+            Assert.DoesNotContain("your time", w.Headline, StringComparison.Ordinal);
             Assert.DoesNotContain("PST8PDT", w.Headline, StringComparison.Ordinal);
         }
+    }
+
+    [Theory]
+    [InlineData("(UTC-08:00) Pacific Time (Los Angeles)", "Pacific Time (Los Angeles)")]
+    [InlineData("(UTC) Coordinated Universal Time", "Coordinated Universal Time")]
+    [InlineData("(UTC+05:30) India Standard Time (Kolkata)", "India Standard Time (Kolkata)")]
+    [InlineData("(UTC-05:00) GMT-05:00", "GMT-05:00")]
+    [InlineData("Pacific Time", "Pacific Time")]
+    [InlineData("(UTC-08:00)", "(UTC-08:00)")]
+    public void StripUtcOffsetPrefix_StripsLeadingOffsetChunk(string input, string expected)
+    {
+        Assert.Equal(expected, MainWindowViewModel.StripUtcOffsetPrefix(input));
     }
 }
