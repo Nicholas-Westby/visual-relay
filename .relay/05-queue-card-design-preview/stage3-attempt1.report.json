@@ -1,0 +1,614 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T20:19:17.972957+00:00",
+  "task": "# Relay stage 3: Diagnose\nTask: 05-queue-card-design-preview\nWorking directory: /tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview\n\n## Task input\n# Design-time preview data for the queue cards, and componentize QueuePanel under the size guard\n\n## Problem\n\nOpening `src/VisualRelay.App/Views/Controls/QueuePanel.axaml` in the Rider/Avalonia previewer renders garbage, and there is no sustainable way to see the task cards while iterating on colors:\n\n1. **The previewer has no DataContext, so every binding fails in the worst way.** `QueuePanel.axaml` declares `x:DataType=\"vm:MainWindowViewModel\"` but no design-time DataContext. With no source, `ItemsSource=\"{Binding Tasks}\"` yields no items (no cards at all), and every failed `IsVisible` binding leaves the control at its default `IsVisible=\"True\"` \u2014 so the \"Initialize this project\" card, the \"This project's .relay/config.json could not be read\" diagnostic box, and the HuggingFace-gate footer all render **simultaneously**, stacked. That is binding fallout, not any real app state.\n2. **`MainWindow.axaml` has a design DataContext, but a useless one.** Its `<Design.DataContext><vm:MainWindowViewModel/></Design.DataContext>` element constructs a bare view model: `Tasks` is empty, so the whole-window preview shows an empty queue.\n3. **Card state visuals cannot be mocked from XAML.** Every state-dependent color on a card is computed in `TaskRowViewModel` (`src/VisualRelay.App/ViewModels/TaskRowViewModel.cs`) from `IsRunning`/`IsSelected`/`NeedsReview`/`IsArchived` \u2014 the `Brush.Parse` statics `SelectedBrush`, `RunningBrush`, `ReviewBrush`, `WaitingCardBrush`, `SelectedCardBrush`, `RunningCardBrush`, the border brushes, and the `BoxShadows` statics, exposed through computed properties (`AccentBrush`, `RailBrush`, `CardBackgroundBrush`, `SelectedHighlightBorderBrush`, `CardBorderBrush`, `CardShadow`, `ProgressFraction`). The only way to preview real card states is real `TaskRowViewModel` instances put into those states \u2014 which is cheap, since the constructor takes only an in-memory `RelayTaskItem` record (`src/VisualRelay.Domain/RelayTaskItem.cs`) and the state mutators (`MarkRunning`, `RecordStageCompleted`, `IsSelected`, `RunningElapsedLabel`) are public or internal-to-App.\n4. **`QueuePanel.axaml` is at 284 lines against a hard 300-line guard.** `FileSizeGuard` (`tools/VisualRelay.Guards/FileSizeGuard.cs`, `DefaultLimit = 300`, scans `.cs` **and** `.axaml`, runs in `./visual-relay check`) leaves no headroom for the design-time attributes this task adds, let alone future styling work. Two self-contained regions carry most of the bulk: the card `DataTemplate` body (~82 lines) and the two bottom-footer `Border`s (~83 lines).\n\n## Fix\n\nOne direction, in this order: add a design-data class, extract the card template into `TaskCard.axaml`, extract the footer into `QueueFooter.axaml`, wire `Design.*` attributes everywhere, and update the two static-scan test classes that parse `QueuePanel.axaml` by path. Design properties are previewer-only \u2014 the XAML compiler strips `Design.*` assignments outside the designer \u2014 so none of this changes runtime behavior or cost.\n\n### 1. New file: `src/VisualRelay.App/DesignTime/DesignData.cs`\n\nA static class holding pre-populated view models for `Design.DataContext`. This is the single place future preview states get added \u2014 fiddling with colors never requires touching C# again.\n\n```csharp\nusing VisualRelay.App.ViewModels;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.App.DesignTime;\n\n/// <summary>\n/// Populated view models for the Avalonia previewer (Design.DataContext).\n/// Never constructed at runtime: the XAML compiler strips Design.* property\n/// assignments outside the designer.\n/// </summary>\npublic static class DesignData\n{\n    /// <summary>Richest single card: running, selected, mid-progress.</summary>\n    public static TaskRowViewModel Card { get; }\n\n    /// <summary>Queue/main-window context with one row per card state.</summary>\n    public static MainWindowViewModel Main { get; }\n\n    static DesignData()\n    {\n        Card = new TaskRowViewModel(NewItem(\"03-survive-display-sleep-at-launch\", completedStages: 8));\n        Card.MarkRunning(9, \"Fix\");\n        Card.RunningElapsedLabel = \"14m 12s\";\n        for (var stage = 1; stage <= 8; stage++)\n        {\n            Card.RecordStageCompleted(stage);\n        }\n        Card.IsSelected = true;\n\n        Main = new MainWindowViewModel();\n        Main.Tasks.Add(Card);\n        Main.Tasks.Add(new TaskRowViewModel(NewItem(\"04-cost-panel-concrete-models\")));\n        Main.Tasks.Add(new TaskRowViewModel(NewItem(\"[ENCRYPTED:fastly]NqzwVwwr5o8kfimLDkWj6XScpHFzu8Xm\",\n            reviewReason: \"Stage 08 visual-review skipped: renderer unavailable\",\n            costUsd: 0.34, durationSeconds: 512, completedStages: 12)));\n        Main.Tasks.Add(new TaskRowViewModel(NewItem(\"01-replace-target-env-base-not-overlay\",\n            costUsd: 0.06, durationSeconds: 138, completedStages: 5)));\n        Main.Tasks.Add(new TaskRowViewModel(NewItem(\"00-bootstrap-project\",\n            archived: true, costUsd: 0.42, durationSeconds: 947, completedStages: 12))\n        { DayHeader = \"Today ($0.42)\" });\n        // Deliberately NOT setting Main.SelectedTask: OnSelectedTaskChanged\n        // (MainWindowViewModel.Commands.cs) kicks SelectTaskAsync, which reads\n        // the fabricated markdown path from disk and surfaces the failure into\n        // StatusText \u2014 polluting every preview. Card.IsSelected above already\n        // drives all selected-state card visuals.\n        Main.StatusText = \"Running 03-survive-display-sleep-at-launch \u2014 Stage 09 \u00b7 Fix\";\n    }\n\n    private static RelayTaskItem NewItem(\n        string id, string? reviewReason = null, bool archived = false,\n        double costUsd = 0, double durationSeconds = 0, int completedStages = 0)\n    {\n        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);\n        var dir = Path.Combine(home, \"Dev\", \"acme\", \"llm-tasks\", id);\n        return new RelayTaskItem(id, Path.Combine(dir, $\"{id}.md\"), dir, false, [],\n            reviewReason, archived, null, costUsd, durationSeconds, completedStages);\n    }\n}\n```\n\nNotes that must hold:\n\n- `RecordStageCompleted` is `internal`; `DesignData` lives in the same assembly, so this compiles as-is.\n- The home-anchored `MarkdownPath` is intentional: `HomePathToTildeConverter` then renders `~/Dev/acme/\u2026` in the preview exactly as in the shipped app.\n- `new MainWindowViewModel()` (null environment accessor) is already proven previewer-safe \u2014 `MainWindow.axaml`'s current `Design.DataContext` constructs one today.\n\n### 2. Extract the card template into `Views/Controls/TaskCard.axaml` (+ `.axaml.cs`)\n\nMove the **entire content** of the `DataTemplate` in `QueuePanel.axaml`'s `TaskQueueList` \u2014 the `<Grid RowDefinitions=\"Auto,*\">` that holds the `DayHeader` TextBlock and the two nested card `Border`s (starting at the `<!-- outer = inner 8 + ring thickness 2 -->` comment) \u2014 into a new UserControl, preserving the moved XML byte-for-byte (comments included). Root element:\n\n```xml\n<UserControl xmlns=\"https://github.com/avaloniaui\"\n             xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n             xmlns:vm=\"using:VisualRelay.App.ViewModels\"\n             xmlns:controls=\"using:VisualRelay.App.Views.Controls\"\n             xmlns:dt=\"using:VisualRelay.App.DesignTime\"\n             x:Class=\"VisualRelay.App.Views.Controls.TaskCard\"\n             x:DataType=\"vm:TaskRowViewModel\"\n             Design.DataContext=\"{x:Static dt:DesignData.Card}\"\n             Design.Width=\"320\">\n```\n\n- `xmlns:controls` is required because the moved body references `{x:Static controls:HomePathToTildeConverter.Instance}`.\n- The root **must not set `Background`** (and no wrapper element may be added around the moved Grid): `TaskCardRenderTests` asserts every `Border`/`ContentPresenter` between each `ListBoxItem` and its `Border.queueCard` is transparent, and the UserControl's default template (a background-less `ContentPresenter`) satisfies that only if `Background` stays null.\n- Code-behind follows the repo's thin-view idiom (`Views/Controls/CommandsView.axaml.cs`): `public partial class TaskCard : UserControl` with only an `InitializeComponent()` constructor.\n\nThe `DataTemplate` in `QueuePanel.axaml` becomes exactly:\n\n```xml\n<ListBox.ItemTemplate>\n  <DataTemplate DataType=\"{x:Type vm:TaskRowViewModel}\">\n    <controls:TaskCard/>\n  </DataTemplate>\n</ListBox.ItemTemplate>\n```\n\nDataContext flows from the list item; the drag-reorder code-behind (`QueuePanel.axaml.cs`) is untouched \u2014 it hit-tests up to the `ListBoxItem` ancestor and reads its `DataContext`, both of which are unchanged.\n\n### 3. Extract the bottom footer into `Views/Controls/QueueFooter.axaml` (+ `.axaml.cs`)\n\nMove the **two** `Grid.Row=\"2\"` sibling `Border`s at the bottom of `QueuePanel.axaml` \u2014 the HF-gate box (`IsVisible=\"{Binding ShowHfGate}\"`, containing `HfGateMessage`, `HfPricingNote`, the \"Get a free token \u2192\" button) and the status strip (`IsVisible=\"{Binding !ShowHfGate}\"`, containing the `StatusText` TextBlock and the `x:Name=\"StatusExpandButton\"` flyout button) \u2014 into a new UserControl. Strip the `Grid.Row=\"2\"` attributes from the moved Borders and wrap them in a single `<Panel>` (they remain mutually exclusive via `ShowHfGate`); preserve everything else byte-for-byte. Root element:\n\n```xml\n<UserControl xmlns=\"https://github.com/avaloniaui\"\n             xmlns:x=\"http://schemas.microsoft.com/winfx/2006/xaml\"\n             xmlns:vm=\"using:VisualRelay.App.ViewModels\"\n             xmlns:buttons=\"using:VisualRelay.App.Views.Controls.Buttons\"\n             xmlns:dt=\"using:VisualRelay.App.DesignTime\"\n             x:Class=\"VisualRelay.App.Views.Controls.QueueFooter\"\n             x:DataType=\"vm:MainWindowViewModel\"\n             Design.DataContext=\"{x:Static dt:DesignData.Main}\"\n             Design.Width=\"340\">\n```\n\nIn `QueuePanel.axaml` the two Borders are replaced by exactly `<controls:QueueFooter Grid.Row=\"2\"/>` (the `controls:` xmlns already exists there). Same thin code-behind idiom as TaskCard. `ShowHfGate` is `_keyStatesLoaded && !IsHuggingFaceConfigured` (`MainWindowViewModel.Keys.cs`) \u2014 false at design time since keys never load, so the preview shows the status strip, fed by the `StatusText` set in `DesignData`.\n\n### 4. `QueuePanel.axaml` root: design attributes\n\nAdd to the root `<UserControl>` element (keeping all existing attributes):\n\n```xml\nxmlns:dt=\"using:VisualRelay.App.DesignTime\"\nDesign.DataContext=\"{x:Static dt:DesignData.Main}\"\nDesign.Width=\"340\" Design.Height=\"780\"\n```\n\nUse Avalonia's `Design.*` attached properties exactly as written \u2014 not the Blend `d:`/`mc:Ignorable` namespace pair. After steps 2\u20134 the file lands around 125 lines. The `ListBox` line carrying `x:Name=\"TaskQueueList\" ItemContainerTheme=\"{StaticResource TaskCardItemTheme}\"` must keep both attributes on that one line \u2014 `TaskCardThemeGuardTests` scans for the `x:Name=\"TaskQueueList\"` line and asserts it also contains `ItemContainerTheme`.\n\n### 5. `MainWindow.axaml`: point the existing design context at the populated VM\n\nReplace the three-line `<Design.DataContext><vm:MainWindowViewModel/></Design.DataContext>` element with the attribute form on the `<Window>` root, plus the `xmlns:dt` declaration:\n\n```xml\nxmlns:dt=\"using:VisualRelay.App.DesignTime\"\nDesign.DataContext=\"{x:Static dt:DesignData.Main}\"\n```\n\nThe whole-window preview then shows the populated queue for free.\n\n### 6. `Styles/VisualRelayTheme.axaml`: preview host for theme fiddling\n\nThe card-adjacent styles (`Border.queueCard`, `ListBoxItem:pointerover Border.queueCard`, `Border.panel`, `Border.chip`, `TaskCardItemTheme`, the `drop-above`/`drop-below` styles) live here, and a bare styles file previews as blank. Add `xmlns:controls=\"using:VisualRelay.App.Views.Controls\"` to the `<Styles>` root and, as its first child, a preview host so editing this file renders live cards:\n\n```xml\n<Design.PreviewWith>\n  <Border Width=\"360\" Height=\"800\" Padding=\"10\" Background=\"#0C0E12\">\n    <controls:QueuePanel/>\n  </Border>\n</Design.PreviewWith>\n```\n\n(`#0C0E12` is the real window background from `MainWindow.axaml`. The nested QueuePanel picks up its own `Design.DataContext` because the previewer process runs in design mode globally. The file is at 212 lines; this fits the guard.)\n\n### 7. Required updates to existing tests (they parse QueuePanel.axaml by path)\n\n**`tests/VisualRelay.Tests/ContrastTests.cs`** statically scans `QueuePanel.axaml`; after the split it would fail (`QueuePanel_NamedText_MeetsAaOnItsSurface` pins `Text=\"{Binding DayHeader}\"` and `Text=\"STATUS\"` via `.Single(\u2026)`, and after extraction the on-panel scan's `Assert.NotEmpty` would see zero literals left in QueuePanel.axaml). Extend the scan to all three files so accessibility coverage is preserved, not narrowed:\n\n- Replace `LoadQueuePanel()` with:\n\n  ```csharp\n  private static readonly string[] PanelXamlFiles =\n      [\"QueuePanel.axaml\", \"TaskCard.axaml\", \"QueueFooter.axaml\"];\n\n  private static IEnumerable<XElement> LoadPanelRoots()\n  {\n      foreach (var name in PanelXamlFiles)\n      {\n          var path = Path.Combine(RepoSetup.Root,\n              \"src\", \"VisualRelay.App\", \"Views\", \"Controls\", name);\n          Assert.True(File.Exists(path), $\"{name} not found: {path}\");\n          yield return XDocument.Load(path).Root!;\n      }\n  }\n\n  private static IEnumerable<XElement> PanelTextElements() =>\n      LoadPanelRoots().SelectMany(TextElements);\n  ```\n\n- Use `PanelTextElements()` at all three former `TextElements(LoadQueuePanel())` call sites (the named-text theory and the two scan enumerators), rename the three `QueuePanel_\u2026` fact/theory methods to `PanelXamls_\u2026`, and update the class/section doc comments to name the three files.\n- `ResolveTextSurface` needs **no change** \u2014 verify these classifications hold rather than \"fixing\" them: the `DayHeader` TextBlock in `TaskCard.axaml` walks to the UserControl root with no `Background` attribute and correctly resolves to the panel background (TaskCard renders on the panel); the flyout `STATUS` label and HF-gate texts still resolve to their inline `#1B2028` surface; card-interior text stays excluded because the card Border's `Background=\"{Binding CardBackgroundBrush}\"` is a non-hex attribute (resolves null), exactly as today.\n\n**`tests/VisualRelay.Tests/StatusFooterFlyoutTests.cs`** does `queuePanel.FindControl<CommonButton>(\"StatusExpandButton\")` \u2014 after extraction that name lives in `QueueFooter`'s namescope, so `FindControl` on `QueuePanel` returns null. In both facts, resolve the footer first:\n\n```csharp\nvar footer = window.GetVisualDescendants().OfType<QueueFooter>().Single();\nvar expandButton = footer.FindControl<CommonButton>(\"StatusExpandButton\");\n```\n\nUpdate the class doc comment (the footer is hosted at QueuePanel's `Grid.Row=\"2\"` but defined in `QueueFooter.axaml`). Keep everything else, including the MainWindow boot these existing tests already use.\n\n## Rejected approaches \u2014 do not do these\n\n- Do NOT move the card state brushes out of `TaskRowViewModel`, or any inline hex out of the XAML, into theme resources/pseudo-class styles \"while you're in there\". The current placement is deliberate (centralized for accessibility and theming, guarded by `ContrastTests` and `TaskCardRenderTests`); this task is preview + split only, with moved XML preserved byte-for-byte.\n- Do NOT set `Main.SelectedTask` in `DesignData` (and do not \"simplify\" `Card.IsSelected = true` away in favor of it): `OnSelectedTaskChanged` fires `SelectTaskAsync`, which reads the markdown path from disk and writes the failure into `StatusText`, corrupting every preview. Row-level `IsSelected` drives all selected-state visuals.\n- Do NOT add HotAvalonia or any other preview/hot-reload package \u2014 no new dependencies of any kind.\n- Do NOT use the Blend `xmlns:d`/`mc:Ignorable=\"d\"` design namespaces in the new files; use Avalonia's `Design.DataContext`/`Design.Width`/`Design.Height` attached properties.\n- Do NOT extract the \"Initialize this project\" card or the config-diagnostic box: they are already small, `ConfigInitEmptyStateUiTests`/`InitPanelButtonsLayoutTests` locate their named controls (`InitEmptyState`, `InitTestCommandBox`, `CreateConfigButton`) in QueuePanel's namescope, and the two extractions above already put the file ~175 lines under the guard.\n- Do NOT rename any `x:Name`d control (`TaskQueueList`, `StatusExpandButton`, `InitEmptyState`, `InitTestCommandBox`, `CreateConfigButton`) or touch the drag-reorder logic in `QueuePanel.axaml.cs`.\n- Do NOT split the `DayHeader` block out of `TaskCard` \u2014 the day header is part of the item template on purpose (per-row group heading), and `TaskCardRenderTests.DayHeader_IsUntinted_WhenSelected` walks it inside the item.\n- Do NOT add the new test file to the fixed file list in `SplitGuardVerificationTests.HeadlessCollectionFiles_HaveCollectionAttribute` \u2014 that list is a legacy pin, not a registry.\n\n## Tests\n\nNew file `tests/VisualRelay.Tests/DesignDataTests.cs` (plain `[Fact]`s, no Avalonia session \u2014 pure view-model assertions):\n\n- `Main_CoversEveryCardState` \u2014 in `DesignData.Main.Tasks`: exactly one row `IsRunning`; at least one `NeedsReview && !IsRunning`; at least one `IsArchived`; at least one `Task.CompletedStageCount == 0 && !IsRunning` (the \"No run history\" card); at least one non-empty `DayHeader`; exactly one `IsSelected`.\n- `Main_LeavesSelectedTaskNull_SoPreviewsDoNoDiskIo` \u2014 `Assert.Null(DesignData.Main.SelectedTask)`, with a comment naming the `SelectTaskAsync` disk-read reason. This is the guardrail that keeps the rejected approach out.\n- `Card_IsRunningSelectedMidProgress` \u2014 `DesignData.Card.IsRunning`, `.IsSelected`, `Assert.InRange(Card.ProgressFraction, 0.01, 0.99)`, and `MetricsLine` contains `\"Stage 09 \u00b7 Fix\"` (proves the running-stage label plumbing renders in previews).\n\nNew file `tests/VisualRelay.Tests/QueuePanelSplitRenderTests.cs` (`[Collection(\"Headless\")]`, `public sealed class`, `[AvaloniaFact]`s) \u2014 the machine-checkable proxy for \"the previewer can render these controls standalone\". Host each control in a bare `Window` (`window.Show()` + `Dispatcher.UIThread.RunJobs()`, per the scoped-control rule in `AGENTS.md` \u2014 do NOT boot `MainWindow` here):\n\n- `TaskCard_RendersStandalone_FromDesignData` \u2014 `new Window { Content = new TaskCard { DataContext = DesignData.Card }, Width = 340, Height = 200 }`; after layout, a descendant `Border` with class `queueCard` exists, and the single descendant `ProgressBar`'s `Value` equals `DesignData.Card.ProgressFraction` (double-precision overload).\n- `QueueFooter_HostsExpandButton_InOwnNameScope` \u2014 host `new QueueFooter { DataContext = DesignData.Main }` the same way; `footer.FindControl<CommonButton>(\"StatusExpandButton\")` is non-null and carries a `Flyout`.\n\nExisting suites that must pass **unmodified**: `TaskCardRenderTests` (the transparency-chain and CornerRadius facts prove the extraction is visually inert), `TaskCardThemeGuardTests`, `ConfigInitEmptyStateUiTests`, `InitPanelButtonsLayoutTests`. `ContrastTests` and `StatusFooterFlyoutTests` change only as prescribed above.\n\n## Constraints\n\n- `./visual-relay check` must pass end-to-end \u2014 in particular the file-size guard: every touched or created `.cs`/`.axaml` file stays \u2264 300 lines (expected: QueuePanel.axaml ~125, TaskCard.axaml ~95, QueueFooter.axaml ~95, DesignData.cs ~80, thin code-behinds ~12 each).\n- No new NuGet packages; no changes outside the files named in this spec plus the listed tests.\n- The moved XAML is byte-identical to the original except for the stripped `Grid.Row=\"2\"` attributes and the new UserControl roots \u2014 no attribute reordering, no re-indentation of moved content, no color or spacing changes anywhere.\n- Manual acceptance (post-merge, human): opening `TaskCard.axaml`, `QueuePanel.axaml`, `QueueFooter.axaml`, or `VisualRelayTheme.axaml` in the Rider previewer shows populated, styled content with no init/diagnostic boxes stacked over the cards.\n- If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove coverage to satisfy it.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The Avalonia previewer renders garbage because QueuePanel.axaml has no design-time DataContext and the ViewModel has empty Tasks. The fix: (1) create DesignData.cs with pre-populated view models, (2) extract the card DataTemplate (~82 lines) into TaskCard.axaml, (3) extract the footer (~83 lines) into QueueFooter.axaml, (4) wire Design.* attributes on QueuePanel, TaskCard, QueueFooter, MainWindow, and VisualRelayTheme, (5) update ContrastTests to scan all three panel XAML files, and update StatusFooterFlyoutTests to resolve QueueFooter then FindControl on it. No runtime behavior changes, no new packages, all existing tests pass unmodified or with the prescribed changes.\",\n  \"options\": [\n    \"Execute the full plan as spec'd: create DesignData.cs, extract TaskCard.axaml+.cs, extract QueueFooter.axaml+.cs, wire Design.* attributes, update ContrastTests and StatusFooterFlyoutTests, add DesignDataTests.cs and QueuePanelSplitRenderTests.cs\",\n    \"Only add DesignData.cs and wire Design.* attributes without extracting TaskCard/QueueFooter (but this leaves QueuePanel.axaml at 284+ lines with the risk of hitting the 300-line FileSizeGuard when adding design attributes)\",\n    \"Only add DesignData.cs and point MainWindow.axaml Design.DataContext at it (partial fix \u2014 improves MainWindow preview but still leaves standalone QueuePanel.axaml preview broken and doesn't address line count)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"QueuePanel.axaml (284 lines) has no design-time DataContext, causing the Avalonia previewer to render all mutually-exclusive panels stacked (init state, config-diagnostic, HF-gate footer, status strip) because bindings fail silently. MainWindow.axaml has a Design.DataContext with a bare MainWindowViewModel whose Tasks collection is empty \u2014 useless preview. The card DataTemplate (~82 lines) and two footer Borders (~83 lines) occupy most of QueuePanel.axaml's bulk, leaving ~125 lines after extraction. DesignData.cs must construct pre-populated TaskRowViewModel instances in-memory: RecordStageCompleted is internal (same-assembly access works), MarkRunning/IsSelected/RunningElapsedLabel are public. ShowHfGate depends on _keyStatesLoaded which stays false at design time, so the status strip (not HF gate) shows. OnSelectedTaskChanged fires SelectTaskAsync which performs disk I/O \u2014 SelectedTask must remain null in DesignData. ContrastTests.LoadQueuePanel() scans QueuePanel.axaml by path and must be extended to all three XAML files. StatusFooterFlyoutTests does queuePanel.FindControl<CommonButton>('StatusExpandButton') which will fail after extraction to QueueFooter \u2014 must resolve QueueFooter first via GetVisualDescendants. TaskCardRenderTests walks MainWindow \u2192 QueuePanel \u2192 ListBox \u2192 ListBoxItem \u2192 Border.queueCard \u2014 the extraction preserves this visual ancestry since TaskCard is a UserControl wrapping the same Grid. TaskCardThemeGuardTests scans for x:Name='TaskQueueList' on a line that also contains ItemContainerTheme \u2014 both stay on one line in QueuePanel.axaml. The thin code-behind idiom is CommandsView.axaml.cs (public partial class ... : UserControl with only InitializeComponent()). HeadlessCollectionFiles_HaveCollectionAttribute in SplitGuardVerificationTests.Conventions.cs has a hardcoded list of 7 files and must NOT be updated.\",\n  \"constraints\": [\n    \"Every touched or created .cs/.axaml file must stay \u2264 300 lines (FileSizeGuard hard limit)\",\n    \"No new NuGet packages or external dependencies of any kind\",\n    \"Moved XAML must be byte-identical except for stripped Grid.Row='2' attributes and new UserControl roots \u2014 no reordering, re-indentation, or color/spacing changes\",\n    \"Use Avalonia's Design.* attached properties (Design.DataContext, Design.Width, Design.Height, Design.PreviewWith), NOT Blend d:/mc:Ignorable namespaces\",\n    \"Do NOT set Main.SelectedTask in DesignData (triggers SelectTaskAsync disk I/O)\",\n    \"Do NOT extract the InitEmptyState 'Initialize this project' card or config-diagnostic box\",\n    \"Do NOT rename any x:Name'd control (TaskQueueList, StatusExpandButton, InitEmptyState, InitTestCommandBox, CreateConfigButton)\",\n    \"Do NOT touch drag-reorder logic in QueuePanel.axaml.cs\",\n    \"Do NOT split DayHeader out of TaskCard\",\n    \"Do NOT add QueuePanelSplitRenderTests.cs or DesignDataTests.cs to HeadlessCollectionFiles_HaveCollectionAttribute fixed list\",\n    \"TaskCard root must NOT set Background (preserves transparency chain for TaskCardRenderTests)\",\n    \"ListBox line in QueuePanel.axaml must keep x:Name='TaskQueueList' and ItemContainerTheme on the same line\",\n    \"New QueuePanelSplitRenderTests must use [Collection('Headless')] and host controls in bare Window with window.Show()+Dispatcher.UIThread.RunJobs() \u2014 NOT boot MainWindow\",\n    \"DesignDataTests uses plain [Fact] (no Avalonia session) \u2014 pure view-model assertions only\",\n    \"If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove coverage\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"evidence\": string, \"excerpts\": string[], \"repro\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have all the evidence. Let me compile the diagnosis.\n\n```json\n{\n  \"evidence\": \"QueuePanel.axaml (284 lines) declares x:DataType=\\\"vm:MainWindowViewModel\\\" at line 7 but has no Design.DataContext attribute \u2014 the Avalonia previewer renders the file with null DataContext, so every binding fails silently: ItemsSource yields zero cards, and all IsVisible bindings default to True, stacking the InitEmptyState card, config-diagnostic box, and both footer Borders simultaneously. MainWindow.axaml lines 20-22 provide a Design.DataContext, but it constructs a bare MainWindowViewModel whose Tasks collection is empty (MainWindowViewModel.cs line 69: `public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];`), so the whole-window preview shows an empty queue. Card visuals (AccentBrush, RailBrush, CardBackgroundBrush, SelectedHighlightBorderBrush, CardBorderBrush, CardShadow, ProgressFraction) are all computed properties in TaskRowViewModel.cs lines 99-110 from runtime state flags (IsRunning/IsSelected/NeedsReview) using Brush.Parse statics (lines 10-21) \u2014 no preview without populated TaskRowViewModel instances. The card DataTemplate (QueuePanel.axaml lines 50-135, ~85 lines) and footer Borders (lines 199-281, ~83 lines) occupy ~168 of the file's 284 lines, leaving only ~116 lines of headroom against the FileSizeGuard default limit of 300 (FileSizeGuard.cs line 13). No DesignData.cs, TaskCard.axaml, or QueueFooter.axaml exist yet. Setting Main.SelectedTask would fire OnSelectedTaskChanged (MainWindowViewModel.Commands.cs line 198) \u2192 SelectTaskAsync (line 203) \u2192 ReadTaskInputAsync (line 232), reading markdown from disk and polluting StatusText. ShowHfGate depends on _keyStatesLoaded (MainWindowViewModel.Keys.cs line 68, defaults to false) so the status strip (not HF gate) shows at design time. Four test suites must remain unmodified: TaskCardRenderTests walks ListBoxItem \u2192 visual descendants \u2192 Border.queueCard (TaskCardRenderTests.cs lines 175-177); TaskCardThemeGuardTests scans QueuePanel.axaml for the x:Name=\\\"TaskQueueList\\\" line also containing ItemContainerTheme (line 39); ConfigInitEmptyStateUiTests and InitPanelButtonsLayoutTests resolve named controls (InitEmptyState, InitTestCommandBox, CreateConfigButton) in QueuePanel's namescope. ContrastTests.LoadQueuePanel (line 235) and StatusFooterFlyoutTests queuePanel.FindControl<CommonButton>(\\\"StatusExpandButton\\\") (line 45) will break after extraction and require the prescribed updates.\",\n  \"excerpts\": [\n    \"QueuePanel.axaml:1-7: <UserControl xmlns=\\\"https://github.com/avaloniaui\\\" ... x:Class=\\\"VisualRelay.App.Views.Controls.QueuePanel\\\" x:DataType=\\\"vm:MainWindowViewModel\\\">  (no Design.DataContext)\",\n    \"MainWindow.axaml:20-22: <Design.DataContext> <vm:MainWindowViewModel/> </Design.DataContext>\",\n    \"MainWindowViewModel.cs:69: public ObservableCollection<TaskRowViewModel> Tasks { get; } = [];\",\n    \"TaskRowViewModel.cs:10-21: private static readonly IBrush SelectedBrush = Brush.Parse(\\\"#3191FF\\\"); ... private static readonly BoxShadows RunningShadow = BoxShadows.Parse(\\\"0 0 22 0 #445AD47D\\\");\",\n    \"TaskRowViewModel.cs:99-110: public IBrush AccentBrush => IsRunning ? RunningBrush : NeedsReview ? ReviewBrush : SelectedBrush; ... public double ProgressFraction => IsRunning ? Math.Clamp(_liveCompletedStageCount / (double)RelayStages.All.Count, 0, 1) : Math.Clamp(Task.CompletedStageCount / (double)RelayStages.All.Count, 0, 1);\",\n    \"FileSizeGuard.cs:13: private const int DefaultLimit = 300;\",\n    \"MainWindowViewModel.Commands.cs:198: LastSelectionLoad = SelectTaskAsync(value); (called from OnSelectedTaskChanged)\",\n    \"MainWindowViewModel.Commands.cs:232: var input = await new RelayTaskRepository(RootPath).ReadTaskInputAsync(task.Task); (disk I/O in SelectTaskAsync)\",\n    \"MainWindowViewModel.Keys.cs:68: private bool _keyStatesLoaded; (defaults false)\",\n    \"MainWindowViewModel.Keys.cs:86: public bool ShowHfGate => _keyStatesLoaded && !IsHuggingFaceConfigured;\",\n    \"TaskCardRenderTests.cs:175-177: private static Border? FindQueueCard(ListBoxItem item) => item.GetVisualDescendants().OfType<Border>().FirstOrDefault(b => b.Classes.Contains(\\\"queueCard\\\"));\",\n    \"TaskCardThemeGuardTests.cs:37-40: if (lines[i].Contains(\\\"x:Name=\\\\\\\"TaskQueueList\\\\\\\"\\\")) { Assert.True(lines[i].Contains(\\\"ItemContainerTheme\\\"), ...); }\",\n    \"ContrastTests.cs:235-241: private static XElement LoadQueuePanel() { var path = Path.Combine(RepoSetup.Root, \\\"src\\\", \\\"VisualRelay.App\\\", \\\"Views\\\", \\\"Controls\\\", \\\"QueuePanel.axaml\\\"); ... return XDocument.Load(path).Root!; }\",\n    \"StatusFooterFlyoutTests.cs:45: var expandButton = queuePanel.FindControl<CommonButton>(\\\"StatusExpandButton\\\");\"\n  ],\n  \"repro\": \"1. Open src/VisualRelay.App/Views/Controls/QueuePanel.axaml in Rider or the Avalonia previewer. Observe that no cards render, and the \\\"Initialize this project\\\" card, config-diagnostic box, HF-gate footer, and status strip all render simultaneously stacked \u2014 the previewer has no DataContext so every binding fails. 2. Open src/VisualRelay.App/Views/MainWindow.axaml in the previewer. Observe an empty queue panel with no task cards \u2014 the bare MainWindowViewModel's Tasks collection is empty. 3. Open src/VisualRelay.App/Styles/VisualRelayTheme.axaml in the previewer. Observe a blank preview \u2014 this styles-only file has no preview host. 4. Open src/VisualRelay.App/ViewModels/TaskRowViewModel.cs and note that every visual property (AccentBrush, CardBackgroundBrush, RailBrush, etc.) is computed from runtime state flags (IsRunning/IsSelected/NeedsReview) \u2014 there is no way to mock these states from XAML without real TaskRowViewModel instances. 5. Run `./visual-relay check` to confirm QueuePanel.axaml (284 lines) is under but close to the 300-line FileSizeGuard limit, and that adding Design.* attributes plus future styling work would exceed it.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 17,
+    "tool_calls_total": 34,
+    "tool_calls_succeeded": 34,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 25,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 8,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 17,
+    "total_llm_time_s": 115.326,
+    "prompt_cache": {
+      "cached_tokens": 574720,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.701,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.157,
+      "prompt_tokens_est": 9811,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 7368
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.839,
+      "prompt_tokens_est": 12162,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 389
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.038,
+      "prompt_tokens_est": 12366,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Views/Controls/QueuePanel.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 15393
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/TaskRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9611
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.Domain/RelayTaskItem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1371
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.794,
+      "prompt_tokens_est": 18342,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Views/MainWindow.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10148
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/ContrastTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11474
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/StatusFooterFlyoutTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8786
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.461,
+      "prompt_tokens_est": 25866,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Views/Controls/QueuePanel.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8644
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Views/Controls/CommandsView.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 244
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tools/VisualRelay.Guards/FileSizeGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4269
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.112,
+      "prompt_tokens_est": 29401,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 14114
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Styles/VisualRelayTheme.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10616
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/TaskCardRenderTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10655
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 5.457,
+      "prompt_tokens_est": 38176,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/TaskCardThemeGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4410
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/ConfigInitEmptyStateUiTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7504
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1338
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.946,
+      "prompt_tokens_est": 41704,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "OnSelectedTaskChanged",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 412
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ShowHfGate",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.038,
+      "result_length": 556
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.633,
+      "prompt_tokens_est": 42103,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1482
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "_keyStatesLoaded",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.075,
+      "result_length": 301
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.64,
+      "prompt_tokens_est": 42705,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "HomePathToTildeConverter",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.041,
+      "result_length": 792
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "HeadlessCollectionFiles",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.069,
+      "result_length": 159
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/InitPanelButtonsLayoutTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4136
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.228,
+      "prompt_tokens_est": 44162,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "offset": 145,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1223
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/tests/VisualRelay.Tests/SplitGuardVerificationTests.Conventions.cs",
+        "offset": 40,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2148
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.291,
+      "prompt_tokens_est": 45119,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "offset": 175,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3287
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 6.956,
+      "prompt_tokens_est": 45914,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "DesignData",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.076,
+      "result_length": 17
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TaskCard\\.axaml|QueueFooter\\.axaml",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 17
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/.relay/05-queue-card-design-preview/run.log"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1283
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 18.466,
+      "prompt_tokens_est": 46765,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 60,
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1538
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.App/Views/Controls/HomePathToTildeConverter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2139
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.759,
+      "prompt_tokens_est": 48917,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayStages",
+        "path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 103
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.58,
+      "prompt_tokens_est": 49045,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.lIynDF/visual-relay/wt/fbb5c78605a5/plan-20260712201443/05-queue-card-design-preview/src/VisualRelay.Core/Execution/RelayStages.cs",
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1679
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 30.968,
+      "prompt_tokens_est": 49651,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

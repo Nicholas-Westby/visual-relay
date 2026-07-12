@@ -10,8 +10,9 @@ namespace VisualRelay.Tests;
 /// about 2.97:1, below the 4.5:1 AA minimum for its 11px SemiBold text. These
 /// tests encode the WCAG relative-luminance / contrast-ratio math and guard the
 /// inline foreground literals that render on the panel so a too-dim colour cannot
-/// slip back in. Pure math plus a static XAML scan, so plain [Fact]/[Theory] (no
-/// Avalonia headless session required).
+/// slip back in. Pure math plus a static XAML scan of QueuePanel.axaml,
+/// TaskCard.axaml, and QueueFooter.axaml, so plain [Fact]/[Theory] (no Avalonia
+/// headless session required).
 /// </summary>
 public sealed class ContrastTests
 {
@@ -78,16 +79,17 @@ public sealed class ContrastTests
 
     // ---- (a) Named inline literals meet AA on their real rendered surface -
     //
-    // Reads the live QueuePanel.axaml, so reverting a foreground back to the old
-    // dim grey fails here. Covers the archive day header (on the panel) and the
-    // STATUS flyout label (on the flyout's own #1B2028 surface, which the on-panel
-    // scanner below deliberately does not reach), pinning each element by its Text.
+    // Reads QueuePanel.axaml, TaskCard.axaml, and QueueFooter.axaml, so reverting
+    // a foreground back to the old dim grey fails here. Covers the archive day
+    // header (on the panel) and the STATUS flyout label (on the flyout's own
+    // #1B2028 surface, which the on-panel scanner below deliberately does not
+    // reach), pinning each element by its Text.
     [Theory]
     [InlineData("{Binding DayHeader}", PanelBackground)]
     [InlineData("STATUS", "#1B2028")]
-    public void QueuePanel_NamedText_MeetsAaOnItsSurface(string text, string expectedSurface)
+    public void PanelXamls_NamedText_MeetsAaOnItsSurface(string text, string expectedSurface)
     {
-        var element = TextElements(LoadQueuePanel())
+        var element = PanelTextElements()
             .Single(t => (string?)t.Attribute("Text") == text);
 
         var foreground = (string?)element.Attribute("Foreground");
@@ -100,10 +102,10 @@ public sealed class ContrastTests
             $"'{text}' foreground {foreground} on {expectedSurface} is {ratio:F2}:1, below {AaNormal}:1.");
     }
 
-    // ---- (b) Scan QueuePanel.axaml: every on-panel text literal meets AA --
+    // ---- (b) Scan all three panel XAML files: every on-panel text literal meets AA --
 
     [Fact]
-    public void QueuePanel_EveryInlineTextForegroundOnPanel_MeetsAa()
+    public void PanelXamls_EveryInlineTextForegroundOnPanel_MeetsAa()
     {
         var onPanel = OnPanelTextForegrounds().ToList();
 
@@ -128,7 +130,7 @@ public sealed class ContrastTests
     // This resolves each such static surface and holds every literal on it to AA,
     // so a dim hint (the #6B7480 regression on the #1B2129 card) cannot slip back.
     [Fact]
-    public void QueuePanel_EveryInlineTextForegroundOnCard_MeetsAa()
+    public void PanelXamls_EveryInlineTextForegroundOnCard_MeetsAa()
     {
         var onCards = OffPanelCardTextForegrounds().ToList();
 
@@ -153,7 +155,7 @@ public sealed class ContrastTests
 
     private static IEnumerable<(string Foreground, string Element)> OnPanelTextForegrounds()
     {
-        foreach (var text in TextElements(LoadQueuePanel()))
+        foreach (var text in PanelTextElements())
         {
             var foreground = (string?)text.Attribute("Foreground");
             if (foreground is null || !Hex.IsMatch(foreground))
@@ -170,7 +172,7 @@ public sealed class ContrastTests
 
     private static IEnumerable<(string Foreground, string Surface, string Element)> OffPanelCardTextForegrounds()
     {
-        foreach (var text in TextElements(LoadQueuePanel()))
+        foreach (var text in PanelTextElements())
         {
             var foreground = (string?)text.Attribute("Foreground");
             if (foreground is null || !Hex.IsMatch(foreground))
@@ -232,11 +234,20 @@ public sealed class ContrastTests
         return t is null ? text.Name.LocalName : $"{text.Name.LocalName} Text={t}";
     }
 
-    private static XElement LoadQueuePanel()
+    private static readonly string[] PanelXamlFiles =
+        ["QueuePanel.axaml", "TaskCard.axaml", "QueueFooter.axaml"];
+
+    private static IEnumerable<XElement> LoadPanelRoots()
     {
-        var path = Path.Combine(RepoSetup.Root,
-            "src", "VisualRelay.App", "Views", "Controls", "QueuePanel.axaml");
-        Assert.True(File.Exists(path), $"QueuePanel.axaml not found: {path}");
-        return XDocument.Load(path).Root!;
+        foreach (var name in PanelXamlFiles)
+        {
+            var path = Path.Combine(RepoSetup.Root,
+                "src", "VisualRelay.App", "Views", "Controls", name);
+            Assert.True(File.Exists(path), $"{name} not found: {path}");
+            yield return XDocument.Load(path).Root!;
+        }
     }
+
+    private static IEnumerable<XElement> PanelTextElements() =>
+        LoadPanelRoots().SelectMany(TextElements);
 }

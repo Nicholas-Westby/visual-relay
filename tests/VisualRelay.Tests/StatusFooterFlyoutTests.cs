@@ -11,10 +11,11 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// Structural anchors for the status-footer expand affordance.
 ///
-/// The footer (Grid.Row="2", IsVisible when !ShowHfGate) must host
-/// a named <c>StatusExpandButton</c> that carries a <see cref="Flyout"/>
-/// whose content includes a <see cref="ScrollViewer"/> and a
-/// <see cref="SelectableTextBlock"/> bound to <c>StatusText</c>.
+/// The footer is hosted at QueuePanel's Grid.Row="2" but defined in
+/// QueueFooter.axaml. It must host a named <c>StatusExpandButton</c> that
+/// carries a <see cref="Flyout"/> whose content includes a
+/// <see cref="ScrollViewer"/> and a <see cref="SelectableTextBlock"/> bound
+/// to <c>StatusText</c>.
 ///
 /// These tests catch regressions where the flyout is accidentally
 /// removed or the ScrollViewer nesting is broken.
@@ -38,11 +39,9 @@ public sealed class StatusFooterFlyoutTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var queuePanel = window.GetVisualDescendants()
-            .OfType<QueuePanel>()
-            .Single();
+        var footer = window.GetVisualDescendants().OfType<QueueFooter>().Single();
 
-        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
+        var expandButton = footer.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
         Assert.NotNull(expandButton.Flyout);
         Assert.IsType<Flyout>(expandButton.Flyout);
@@ -66,11 +65,9 @@ public sealed class StatusFooterFlyoutTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var queuePanel = window.GetVisualDescendants()
-            .OfType<QueuePanel>()
-            .Single();
+        var footer = window.GetVisualDescendants().OfType<QueueFooter>().Single();
 
-        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
+        var expandButton = footer.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         var flyout = Assert.IsType<Flyout>(expandButton.Flyout);
@@ -120,11 +117,9 @@ public sealed class StatusFooterFlyoutTests
         window.Show();
         Dispatcher.UIThread.RunJobs();
 
-        var queuePanel = window.GetVisualDescendants()
-            .OfType<QueuePanel>()
-            .Single();
+        var footer = window.GetVisualDescendants().OfType<QueueFooter>().Single();
 
-        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
+        var expandButton = footer.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         // Initial state: StatusText == "Idle" (non-empty), so button is visible.
@@ -173,11 +168,9 @@ public sealed class StatusFooterFlyoutTests
         vm.StatusText = longStatus;
         Dispatcher.UIThread.RunJobs();
 
-        var queuePanel = window.GetVisualDescendants()
-            .OfType<QueuePanel>()
-            .Single();
+        var footer = window.GetVisualDescendants().OfType<QueueFooter>().Single();
 
-        var expandButton = queuePanel.FindControl<CommonButton>("StatusExpandButton");
+        var expandButton = footer.FindControl<CommonButton>("StatusExpandButton");
         Assert.NotNull(expandButton);
 
         // Open the flyout so its visual tree is materialised.
