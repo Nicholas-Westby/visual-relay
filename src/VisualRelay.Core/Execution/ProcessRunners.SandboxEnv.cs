@@ -1,7 +1,12 @@
+using System.Collections;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
+
+internal sealed record TargetCommandEnvironment(
+    IReadOnlyDictionary<string, string> Overrides,
+    IReadOnlySet<string> Remove);
 
 public sealed partial class SwivalSubagentRunner
 {
@@ -49,17 +54,38 @@ public sealed partial class SwivalSubagentRunner
     /// the env var is absent — falls back to returning the VR overrides alone
     /// (the current process env is the base, matching existing behavior).
     /// </summary>
-    internal static IReadOnlyDictionary<string, string> BuildTargetCommandEnvironment(
-        RelayConfig config, IEnvironmentAccessor? accessor = null)
+    internal static TargetCommandEnvironment BuildTargetCommandEnvironment(
+        RelayConfig config, IEnvironmentAccessor? accessor = null,
+        IReadOnlyDictionary<string, string>? processEnv = null)
     {
-        var snapshot = UserEnvSnapshot.Load(accessor);
-        if (snapshot is null)
-            return BuildSandboxEnvironment(config);
+        processEnv ??= SnapshotProcessEnv();
 
-        var merged = new Dictionary<string, string>(snapshot);
+        var snapshot = UserEnvSnapshot.Load(accessor);
+        if (snapshot is null || !snapshot.ContainsKey("PATH"))
+            return new TargetCommandEnvironment(BuildSandboxEnvironment(config), new HashSet<string>());
+
+        var merged = new Dictionary<string, string>(snapshot!);
         foreach (var kvp in BuildSandboxEnvironment(config))
             merged[kvp.Key] = kvp.Value;
 
-        return merged;
+        var remove = new HashSet<string>();
+        foreach (var key in processEnv.Keys)
+        {
+            if (!merged.ContainsKey(key))
+                remove.Add(key);
+        }
+
+        return new TargetCommandEnvironment(merged, remove);
+    }
+
+    private static IReadOnlyDictionary<string, string> SnapshotProcessEnv()
+    {
+        var dict = new Dictionary<string, string>();
+        foreach (DictionaryEntry entry in Environment.GetEnvironmentVariables())
+        {
+            if (entry.Key is string key && entry.Value is string value)
+                dict[key] = value;
+        }
+        return dict;
     }
 }

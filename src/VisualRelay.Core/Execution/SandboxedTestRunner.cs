@@ -22,7 +22,7 @@ public sealed partial class SandboxedTestRunner(
         string rootPath, string command, CancellationToken cancellationToken = default)
     {
         var (fileName, args) = ResolveLaunch(command, rootPath);
-        var env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);
+        var targetEnv = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);
 
         // Wrap the sandboxed run with the idle-reap watchdog. The wrapper (nono)
         // supervises the test process tree and can outlive the FINISHED tests —
@@ -31,12 +31,13 @@ public sealed partial class SandboxedTestRunner(
         // seconds. RunWatchedAsync reaps once the tree goes output-silent +
         // CPU-idle and surfaces the inner command's real red/green result.
         return await RunWatchedAsync(
-            fileName, args, rootPath, env,
+            fileName, args, rootPath, targetEnv.Overrides,
             firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
             idleGraceMs: config.TestIdleGraceMilliseconds,
             hardCap: _timeout,
             cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
-            cancellationToken, _timeProvider);
+            cancellationToken, _timeProvider,
+            envRemove: targetEnv.Remove);
     }
 
     /// <summary>

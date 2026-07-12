@@ -72,6 +72,51 @@ public sealed class SandboxEnvForwardingTests
         Assert.Equal("1", output.Trim());
     }
 
+    [Fact]
+    public async Task ProcessCapture_EnvRemove_StripsMarkerFromChild()
+    {
+        // The envRemove mechanism must actually strip a key from the spawned
+        // child's environment. Set a unique marker in the test process, spawn
+        // a child with envRemove containing that marker, and assert the child
+        // does NOT see it. Also pass a second key via environment: and assert
+        // the child DOES see that one — proving the removal is selective.
+        if (OperatingSystem.IsWindows())
+            return; // /bin/sh-based assertion is POSIX-only.
+
+        const string markerKey = "VR_INTEGRATION_MARKER_REMOVE";
+        const string markerValue = "this-should-not-be-visible";
+        const string passKey = "VR_INTEGRATION_MARKER_PASS";
+        const string passValue = "this-should-be-visible";
+
+        try
+        {
+            Environment.SetEnvironmentVariable(markerKey, markerValue);
+
+            var envRemove = new HashSet<string> { markerKey };
+            var environment = new Dictionary<string, string>
+            {
+                [passKey] = passValue,
+            };
+
+            var (exitCode, output, timedOut) = await ProcessCapture.RunAsync(
+                "/bin/sh",
+                new[] { "-c", $"if [ -z \"${markerKey}\" ]; then printf 'removed'; else printf 'leaked'; fi; printf '|'; printf '%s' \"$VR_INTEGRATION_MARKER_PASS\"" },
+                Path.GetTempPath(),
+                TimeSpan.FromSeconds(10),
+                CancellationToken.None,
+                environment: environment,
+                envRemove: envRemove);
+
+            Assert.False(timedOut);
+            Assert.Equal(0, exitCode);
+            Assert.Equal($"removed|{passValue}", output.Trim());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(markerKey, null);
+        }
+    }
+
     private static RelayConfig SandboxOn() =>
         new(
             "llm-tasks",

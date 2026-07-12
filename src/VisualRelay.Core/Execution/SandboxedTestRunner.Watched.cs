@@ -84,7 +84,9 @@ public sealed partial class SandboxedTestRunner
         string fileName, IReadOnlyList<string> args, string rootPath,
         IReadOnlyDictionary<string, string>? environment,
         int firstOutputTimeoutMs, int idleGraceMs, TimeSpan hardCap,
-        int cpuSampleIntervalMs, CancellationToken cancellationToken, TimeProvider? timeProvider = null)
+        int cpuSampleIntervalMs, CancellationToken cancellationToken,
+        TimeProvider? timeProvider = null,
+        IReadOnlySet<string>? envRemove = null)
     {
         var tp = timeProvider ?? TimeProvider.System;
         var sw = Stopwatch.StartNew();
@@ -101,7 +103,7 @@ public sealed partial class SandboxedTestRunner
 
         var processTask = ProcessCapture.RunAsync(
             fileName, args, rootPath, hardCap, cancellationToken,
-            environment: environment, killToken: watchdogCts.Token,
+            environment: environment, envRemove: envRemove, killToken: watchdogCts.Token,
             onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs, timeProvider: tp);
         var watchdogTask = watchdog.WaitAsync(watchdogLinkedCts.Token);
 

@@ -1,0 +1,281 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T05:20:57.846209+00:00",
+  "task": "# Relay stage 4: Plan\nTask: 01-replace-target-env-base-not-overlay\nWorking directory: /Users/nicholaswestby/Dev/visual-relay\n\n## Task input\n# Replace the target-command env base instead of overlaying it\n\n## Problem\n\nTarget-repo commands (testCmd, guardCmd, formatCmd, bootstrap-check, and the swival stage subprocess) run with a **mixed environment**: the user's pre-devshell snapshot is applied as *overrides on top of* Visual Relay's own nix-devshell process environment. Keys that exist only in the devshell survive the merge and leak into the child.\n\nReal incident (2026-07-11, task `show-cost-per-llm-model`): the repo's `flake.nix` devShell exports\n\n```nix\nDOTNET_ROOT = \"${pkgs.dotnet-sdk_10}/share/dotnet\";\n```\n\nThe user's snapshot has no `DOTNET_ROOT`, so the nix value (SDK 10.0.301) leaked into the guard command's environment, while the snapshot's `PATH` resolved the host `dotnet` (SDK 10.0.300). The guard's `dotnet format VisualRelay.slnx --verify-no-changes` then crashed at startup:\n\n```\nUnhandled exception: System.IO.FileNotFoundException: Could not load file or assembly\n'System.Composition.AttributedModel, Version=10.0.0.9, ...'\n```\n\n(10.0.301's analyzers loaded into a 10.0.300 format host). Every verify went red with `guardCheck=red testCheck=green`, byte-identical across all fix-verify attempts, and the run was flagged. Either SDK alone works; only the mix crashes. Confirmed by running `DOTNET_ROOT=<nix sdk root> dotnet format VisualRelay.slnx --verify-no-changes` (crashes) vs the same command without `DOTNET_ROOT` (exit 0).\n\n## Root cause\n\n`BuildTargetCommandEnvironment` in `src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs` returns only an override dictionary:\n\n```csharp\nvar merged = new Dictionary<string, string>(snapshot);\nforeach (var kvp in BuildSandboxEnvironment(config))\n    merged[kvp.Key] = kvp.Value;\nreturn merged;\n```\n\n`ProcessCapture.RunAsync` (in `src/VisualRelay.Core/Execution/ProcessCapture.cs`) applies that dictionary onto `ProcessStartInfo.EnvironmentVariables`, which **inherits the full current process env** \u2014 so any devshell-only key (not present in the snapshot) survives. `StripLeakedNixSdkEnv` only removes `DEVELOPER_DIR`/`SDKROOT`, so it does not cover `DOTNET_ROOT` or any other devshell-only var.\n\n`ProcessCapture.RunAsync` already has the needed mechanism \u2014 an `envRemove` parameter that deletes keys from the inherited env **before** the override dictionary is applied:\n\n```csharp\nif (envRemove is not null)\n{\n    foreach (var key in envRemove)\n    {\n        process.StartInfo.EnvironmentVariables.Remove(key);\n    }\n}\n```\n\nIt is simply never used by the target-command call sites.\n\n## Fix\n\nMake the snapshot a true **replacement base**: when a valid snapshot exists, the child environment must be exactly `snapshot \u222a VR overrides` \u2014 nothing inherited from the devshell survives unless the snapshot or the overrides contain it.\n\n### 1. Return a removal set alongside the overrides\n\nIn `src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs`, change `BuildTargetCommandEnvironment` to return a new record (declare it in the same file):\n\n```csharp\ninternal sealed record TargetCommandEnvironment(\n    IReadOnlyDictionary<string, string> Overrides,\n    IReadOnlySet<string> Remove);\n```\n\nSemantics:\n\n- **Valid snapshot** (non-null AND contains a `PATH` key \u2014 a snapshot without `PATH` is treated as invalid, same as absent):\n  - `Overrides` = snapshot entries, then `BuildSandboxEnvironment(config)` entries applied on top (VR overrides win) \u2014 same merge as today.\n  - `Remove` = every key present in the current process environment that is **not** a key of `Overrides`.\n- **No/invalid snapshot**: `Overrides` = `BuildSandboxEnvironment(config)`, `Remove` = empty set. This preserves today's packaged/brew behavior exactly.\n\nFor testability, add an optional parameter for the process environment, defaulting to the real one:\n\n```csharp\ninternal static TargetCommandEnvironment BuildTargetCommandEnvironment(\n    RelayConfig config,\n    IEnvironmentAccessor? accessor = null,\n    IReadOnlyDictionary<string, string>? processEnv = null)\n```\n\nWhen `processEnv` is null, snapshot the real environment via `Environment.GetEnvironmentVariables()`. Do NOT widen `IEnvironmentAccessor` (it stays a single-key getter).\n\n### 2. Thread `Remove` through both call sites\n\n- `src/VisualRelay.Core/Execution/SandboxedTestRunner.cs`, in `RunAsync` at `var env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);` \u2014 destructure the record and pass the removal set through `RunWatchedAsync` (in `SandboxedTestRunner.Watched.cs`; add an `envRemove` parameter to it) down to its `ProcessCapture.RunAsync` call's existing `envRemove:` argument.\n- `src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`, at `var sandboxEnv = BuildTargetCommandEnvironment(_config);` \u2014 pass `envRemove:` on the `ProcessCapture.RunAsync(...)` call that currently passes `environment: sandboxEnv`.\n\nKeep `StripLeakedNixSdkEnv` and its call in `ProcessCapture` unchanged \u2014 it remains the defense for the no-snapshot fallback path.\n\n### 3. Why this cannot break process launching\n\nExecutable filename resolution (`nono`, `swival`) happens in the **parent** process against the parent's PATH before the child env table applies \u2014 the child's replaced `PATH` already ships today (snapshot `PATH` overwrites) and stages run fine. Removing devshell-only keys changes only the child's env table, not how the binary is found. Keys that appear in both `Remove` and `Overrides` cannot exist (Remove excludes Overrides keys by construction), and `ProcessCapture` removes before it applies, so ordering is safe.\n\n## Rejected approach \u2014 do not do this\n\nDo NOT fix this by growing `LeakedAppleSdkEnvNames` (or any other name-by-name strip list) with `DOTNET_ROOT` and friends. Chasing the devshell's env footprint variable-by-variable is exactly the fragile approach the snapshot design replaced; the snapshot already tells us the complete set of keys the user's environment legitimately has. Do NOT modify the `visual-relay` bootstrap script \u2014 the snapshot capture is correct as-is.\n\n## Tests\n\nUpdate `tests/VisualRelay.Tests/UserEnvSnapshotTests.cs` \u2014 existing `BuildTargetCommandEnvironment` tests adapt to the new record shape (preserve every existing assertion's intent; never delete coverage):\n\n- Devshell-only key: `processEnv` contains `DOTNET_ROOT=/nix/store/x`, snapshot does not \u2192 `Remove` contains `DOTNET_ROOT`.\n- Snapshot key: present in both \u2192 not in `Remove`; `Overrides` carries the snapshot value.\n- VR override keys (e.g. `PYTHONDONTWRITEBYTECODE`) \u2192 in `Overrides`, never in `Remove`, even when absent from the snapshot.\n- No snapshot \u2192 `Remove` empty, `Overrides` equals `BuildSandboxEnvironment` output.\n- Snapshot without `PATH` \u2192 treated as invalid (fallback behavior, `Remove` empty).\n\nAdd a child-process integration test alongside the existing patterns in `tests/VisualRelay.Tests/SandboxEnvForwardingTests.cs`: set a marker variable in the test process, spawn a child via `ProcessCapture.RunAsync` with `envRemove` containing that marker, and assert the child does not see it (and that a key passed via `environment` still arrives).\n\n## Constraints\n\n- `dotnet build VisualRelay.slnx` must succeed; all existing tests must pass.\n- Packaged/brew installs (no snapshot) must behave byte-for-byte as before.\n- Do not change `BuildSandboxEnvironment`'s contents, `StripLeakedNixSdkEnv`, or the bootstrap script.\n- If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove tests to satisfy it.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Replace the target-command env base instead of overlaying it: when a valid user snapshot exists, the child process environment must be exactly `snapshot \u222a VR overrides` \u2014 nothing inherited from the devshell leaks through. Three options: (A) return a `TargetCommandEnvironment(Overrides, Remove)` record from `BuildTargetCommandEnvironment` and thread `Remove` through existing `envRemove` param in `ProcessCapture.RunAsync`; (B) build a complete replacement dictionary and set `ProcessStartInfo.Environment` directly; (C) compute the removal diff at each call site. Option A is preferred (uses existing mechanism, clean semantics, zero change for no-snapshot path).\",\n  \"options\": [\n    \"Option A \u2014 Return `TargetCommandEnvironment` record with `Overrides` + `Remove` set, thread `Remove` through `envRemove` parameter in `ProcessCapture.RunAsync`\",\n    \"Option B \u2014 Build complete replacement environment dictionary and use `ProcessStartInfo.Environment` (full replacement) instead of `EnvironmentVariables` (overlay)\",\n    \"Option C \u2014 Two-phase: capture process env baseline, compute removal diff at each call site, pass to `envRemove`\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"**Codebase investigation for task `01-replace-target-env-base-not-overlay`**\\n\\n**Files to modify (source):**\\n1. **`src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs`** (65 lines) \u2014 Contains `BuildSandboxEnvironment(RelayConfig)` (returns `IReadOnlyDictionary<string, string>`) and `BuildTargetCommandEnvironment(RelayConfig, IEnvironmentAccessor?)` (returns `IReadOnlyDictionary<string, string>`). The latter merges snapshot\u2192VR overrides or falls back to sandbox-only. Need to add `TargetCommandEnvironment(Overrides, Remove)` record and change return type. For testability, add optional `processEnv` param without widening `IEnvironmentAccessor` (which is single-key only). Semantics: valid snapshot = snapshot has `PATH` key; `Remove` = processEnv keys not in Overrides; no snapshot \u2192 Remove empty.\\n\\n2. **`src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`** (286 lines) \u2014 Line 127: `var sandboxEnv = BuildTargetCommandEnvironment(_config);` then passed as `environment:` to `ProcessCapture.RunAsync` (line 132-136). Must destructure record and pass `envRemove:` alongside existing `environment:`.\\n\\n3. **`src/VisualRelay.Core/Execution/SandboxedTestRunner.cs`** (106 lines) \u2014 Line 25: `var env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);` then passed to `RunWatchedAsync` (line 33-39). Must destructure and thread removal set.\\n\\n4. **`src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs`** (126 lines) \u2014 `RunWatchedAsync` signature (line 83) takes `IReadOnlyDictionary<string, string>? environment`. Need to add `IReadOnlySet<string>? envRemove` parameter and pass to `ProcessCapture.RunAsync` at line 102-105.\\n\\n**No changes needed to:**\\n5. **`src/VisualRelay.Core/Execution/ProcessCapture.cs`** (300 lines) \u2014 Already has `envRemove` parameter (lines 52, 72, 92) and removal logic (lines 104-110) that runs before `environment` is applied. `StripLeakedNixSdkEnv` remains unchanged \u2014 it stays as defense for no-snapshot path.\\n\\n**Files to modify (tests):**\\n6. **`tests/VisualRelay.Tests/UserEnvSnapshotTests.cs`** (195 lines) \u2014 7 facts (3 Load_*, 3 BuildTargetCommandEnvironment_*, 1 Dispose). Adapt assertions to new `TargetCommandEnvironment` record shape. Add tests for: devshell-only key in `Remove`, snapshot key not in `Remove`, VR override keys absent from snapshot not in `Remove`, no-snapshot \u2192 Remove empty, snapshot-without-PATH \u2192 invalid/fallback.\\n\\n7. **`tests/VisualRelay.Tests/SandboxEnvForwardingTests.cs`** (93 lines) \u2014 3 facts. Add child-process integration test: set marker var in test process, spawn child via `ProcessCapture.RunAsync` with `envRemove` containing that marker, assert child does not see it, but env-passed key still arrives.\\n\\n**Fact-count ratchet:** Baseline is 175 (line 184 in `SplitGuardVerificationTests.cs`). Neither `UserEnvSnapshotTests` nor `SandboxEnvForwardingTests` are in the oversized prefixes list (lines 186-231), so no ratchet bump needed.\\n\\n**Test doubles:** `DictionaryEnvironmentAccessor` in `tests/VisualRelay.Tests/TestDoubles.cs` implements `IEnvironmentAccessor` (single-key getter). `SandboxOn()` helper returns a `RelayConfig` with sandbox enabled \u2014 same pattern used in both test files.\",\n  \"constraints\": [\n    \"`dotnet build VisualRelay.slnx` must succeed; all existing tests must pass.\",\n    \"Packaged/brew installs (no snapshot) must behave byte-for-byte as before \u2014 Remove must be empty set, Overrides must equal `BuildSandboxEnvironment` output.\",\n    \"Do NOT change `BuildSandboxEnvironment`'s contents, `StripLeakedNixSdkEnv`, or the bootstrap script.\",\n    \"Do NOT widen `IEnvironmentAccessor` interface (it stays a single-key getter).\",\n    \"If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove tests to satisfy it. Current baseline: 175 (SplitGuardVerificationTests.cs line 184).\",\n    \"The `envRemove` mechanism in `ProcessCapture.RunAsync` removes keys before applying `environment` overrides \u2014 this ordering must be preserved (the fix relies on it).\",\n    \"Valid snapshot = non-null AND contains a `PATH` key. A snapshot without `PATH` is treated as invalid (same as absent).\",\n    \"`Remove` by construction excludes all keys present in `Overrides` \u2014 no key can appear in both.\",\n    \"Executable filename resolution (nono, swival) happens in the parent process against the parent's PATH before child env applies \u2014 removing devshell-only keys from child env is safe and cannot affect binary discovery.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The root cause is in `ProcessRunners.SandboxEnv.cs:52-64`: `BuildTargetCommandEnvironment` returns only an `IReadOnlyDictionary<string, string>` of overrides \u2014 no removal set. When a valid user snapshot exists, it merges snapshot entries with VR sandbox overrides and returns the combined dictionary. Both call sites (`ProcessRunners.RunAsync.cs:127` and `SandboxedTestRunner.cs:25`) pass this dictionary as the `environment:` parameter to `ProcessCapture.RunAsync`, which applies it onto `ProcessStartInfo.EnvironmentVariables`. Because `EnvironmentVariables` inherits the full parent process environment, any devshell-only key (e.g. `DOTNET_ROOT`) that is absent from the snapshot leaks into the child. The `envRemove` mechanism in `ProcessCapture.cs:104-110` already exists and removes keys BEFORE applying overrides \u2014 but neither call site passes an `envRemove:` argument. `StripLeakedNixSdkEnv` (`ProcessCapture.cs:18,29-41`) only strips `DEVELOPER_DIR`/`SDKROOT` and does not cover `DOTNET_ROOT` or any other nix-injected variable. The fix is to change `BuildTargetCommandEnvironment` to return a `TargetCommandEnvironment(Overrides, Remove)` record, compute `Remove` as every process-env key not present in `Overrides` when a valid snapshot exists, and thread `Remove` through both call sites into the existing `envRemove` parameter.\",\n  \"excerpts\": [\n    \"ProcessRunners.SandboxEnv.cs:52-64 \u2014 BuildTargetCommandEnvironment returns only IReadOnlyDictionary<string, string> (no removal set):\\n```csharp\\ninternal static IReadOnlyDictionary<string, string> BuildTargetCommandEnvironment(\\n    RelayConfig config, IEnvironmentAccessor? accessor = null)\\n{\\n    var snapshot = UserEnvSnapshot.Load(accessor);\\n    if (snapshot is null)\\n        return BuildSandboxEnvironment(config);\\n\\n    var merged = new Dictionary<string, string>(snapshot);\\n    foreach (var kvp in BuildSandboxEnvironment(config))\\n        merged[kvp.Key] = kvp.Value;\\n\\n    return merged;\\n}\\n```\",\n    \"ProcessCapture.cs:104-117 \u2014 envRemove mechanism exists (removes before applying) but is never used by target-command call sites:\\n```csharp\\nif (envRemove is not null)\\n{\\n    foreach (var key in envRemove)\\n    {\\n        process.StartInfo.EnvironmentVariables.Remove(key);\\n    }\\n}\\nif (environment is not null)\\n{\\n    foreach (var kvp in environment)\\n    {\\n        process.StartInfo.EnvironmentVariables[kvp.Key] = kvp.Value;\\n    }\\n}\\n```\",\n    \"ProcessCapture.cs:18,29-41 \u2014 StripLeakedNixSdkEnv only covers two hardcoded keys, not DOTNET_ROOT:\\n```csharp\\nprivate static readonly string[] LeakedAppleSdkEnvNames = [\\\"DEVELOPER_DIR\\\", \\\"SDKROOT\\\"];\\n```\",\n    \"ProcessRunners.RunAsync.cs:127-136 \u2014 Call site 1 (swival stage): passes environment: with no envRemove:\\n```csharp\\nvar sandboxEnv = BuildTargetCommandEnvironment(_config);\\n// ...\\nvar processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot,\\n    processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,\\n    onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs,\\n    onWedgeSample: watchdog.RecordWedgeSample,\\n    socketProbe: BackendSocketProbe.HasEstablishedBackendConnection, timeProvider: _timeProvider);\\n```\",\n    \"SandboxedTestRunner.cs:25-39 \u2014 Call site 2 (verify path): passes env through RunWatchedAsync, no envRemove:\\n```csharp\\nvar env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);\\nreturn await RunWatchedAsync(\\n    fileName, args, rootPath, env,\\n    firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,\\n    idleGraceMs: config.TestIdleGraceMilliseconds,\\n    hardCap: _timeout,\\n    cpuSampleIntervalMs: CpuPulseSampleIntervalMs,\\n    cancellationToken, _timeProvider);\\n```\",\n    \"SandboxedTestRunner.Watched.cs:83-105 \u2014 RunWatchedAsync takes IReadOnlyDictionary<string, string>? environment but no envRemove, passes only environment: to ProcessCapture:\\n```csharp\\ninternal static async Task<TestRunResult> RunWatchedAsync(\\n    string fileName, IReadOnlyList<string> args, string rootPath,\\n    IReadOnlyDictionary<string, string>? environment,\\n    int firstOutputTimeoutMs, int idleGraceMs, TimeSpan hardCap,\\n    int cpuSampleIntervalMs, CancellationToken cancellationToken, TimeProvider? timeProvider = null)\\n{\\n    // ...\\n    var processTask = ProcessCapture.RunAsync(\\n        fileName, args, rootPath, hardCap, cancellationToken,\\n        environment: environment, killToken: watchdogCts.Token,\\n        onActivity: watchdog.Pulse, cpuSampleIntervalMs: cpuSampleIntervalMs, timeProvider: tp);\\n```\",\n    \"IEnvironmentAccessor.cs:9-16 \u2014 Single-key getter, stays unchanged:\\n```csharp\\npublic interface IEnvironmentAccessor\\n{\\n    string? GetEnvironmentVariable(string name);\\n}\\n```\",\n    \"SplitGuardVerificationTests.cs:184 \u2014 Fact-count ratchet baseline is 175; UserEnvSnapshotTests and SandboxEnvForwardingTests are NOT in the tracked prefix list (lines 186-231), so no ratchet bump needed for new facts.\"\n  ],\n  \"repro\": \"On macOS with nix devshell exporting DOTNET_ROOT:\\n1. Ensure VISUAL_RELAY_USER_ENV_SNAPSHOT points to a user snapshot that lacks DOTNET_ROOT.\\n2. Configure a repo with guardCmd = \\\"dotnet format VisualRelay.slnx --verify-no-changes\\\".\\n3. Run a relay stage. The child inherits DOTNET_ROOT=/nix/store/...-dotnet-sdk-10.0.301/share/dotnet from the nix devshell (not in snapshot \u2192 not in the override dict \u2192 survives inheritance), while PATH from the snapshot resolves the host dotnet (10.0.300).\\n4. The child crashes: System.IO.FileNotFoundException: Could not load file or assembly 'System.Composition.AttributedModel, Version=10.0.0.9' \u2014 10.0.301's analyzers loaded into 10.0.300's runtime.\\n\\nMinimal repro outside relay:\\n  DOTNET_ROOT=/nix/store/...-dotnet-sdk-10.0.301/share/dotnet dotnet format SomeSln.slnx --verify-no-changes  # crashes\\n  dotnet format SomeSln.slnx --verify-no-changes  # exit 0\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have all the information needed. Let me produce the concrete plan.\n\n```json\n{\n  \"plan\": \"## Implementation Plan: Replace target-command env base instead of overlaying\\n\\n### 1. `src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs`\\n\\n**Add `TargetCommandEnvironment` record** after the `using` block and before `public sealed partial class SwivalSubagentRunner`:\\n\\n```csharp\\ninternal sealed record TargetCommandEnvironment(\\n    IReadOnlyDictionary<string, string> Overrides,\\n    IReadOnlySet<string> Remove);\\n```\\n\\n**Change `BuildTargetCommandEnvironment`** signature to return `TargetCommandEnvironment` and add optional `processEnv` parameter. New semantics:\\n\\n- When `processEnv` is null, snapshot the real `Environment.GetEnvironmentVariables()` into `IReadOnlyDictionary<string,string>` via a private helper (cast each `DictionaryEntry` key/value to string).\\n- When snapshot is null OR snapshot lacks a `PATH` key: return `new TargetCommandEnvironment(BuildSandboxEnvironment(config), new HashSet<string>())` \u2014 byte-identical to today's fallback.\\n- When valid snapshot exists: merge snapshot entries, then `BuildSandboxEnvironment(config)` entries on top (VR wins). Compute `Remove` = every key in `processEnv` that is NOT a key in `merged`. Return `new TargetCommandEnvironment(merged, remove)`.\\n\\n**Add private helper** `SnapshotProcessEnv()` that calls `Environment.GetEnvironmentVariables()` and builds `Dictionary<string,string>`.\\n\\n### 2. `src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`\\n\\nAt line 127, change:\\n```csharp\\nvar sandboxEnv = BuildTargetCommandEnvironment(_config);\\n```\\nto:\\n```csharp\\nvar targetEnv = BuildTargetCommandEnvironment(_config);\\n```\\n\\nIn the `ProcessCapture.RunAsync` call (lines 132\u2013136), change `environment: sandboxEnv` to `environment: targetEnv.Overrides` and add `envRemove: targetEnv.Remove` as the next named argument (before `killToken:`).\\n\\n### 3. `src/VisualRelay.Core/Execution/SandboxedTestRunner.cs`\\n\\nAt line 25, change:\\n```csharp\\nvar env = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);\\n```\\nto:\\n```csharp\\nvar targetEnv = SwivalSubagentRunner.BuildTargetCommandEnvironment(config);\\n```\\n\\nIn the `RunWatchedAsync` call (lines 33\u201339), change `env` to `targetEnv.Overrides` and add `envRemove: targetEnv.Remove` as a new named argument.\\n\\n### 4. `src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs`\\n\\nAdd `IReadOnlySet<string>? envRemove = null` parameter to `RunWatchedAsync` (line 87, after `environment`). At the `ProcessCapture.RunAsync` call (lines 102\u2013105), add `envRemove: envRemove` as a named argument (after `environment:`).\\n\\n### 5. `tests/VisualRelay.Tests/UserEnvSnapshotTests.cs`\\n\\n**Adapt existing `BuildTargetCommandEnvironment_*` facts** (lines 86\u2013154) to destructure `.Overrides` from the new `TargetCommandEnvironment` return type. All assertions on individual key/value pairs remain identical; only the variable declaration changes. Example: `var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env);` becomes `var result = SwivalSubagentRunner.BuildTargetCommandEnvironment(SandboxOn(), _env).Overrides;`.\\n\\n**Add five new facts:**\\n\\n1. **`BuildTargetCommandEnvironment_DevshellOnlyKey_IsInRemove`**: Provide a `processEnv` dict containing `DOTNET_ROOT=/nix/store/x` and a snapshot without `DOTNET_ROOT`. Assert `Remove` contains `DOTNET_ROOT` and `Overrides` does not.\\n\\n2. **`BuildTargetCommandEnvironment_SnapshotKey_NotInRemove`**: Provide a `processEnv` where key exists in both snapshot and process env. Assert the key is NOT in `Remove` and its snapshot value is in `Overrides`.\\n\\n3. **`BuildTargetCommandEnvironment_VrOverrideKeys_NeverInRemove`**: With a valid snapshot that lacks VR override keys (e.g. `PYTHONDONTWRITEBYTECODE`), assert those keys are present in `Overrides` and absent from `Remove`.\\n\\n4. **`BuildTargetCommandEnvironment_NoSnapshot_RemoveEmpty`**: Without setting `VISUAL_RELAY_USER_ENV_SNAPSHOT`, assert `Remove` is empty and `Overrides` equals `BuildSandboxEnvironment` output.\\n\\n5. **`BuildTargetCommandEnvironment_SnapshotWithoutPath_TreatedAsInvalid`**: Write a snapshot that has `HOME` but NO `PATH` key. Assert `Remove` is empty (fallback behavior) and `Overrides` equals `BuildSandboxEnvironment` output.\\n\\n### 6. `tests/VisualRelay.Tests/SandboxEnvForwardingTests.cs`\\n\\n**Add integration test `ProcessCapture_EnvRemove_StripsMarkerFromChild`**: On POSIX only (skip Windows), set a unique marker variable in the current process (via `Environment.SetEnvironmentVariable`), spawn a child via `ProcessCapture.RunAsync` with `envRemove` containing that marker, and assert the child does NOT see it. Also pass a second key via `environment:` and assert the child DOES see that one. Clean up the marker in a `try/finally`.\\n\\n### Fact-count ratchet\\n\\nNeither `UserEnvSnapshotTests` nor `SandboxEnvForwardingTests` is in the tracked prefix list in `SplitGuardVerificationTests.cs` lines 186\u2013231. No ratchet bump needed. The baseline of 175 remains unchanged.\\n\\n### Build verification\\n\\n`dotnet build VisualRelay.slnx` must succeed. All existing tests must pass. Packaged/brew installs (no snapshot) produce `Remove` = empty, `Overrides` = `BuildSandboxEnvironment` \u2014 byte-identical to today.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs\",\n    \"src/VisualRelay.Core/Execution/SandboxedTestRunner.cs\",\n    \"src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs\",\n    \"tests/VisualRelay.Tests/UserEnvSnapshotTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxEnvForwardingTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 5,
+    "tool_calls_total": 14,
+    "tool_calls_succeeded": 14,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 11,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 5,
+    "total_llm_time_s": 67.975,
+    "prompt_cache": {
+      "cached_tokens": 92544,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.107,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.091,
+      "prompt_tokens_est": 8508,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.SandboxEnv.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3807
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessCapture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15969
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17902
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6023
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6878
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.583,
+      "prompt_tokens_est": 20337,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/UserEnvSnapshotTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7826
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/SandboxEnvForwardingTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4311
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/UserEnvSnapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1940
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12141
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.352,
+      "prompt_tokens_est": 27223,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Configuration/IEnvironmentAccessor.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 663
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "KeyEnvFile",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 3520
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/SplitGuardVerificationTests.cs",
+        "offset": 180,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3102
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 21.301,
+      "prompt_tokens_est": 29239,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ProcessCapture\\.RunAsync\\(",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.036,
+      "result_length": 2495
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "envRemove",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 31.649,
+      "prompt_tokens_est": 31246,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

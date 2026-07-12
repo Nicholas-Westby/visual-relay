@@ -124,13 +124,14 @@ public sealed partial class SwivalSubagentRunner
             var arguments = BuildPromptArguments(attemptInvocation, resolvedCommands, correctivePriorOutput, correctiveShapeError, attempt, reportFile);
 
             var (fileName, launchArguments) = BuildLaunchTarget(arguments, skipDirs, attemptInvocation);
-            var sandboxEnv = BuildTargetCommandEnvironment(_config);
+            var targetEnv = BuildTargetCommandEnvironment(_config);
             var processTimeout = absoluteCeilingMs <= 0
                 ? Timeout.InfiniteTimeSpan
                 : TimeSpan.FromMilliseconds(absoluteCeilingMs);
 
             var processTask = ProcessCapture.RunAsync(fileName, launchArguments, attemptInvocation.TargetRoot,
-                processTimeout, cancellationToken, environment: sandboxEnv, killToken: watchdogCts.Token,
+                processTimeout, cancellationToken, environment: targetEnv.Overrides,
+                envRemove: targetEnv.Remove, killToken: watchdogCts.Token,
                 onActivity: watchdog.Pulse, cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
                 onWedgeSample: watchdog.RecordWedgeSample,
                 socketProbe: BackendSocketProbe.HasEstablishedBackendConnection, timeProvider: _timeProvider);

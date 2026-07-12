@@ -125,6 +125,10 @@ public sealed partial class SplitGuardVerificationTests
             // authoritative — it sets/clears process env vars in try/finally
             // blocks to prove the accessor wins over the real environment.
             if (Path.GetFileName(file) == "KeyEnvFileHermeticityTests.cs") continue;
+            // SandboxEnvForwardingTests.ProcessCapture_EnvRemove_StripsMarkerFromChild
+            // sets/clears a unique process env marker in try/finally to prove that
+            // envRemove actually strips keys from the spawned child environment.
+            if (Path.GetFileName(file) == "SandboxEnvForwardingTests.cs") continue;
 
             var content = File.ReadAllText(file);
             if (content.Contains("Environment.SetEnvironmentVariable", StringComparison.Ordinal))
