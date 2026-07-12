@@ -3,7 +3,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class ArchiveDayGroupingTests
+public sealed partial class ArchiveDayGroupingTests
 {
     [Fact]
     public void Today_FirstTaskLocalDateEqualsToday_ReturnsToday()
@@ -187,7 +187,7 @@ public sealed class ArchiveDayGroupingTests
 
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
 
-        Assert.Equal("Today ($1.54)", heading);
+        Assert.Equal("Today: $1.54, $1.54/task, $2/mo", heading);
     }
 
     [Fact]
@@ -200,7 +200,7 @@ public sealed class ArchiveDayGroupingTests
             Archived("b", AtLocal(2026, 6, 19, 14, 0), costUsd: 0.11),
         };
 
-        Assert.Equal("Yesterday ($0.21)", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
+        Assert.Equal("Yesterday: $0.21, $0.11/task, $0.21/mo", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
         Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));
     }
 
@@ -216,7 +216,7 @@ public sealed class ArchiveDayGroupingTests
         var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);
 
         Assert.NotNull(heading);
-        Assert.Contains("($5.00)", heading, StringComparison.Ordinal);
+        Assert.Contains(": $5.00, $5.00/task, $5/mo", heading, StringComparison.Ordinal);
         Assert.Contains("17", heading, StringComparison.Ordinal);
         Assert.Contains("2026", heading, StringComparison.Ordinal);
     }
@@ -237,14 +237,14 @@ public sealed class ArchiveDayGroupingTests
             Archived("e", AtLocal(2026, 6, 15, 8, 0), costUsd: 0.70),
         };
 
-        Assert.Equal("Today ($3.00)", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
+        Assert.Equal("Today: $3.00, $0.90/task, $5/mo", ArchiveDayGrouping.HeadingFor(tasks, 0, today));
         Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));
         var day2 = ArchiveDayGrouping.HeadingFor(tasks, 2, today);
         Assert.NotNull(day2);
-        Assert.Contains("($0.50)", day2, StringComparison.Ordinal);
+        Assert.Contains(": $0.50", day2, StringComparison.Ordinal);
         Assert.NotEqual("Today", day2);
-        Assert.Equal("Thursday, June 18, 2026 ($0.50)", ArchiveDayGrouping.HeadingFor(tasks, 2, today));
-        Assert.Equal("Monday, June 15, 2026 ($1.00)", ArchiveDayGrouping.HeadingFor(tasks, 3, today));
+        Assert.Equal("Thursday, June 18, 2026: $0.50", ArchiveDayGrouping.HeadingFor(tasks, 2, today));
+        Assert.Equal("Monday, June 15, 2026: $1.00", ArchiveDayGrouping.HeadingFor(tasks, 3, today));
         Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 4, today));
     }
 

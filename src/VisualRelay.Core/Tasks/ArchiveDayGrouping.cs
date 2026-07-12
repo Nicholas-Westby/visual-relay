@@ -6,10 +6,15 @@ namespace VisualRelay.Core.Tasks;
 /// <summary>
 /// Pure helper that assigns per-day heading labels for a completion-ordered
 /// archive list. Returns a label for the first row of each local-calendar day
-/// and <c>null</c> for all subsequent rows on the same day.
+/// and <c>null</c> for all subsequent rows on the same day. The newest
+/// completed day's heading also carries rolling-30-day quick metrics (average
+/// cost per task and total spend presented as a monthly rate).
 /// </summary>
 public static class ArchiveDayGrouping
 {
+    /// <summary>Rolling window (local calendar days, ending at and including
+    /// <c>today</c>) feeding the newest header's per-task and per-month metrics.</summary>
+    private const int MetricsWindowDays = 30;
     /// <summary>
     /// Returns the heading label for the row at <paramref name="index"/>,
     /// or <c>null</c> when it shares the same local day as the previous row.
@@ -47,20 +52,43 @@ public static class ArchiveDayGrouping
         else
             heading = localDay.ToString("dddd, MMMM d, yyyy", CultureInfo.CurrentCulture);
 
-        // Sum CostUsd across all tasks sharing the same local calendar day.
+        // One pass: this day's total, the rolling-window aggregates, and the newest
+        // completed local day (the list arrives newest-first, but scanning is
+        // order-independent and free at archive sizes).
         var dayTotal = 0.0;
+        var windowTotal = 0.0;
+        var windowCount = 0;
+        DateOnly? newestDay = null;
+        var windowStart = today.AddDays(-(MetricsWindowDays - 1));
         foreach (var t in orderedTasks)
         {
-            if (t.CompletedAt is { } ct)
+            if (t.CompletedAt is not { } ct)
+                continue;
+            var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);
+            if (newestDay is null || d > newestDay.Value)
+                newestDay = d;
+            if (d == localDay)
+                dayTotal += t.CostUsd;
+            if (d >= windowStart)
             {
-                var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);
-                if (d == localDay)
-                    dayTotal += t.CostUsd;
+                windowTotal += t.CostUsd;
+                windowCount++;
             }
         }
 
         if (dayTotal > 0)
-            heading = $"{heading} ({MoneyFormatter.Dollars(dayTotal)})";
+        {
+            heading = $"{heading}: {MoneyFormatter.Dollars(dayTotal)}";
+
+            // Quick metrics ride ONLY the newest group's header: average cost per
+            // task and total spend over the rolling window, shown as a monthly rate.
+            if (localDay == newestDay && windowCount > 0 && windowTotal > 0)
+            {
+                var perTask = MoneyFormatter.Dollars(windowTotal / windowCount);
+                var perMonth = MoneyFormatter.WholeDollars(windowTotal);
+                heading = $"{heading}, {perTask}/task, {perMonth}/mo";
+            }
+        }
 
         return heading;
     }

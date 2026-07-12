@@ -13,16 +13,16 @@ public sealed class HfGateHintLayoutTests
 {
     /// <summary>
     /// The HF-gate banner hint "or open Settings ⚙ in the top bar" must not be
-    /// clipped at the QueuePanel's fixed 280 px width. Before the fix the hint
-    /// was laid out horizontally beside the "Get a free token →" button, and the
-    /// combined width (~326 px) exceeded the ~250 px content area, causing the
-    /// outer Border's ClipToBounds to cut ~61 px (35%) of the hint.
+    /// clipped at the QueuePanel's fixed 320 px width. Before the width was
+    /// widened from 280 to 320, the hint was laid out horizontally beside the
+    /// "Get a free token →" button, and the combined width (~326 px) exceeded
+    /// the content area, causing the outer Border's ClipToBounds to clip the hint.
     ///
     /// After the fix the hint is on its own line with TextWrapping="Wrap", so it
-    /// stays within the 280 px panel boundary.
+    /// stays within the panel boundary.
     /// </summary>
     [AvaloniaFact]
-    public async Task HfGateHint_IsNotClipped_AtFixed280PxPanelWidth()
+    public async Task HfGateHint_IsNotClipped_AtFixed320PxPanelWidth()
     {
         // ── Arrange: config + task, no HF token ──
         using var repo = TestRepository.Create();
@@ -58,15 +58,15 @@ public sealed class HfGateHintLayoutTests
         Assert.NotNull(hintBlock);
 
         // ── Assert: the hint's right edge, translated into QueuePanel
-        //    coordinates, does not exceed the panel's 280 px width. ──
+        //    coordinates, does not exceed the panel's 320 px width. ──
         var hintRightInPanel = hintBlock.TranslatePoint(
             new Point(hintBlock.Bounds.Width, 0), queuePanel);
 
         Assert.NotNull(hintRightInPanel);
         Assert.True(
-            hintRightInPanel.Value.X <= 280.0,
+            hintRightInPanel.Value.X <= 320.0,
             $"HF-gate hint right edge {hintRightInPanel.Value.X:F1} px exceeds "
-            + "QueuePanel width 280 px — hint text is clipped. "
+            + "QueuePanel width 320 px — hint text is clipped. "
             + $"Hint Bounds={hintBlock.Bounds}, "
             + $"DesiredSize={hintBlock.DesiredSize}");
 

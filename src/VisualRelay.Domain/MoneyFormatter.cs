@@ -24,6 +24,17 @@ public static class MoneyFormatter
         return $"${FormatSubCent(usd)}";
     }
 
+    /// <summary>Whole-dollar display for rate-style figures (e.g. "$98"): rounds
+    /// to the nearest dollar away from zero. Amounts under $1 fall back to
+    /// <see cref="Dollars"/> so small spend never collapses to "$0".</summary>
+    public static string WholeDollars(double usd)
+    {
+        if (usd < 1)
+            return Dollars(usd);
+        var rounded = Math.Round(usd, 0, MidpointRounding.AwayFromZero);
+        return $"${rounded.ToString("0", CultureInfo.InvariantCulture)}";
+    }
+
     private static string FormatSubCent(double usd)
     {
         // Decimal places needed for the requested significant figures, e.g.

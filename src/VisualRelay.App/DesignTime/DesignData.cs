@@ -37,7 +37,7 @@ public static class DesignData
             costUsd: 0.06, durationSeconds: 138, completedStages: 5)));
         Main.Tasks.Add(new TaskRowViewModel(NewItem("00-bootstrap-project",
             archived: true, costUsd: 0.42, durationSeconds: 947, completedStages: 12))
-        { DayHeader = "Today ($0.42)" });
+        { DayHeader = "Today: $0.42, $0.21/task, $13/mo" });
         // Deliberately NOT setting Main.SelectedTask: OnSelectedTaskChanged
         // (MainWindowViewModel.Commands.cs) kicks SelectTaskAsync, which reads
         // the fabricated markdown path from disk and surfaces the failure into

@@ -1,0 +1,710 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T22:52:18.424551+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 08-archive-header-cost-metrics\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Archive day headers: 30-day quick metrics on the newest group + wider left panel\n\n## Problem\n\nIn the archive view, day group headers currently read `Today ($1.35)` /\n`Yesterday ($0.68)`. Two changes:\n\n1. **Format** switches from parentheses to a colon for every header with cost:\n   `Today: $1.35`, `Yesterday: $0.68`, `Thursday, June 18, 2026: $0.50`.\n2. **Only the most recent group header** additionally shows two rolling quick metrics,\n   both computed over the last 30 days: average cost per task and total spend\n   presented as a monthly rate \u2014 e.g. `Today: $1.35, $0.18/task, $98/mo`.\n   Older group headers show only their day cost.\n\nAdditionally the left (queue/archive) panel is slightly too narrow \u2014 the collapse\nchevron in its header crowds the edge and the longer header text needs room \u2014 so its\nwidth goes from 280 to 320.\n\n## Where everything lives\n\n- The header text is built by the pure helper\n  `src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs` \u2192 `HeadingFor(IReadOnlyList<RelayTaskItem> orderedTasks, int index, DateOnly today)`.\n  Its current cost suffix is:\n\n  ```csharp\n  if (dayTotal > 0)\n      heading = $\"{heading} ({MoneyFormatter.Dollars(dayTotal)})\";\n  ```\n\n  The list is ordered newest-completion-first; `RelayTaskItem` carries\n  `double CostUsd` and `DateTimeOffset? CompletedAt`; days are grouped by\n  `CompletedAt.ToLocalTime().Date`.\n- The single caller is `MainWindowViewModel.ReloadTaskListAsync`\n  (`src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs`):\n  `row.DayHeader = ArchiveDayGrouping.HeadingFor(tasks, i, today) ?? string.Empty;`\n  \u2014 **the signature does not change and this file is not touched.**\n- Money formatting: `src/VisualRelay.Domain/MoneyFormatter.cs` \u2192 `Dollars(double)`\n  (2-decimal dollars; sub-cent amounts keep 2 significant figures; `<= 0` \u2192 `\"$0.00\"`).\n- Panel width: `src/VisualRelay.App/Views/MainWindow.axaml`, under the comment\n  `<!-- Left column: Queue or collapsed rail (content-swap in Auto track) -->`:\n  `<controls:QueuePanel Width=\"280\" ...`.\n- Design-time sample: `src/VisualRelay.App/DesignTime/DesignData.cs` sets\n  `{ DayHeader = \"Today ($0.42)\" }` on the archived sample row.\n- Tests: `tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs` (currently 293 lines \u2014\n  right under the 300-line guard, which is why new tests go in a new partial file, see\n  Tests below).\n\n## Fix\n\n### 1. `MoneyFormatter.WholeDollars` (new helper in `src/VisualRelay.Domain/MoneyFormatter.cs`)\n\nThe `/mo` figure rounds to the nearest whole dollar \u2014 unless the amount is under $1,\nin which case it falls back to cents so small spend never collapses to `$0`:\n\n```csharp\n/// <summary>Whole-dollar display for rate-style figures (e.g. \"$98\"): rounds\n/// to the nearest dollar away from zero. Amounts under $1 fall back to\n/// <see cref=\"Dollars\"/> so small spend never collapses to \"$0\".</summary>\npublic static string WholeDollars(double usd)\n{\n    if (usd < 1)\n        return Dollars(usd);\n    var rounded = Math.Round(usd, 0, MidpointRounding.AwayFromZero);\n    return $\"${rounded.ToString(\"0\", CultureInfo.InvariantCulture)}\";\n}\n```\n\n### 2. `ArchiveDayGrouping.HeadingFor` \u2014 replace the cost-suffix block\n\nKeep the method's existing null/label logic (null `CompletedAt` \u2192 null; same-day\nnon-first row \u2192 null; Today/Yesterday/`\"dddd, MMMM d, yyyy\"` label) byte-for-byte.\nReplace everything from the `// Sum CostUsd across all tasks...` comment down to the\n`return heading;` with a single pass that also accumulates the rolling window and\nfinds the newest completed day:\n\n```csharp\n// One pass: this day's total, the rolling-window aggregates, and the newest\n// completed local day (the list arrives newest-first, but scanning is\n// order-independent and free at archive sizes).\nvar dayTotal = 0.0;\nvar windowTotal = 0.0;\nvar windowCount = 0;\nDateOnly? newestDay = null;\nvar windowStart = today.AddDays(-(MetricsWindowDays - 1));\nforeach (var t in orderedTasks)\n{\n    if (t.CompletedAt is not { } ct)\n        continue;\n    var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);\n    if (newestDay is null || d > newestDay.Value)\n        newestDay = d;\n    if (d == localDay)\n        dayTotal += t.CostUsd;\n    if (d >= windowStart)\n    {\n        windowTotal += t.CostUsd;\n        windowCount++;\n    }\n}\n\nif (dayTotal > 0)\n{\n    heading = $\"{heading}: {MoneyFormatter.Dollars(dayTotal)}\";\n\n    // Quick metrics ride ONLY the newest group's header: average cost per\n    // task and total spend over the rolling window, shown as a monthly rate.\n    if (localDay == newestDay && windowCount > 0 && windowTotal > 0)\n    {\n        var perTask = MoneyFormatter.Dollars(windowTotal / windowCount);\n        var perMonth = MoneyFormatter.WholeDollars(windowTotal);\n        heading = $\"{heading}, {perTask}/task, {perMonth}/mo\";\n    }\n}\n\nreturn heading;\n```\n\nwith this constant added to the class:\n\n```csharp\n/// <summary>Rolling window (local calendar days, ending at and including\n/// <c>today</c>) feeding the newest header's per-task and per-month metrics.</summary>\nprivate const int MetricsWindowDays = 30;\n```\n\nAlso update the class XML doc summary to mention that the newest completed day's\nheading carries rolling-30-day quick metrics.\n\nPinned semantics (the tests below encode all of these):\n\n- **Window** = local calendar days `d` with `d >= today.AddDays(-29)` \u2014 the 30 days\n  ending at and including today. The window count includes zero-cost completed tasks\n  (they dilute the average deliberately: \"average cost per task\" means all tasks).\n- **Newest group** = the group of the newest completed local day in the list \u2014 not\n  necessarily \"Today\". If the newest archive entry is from last week, that header\n  gets the metrics.\n- **Per-task** = `Dollars(windowTotal / windowCount)` \u2014 cents always (e.g. `$0.18/task`).\n- **Per-month** = `WholeDollars(windowTotal)` \u2014 whole dollars, cents only under $1.\n- **Zero-cost day** \u2192 bare label with no colon and no metrics (existing behavior,\n  already pinned by `ZeroCost_OmitsCostSuffix` and\n  `MultipleTasksSameDayZeroTotal_OmitsCostSuffix` \u2014 those tests stay green unmodified).\n- If the newest group's day total is 0, or the window is empty/zero, no metrics are\n  appended anywhere.\n\n### 3. Panel width\n\nIn `src/VisualRelay.App/Views/MainWindow.axaml`, change\n`<controls:QueuePanel Width=\"280\"` to `<controls:QueuePanel Width=\"320\"`. Leave the\ncollapsed-rail `<Border Width=\"36\"` and every other width alone. (The panel sets its\nown width inside an `Auto` grid track \u2014 do not touch the ColumnDefinitions.)\n\n### 4. Design-time sample\n\nIn `src/VisualRelay.App/DesignTime/DesignData.cs`, update the archived sample row's\nheader to the new shape so the previewer shows the real format:\n\n```csharp\n{ DayHeader = \"Today: $0.42, $0.21/task, $13/mo\" });\n```\n\n(`DesignDataTests` only asserts a non-empty `DayHeader`; it stays green.)\n\n## Tests\n\n`ArchiveDayGroupingTests.cs` is at 293 lines; adding tests there would breach the\n300-line `FileSizeGuard`. Follow the repo's existing partial-test-class precedent\n(`CostPerModelTests` + `CostPerModelTests.Display.cs`):\n\n1. In `tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs`: change\n   `public sealed class ArchiveDayGroupingTests` to\n   `public sealed partial class ArchiveDayGroupingTests`, and update the five\n   existing cost-format pins in place (the `AtLocal`/`Archived` helpers stay where\n   they are \u2014 the new partial can use them):\n   - `Today_WithCost_IncludesTotalCost` (single task today, 1.54; window = that task):\n     expect `\"Today: $1.54, $1.54/task, $2/mo\"`.\n   - `Yesterday_WithMultipleTasks_SumsCosts` (0.10 + 0.11 yesterday; yesterday IS the\n     newest group): expect `\"Yesterday: $0.21, $0.11/task, $0.21/mo\"` at index 0,\n     null at index 1.\n   - `FullDate_WithCost_IncludesTotalCost` (single task June 17, 5.00 \u2014 newest group):\n     replace `Assert.Contains(\"($5.00)\", ...)` with\n     `Assert.Contains(\": $5.00, $5.00/task, $5/mo\", heading, StringComparison.Ordinal);`\n     (keep the existing \"17\"/\"2026\" Contains asserts).\n   - `FirstOfNewDay_CostOnlyOnHeadingRow` (today 3.00 total; June 18 0.50; June 15\n     1.00; all within the window \u2192 windowTotal 4.50 over 5 tasks):\n     index 0 \u2192 `\"Today: $3.00, $0.90/task, $5/mo\"`;\n     the `Assert.Contains(\"($0.50)\", ...)` \u2192 `Assert.Contains(\": $0.50\", ...)`;\n     `\"Thursday, June 18, 2026 ($0.50)\"` \u2192 `\"Thursday, June 18, 2026: $0.50\"`;\n     `\"Monday, June 15, 2026 ($1.00)\"` \u2192 `\"Monday, June 15, 2026: $1.00\"`.\n     Note the older headers get NO metrics \u2014 that is the point of this test now.\n   - All no-cost and grouping tests (`Today_FirstTaskLocalDateEqualsToday_ReturnsToday`,\n     `ZeroCost_OmitsCostSuffix`, etc.) stay byte-for-byte.\n\n2. New file `tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs`\n   (`public sealed partial class ArchiveDayGroupingTests`, same namespace) with:\n\n   - `Window_Includes29DaysBack_Excludes30` \u2014 today = 2026-06-20; tasks: today 1.00,\n     `AtLocal(2026, 5, 22, \u2026)` 2.00 (29 days back \u2014 inside), `AtLocal(2026, 5, 21, \u2026)`\n     4.00 (30 days back \u2014 outside). Index 0 must equal\n     `\"Today: $1.00, $1.50/task, $3/mo\"` (window = 1.00 + 2.00 over 2 tasks).\n   - `OlderGroupInsideWindow_GetsNoMetrics` \u2014 reuse the three-task list above and\n     assert the 2026-05-22 header equals `\"Friday, May 22, 2026: $2.00\"` (cost, colon,\n     no `/task`, no `/mo`).\n   - `NewestGroupNotToday_StillGetsMetrics` \u2014 today = 2026-06-20; single task\n     `AtLocal(2026, 6, 14, \u2026)` 1.20 (six days ago, newest and only group):\n     expect `\"Sunday, June 14, 2026: $1.20, $1.20/task, $1/mo\"`.\n   - `MonthUnderOneDollar_ShowsCents` \u2014 single task yesterday 0.42:\n     expect `\"Yesterday: $0.42, $0.42/task, $0.42/mo\"`.\n   - `WholeDollars_Formats` \u2014 `[Theory]` directly on `MoneyFormatter.WholeDollars`\n     (no MoneyFormatter test file exists; this pins the new helper):\n     `(0.0, \"$0.00\")`, `(0.42, \"$0.42\")`, `(1.49, \"$1\")`, `(4.5, \"$5\")`,\n     `(98.4, \"$98\")`.\n\n   Date sanity for the pins: 2026-06-20 is a Saturday (the existing suite already pins\n   Thursday June 18 and Monday June 15, 2026), so 2026-05-22 is a Friday and\n   2026-06-14 is a Sunday.\n\nBoth test files must stay under 300 lines (the main file's edits are same-line\nreplacements; the new file is ~120 lines).\n\n## Rejected approaches \u2014 do not do these\n\n- **Computing the metrics in `MainWindowViewModel`** \u2014 the grouping helper is pure and\n  unit-tested precisely so this logic never needs an Avalonia session; the caller and\n  the `HeadingFor` signature stay untouched.\n- **Calendar-month totals** (\"spend in June\") for `/mo` \u2014 the requirement is a rolling\n  last-30-days figure presented as a monthly rate.\n- **Rounding `$/task` to whole dollars** \u2014 only the `/mo` figure rounds; per-task\n  keeps cents.\n- **Metrics on every day header** \u2014 newest group only; older headers show just their\n  day cost.\n- **Widening via the Grid ColumnDefinitions or the collapsed rail** \u2014 only the\n  `QueuePanel Width` attribute changes.\n- **Caching/precomputing the window aggregates across `HeadingFor` calls** \u2014 the per-call\n  scan is O(n) with n \u2248 tens; keep the helper stateless and pure.\n\n## Verification\n\n1. `dotnet build` \u2014 green.\n2. `dotnet test tests/VisualRelay.Tests --filter \"FullyQualifiedName~ArchiveDayGroupingTests|FullyQualifiedName~DesignDataTests\"` \u2014 green.\n3. `./visual-relay check` \u2014 must pass; in particular the diff of THIS task must not\n   introduce any new InspectCode finding (no unused usings, no unreferenced locals)\n   and every touched `.cs`/`.axaml` file must stay under the 300-line guard.\n4. Launch the app, open the archive: the newest day header reads like\n   `Today: $1.35, $0.18/task, $98/mo`, older ones like `Yesterday: $0.68`, and the\n   header row (title, count chip, New/Queue buttons, collapse chevron) fits without\n   crowding at the new 320px width.\n\n## Constraints\n\n- Touch ONLY: `src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs`,\n  `src/VisualRelay.Domain/MoneyFormatter.cs`, `src/VisualRelay.App/Views/MainWindow.axaml`\n  (one attribute), `src/VisualRelay.App/DesignTime/DesignData.cs` (one string),\n  `tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs`, and the new\n  `tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs`.\n- Do NOT touch `MainWindowViewModel.Helpers.cs`, `TaskRowViewModel`, `TaskCard.axaml`,\n  `QueuePanel.axaml`, or `MoneyFormatter.Dollars`.\n- No new packages. `WholeDollars` uses `CultureInfo.InvariantCulture` like the rest of\n  `MoneyFormatter`; the date label keeps `CultureInfo.CurrentCulture` as today.\n\n\n## Manifest\nsrc/VisualRelay.Domain/MoneyFormatter.cs\nsrc/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs\nsrc/VisualRelay.App/Views/MainWindow.axaml\nsrc/VisualRelay.App/DesignTime/DesignData.cs\ntests/VisualRelay.Tests/ArchiveDayGroupingTests.cs\ntests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Archive day headers need colon-separated cost formatting and rolling 30-day metrics (avg cost/task + monthly spend rate) on the newest group only. The left panel widens from 280\u2192320. All changes are in the pure HeadingFor helper, MoneyFormatter.WholeDollars, one axaml attribute, one design-data string, and test files\u2014no signature changes or caller touches.\",\n  \"options\": [\n    \"Option A: Single-pass rewrite as specified \u2014 one foreach accumulates day total, rolling window, and newest-day discovery; MetricsWindowDays constant on the class; new partial test file mirrors spec. Matches the task exactly.\",\n    \"Option B: Extract window computation to a private method/struct called from HeadingFor for readability, keeping the base method leaner. Adds indirection but is cleaner at the call site.\",\n    \"Option C: Two-pass \u2014 keep the original day-total loop and add a second scan for window aggregates only when the current day is the newest. Less restructuring but double the scan overhead.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"ArchiveDayGrouping.HeadingFor currently appends parentheses cost suffix ($'{heading} ({MoneyFormatter.Dollars(dayTotal)})') via a single-pass day-total scan. Must switch to colon format and add a rolling 30-day window scan (same pass) that attaches avg cost/task + monthly spend rate ONLY to the newest completed day's header. MoneyFormatter needs a WholeDollars helper for /mo rounding. MainWindow.axaml QueuePanel width changes 280\u2192320. DesignData sample header updates. Existing test file at 293 lines must go partial (public sealed partial class) \u2014 same pattern as CostPerModelTests. New Metrics partial file adds 5 tests. All .cs/.axaml must stay under 300-line FileSizeGuard. HeadingFor signature invariant enforced by callers.\",\n  \"constraints\": [\n    \"ArchiveDayGrouping.HeadingFor signature must not change; MainWindowViewModel.Helpers.cs is not touched\",\n    \"All touched .cs and .axaml files must stay under the 300-line FileSizeGuard limit\",\n    \"ArchiveDayGroupingTests.cs (293 lines) must use partial class split \u2014 new tests go in ArchiveDayGroupingTests.Metrics.cs\",\n    \"MoneyFormatter.WholeDollars must use CultureInfo.InvariantCulture; date labels keep CultureInfo.CurrentCulture\",\n    \"No new NuGet packages; no changes to MoneyFormatter.Dollars, QueuePanel.axaml, TaskCard.axaml, or TaskRowViewModel\",\n    \"Only the QueuePanel Width attribute changes (280\u2192320) \u2014 Grid ColumnDefinitions and collapsed rail Border Width=36 are untouched\",\n    \"Rolling window is 30 local calendar days ending at today (d >= today.AddDays(-29))\",\n    \"Zero-cost completed tasks count toward window task count but not day total\",\n    \"Newest group = newest completed local day in list (may not be Today); only it gets metrics\",\n    \"Per-task uses Dollars() (cents always); per-month uses WholeDollars() (whole dollars, cents under $1)\",\n    \"Zero-cost day \u2192 bare label, no colon, no metrics; empty/zero window \u2192 no metrics appended\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"All five files to modify and three collateral files were read in full. ArchiveDayGrouping.HeadingFor (67 lines) currently builds parens cost suffix on line 63 and has no rolling-window logic. MoneyFormatter (40 lines) lacks WholeDollars. MainWindow.axaml line 62 has Width=\\\"280\\\". DesignData.cs line 40 has \\\"Today ($0.42)\\\". ArchiveDayGroupingTests.cs (293 lines) is sealed class with five parens-format cost assertions. The caller at MainWindowViewModel.Helpers.cs line 170 passes (tasks, i, today) \u2014 signature unchanged. CostPerModelTests.cs + .Display.cs establish the partial class precedent. No ColumnDefinitions, collapsed rail, or caller changes are needed. All files stay under 300 lines after changes.\",\n  \"excerpts\": [\n    \"ArchiveDayGrouping.cs:63: heading = $\\\"{heading} ({MoneyFormatter.Dollars(dayTotal)})\\\"; \u2014 parens format, no metrics\",\n    \"ArchiveDayGrouping.cs:51-60: single-purpose day-total foreach; no window aggregates, no newestDay\",\n    \"MoneyFormatter.cs:11-25: only Dollars() and FormatSubCent(); WholeDollars missing\",\n    \"MainWindow.axaml:62: <controls:QueuePanel Width=\\\"280\\\" \u2014 needs 320\",\n    \"DesignData.cs:40: { DayHeader = \\\"Today ($0.42)\\\" } \u2014 old format\",\n    \"ArchiveDayGroupingTests.cs:6: public sealed class \u2014 needs sealed partial\",\n    \"ArchiveDayGroupingTests.cs:190: Assert.Equal(\\\"Today ($1.54)\\\", heading) \u2014 old parens assertion\",\n    \"ArchiveDayGroupingTests.cs:203-204: Yesterday cost assertions use parens\",\n    \"ArchiveDayGroupingTests.cs:219: Assert.Contains(\\\"($5.00)\\\", ...) \u2014 old parens assertion\",\n    \"ArchiveDayGroupingTests.cs:240,244,246,247: FirstOfNewDay assertions all use parens\",\n    \"MainWindowViewModel.Helpers.cs:170: row.DayHeader = ArchiveDayGrouping.HeadingFor(tasks, i, today) ?? string.Empty; \u2014 signature invariant, not touched\",\n    \"CostPerModelTests.cs:6 + CostPerModelTests.Display.cs:6: both declare public sealed partial class CostPerModelTests \u2014 establishes partial split pattern\"\n  ],\n  \"repro\": \"dotnet test tests/VisualRelay.Tests --filter \\\"FullyQualifiedName~ArchiveDayGroupingTests\\\" \u2014 currently green with parens-format assertions; after changes, five assertions will fail unless updated to colon format with metrics on newest group only\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Step 1 \u2014 MoneyFormatter.WholeDollars\\n\\nAdd a new public static method `WholeDollars(double usd)` to `MoneyFormatter` after `Dollars` (between line 25 and line 27). Uses `Math.Round(usd, 0, MidpointRounding.AwayFromZero)` for amounts \u2265 $1, falling back to `Dollars(usd)` for amounts < $1. Uses `CultureInfo.InvariantCulture` like the rest of the class. ~14 lines. Final file ~54 lines, well under 300.\\n\\n## Step 2 \u2014 ArchiveDayGrouping.HeadingFor rewrite\\n\\nMake these changes to `ArchiveDayGrouping.cs`:\\n\\n- **Line 6 \u2014 class doc summary**: extend the XML summary to mention the newest completed day's heading also carries rolling-30-day quick metrics.\\n- **Add constant** after line 12 (after the opening brace): `private const int MetricsWindowDays = 30;` with a doc comment.\\n- **Replace lines 50\u201365** (from `// Sum CostUsd\u2026` through `return heading;`) with the new single-pass block that: accumulates `dayTotal`, `windowTotal`, `windowCount`, finds `newestDay`, builds the colon-format heading (`$\\\\\\\"{heading}: {Dollars(dayTotal)}\\\\\\\"`), and \u2014 only when `localDay == newestDay && windowCount > 0 && windowTotal > 0` \u2014 appends `, {perTask}/task, {perMonth}/mo`. Zero-cost dayTotal still omits the colon and all metrics.\\n\\nFinal file grows from 67 \u2192 ~85 lines, well under 300.\\n\\n## Step 3 \u2014 MainWindow.axaml panel width\\n\\nLine 62: change `<controls:QueuePanel Width=\\\\\\\"280\\\\\\\"` to `<controls:QueuePanel Width=\\\\\\\"320\\\\\\\"`. No other attribute or element touched. Line count unchanged (209).\\n\\n## Step 4 \u2014 DesignData.cs sample header\\n\\nLine 40: change `\\\\\\\"Today ($0.42)\\\\\\\"` to `\\\\\\\"Today: $0.42, $0.21/task, $13/mo\\\\\\\"`. Line count unchanged (58).\\n\\n## Step 5 \u2014 ArchiveDayGroupingTests.cs: make partial + pin updates\\n\\n- Line 6: change `public sealed class ArchiveDayGroupingTests` to `public sealed partial class ArchiveDayGroupingTests`.\\n- `Today_WithCost_IncludesTotalCost` (line 190): change assertion to `\\\\\\\"Today: $1.54, $1.54/task, $2/mo\\\\\\\"`.\\n- `Yesterday_WithMultipleTasks_SumsCosts` (line 203): change index 0 assertion to `\\\\\\\"Yesterday: $0.21, $0.11/task, $0.21/mo\\\\\\\"`; index 1 stays null.\\n- `FullDate_WithCost_IncludesTotalCost` (line 219): replace `Assert.Contains(\\\\\\\"($5.00)\\\\\\\", \u2026)` with `Assert.Contains(\\\\\\\": $5.00, $5.00/task, $5/mo\\\\\\\", heading, StringComparison.Ordinal);`. Keep the \\\\\\\"17\\\\\\\" and \\\\\\\"2026\\\\\\\" asserts.\\n- `FirstOfNewDay_CostOnlyOnHeadingRow` (lines 240\u2013248): update all five assertions \u2014 index 0 \u2192 `\\\\\\\"Today: $3.00, $0.90/task, $5/mo\\\\\\\"`, index 2 \u2192 `Assert.Contains(\\\\\\\": $0.50\\\\\\\", \u2026)`, index 2 exact \u2192 `\\\\\\\"Thursday, June 18, 2026: $0.50\\\\\\\"`, index 3 exact \u2192 `\\\\\\\"Monday, June 15, 2026: $1.00\\\\\\\"`. Note older headers (index 2, 3) have colon format but NO metrics.\\n\\nAll other tests (zero-cost, grouping, etc.) untouched. Line count stays ~293, under 300.\\n\\n## Step 6 \u2014 New ArchiveDayGroupingTests.Metrics.cs\\n\\nCreate `tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs` with:\\n- `public sealed partial class ArchiveDayGroupingTests` in `namespace VisualRelay.Tests`.\\n- Five test methods:\\n  1. `Window_Includes29DaysBack_Excludes30` \u2014 today 2026-06-20; tasks today 1.00, May 22 (Friday) 2.00, May 21 (Saturday) 4.00. Index 0 = `\\\\\\\"Today: $1.00, $1.50/task, $3/mo\\\\\\\"`.\\n  2. `OlderGroupInsideWindow_GetsNoMetrics` \u2014 same list; May 22 header = `\\\\\\\"Friday, May 22, 2026: $2.00\\\\\\\"` (colon, cost, no metrics).\\n  3. `NewestGroupNotToday_StillGetsMetrics` \u2014 today 2026-06-20; single task June 14 (Sunday) 1.20 \u2192 `\\\\\\\"Sunday, June 14, 2026: $1.20, $1.20/task, $1/mo\\\\\\\"`.\\n  4. `MonthUnderOneDollar_ShowsCents` \u2014 single task yesterday 0.42 \u2192 `\\\\\\\"Yesterday: $0.42, $0.42/task, $0.42/mo\\\\\\\"`.\\n  5. `WholeDollars_Formats` \u2014 `[Theory]` `[InlineData]` on `MoneyFormatter.WholeDollars`: (0.0, \\\\\\\"$0.00\\\\\\\"), (0.42, \\\\\\\"$0.42\\\\\\\"), (1.49, \\\\\\\"$1\\\\\\\"), (4.5, \\\\\\\"$5\\\\\\\"), (98.4, \\\\\\\"$98\\\\\\\").\\n\\nReuses the private `AtLocal` and `Archived` helpers from the main partial. ~120 lines, well under 300.\",\n  \"manifest\": [\n    \"src/VisualRelay.Domain/MoneyFormatter.cs\",\n    \"src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs\",\n    \"src/VisualRelay.App/Views/MainWindow.axaml\",\n    \"src/VisualRelay.App/DesignTime/DesignData.cs\",\n    \"tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs\",\n    \"+tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All changes are complete and verified. Build succeeds with 0 warnings/0 errors, and all 28 tests pass.\n\n```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs\",\n    \"tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs\"\n  ],\n  \"rationale\": \"Created ArchiveDayGroupingTests.Metrics.cs with 5 new tests (Window_Includes29DaysBack_Excludes30, OlderGroupInsideWindow_GetsNoMetrics, NewestGroupNotToday_StillGetsMetrics, MonthUnderOneDollar_ShowsCents, WholeDollars_Formats theory). Updated the existing ArchiveDayGroupingTests.cs: made class sealed partial, updated 5 cost-format assertions from parentheses to colon format with rolling metrics on newest group. All 28 tests pass (build green, 0 warnings). All modified files stay under 300 lines: MoneyFormatter.cs=51, ArchiveDayGrouping.cs=95, MainWindow.axaml=209, DesignData.cs=58, ArchiveDayGroupingTests.cs=293, Metrics.cs=86.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 26,
+    "tool_calls_total": 32,
+    "tool_calls_succeeded": 32,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 26,
+    "total_llm_time_s": 109.19,
+    "prompt_cache": {
+      "cached_tokens": 646784,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 10.472,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 7,
+      "completed": 7,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.209,
+      "prompt_tokens_est": 10400,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/MoneyFormatter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1603
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2530
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/Views/MainWindow.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10171
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/DesignTime/DesignData.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2994
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11232
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.318,
+      "prompt_tokens_est": 18276,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "public sealed partial class",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.128,
+      "result_length": 12778
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2557
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 6.874,
+      "prompt_tokens_est": 22198,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Add WholeDollars to MoneyFormatter.cs",
+          "Rewrite ArchiveDayGrouping.HeadingFor with colon format + rolling 30-day metrics",
+          "Change MainWindow.axaml QueuePanel Width from 280 to 320",
+          "Update DesignData.cs sample header",
+          "Make ArchiveDayGroupingTests.cs partial + update 5 cost-format assertions",
+          "Create ArchiveDayGroupingTests.Metrics.cs with 5 new tests",
+          "Verify: dotnet build + dotnet test on ArchiveDayGroupingTests|DesignDataTests"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 674
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.684,
+      "prompt_tokens_est": 22901,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/MoneyFormatter.cs",
+        "old_string": "        return $\"${FormatSubCent(usd)}\";\n    }\n\n    private static string FormatSubCent(double usd)",
+        "new_string": "        return $\"${FormatSubCent(usd)}\";\n    }\n\n    /// <summary>Whole-dollar display for rate-style figures (e.g. \"$98\"): rounds\n    /// to the nearest dollar away from zero. Amounts under $1 fall back to\n    /// <see cref=\"Dollars\"/> so small spend never collapses to \"$0\".</summary>\n    public static string WholeDollars(double usd)\n    {\n        if (usd < 1)\n            return Dollars(usd);\n        var rounded = Math.Round(usd, 0, MidpointRounding.AwayFromZero);\n        return $\"${rounded.ToString(\"0\", CultureInfo.InvariantCulture)}\";\n    }\n\n    private static string FormatSubCent(double usd)"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 106
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.127,
+      "prompt_tokens_est": 23222,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Add WholeDollars to MoneyFormatter.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 674
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.541,
+      "prompt_tokens_est": 23451,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs",
+        "old_string": "/// <summary>\n/// Pure helper that assigns per-day heading labels for a completion-ordered\n/// archive list. Returns a label for the first row of each local-calendar day\n/// and <c>null</c> for all subsequent rows on the same day.\n/// </summary>\npublic static class ArchiveDayGrouping\n{",
+        "new_string": "/// <summary>\n/// Pure helper that assigns per-day heading labels for a completion-ordered\n/// archive list. Returns a label for the first row of each local-calendar day\n/// and <c>null</c> for all subsequent rows on the same day. The newest\n/// completed day's heading additionally carries rolling-30-day quick metrics\n/// (average cost per task and monthly-rate total spend).\n/// </summary>\npublic static class ArchiveDayGrouping\n{\n    /// <summary>Rolling window (local calendar days, ending at and including\n    /// <c>today</c>) feeding the newest header's per-task and per-month metrics.</summary>\n    private const int MetricsWindowDays = 30;"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 114
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 5.77,
+      "prompt_tokens_est": 23809,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs",
+        "old_string": "        // Sum CostUsd across all tasks sharing the same local calendar day.\n        var dayTotal = 0.0;\n        foreach (var t in orderedTasks)\n        {\n            if (t.CompletedAt is { } ct)\n            {\n                var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);\n                if (d == localDay)\n                    dayTotal += t.CostUsd;\n            }\n        }\n\n        if (dayTotal > 0)\n            heading = $\"{heading} ({MoneyFormatter.Dollars(dayTotal)})\";\n\n        return heading;",
+        "new_string": "        // One pass: this day's total, the rolling-window aggregates, and the newest\n        // completed local day (the list arrives newest-first, but scanning is\n        // order-independent and free at archive sizes).\n        var dayTotal = 0.0;\n        var windowTotal = 0.0;\n        var windowCount = 0;\n        DateOnly? newestDay = null;\n        var windowStart = today.AddDays(-(MetricsWindowDays - 1));\n        foreach (var t in orderedTasks)\n        {\n            if (t.CompletedAt is not { } ct)\n                continue;\n            var d = DateOnly.FromDateTime(ct.ToLocalTime().Date);\n            if (newestDay is null || d > newestDay.Value)\n                newestDay = d;\n            if (d == localDay)\n                dayTotal += t.CostUsd;\n            if (d >= windowStart)\n            {\n                windowTotal += t.CostUsd;\n                windowCount++;\n            }\n        }\n\n        if (dayTotal > 0)\n        {\n            heading = $\"{heading}: {MoneyFormatter.Dollars(dayTotal)}\";\n\n            // Quick metrics ride ONLY the newest group's header: average cost per\n            // task and total spend over the rolling window, shown as a monthly rate.\n            if (localDay == newestDay && windowCount > 0 && windowTotal > 0)\n            {\n                var perTask = MoneyFormatter.Dollars(windowTotal / windowCount);\n                var perMonth = MoneyFormatter.WholeDollars(windowTotal);\n                heading = $\"{heading}, {perTask}/task, {perMonth}/mo\";\n            }\n        }\n\n        return heading;"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 114
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.728,
+      "prompt_tokens_est": 24443,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/Views/MainWindow.axaml",
+        "old_string": "        <controls:QueuePanel Width=\"280\"",
+        "new_string": "        <controls:QueuePanel Width=\"320\""
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 108
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/DesignTime/DesignData.cs",
+        "old_string": "{ DayHeader = \"Today ($0.42)\" });",
+        "new_string": "{ DayHeader = \"Today: $0.42, $0.21/task, $13/mo\" });"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 110
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.127,
+      "prompt_tokens_est": 24777,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Rewrite ArchiveDayGrouping.HeadingFor with colon format + rolling 30-day metrics",
+          "Change MainWindow.axaml QueuePanel Width from 280 to 320",
+          "Update DesignData.cs sample header"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 671
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.744,
+      "prompt_tokens_est": 25037,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "old_string": "public sealed class ArchiveDayGroupingTests",
+        "new_string": "public sealed partial class ArchiveDayGroupingTests"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 116
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.195,
+      "prompt_tokens_est": 25190,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "old_string": "        Assert.Equal(\"Today ($1.54)\", heading);",
+        "new_string": "        Assert.Equal(\"Today: $1.54, $1.54/task, $2/mo\", heading);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 116
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.018,
+      "prompt_tokens_est": 25487,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "new_string": "        Assert.Equal(\"Yesterday: $0.21, $0.11/task, $0.21/mo\", ArchiveDayGrouping.HeadingFor(tasks, 0, today));",
+        "old_string": "        Assert.Equal(\"Yesterday ($0.21)\", ArchiveDayGrouping.HeadingFor(tasks, 0, today));"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 116
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.045,
+      "prompt_tokens_est": 25713,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "new_string": "        Assert.Contains(\": $5.00, $5.00/task, $5/mo\", heading, StringComparison.Ordinal);",
+        "old_string": "        Assert.Contains(\"($5.00)\", heading, StringComparison.Ordinal);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 116
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.965,
+      "prompt_tokens_est": 25876,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "offset": 224,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1624
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 7.365,
+      "prompt_tokens_est": 26542,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs",
+        "new_string": "        Assert.Equal(\"Today: $3.00, $0.90/task, $5/mo\", ArchiveDayGrouping.HeadingFor(tasks, 0, today));\n        Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));\n        var day2 = ArchiveDayGrouping.HeadingFor(tasks, 2, today);\n        Assert.NotNull(day2);\n        Assert.Contains(\": $0.50\", day2, StringComparison.Ordinal);\n        Assert.NotEqual(\"Today\", day2);\n        Assert.Equal(\"Thursday, June 18, 2026: $0.50\", ArchiveDayGrouping.HeadingFor(tasks, 2, today));\n        Assert.Equal(\"Monday, June 15, 2026: $1.00\", ArchiveDayGrouping.HeadingFor(tasks, 3, today));",
+        "old_string": "        Assert.Equal(\"Today ($3.00)\", ArchiveDayGrouping.HeadingFor(tasks, 0, today));\n        Assert.Null(ArchiveDayGrouping.HeadingFor(tasks, 1, today));\n        var day2 = ArchiveDayGrouping.HeadingFor(tasks, 2, today);\n        Assert.NotNull(day2);\n        Assert.Contains(\"($0.50)\", day2, StringComparison.Ordinal);\n        Assert.NotEqual(\"Today\", day2);\n        Assert.Equal(\"Thursday, June 18, 2026 ($0.50)\", ArchiveDayGrouping.HeadingFor(tasks, 2, today));\n        Assert.Equal(\"Monday, June 15, 2026 ($1.00)\", ArchiveDayGrouping.HeadingFor(tasks, 3, today));"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 116
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 10.113,
+      "prompt_tokens_est": 27310,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Make ArchiveDayGroupingTests.cs partial + update 5 cost-format assertions"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 670
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 9.393,
+      "prompt_tokens_est": 28352,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs",
+        "content": "using VisualRelay.Core.Tasks;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed partial class ArchiveDayGroupingTests\n{\n    [Fact]\n    public void Window_Includes29DaysBack_Excludes30()\n    {\n        var today = new DateOnly(2026, 6, 20);\n        var tasks = new[]\n        {\n            // Today (2026-06-20) \u2014 inside window\n            Archived(\"a\", AtLocal(2026, 6, 20, 5, 0), costUsd: 1.00),\n            // 2026-05-22 (Friday) \u2014 29 days back, inside window\n            Archived(\"b\", AtLocal(2026, 5, 22, 10, 0), costUsd: 2.00),\n            // 2026-05-21 (Saturday) \u2014 30 days back, outside window\n            Archived(\"c\", AtLocal(2026, 5, 21, 8, 0), costUsd: 4.00),\n        };\n\n        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);\n\n        // Window = 1.00 + 2.00 over 2 tasks. May 21 excluded.\n        Assert.Equal(\"Today: $1.00, $1.50/task, $3/mo\", heading);\n    }\n\n    [Fact]\n    public void OlderGroupInsideWindow_GetsNoMetrics()\n    {\n        var today = new DateOnly(2026, 6, 20);\n        var tasks = new[]\n        {\n            Archived(\"a\", AtLocal(2026, 6, 20, 5, 0), costUsd: 1.00),\n            Archived(\"b\", AtLocal(2026, 5, 22, 10, 0), costUsd: 2.00),\n            Archived(\"c\", AtLocal(2026, 5, 21, 8, 0), costUsd: 4.00),\n        };\n\n        var heading = ArchiveDayGrouping.HeadingFor(tasks, 1, today);\n\n        // May 22 has cost with colon but NO metrics \u2014 it is not the newest group.\n        Assert.Equal(\"Friday, May 22, 2026: $2.00\", heading);\n    }\n\n    [Fact]\n    public void NewestGroupNotToday_StillGetsMetrics()\n    {\n        var today = new DateOnly(2026, 6, 20);\n        var tasks = new[]\n        {\n            Archived(\"a\", AtLocal(2026, 6, 14, 9, 0), costUsd: 1.20),\n        };\n\n        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);\n\n        // June 14 (Sunday) is the newest (and only) group \u2014 gets metrics.\n        Assert.Equal(\"Sunday, June 14, 2026: $1.20, $1.20/task, $1/mo\", heading);\n    }\n\n    [Fact]\n    public void MonthUnderOneDollar_ShowsCents()\n    {\n        var today = new DateOnly(2026, 6, 20);\n        var tasks = new[]\n        {\n            Archived(\"a\", AtLocal(2026, 6, 19, 10, 0), costUsd: 0.42),\n        };\n\n        var heading = ArchiveDayGrouping.HeadingFor(tasks, 0, today);\n\n        // Under $1 total, WholeDollars falls back to Dollars.\n        Assert.Equal(\"Yesterday: $0.42, $0.42/task, $0.42/mo\", heading);\n    }\n\n    [Theory]\n    [InlineData(0.0, \"$0.00\")]\n    [InlineData(0.42, \"$0.42\")]\n    [InlineData(1.49, \"$1\")]\n    [InlineData(4.5, \"$5\")]\n    [InlineData(98.4, \"$98\")]\n    public void WholeDollars_Formats(double amount, string expected)\n    {\n        var result = MoneyFormatter.WholeDollars(amount);\n        Assert.Equal(expected, result);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 137
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 2.461,
+      "prompt_tokens_est": 29455,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Create ArchiveDayGroupingTests.Metrics.cs with 5 new tests"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 669
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.576,
+      "prompt_tokens_est": 29710,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/MoneyFormatter.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/ArchiveDayGrouping.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/Views/MainWindow.axaml /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.App/DesignTime/DesignData.cs /Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.cs /Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/ArchiveDayGroupingTests.Metrics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.104,
+      "result_length": 591
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 2.599,
+      "prompt_tokens_est": 30103,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"build\", \"/Users/nicholaswestby/Dev/visual-relay/visual-relay.sln\", \"--no-restore\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 0.173,
+      "result_length": 225
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 2.636,
+      "prompt_tokens_est": 30257,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.sln",
+        "path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.157,
+      "result_length": 29
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 2.75,
+      "prompt_tokens_est": 30357,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.sln*",
+        "path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.152,
+      "result_length": 49
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.csproj",
+        "path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.113,
+      "result_length": 29
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 2.581,
+      "prompt_tokens_est": 30450,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"build\", \"/Users/nicholaswestby/Dev/visual-relay/VisualRelay.slnx\", \"--no-restore\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.65,
+      "result_length": 2621
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.557,
+      "prompt_tokens_est": 31334,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"dotnet\", \"test\", \"/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests\", \"--filter\", \"FullyQualifiedName~ArchiveDayGroupingTests|FullyQualifiedName~DesignDataTests\", \"--no-build\"]",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 1.945,
+      "result_length": 415
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 2.626,
+      "prompt_tokens_est": 31596,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Verify: dotnet build + dotnet test on ArchiveDayGroupingTests|DesignDataTests"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 668
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 4.186,
+      "prompt_tokens_est": 31878,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
