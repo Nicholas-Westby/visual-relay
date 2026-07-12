@@ -35,18 +35,23 @@ public static class FixTaskAuthorRunner
 
     /// <summary>
     /// Runs the subagent to author a fix task from the failed-run diagnostics
-    /// in <paramref name="taskDirectory"/>.
+    /// found under <c>.relay/&lt;taskId&gt;/</c>.
     /// </summary>
     public static async Task<FixTaskAuthorOutcome> RunAsync(
         string rootPath,
         string taskId,
-        string taskDirectory,
         RelayConfig config,
         ISubagentRunner runner,
         CancellationToken ct)
     {
-        // Gather context.
+        // Gather context from the run-artifact directory (not the spec folder).
+        var taskDirectory = Path.Combine(rootPath, ".relay", taskId);
         var context = FailedRunContextReader.Read(taskDirectory);
+
+        // ── Defect 3: refuse to invoke the subagent with an empty context ──
+        if (context.FlagReason is null && context.VerifyOutputs.Count == 0 && context.LedgerSummary is null)
+            return new FixTaskAuthorOutcome(false, null, null, null,
+                $"No failure evidence found under .relay/{taskId} — cannot author a fix task.");
 
         var prompt = BuildPrompt(taskId, context);
 

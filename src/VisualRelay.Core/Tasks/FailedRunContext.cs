@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using VisualRelay.Domain;
 
@@ -94,6 +96,23 @@ public static class FailedRunContextReader
                     var attempt = int.Parse(m.Groups[2].Value);
                     var tail = ReadTail(file, 200);
                     var summary = ExtractSummary(tail);
+
+                    // Try to enrich with non-test check evidence from sibling .verify-checks.json.
+                    var checksPath = file.Replace(".verify-output.txt", ".verify-checks.json", StringComparison.Ordinal);
+                    var checksSummary = ReadChecksSummary(checksPath);
+                    if (checksSummary.Length > 0)
+                    {
+                        summary = string.IsNullOrEmpty(summary)
+                            ? checksSummary
+                            : checksSummary + "\n" + summary;
+                    }
+
+                    // If still empty, fall back to the raw verify-output tail.
+                    if (string.IsNullOrEmpty(summary))
+                    {
+                        summary = TruncateToTail(tail, 40, 4_000);
+                    }
+
                     verifyOutputs.Add(new FailedVerifyOutput(stage, attempt, summary));
                 }
                 catch
@@ -122,6 +141,67 @@ public static class FailedRunContextReader
         return new FailedRunContext(
             flagReason, flaggedStage, flaggedStageName, flaggedStageError,
             verifyOutputs, ledgerSummary);
+    }
+
+    private static string ReadChecksSummary(string checksPath)
+    {
+        if (!File.Exists(checksPath))
+            return string.Empty;
+
+        try
+        {
+            var json = File.ReadAllText(checksPath);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var sb = new StringBuilder();
+            AppendCheckSection(sb, "bootstrap check", "bootstrapCheck", "bootstrapOutput", root);
+            AppendCheckSection(sb, "guard check", "guardCheck", "guardOutput", root);
+            AppendCheckSection(sb, "new-guard-probe check", "newGuardProbeCheck", "newGuardProbeOutput", root);
+
+            return sb.ToString();
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static void AppendCheckSection(
+        StringBuilder sb,
+        string label,
+        string checkProp,
+        string outputProp,
+        JsonElement root)
+    {
+        if (!root.TryGetProperty(checkProp, out var checkEl) || checkEl.GetString() != "red")
+            return;
+
+        sb.AppendLine($"{label}: red");
+
+        if (root.TryGetProperty(outputProp, out var outputEl))
+        {
+            var output = outputEl.GetString();
+            if (!string.IsNullOrWhiteSpace(output))
+            {
+                sb.Append(TruncateToTail(output, 40, 4_000));
+                if (!output.EndsWith('\n'))
+                    sb.AppendLine();
+            }
+        }
+    }
+
+    private static string TruncateToTail(string content, int maxLines, int maxChars)
+    {
+        var lines = content.Replace("\r\n", "\n").Split('\n');
+        if (lines.Length > maxLines)
+            lines = lines[^maxLines..];
+
+        var joined = string.Join('\n', lines);
+        if (joined.Length > maxChars)
+            joined = joined[^maxChars..];
+
+        return joined;
     }
 
     private static string ReadTail(string filePath, int maxLines)

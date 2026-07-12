@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T05:44:05.807175+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: [ENCRYPTED:fastly]lRxVxyYqnzqS0HLBG3aP0nld9DiDY4x9\nWorking directory: /Users/nicholaswestby/Dev/visual-relay\n\n## Task input\n# Feed the fix-task author real failure evidence\n\n## Problem\n\nThe \"Create task to fix\" button authored a confidently wrong task. On 2026-07-11 (task `show-cost-per-llm-model`, flagged with `guardCheck=red testCheck=green`), the FixTaskAuthor subagent's prompt contained the line \"Here are the failures:\" followed by **nothing** \u2014 no flag reason, no verify output, no ledger. The agent, whose filesystem access is restricted to `.swival/`, then scavenged `.swival/trash/` and stale `.swival/bg/` debug logs and fabricated a task around claims that were false for the tree (it asserted a view-model method was never called when it was, and that README tests failed when the test check was green). The real failure (a guard-command crash) never reached the prompt.\n\nThree independent defects compound here.\n\n### Defect 1 \u2014 the wrong directory is passed\n\n`CreateFixTaskAsync` in `src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs` does:\n\n```csharp\nvar taskDirectory = SelectedTask.Task.TaskDirectory;\n```\n\nand passes that to `FixTaskAuthorRunner.RunAsync`. But `RelayTaskItem.TaskDirectory` is the **spec folder** (`llm-tasks/<slug>/` \u2014 it holds only the task markdown), while `FailedRunContextReader.Read` (in `src/VisualRelay.Core/Tasks/FailedRunContext.cs`) is documented and written to read the **run-artifact folder** `.relay/<taskId>/` \u2014 that is where `NEEDS-REVIEW`, `status.json`, `stage{N}-attempt{M}.verify-output.txt`, and `ledger.md` live. The reader is deliberately forgiving (\"never throws \u2014 missing files produce null/empty fields\"), so it silently returned an all-empty context.\n\n### Defect 2 \u2014 the summarizer only understands test output\n\n`FailedRunContextReader.ExtractSummary` keeps only lines containing `[FAIL]` and a final `Failed:`/`Passed:` tally. That is the shape of test-runner output. When the red check is the guard, bootstrap, or new-guard probe (e.g. a formatter crashing with an assembly-load stack trace), none of those markers exist and the summary digests to nothing \u2014 even with the right directory.\n\n### Defect 3 \u2014 nothing refuses an empty prompt\n\n`FixTaskAuthorRunner.RunAsync` (in `src/VisualRelay.Core/Execution/FixTaskAuthorRunner.cs`) builds the prompt via `BuildPrompt`, where every evidence section is conditional (`if (ctx.FlagReason is not null) \u2026`). With an empty context it happily invokes the subagent with a prompt that announces failures and lists none, guaranteeing fabrication.\n\n## Fix\n\n### 1. Compute the artifact directory inside the runner\n\nRemove the `taskDirectory` parameter from `FixTaskAuthorRunner.RunAsync` and compute the path internally from the parameters it already has:\n\n```csharp\nvar taskDirectory = Path.Combine(rootPath, \".relay\", taskId);\n```\n\nUpdate the only production caller (`CreateFixTaskAsync` in `MainWindowViewModel.FixTask.cs`) to drop the argument, and delete its `var taskDirectory = SelectedTask.Task.TaskDirectory;` line. This removes the wrong-directory failure mode structurally instead of fixing the one call site. Test callers (`tests/VisualRelay.Tests/MainWindowViewModelFixTaskTests.cs`, `.Execution.cs`, `.Capabilities.cs`, `FixTaskFakeRunners.cs`) adapt to the new signature; any fixture that previously planted artifacts in the spec folder must plant them under `<root>/.relay/<taskId>/` instead.\n\n### 2. Include non-test check evidence in the reader\n\n`RelayDriver` persists a structured per-check breakdown next to each verify output: `stage{N}-attempt{M}.verify-checks.json` (written by `TryPersistVerifyChecksJson` in `src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs`, a camelCase-serialized `SetupCheckResults` with keys `bootstrapCheck`/`bootstrapOutput`, `guardCheck`/`guardOutput`, `newGuardProbeCheck`/`newGuardProbeOutput`, `testCheck`/`testCommand`/`testExitCode`; each `*Check` is `\"green\"`, `\"red\"`, or null).\n\nIn `FailedRunContextReader.Read`, for each discovered `stage{N}-attempt{M}.verify-output.txt`, also try the sibling `.verify-checks.json`:\n\n- For every non-test check whose value is `\"red\"`, prepend a labeled section to that `FailedVerifyOutput.Summary` \u2014 e.g. `guard check: red`, followed by the last 40 lines of the corresponding `*Output` string, capped at 4,000 characters.\n- Keep the existing `[FAIL]`-line extraction for test output unchanged.\n- When the combined summary would still be empty (no checks json, no `[FAIL]` markers, no tally line), fall back to the raw tail (last 40 lines, 4,000-character cap) of the verify-output file so the prompt is never evidence-free while an artifact exists.\n\nThe inclusion must stay content-agnostic: copy output verbatim; never pattern-match tool-specific text (Visual Relay processes arbitrary repos and stacks).\n\n### 3. Refuse to author from an empty context\n\nIn `FixTaskAuthorRunner.RunAsync`, after `FailedRunContextReader.Read`, if `FlagReason` is null AND `VerifyOutputs` is empty AND `LedgerSummary` is null, return\n\n```csharp\nnew FixTaskAuthorOutcome(false, null, null, null,\n    $\"No failure evidence found under .relay/{taskId} \u2014 cannot author a fix task.\")\n```\n\n**without** invoking the subagent. The existing error path in `CreateFixTaskAsync` (`StatusText = $\"Couldn't create fix task: {outcome.Error}\"`) surfaces it; no UI changes needed.\n\n## Rejected approaches \u2014 do not do these\n\n- Do NOT keep the `taskDirectory` parameter and merely fix the caller's argument; the redundant parameter is how the seam drifted.\n- Do NOT widen the fix-task subagent's filesystem access so it can \"find evidence itself\" \u2014 the restriction to `.swival/` stays; evidence belongs in the prompt.\n- Do NOT add test-framework- or language-specific parsing (no xunit/dotnet/pytest patterns) to the reader.\n\n## Tests\n\nNew file `tests/VisualRelay.Tests/FailedRunContextReaderTests.cs` (temp-dir fixtures shaped like `.relay/<taskId>/`):\n\n- guard red: checks json with `guardCheck: \"red\"` and a multi-line `guardOutput` \u2192 summary contains `guard check: red` and the output tail verbatim.\n- test red: verify-output containing `[FAIL]` lines and a tally \u2192 existing extraction preserved.\n- no markers anywhere: summary falls back to the raw verify-output tail (never empty when the file has content).\n- tail bounds: output longer than 40 lines / 4,000 chars is truncated to the cap.\n\nIn the existing fix-task test files:\n\n- empty `.relay/<taskId>/` \u2192 `RunAsync` returns failure containing \"No failure evidence\", and the fake runner records zero invocations.\n- artifacts planted under `<root>/.relay/<taskId>/` (a `NEEDS-REVIEW` file and one verify-output) \u2192 the fake runner's captured `TaskInput` prompt contains the flag reason and the verify evidence.\n\n## Constraints\n\n- `dotnet build VisualRelay.slnx` must succeed; all existing tests must pass (adapting signatures/fixtures is expected; never delete coverage).\n- `BuildPrompt`'s section layout and the system prompt stay unchanged apart from receiving richer context.\n- If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove tests to satisfy it.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the detailed task specification and the constraints (sandbox restricts filesystem access to `.swival/`), I have enough context from the problem description itself \u2014 which includes full code snippets, file paths, and the prescribed fix \u2014 to frame the task and enumerate solution options.\n\n---\n\n## Task summary\n\nFix three compounding defects in the \"Create fix task\" pipeline that cause the `FixTaskAuthor` subagent to receive an empty evidence prompt:\n\n1. **Wrong directory** \u2014 `CreateFixTaskAsync` passes the spec folder (`llm-tasks/<slug>/`) instead of the run-artifact folder (`.relay/<taskId>/`) to `FixTaskAuthorRunner.RunAsync`.\n2. **Summarizer blind to non-test output** \u2014 `FailedRunContextReader.ExtractSummary` only keeps `[FAIL]` lines / a tally line; guard/bootstrap/new-guard-probe check output (e.g. stack traces) produces an empty summary.\n3. **No empty-prompt guard** \u2014 `FixTaskAuthorRunner.RunAsync` invokes the subagent even when every evidence section is null/empty.\n\n**Files to touch (per the spec):**\n- `src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs` \u2014 drop `taskDirectory` argument.\n- `src/VisualRelay.Core/Execution/FixTaskAuthorRunner.cs` \u2014 compute path internally; add empty-context guard.\n- `src/VisualRelay.Core/Tasks/FailedRunContext.cs` \u2014 parse sibling `.verify-checks.json` and incorporate non-test red-check evidence; add raw-tail fallback.\n- `src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs` \u2014 reference only (already writes `.verify-checks.json`).\n- Test files: `tests/VisualRelay.Tests/FailedRunContextReaderTests.cs` (new); adapt existing fix-task tests for new signature and fixture locations.\n\n**Constraints:** `dotnet build VisualRelay.slnx` must succeed; all existing tests pass (signatures adapt, coverage preserved, fact-count ratchets bumped if needed).\n\n---\n\n## Solution options\n\n```json\n{\n  \"summary\": \"Fix three defects causing FixTaskAuthor to receive empty failure evidence: wrong artifact-directory path, non-test check blindness in the summary extractor, and missing empty-prompt guard. Implement the prescribed fix (compute artifact dir inside runner, parse .verify-checks.json for non-test red checks with raw-tail fallback, refuse empty context) or adopt a lighter-weight alternative that skips the JSON-parsing component.\",\n  \"options\": [\n    \"Option 1 \u2014 Follow the prescribed three-defect fix exactly as specified: (a) remove the `taskDirectory` parameter from `FixTaskAuthorRunner.RunAsync` and compute path internally from `rootPath`/`taskId`; (b) in `FailedRunContextReader`, parse sibling `.verify-checks.json` for non-test red-check output, preserve existing `[FAIL]` extraction, and add a raw-tail fallback when the summary would otherwise be empty; (c) add an empty-context guard in `RunAsync` that returns `FixTaskAuthorOutcome(false, \u2026)` before invoking the subagent. Adapt all callers and test fixtures. This is the most robust option \u2014 it handles all three defects, structured check evidence is the clearest signal, and the empty-context guard prevents fabrication even if evidence is genuinely missing.\",\n    \"Option 2 \u2014 Fix Defects 1 & 3 identically to the spec, but for Defect 2 use a simpler strategy: skip `.verify-checks.json` parsing entirely and instead always append the raw tail (last 40 lines, \u22644000 chars) of every discovered `verify-output.txt` when the summary from existing `[FAIL]`/tally extraction is empty. If the file itself is empty or missing, fall through to the empty-context guard. This avoids adding a dependency on the checks-JSON format (which is written by a single method in RelayDriver and could drift), at the cost of losing structured labeled sections (e.g. \\\"guard check: red\\\") and potentially including irrelevant terminal noise when the check output is mixed with test output. Simpler code, less coupling, but the prompt is less actionable.\",\n    \"Option 3 \u2014 Fix only Defect 1 (wrong directory) and Defect 3 (empty-prompt guard) exactly as specified, and for Defect 2 change the evidence architecture: instead of `FailedRunContextReader` trying to extract meaning from verify-output, have `FixTaskAuthorRunner.RunAsync` collect ALL raw artifact files from the `.relay/<taskId>/` directory \u2014 `NEEDS-REVIEW`, `status.json`, every `verify-output.txt`/`verify-checks.json`, `ledger.md` \u2014 and include them as an appended \\\"Raw artifact dump\\\" section in the prompt (truncated to a combined cap). This is the most future-proof approach (any future artifact format is automatically included) but produces the noisiest prompt and may waste subagent tokens. The subagent must then parse the evidence itself, which is feasible since it's an LLM \u2014 but the spec explicitly warns against widening the subagent's role in finding evidence.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 3,
+    "tool_calls_total": 2,
+    "tool_calls_succeeded": 1,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 0,
+        "failed": 1
+      },
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 3,
+    "total_llm_time_s": 23.125,
+    "prompt_cache": {
+      "cached_tokens": 11520,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.002,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.604,
+      "prompt_tokens_est": 5467,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 162,
+      "error": "error: Path '/Users/nicholaswestby/Dev/visual-relay' resolves to /Users/nicholaswestby/Dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.494,
+      "prompt_tokens_est": 5608,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8106
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 19.027,
+      "prompt_tokens_est": 7639,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

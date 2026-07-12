@@ -1,5 +1,7 @@
 using Avalonia.Threading;
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Configuration;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -197,5 +199,82 @@ public sealed partial class MainWindowViewModelFixTaskTests
         // Disambiguated slug must be written and appear in the queue.
         Assert.True(File.Exists(NestedMarkdownPath(repo.Root, $"{AuthoredSlug}-2")));
         Assert.Contains(vm.Tasks, t => t.Id == $"{AuthoredSlug}-2");
+    }
+
+    // ── Defect 3: empty context refuses subagent invocation ──────────────────
+
+    [AvaloniaFact]
+    public async Task RunAsync_EmptyContext_ReturnsNoEvidenceError()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "visual-relay-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var fake = new FixTaskFakeRunner();
+            var config = RelayConfigLoader.Defaults();
+
+            var outcome = await FixTaskAuthorRunner.RunAsync(
+                root, "task-without-evidence", config, fake, CancellationToken.None);
+
+            Assert.False(outcome.Success);
+            Assert.Contains("No failure evidence", outcome.Error, StringComparison.Ordinal);
+            // The fake runner must NOT have been invoked.
+            Assert.False(fake.WasCalled);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    // ── Defect 1 & 2: evidence under .relay/<taskId>/ flows into prompt ───────
+
+    [AvaloniaFact]
+    public async Task RunAsync_EvidenceFlowsIntoPrompt()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "visual-relay-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var taskId = "flagged-task";
+            var relayDir = Path.Combine(root, ".relay", taskId);
+            Directory.CreateDirectory(relayDir);
+
+            // Write NEEDS-REVIEW with a flag reason.
+            await File.WriteAllTextAsync(
+                Path.Combine(relayDir, "NEEDS-REVIEW"),
+                "swival timed out after 3 retries\nstage 10\n");
+
+            // Write one verify-output.txt.
+            await File.WriteAllTextAsync(
+                Path.Combine(relayDir, "stage10-attempt1.verify-output.txt"),
+                """
+                # verify output (autopsy artifact)
+                # check: red
+                Some guard crash output
+                FileNotFoundException: System.Composition
+                """);
+
+            var fake = new FixTaskFakeRunner();
+            var config = RelayConfigLoader.Defaults();
+
+            var outcome = await FixTaskAuthorRunner.RunAsync(
+                root, taskId, config, fake, CancellationToken.None);
+
+            Assert.True(outcome.Success);
+            Assert.True(fake.WasCalled);
+            Assert.NotNull(fake.LastInvocation);
+
+            var prompt = fake.LastInvocation!.TaskInput;
+
+            // Prompt should contain evidence from NEEDS-REVIEW.
+            Assert.Contains("swival timed out", prompt, StringComparison.Ordinal);
+            // Prompt should contain the verify-output evidence.
+            Assert.Contains("guard crash", prompt, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { /* best-effort */ }
+        }
     }
 }

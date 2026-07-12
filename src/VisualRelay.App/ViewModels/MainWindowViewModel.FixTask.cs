@@ -43,7 +43,6 @@ public partial class MainWindowViewModel
             return;
 
         var taskId = SelectedTask.Id;
-        var taskDirectory = SelectedTask.Task.TaskDirectory;
 
         // Confirm via the shared seam.
         var confirmed = await ConfirmAsync(
@@ -70,7 +69,7 @@ public partial class MainWindowViewModel
         {
             outcome = await Task.Run(
                 () => FixTaskAuthorRunner.RunAsync(
-                    RootPath, taskId, taskDirectory, config, runner, ct),
+                    RootPath, taskId, config, runner, ct),
                 ct);
         }
         catch (OperationCanceledException)
