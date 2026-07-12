@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using VisualRelay.Core.Configuration;
@@ -235,6 +236,16 @@ public partial class MainWindowViewModel
                 });
             }
             _suppressLitTierPersist = false;
+
+            var assignments = LitTierRows
+                .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel) && r.SelectedModel != "(key missing)")
+                .ToDictionary(
+                    r => r.Tier,
+                    r => r.SelectedModel == "fallback"
+                        ? BackendConfigGenerator.DefaultTierResolution["fallback"]
+                        : r.SelectedModel,
+                    StringComparer.Ordinal);
+            PopulateModelCostRows(assignments);
         }
         catch
         {

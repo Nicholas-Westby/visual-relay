@@ -1,194 +1,141 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Costs;
 
 namespace VisualRelay.Tests;
 
-public sealed class CostPerModelTests
+public sealed partial class CostPerModelTests
 {
-    [Fact]
-    public void PopulateModelCostRows_ContainsAllModelsFromRelayPricingDefault()
-    {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        Assert.Equal(RelayPricing.Default.Count, vm.ModelCostRows.Count);
-
-        foreach (var (key, _) in RelayPricing.Default)
-        {
-            Assert.Contains(vm.ModelCostRows, r => r.ModelKey == key);
-        }
-    }
+    // ── No tier aliases as card keys ────────────────────────────────────
 
     [Fact]
-    public void PopulateModelCostRows_RatesMatchRelayPricingDefault()
+    public void PopulateModelCostRows_NoModelKeyIsATierAlias()
     {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
+        var tierAliases = new HashSet<string>(
+            BackendConfigGenerator.DefaultTierResolution.Keys, StringComparer.Ordinal);
 
-        foreach (var (key, pricing) in RelayPricing.Default)
-        {
-            var row = vm.ModelCostRows.Single(r => r.ModelKey == key);
-            Assert.Equal(pricing.Input, row.InputRate);
-            Assert.Equal(pricing.Output, row.OutputRate);
-            Assert.Equal(pricing.CachedInput, row.CachedInputRate);
-            Assert.Equal(pricing.CacheWrite, row.CacheWriteRate);
-        }
-    }
-
-    [Fact]
-    public void PopulateModelCostRows_NullCacheWrite_ShowsSameAsInput()
-    {
-        // frontier has no CacheWrite (null) — documented fallback is "billed at the Input rate"
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var frontier = vm.ModelCostRows.Single(r => r.ModelKey == "frontier");
-        Assert.Null(frontier.CacheWriteRate);
-        Assert.Equal("same as input", frontier.CacheWriteDisplay);
-    }
-
-    [Fact]
-    public void PopulateModelCostRows_ExplicitCacheWrite_ShowsDollarRate()
-    {
-        // claude-opus-1m has CacheWrite = 6.25
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var opus = vm.ModelCostRows.Single(r => r.ModelKey == "claude-opus-1m");
-        Assert.NotNull(opus.CacheWriteRate);
-        Assert.Equal(6.25, opus.CacheWriteRate!.Value);
-        Assert.Equal("$6.25 per 1M tokens", opus.CacheWriteDisplay);
-    }
-
-    // ── Time-windowed models ────────────────────────────────────────────
-
-    [Fact]
-    public void PopulateModelCostRows_CheapModel_HasWindows()
-    {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        Assert.True(cheap.HasWindows);
-        Assert.NotEmpty(cheap.Windows);
-    }
-
-    [Fact]
-    public void PopulateModelCostRows_BalancedModel_HasWindows()
-    {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var balanced = vm.ModelCostRows.Single(r => r.ModelKey == "balanced");
-        Assert.True(balanced.HasWindows);
-        Assert.NotEmpty(balanced.Windows);
-    }
-
-    [Fact]
-    public void PopulateModelCostRows_NonDeepSeekModels_HaveNoWindows()
-    {
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
         foreach (var row in vm.ModelCostRows)
-        {
-            if (row.ModelKey is "cheap" or "balanced")
-                continue;
+            Assert.DoesNotContain(row.ModelKey, tierAliases);
+    }
 
-            Assert.False(row.HasWindows,
-                $"'{row.ModelKey}' should not have windows.");
-            Assert.Empty(row.Windows);
+    [Fact]
+    public void PopulateModelCostRows_NoDuplicateModelKeys()
+    {
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+
+        var keys = vm.ModelCostRows.Select(r => r.ModelKey).ToList();
+        Assert.Equal(keys.Distinct(StringComparer.Ordinal).Count(), keys.Count);
+    }
+
+    // ── Default resolution badges ───────────────────────────────────────
+
+    [Fact]
+    public void PopulateModelCostRows_DefaultBadges()
+    {
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+
+        var cheapCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("cheap"));
+        Assert.Equal("deepseek-v4-flash", cheapCard.ModelKey);
+        Assert.True(cheapCard.IsActive);
+
+        var balancedCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("balanced"));
+        Assert.Equal("deepseek-v4-pro", balancedCard.ModelKey);
+        Assert.True(balancedCard.IsActive);
+
+        var frontierCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("frontier"));
+        Assert.Equal("glm-5.2", frontierCard.ModelKey);
+        Assert.True(frontierCard.IsActive);
+
+        var visionCard = vm.ModelCostRows.First(r => r.TierBadges.Contains("vision"));
+        Assert.Equal("hf-qwen3-vl-235b", visionCard.ModelKey);
+        Assert.True(visionCard.IsActive);
+
+        // kimi-k2 and gpt-5 have no badge and are inactive.
+        var kimi = vm.ModelCostRows.Single(r => r.ModelKey == "kimi-k2");
+        Assert.Empty(kimi.TierBadges);
+        Assert.False(kimi.IsActive);
+
+        var gpt5 = vm.ModelCostRows.Single(r => r.ModelKey == "gpt-5");
+        Assert.Empty(gpt5.TierBadges);
+        Assert.False(gpt5.IsActive);
+    }
+
+    // ── Ordering ────────────────────────────────────────────────────────
+
+    [Fact]
+    public void PopulateModelCostRows_BadgedCardsPrecedeUnbadged()
+    {
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+
+        var foundUnbadged = false;
+        foreach (var row in vm.ModelCostRows)
+        {
+            if (row.TierBadges.Count == 0)
+                foundUnbadged = true;
+            else
+                Assert.False(foundUnbadged, $"badged card '{row.ModelKey}' after unbadged");
         }
     }
 
     [Fact]
-    public void PopulateModelCostRows_Windows_HaveCorrectMultiplier()
+    public void PopulateModelCostRows_FirstCardIsCheapModel()
     {
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        Assert.Equal(2, cheap.Windows.Count);
-        Assert.All(cheap.Windows, w => Assert.Equal(2.0, w.Multiplier));
+        Assert.Equal("deepseek-v4-flash", vm.ModelCostRows[0].ModelKey);
+        Assert.Contains("cheap", vm.ModelCostRows[0].TierBadges);
     }
 
-    [Fact]
-    public void PopulateModelCostRows_Windows_PeakRatesAreMultiplied()
-    {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
+    // ── Explicit assignments ────────────────────────────────────────────
 
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        // cheap base rates: input=0.14, output=0.28, cachedInput=0.0028, cacheWrite=0.14
-        foreach (var w in cheap.Windows)
+    [Fact]
+    public void PopulateModelCostRows_ExplicitAssignmentWins()
+    {
+        var assignments = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            Assert.Equal(0.14 * 2.0, w.PeakInputRate);
-            Assert.Equal(0.28 * 2.0, w.PeakOutputRate);
-            Assert.Equal(0.0028 * 2.0, w.PeakCachedInputRate);
-            Assert.Equal(0.14 * 2.0, w.PeakCacheWriteRate);
-        }
+            ["cheap"] = "kimi-k2",
+        };
+
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows(assignments);
+
+        var kimi = vm.ModelCostRows.Single(r => r.ModelKey == "kimi-k2");
+        Assert.Contains("cheap", kimi.TierBadges);
+        Assert.True(kimi.IsActive);
+
+        var flash = vm.ModelCostRows.Single(r => r.ModelKey == "deepseek-v4-flash");
+        Assert.Empty(flash.TierBadges);
+        Assert.False(flash.IsActive);
     }
 
-    [Fact]
-    public void PopulateModelCostRows_Windows_StartEndTimesAreConvertedToLocal()
-    {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        var w1 = cheap.Windows[0];
-
-        // The window is 09:00–12:00 Asia/Shanghai (UTC+8).
-        // In UTC: 01:00–04:00.
-        // The local time representation should differ from the source window
-        // unless the machine happens to be in Asia/Shanghai.
-        // Verify the window boundaries were converted by checking that at
-        // least one of them differs from the raw 09:00/12:00 values, OR that
-        // the SourceTimezoneLabel confirms Asia/Shanghai.
-        Assert.Equal("Asia/Shanghai", w1.SourceTimezoneLabel);
-    }
+    // ── Unpriced assignment ─────────────────────────────────────────────
 
     [Fact]
-    public void PopulateModelCostRows_WindowDisplayTimes_AreNonEmpty()
+    public void PopulateModelCostRows_UnpricedAssignmentYieldsCard()
     {
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        foreach (var w in cheap.Windows)
+        var assignments = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            Assert.NotEmpty(w.StartTimeDisplay);
-            Assert.NotEmpty(w.EndTimeDisplay);
-        }
-    }
+            ["vision"] = "hf-qwen3-vl-30b",
+        };
 
-    [Fact]
-    public void PopulateModelCostRows_WindowDisplayTimezoneLabel_IsSet()
-    {
         var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
+        vm.PopulateModelCostRows(assignments);
 
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        foreach (var w in cheap.Windows)
-        {
-            Assert.NotEmpty(w.DisplayTimezoneLabel);
-        }
+        var card = vm.ModelCostRows.Single(r => r.ModelKey == "hf-qwen3-vl-30b");
+        Assert.Contains("vision", card.TierBadges);
+        Assert.False(card.IsPriced, "unpriced model must have IsPriced=false");
+        Assert.True(card.IsActive);
+        Assert.Empty(card.InputDisplay);
     }
 
-    [Fact]
-    public void PopulateModelCostRows_WindowPeakCacheWriteDisplay_NullFallback_ShowsSameAsInput()
-    {
-        // vision model has null CacheWrite — its window peak (if it had windows) would show "same as input".
-        // Verify on cheap which has CacheWrite=0.14 (non-null), so peak shows a dollar rate.
-        var vm = new MainWindowViewModel();
-        vm.PopulateModelCostRows();
-
-        var cheap = vm.ModelCostRows.Single(r => r.ModelKey == "cheap");
-        foreach (var w in cheap.Windows)
-        {
-            Assert.Equal("$0.28 per 1M tokens", w.PeakCacheWriteDisplay);
-        }
-    }
+    // ── Idempotency ─────────────────────────────────────────────────────
 
     [Fact]
     public void PopulateModelCostRows_IsIdempotent()
@@ -202,14 +149,39 @@ public sealed class CostPerModelTests
     }
 
     [Fact]
-    public void PopulateModelCostRows_DisplayNameMatchesModelKey()
+    public void PopulateModelCostRows_Parameterless_UsesDefaultResolution()
+    {
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+        var cards1 = vm.ModelCostRows.Select(r => r.ModelKey)
+            .OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+        var vm2 = new MainWindowViewModel();
+        vm2.PopulateModelCostRows(null);
+        var cards2 = vm2.ModelCostRows.Select(r => r.ModelKey)
+            .OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+        Assert.Equal(cards1, cards2);
+    }
+
+    [Fact]
+    public void PopulateModelCostRows_AllDefaultCards_ArePriced()
     {
         var vm = new MainWindowViewModel();
         vm.PopulateModelCostRows();
 
-        foreach (var row in vm.ModelCostRows)
-        {
-            Assert.Equal(row.ModelKey, row.DisplayName);
-        }
+        Assert.All(vm.ModelCostRows, r =>
+            Assert.True(r.IsPriced, $"'{r.ModelKey}' should be priced"));
+    }
+
+    [Fact]
+    public void PopulateModelCostRows_VisionBadgeOnHfQwen3Vl235b()
+    {
+        var vm = new MainWindowViewModel();
+        vm.PopulateModelCostRows();
+
+        var visionCard = vm.ModelCostRows.Single(r => r.ModelKey == "hf-qwen3-vl-235b");
+        Assert.Contains("vision", visionCard.TierBadges);
+        Assert.True(visionCard.IsActive);
     }
 }

@@ -11,19 +11,19 @@ public partial class MainWindowViewModel
         private string _modelKey = string.Empty;
 
         [ObservableProperty]
-        private string _displayName = string.Empty;
+        private bool _isActive;
 
         [ObservableProperty]
-        private double _inputRate;
+        private bool _isPriced;
 
         [ObservableProperty]
-        private double _outputRate;
+        private string _inputDisplay = string.Empty;
 
         [ObservableProperty]
-        private double? _cachedInputRate;
+        private string _outputDisplay = string.Empty;
 
         [ObservableProperty]
-        private double? _cacheWriteRate;
+        private string _cachedInputDisplay = string.Empty;
 
         [ObservableProperty]
         private string _cacheWriteDisplay = string.Empty;
@@ -31,37 +31,26 @@ public partial class MainWindowViewModel
         [ObservableProperty]
         private bool _hasWindows;
 
+        public ObservableCollection<string> TierBadges { get; } = [];
         public ObservableCollection<ModelCostWindowRow> Windows { get; } = [];
     }
 
     public sealed partial class ModelCostWindowRow : ObservableObject
     {
         [ObservableProperty]
-        private string _startTimeDisplay = string.Empty;
+        private string _headline = string.Empty;
 
         [ObservableProperty]
-        private string _endTimeDisplay = string.Empty;
+        private string _sourceNote = string.Empty;
 
         [ObservableProperty]
-        private string _sourceTimezoneLabel = string.Empty;
+        private string _peakInputDisplay = string.Empty;
 
         [ObservableProperty]
-        private string _displayTimezoneLabel = string.Empty;
+        private string _peakOutputDisplay = string.Empty;
 
         [ObservableProperty]
-        private double _multiplier;
-
-        [ObservableProperty]
-        private double _peakInputRate;
-
-        [ObservableProperty]
-        private double _peakOutputRate;
-
-        [ObservableProperty]
-        private double _peakCachedInputRate;
-
-        [ObservableProperty]
-        private double _peakCacheWriteRate;
+        private string _peakCachedInputDisplay = string.Empty;
 
         [ObservableProperty]
         private string _peakCacheWriteDisplay = string.Empty;

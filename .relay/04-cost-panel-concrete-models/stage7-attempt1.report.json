@@ -1,0 +1,574 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-12T19:06:43.906394+00:00",
+  "task": "# Relay stage 7: Review\nTask: 04-cost-panel-concrete-models\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Make the Cost Per LLM Model panel show concrete models, correct fallbacks, and honest local times\n\n## Problem\n\nThe Settings \u2192 \"Cost Per LLM Model\" panel (`src/VisualRelay.App/Views/Controls/CostPerModel.axaml`, populated by `PopulateModelCostRows` in `src/VisualRelay.App/ViewModels/MainWindowViewModel.CostPerModel.cs`) has a cluster of defects, all visible in the running app:\n\n1. **Tier aliases are rendered as if they were models.** The panel shows cards titled \"cheap\", \"balanced\", \"frontier\", and \"vision\" alongside real model names like \"glm-5.2\". \"frontier\" and \"glm-5.2\" appear as two separate cards with byte-identical rates because the pricing table duplicates the GLM 5.2 numbers under both keys.\n2. **The pricing data model itself is the root cause and violates the panel's DRY goal.** `RelayPricing.Default` (`src/VisualRelay.Core/Costs/RelayPricing.cs`) mixes tier aliases and concrete model names as keys:\n\n   ```csharp\n   [\"cheap\"] = new(0.14, 0.28, 0.0028, 0.14) { Windows = DeepseekPeakWindows },\n   ...\n   [\"frontier\"] = new(1.40, 4.40, 0.26),\n   // GLM 5.2 via HF (zai-org), 2026-07-07; same as frontier\n   [\"glm-5.2\"] = new(1.40, 4.40, 0.26),\n   ```\n\n   The tier entries are hand-copied snapshots of whatever concrete model the tier resolved to on the day they were written. Tier\u2192model resolution is actually dynamic: `BackendConfigGenerator` (`src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs`, `Chains` + `ResolveTiers`) re-targets tiers based on which provider keys are present and on user overrides persisted from the Live Tiers UI (`TierModelOverrides`). If the user re-points `cheap` at `kimi-k2` in Live Tiers, the `\"cheap\"` pricing entry silently keeps DeepSeek rates \u2014 both the panel and the cost estimator then display/charge the wrong numbers with no error. The intent was \"what is displayed is what is configured in the code\"; the current shape is a second, drift-prone copy of the configuration.\n3. **Peak-window times are shown in 24-hour format with a confusing timezone label.** The window header renders as `18:00 \u2013 21:00 ( Asia/Shanghai \u2192 PST8PDT ) \u2014 2\u00d7 multiplier`. The times shown are already converted to local time, but the `source \u2192 dest` arrow makes them read as Shanghai times; `PST8PDT` is a raw POSIX zone identifier leaked from `TimeZoneInfo.Local.Id`; and the times use `ToString(\"HH:mm\")` (24-hour) instead of AM/PM. The culprit is `ConvertWindowTimeToLocal` returning `TimeOnly.FromDateTime(localDateTime).ToString(\"HH:mm\")` and the row exposing `DisplayTimezoneLabel = TimeZoneInfo.Local.Id`.\n4. **No indication of which models are currently active.** The panel gives no hint which cards correspond to the models the tiers currently resolve to (the same information the Live Tiers section already computes via `BackendConfigGenerator.GetTierRows`).\n5. **\"same as input\" is applied inconsistently.** `FormatCacheWriteDisplay` prints \"same as input\" only when `CacheWrite` is `null` (glm-5.2), but prints a bare `$0.14` for cheap/deepseek-v4-flash where `CacheWrite` is explicitly equal to `Input` \u2014 same economic fact, two different renderings, and the numeric one gives no hint.\n6. **The vision card renders \"Cached input: $ per 1M tokens\".** `CachedInputRate` is `double?`; when `null` the XAML `StringFormat='${0} per 1M tokens'` binding produces an empty amount. The correct semantics (per `RelayCostEstimator`) is that a `null` `CachedInput` bills at the Input rate.\n7. **Peak cached input disagrees with the estimator.** `PeakCachedInputRate = (pricing.CachedInput ?? 0) * window.Multiplier` \u2014 the estimator uses `pricing.CachedInput ?? pricing.Input`. A windowed model with `null` `CachedInput` would display `$0` while being billed at the input rate.\n8. **Rate formatting is culture-sensitive and inconsistent.** All rates go through XAML `StringFormat='${0} per 1M tokens'` or `$\"${rate.Value} per 1M tokens\"` \u2014 raw `double.ToString()` in the current culture. Under a comma-decimal locale this renders `$0,0028`; and values render with whatever precision the double happens to have (`$1.4` vs `$0.003625`).\n9. **The null-fallback semantics are duplicated instead of shared.** `RelayCostEstimator.EstimateReport` has its own `var cachedRate = pricing.CachedInput ?? pricing.Input; var cacheWriteRate = pricing.CacheWrite ?? pricing.Input;` while the view model re-implements (and partially gets wrong, see 7) the same rules.\n10. **An unreachable pricing entry.** `[\"claude-haiku\"]` exists in `RelayPricing.Default` but appears nowhere in `tools/backend/litellm-config.yaml`'s `model_list`, in `BackendConfigGenerator.Chains`/`SelectableModelsByTier`, or in `SwivalProfileSession.DefaultToml` \u2014 no report can ever carry that model name.\n\nGround truth about what needs pricing: stage reports record the *requested* model name, which in practice is a tier alias \u2014 a sweep of this repo's `.relay/*/stage*.json` reports shows exactly four distinct values: `balanced`, `cheap`, `frontier`, `vision`. So the estimator must keep pricing tier-alias names; it just must do so by *resolving* them, not by duplicated table rows.\n\n## Fix\n\nOne direction, three layers. Pricing becomes concrete-models-only; tier aliases resolve through the configuration that already owns tier\u2192model mapping; the panel renders concrete models with tier badges and locale-proof strings.\n\n### 1. Core: concrete-model pricing + shared effective rates\n\nIn `src/VisualRelay.Core/Costs/RelayPricing.cs`:\n\n- Re-key `RelayPricing.Default` to concrete `model_list` names only. Replace the four tier-alias entries with their concrete equivalents, keeping the exact same rates and comments:\n  - `\"cheap\"` \u2192 `\"deepseek-v4-flash\"` (0.14, 0.28, 0.0028, 0.14, `DeepseekPeakWindows`)\n  - `\"balanced\"` \u2192 `\"deepseek-v4-pro\"` (0.435, 0.87, 0.003625, 0.435, `DeepseekPeakWindows`)\n  - `\"frontier\"` \u2192 delete (duplicate of `\"glm-5.2\"`, which stays)\n  - `\"vision\"` \u2192 `\"hf-qwen3-vl-235b\"` (0.20, 0.88)\n  - Delete `\"claude-haiku\"` (unreachable, see Problem 10). Keep every other entry (`glm-5.2`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`) unchanged.\n- Add effective-rate members to `ModelPricing` so the null-fallback rule lives in exactly one place:\n\n  ```csharp\n  public double EffectiveCachedInput => CachedInput ?? Input;\n  public double EffectiveCacheWrite => CacheWrite ?? Input;\n  ```\n\nIn `src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs` (main file, next to `Chains`), add the default tier\u2192concrete-model map \u2014 the head of each chain, which is by construction today's auto-resolution:\n\n```csharp\n/// <summary>Default tier-alias \u2192 concrete model resolution (head of each\n/// chain; the \"fallback\" pseudo-model maps to the HF floor). Used to price\n/// reports whose recorded model is a tier alias.</summary>\npublic static IReadOnlyDictionary<string, string> DefaultTierResolution { get; } =\n    Chains.ToDictionary(\n        kv => kv.Key,\n        kv => kv.Value[0].Model == FallbackTier ? FallbackFloorModel : kv.Value[0].Model,\n        StringComparer.Ordinal);\n```\n\nIn `src/VisualRelay.Core/Costs/RelayCostEstimator.cs`, `EstimateReport`:\n\n- Replace the single dictionary lookup with concrete-first, then tier-alias resolution:\n\n  ```csharp\n  if (!RelayPricing.Default.TryGetValue(model, out var pricing) &&\n      !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(model, out var concrete) &&\n        RelayPricing.Default.TryGetValue(concrete, out pricing)))\n  {\n      return new RelayCostEstimate(model, 0, false, ...); // unchanged unpriced path\n  }\n  ```\n\n  Keep `RelayCostEstimate.Model` as the originally requested name. Document in the method's XML doc that tier aliases are priced at the tier's *default* resolution \u2014 per-run overrides are not recorded in reports, so a user-overridden tier is an accepted approximation (still strictly better than the previous hand-copied snapshot, which had the same staleness plus drift).\n- Replace `pricing.CachedInput ?? pricing.Input` and `pricing.CacheWrite ?? pricing.Input` with `pricing.EffectiveCachedInput` / `pricing.EffectiveCacheWrite`.\n\nAll existing estimator cost assertions must keep passing with identical dollar values: `cheap`/`balanced`/`vision` now resolve to entries with the same rates they had before.\n\n### 2. View model: badges, effective rates, preformatted strings\n\nIn `MainWindowViewModel.CostPerModel.cs`:\n\n- Change the signature to `public void PopulateModelCostRows(IReadOnlyDictionary<string, string>? tierAssignments = null)`. When `null`, use `BackendConfigGenerator.DefaultTierResolution`. The card list is the union of `RelayPricing.Default.Keys` and the assignment values, so an override pointing a tier at a model with no pricing entry still yields a card (marked unpriced) instead of silently vanishing.\n- Per card compute `TierBadges` \u2014 the tiers (assignment keys) whose assigned model is this card's model, ordered by a fixed tier order:\n\n  ```csharp\n  private static readonly string[] TierOrder =\n      [\"cheap\", \"balanced\", \"frontier\", \"vision\", \"claude\", \"fallback\"];\n  ```\n\n  Sort cards: models with badges first (by their first badge's `TierOrder` index), then the unassigned rest by ordinal model name. `IsActive` = has at least one badge. `IsPriced` = has a `RelayPricing.Default` entry; unpriced cards carry badges and the name but no rate rows.\n- Move ALL rate rendering into the view model as preformatted, invariant-culture strings; the XAML must bind only ready-made strings (this fixes Problems 6 and 8 in one stroke). Helpers:\n\n  ```csharp\n  private static string FormatRate(double rate) =>\n      \"$\" + rate.ToString(\"0.######\", CultureInfo.InvariantCulture) + \" per 1M tokens\";\n\n  // Cached-input and cache-write rows: always numeric; annotate when the\n  // effective rate equals the input rate (covers BOTH the null fallback and\n  // an explicit value equal to input \u2014 one consistent rendering).\n  private static string FormatRateRelativeToInput(double effective, double input) =>\n      effective == input ? FormatRate(effective) + \" (same as input)\" : FormatRate(effective);\n  ```\n\n  Base rows: `InputDisplay = FormatRate(pricing.Input)`, `OutputDisplay = FormatRate(pricing.Output)`, `CachedInputDisplay = FormatRateRelativeToInput(pricing.EffectiveCachedInput, pricing.Input)`, `CacheWriteDisplay = FormatRateRelativeToInput(pricing.EffectiveCacheWrite, pricing.Input)`. Delete `FormatCacheWriteDisplay` and the raw `double`/`double?` rate properties from `ModelCostRow` (`InputRate`, `OutputRate`, `CachedInputRate`, `CacheWriteRate`) \u2014 expose only the display strings plus `ModelKey`, `TierBadges`, `IsActive`, `IsPriced`, `HasWindows`, `Windows`. Drop `DisplayName` (it was always identical to `ModelKey`).\n- Peak rows use the same helpers on effective rates: `PeakInputDisplay = FormatRate(pricing.Input * m)`, `PeakOutputDisplay = FormatRate(pricing.Output * m)`, `PeakCachedInputDisplay = FormatRateRelativeToInput(pricing.EffectiveCachedInput * m, pricing.Input * m)`, `PeakCacheWriteDisplay = FormatRateRelativeToInput(pricing.EffectiveCacheWrite * m, pricing.Input * m)`. This eliminates the `?? 0` bug (Problem 7).\n- Window header: replace the eleven-TextBlock strip and the `SourceTimezoneLabel`/`DisplayTimezoneLabel`/`StartTimeDisplay`/`EndTimeDisplay`/`Multiplier` properties with two strings built in the view model:\n  - `Headline` \u2014 local times, 12-hour, explicitly \"your time\": `6:00 PM \u2013 9:00 PM your time \u2014 2\u00d7 peak pricing`. Times come from the existing conversion (`ConvertWindowTimeToLocal`, unchanged math) but formatted with `ToString(\"h:mm tt\", CultureInfo.InvariantCulture)`. Multiplier formatted `window.Multiplier.ToString(\"0.#\", CultureInfo.InvariantCulture) + \"\u00d7 peak pricing\"`.\n  - `SourceNote` \u2014 the provider's own schedule for transparency: `(9:00 AM \u2013 12:00 PM in Asia/Shanghai)`, same `h:mm tt` format, using the raw `RateWindow` times and `TimeZoneId`.\n  - If `TimeZoneInfo.FindSystemTimeZoneById` throws (existing catch path), the `Headline` uses the source times with `in Asia/Shanghai` in place of `your time`, and `SourceNote` is empty. Never display `TimeZoneInfo.Local.Id` or any platform timezone identifier \u2014 that is where `PST8PDT` came from.\n- Wire live refresh: at the end of `RefreshLitTiersAsync` in `MainWindowViewModel.Keys.cs` (after the `LitTierRows` rebuild loop and `_suppressLitTierPersist = false;`), rebuild the cost cards from the just-computed resolution so the panel always mirrors Live Tiers, including user overrides:\n\n  ```csharp\n  var assignments = LitTierRows\n      .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel) && r.SelectedModel != \"(key missing)\")\n      .ToDictionary(\n          r => r.Tier,\n          r => r.SelectedModel == \"fallback\"\n              ? BackendConfigGenerator.DefaultTierResolution[\"fallback\"]\n              : r.SelectedModel,\n          StringComparer.Ordinal);\n  PopulateModelCostRows(assignments);\n  ```\n\n  Keep the existing parameterless-style call in `LoadInitialAsync` (`MainWindowViewModel.cs`) as `PopulateModelCostRows()` so the panel is populated with the default resolution before keys load.\n\n### 3. XAML: badges, active styling, unpriced state\n\nIn `CostPerModel.axaml`:\n\n- Card header becomes a horizontal row: the model name TextBlock (bind `ModelKey`) followed by one small badge chip per `TierBadges` entry (ItemsControl with horizontal StackPanel; chip = `Border` `CornerRadius=\"8\"` `Padding=\"6,1\"` `Background=\"#2E4B6E\"` containing the tier name at `FontSize=\"10\"` `Foreground=\"#CFE0F5\"`).\n- Active cards keep the current border; inactive cards (`IsActive` false) get the muted header `Foreground=\"#9AA3B1\"` instead of `#F2F5FA` so configured models stand out. Do this with two TextBlocks toggled by `IsVisible` bindings on `IsActive` (Avalonia DataTemplates here have no style triggers; keep it dumb).\n- The four rate `Grid` rows bind the new display strings directly (`InputDisplay`, `OutputDisplay`, `CachedInputDisplay`, `CacheWriteDisplay`) with **no `StringFormat`** anywhere in this control. Wrap the rate rows + windows section in a container with `IsVisible=\"{Binding IsPriced}\"`, and add a sibling TextBlock `pricing not configured for this model` (muted `#7F8794`, `FontSize=\"12\"`) with `IsVisible=\"{Binding !IsPriced}\"`.\n- The window header strip becomes two TextBlocks: `Headline` (existing amber `#E0A458`) and `SourceNote` (`FontSize=\"10\"` `Foreground=\"#7F8794\"`, `IsVisible` bound to `SourceNote` non-empty via `StringConverters.IsNotNullOrEmpty`). Peak rows bind the four new peak display strings.\n\n### Consistency test updates (required, do not delete)\n\n- `tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs` currently asserts tier names are `RelayPricing.Default` keys. Rewrite that invariant to the new shape: every tier alias in `BackendConfigGenerator.Chains.Keys` must have a `DefaultTierResolution` entry, and every `DefaultTierResolution` value must have a `RelayPricing.Default` entry (keep the swival-toml tier-name assertions as they are). Also assert the inverse hygiene rule: `RelayPricing.Default.Keys` contains none of `Chains.Keys` (no tier alias may reappear as a pricing key).\n- `RelayPricingRateTests`, `RelayPricingScheduleTests`, `RelayPricingScheduleEdgeTests`, `RelayCostEstimatorTests`: update any lookups that index `RelayPricing.Default` by tier alias to the concrete key; report-JSON fixtures that set `\"model\": \"cheap\"` etc. must stay as tier aliases and keep asserting the same dollar values (they prove alias resolution works).\n\n## Rejected approaches \u2014 do not do these\n\n- Do NOT keep tier-alias keys in `RelayPricing.Default` (or add a second tier-keyed table). The whole point is a single pricing row per concrete model.\n- Do NOT invent rates for models that have none (e.g. `hf-qwen3-vl-30b`). Unpriced cards say \"pricing not configured for this model\"; adding verified rates is out of scope.\n- Do NOT parse the generated LiteLLM YAML at runtime to discover tier assignments \u2014 `BackendConfigGenerator` is the source that *generates* that YAML; use `DefaultTierResolution`/`GetTierRows`.\n- Do NOT display `TimeZoneInfo.Local.Id`, `TimeZoneInfo.Local.DisplayName`, or attempt timezone-abbreviation lookup (PDT/PST); cross-platform abbreviation data is unreliable. The phrase is the literal \"your time\".\n- Do NOT use XAML `StringFormat` for any currency or time value in this control; all such strings are built in the view model with `CultureInfo.InvariantCulture`.\n- Do NOT change `tools/backend/litellm-config.yaml`, `BackendConfigGenerator.Chains`, `SelectableModelsByTier`, or `SwivalProfileSession.DefaultToml`.\n- Do NOT make `PopulateModelCostRows` async or have it load config itself \u2014 it stays a pure projection; `RefreshLitTiersAsync` already owns the async config/keys work.\n\n## Tests\n\nRewrite `tests/VisualRelay.Tests/CostPerModelTests.cs` around the new shape (the old raw-rate assertions no longer compile). Cover at minimum, via `new MainWindowViewModel()` + `PopulateModelCostRows(...)`:\n\n- No card's `ModelKey` is a tier alias (`cheap`/`balanced`/`frontier`/`vision`/`claude`/`fallback`), and there are no duplicate `ModelKey` values.\n- Default resolution badges: `deepseek-v4-flash` carries the `cheap` badge, `deepseek-v4-pro` carries `balanced`, `glm-5.2` carries `frontier`; `kimi-k2` and `gpt-5` have no badges and `IsActive == false`.\n- Ordering: every badged card precedes every unbadged card, and the first card is the `cheap` tier's model.\n- Explicit assignments win: `PopulateModelCostRows(new Dictionary<string,string> { [\"cheap\"] = \"kimi-k2\" })` puts the `cheap` badge on `kimi-k2` and leaves `deepseek-v4-flash` unbadged.\n- Unpriced assignment: `[\"vision\"] = \"hf-qwen3-vl-30b\"` yields a card with that key, `IsPriced == false`, and a `vision` badge.\n- `CachedInputDisplay` for `hf-qwen3-coder-next` (null `CachedInput`) is `\"$0.3 per 1M tokens (same as input)\"` \u2014 numeric, never a blank amount.\n- `CacheWriteDisplay` for `deepseek-v4-flash` (explicit 0.14 == input) ends with `\"(same as input)\"`; for `claude-opus-1m` it is exactly `\"$6.25 per 1M tokens\"` with no annotation.\n- Peak rows on `deepseek-v4-flash`: `PeakCachedInputDisplay` starts with `\"$0.0056\"` (effective \u00d7 2, not `?? 0`), `PeakCacheWriteDisplay` carries the `\"(same as input)\"` annotation.\n- Culture safety: set `CultureInfo.CurrentCulture` to `de-DE` for the populate call (restore in `finally`) and assert a fractional rate string still contains `\".\"` and no `\",\"`.\n- Window `Headline` matches `^\\d{1,2}:\\d{2} [AP]M \u2013 \\d{1,2}:\\d{2} [AP]M your time \u2014 2\u00d7 peak pricing$` and `SourceNote` equals `\"(9:00 AM \u2013 12:00 PM in Asia/Shanghai)\"` for the first DeepSeek window (source times are fixed; local times vary by machine, hence the pattern).\n- Idempotency: calling `PopulateModelCostRows()` twice yields the same card count.\n\nAdd to `tests/VisualRelay.Tests/RelayCostEstimatorTests.cs` (keep existing facts):\n\n- A report with `\"model\": \"cheap\"` and one with `\"model\": \"deepseek-v4-flash\"`, identical token stats, produce identical `CostUsd` and both `Priced == true`.\n- A report with `\"model\": \"frontier\"` prices at glm-5.2 rates.\n- `\"model\": \"nonexistent-model-xyz\"` remains `Priced == false` (existing fact keeps passing).\n\nEffective-rate unit facts (in `RelayPricingRateTests` or alongside): `EffectiveCachedInput`/`EffectiveCacheWrite` return the explicit value when set and `Input` when null.\n\n## Constraints\n\n- `dotnet build VisualRelay.slnx` must succeed; the full test suite must pass.\n- No new NuGet dependencies; no changes outside the files named above plus the listed tests.\n- Keep the Settings expander header text \"Cost Per LLM Model\" (`SettingsPanel.axaml`) unchanged.\n- If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove coverage to satisfy it.\n\n\n## Manifest\nsrc/VisualRelay.Core/Costs/RelayPricing.cs\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\nsrc/VisualRelay.Core/Costs/RelayCostEstimator.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.CostPerModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.ModelCostRow.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\nsrc/VisualRelay.App/Views/Controls/CostPerModel.axaml\ntests/VisualRelay.Tests/CostPerModelTests.cs\ntests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs\ntests/VisualRelay.Tests/RelayCostEstimatorTests.cs\ntests/VisualRelay.Tests/RelayPricingRateTests.cs\ntests/VisualRelay.Tests/CostPerModelTests.Display.cs\ntests/VisualRelay.Tests/RelayCostEstimatorTests.Tiers.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The Cost Per LLM Model panel has 10 defects spanning the pricing data model (tier aliases as keys, duplicate entries, drift-prone snapshots), the view model (culture-sensitive formatting, broken null-fallback for cached rates, inconsistent 'same as input' rendering, wrong peak-cached-input computation, leaked POSIX timezone IDs, 24-hour time format), and the XAML (no active-model indication, blank cached-input amounts for null values). The fix must span three layers \u2014 core pricing data model (concrete-only keys + effective-rate members), view model (preformatted invariant-culture strings + tier badges + 'your time' window headlines), and XAML (badge chips + active/priced state toggles + no StringFormat for currency/time) \u2014 while keeping the test suite green and respecting constraints against new dependencies, config-file changes, and timezone abbreviation display. Three options are viable: the prescribed full fix (Option 1), a more radical config-derived pricing approach that eliminates the static dictionary entirely (Option 2), or a minimal panel-only fix that addresses display defects while keeping tier-alias pricing keys (Option 3).\",\n  \"options\": [\n    \"Option 1: Prescribed concrete-model pricing \u2014 re-key RelayPricing.Default to concrete names only, add DefaultTierResolution to BackendConfigGenerator, update estimator to resolve tier aliases via that map. Fixes all 10 defects structurally; single pricing row per model eliminates drift; recommended in the task spec.\",\n    \"Option 2: Config-derived pricing \u2014 go further by eliminating RelayPricing.Default as a hand-maintained dictionary. Introduce a ModelRates map alongside Chains; derive both DefaultTierResolution and the pricing dictionary as projections. Structural guarantee against drift but more invasive.\",\n    \"Option 3: Minimal panel-only fix \u2014 keep tier-alias keys in RelayPricing.Default but fix all display defects in the view model and XAML. Add effective-rate members, fix null-fallback bug, preformat strings, add badges/active styling. Zero estimator risk but leaves the root duplicate-key problem unfixed.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase has a cluster of related defects in the Cost Per LLM Model panel spanning three layers. (1) Core pricing data (RelayPricing.cs): The Default dictionary uses tier-alias keys (\\\"cheap\\\", \\\"balanced\\\", \\\"frontier\\\", \\\"vision\\\") as hand-copied snapshots of whatever concrete model the tier resolved to when written, plus an unreachable \\\"claude-haiku\\\" entry. This duplicates and drifts from the real configuration in BackendConfigGenerator.Chains, which dynamically resolves tiers based on present provider keys and user overrides. (2) View model (MainWindowViewModel.CostPerModel.cs, ModelCostRow.cs): PopulateModelCostRows iterates RelayPricing.Default directly, exposing raw double rates via XAML StringFormat bindings (culture-sensitive), leaks TimeZoneInfo.Local.Id (\\\"PST8PDT\\\"), uses 24-hour \\\"HH:mm\\\" format, has a null-fallback bug on PeakCachedInputRate (uses ?? 0 instead of ?? Input), and renders \\\"same as input\\\" inconsistently (only when CacheWrite is null, not when explicitly equal to Input). (3) XAML (CostPerModel.axaml): The 11-TextBlock window header strip renders source\u2192dest timezone with a confusing arrow and POSIX zone ID; no tier badges, active-model indication, or unpriced state exist. The test files (CostPerModelTests.cs references tier-alias keys; BackendConfigGeneratorAliasConsistencyTests.cs asserts tier names are RelayPricing.Default keys; RelayCostEstimatorTests.cs/RelayPricingScheduleTests.cs/RelayPricingScheduleEdgeTests.cs use model:\\\"cheap\\\" etc. in JSON fixtures) all need updates. The BackendConfigGenerator already has Chains (tier\u2192candidate models) and GetTierRows; a DefaultTierResolution can be derived as the head of each chain. The fact-count ratchet (SplitGuardVerificationTests.cs, baseline=175) tracks only oversized files; CostPerModelTests.cs is NOT in that list, but BackendConfigGeneratorAliasConsistencyTests.cs IS (currently 1 fact; the rewrite must keep/bump the count to avoid a ratchet failure). StringConverters.IsNotNullOrEmpty is an Avalonia built-in from Avalonia.Data.Converters.\",\n  \"constraints\": [\n    \"dotnet build VisualRelay.slnx must succeed; the full test suite must pass.\",\n    \"No new NuGet dependencies.\",\n    \"No changes outside the named files (RelayPricing.cs, BackendConfigGenerator.cs, RelayCostEstimator.cs, MainWindowViewModel.CostPerModel.cs, ModelCostRow.cs, CostPerModel.axaml, CostPerModel.axaml.cs, MainWindowViewModel.Keys.cs, MainWindowViewModel.cs) plus listed tests.\",\n    \"Keep Settings expander header text \\\"Cost Per LLM Model\\\" unchanged in SettingsPanel.axaml.\",\n    \"If a fact-count ratchet test guards a touched test class, bump the ratchet to match \u2014 never remove coverage to satisfy it.\",\n    \"Do NOT keep tier-alias keys in RelayPricing.Default.\",\n    \"Do NOT invent rates for models that have none.\",\n    \"Do NOT parse the generated LiteLLM YAML at runtime.\",\n    \"Do NOT display TimeZoneInfo.Local.Id or attempt timezone-abbreviation lookup.\",\n    \"Do NOT use XAML StringFormat for any currency or time value in this control.\",\n    \"Do NOT change tools/backend/litellm-config.yaml, BackendConfigGenerator.Chains, SelectableModelsByTier, or SwivalProfileSession.DefaultToml.\",\n    \"Do NOT make PopulateModelCostRows async or have it load config itself.\",\n    \"Report-JSON fixtures using model:\\\"cheap\\\" etc. must stay as tier aliases and keep asserting the same dollar values (proving alias resolution works).\",\n    \"All rate formatting must use CultureInfo.InvariantCulture.\",\n    \"Times must be 12-hour AM/PM format with 'your time' label.\",\n    \"CostPerModelTests.cs has ~18 facts currently and is NOT in the oversized-family ratchet list.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"All 10 defects confirmed in live code. Root cause: RelayPricing.Default (RelayPricing.cs:26-51) uses tier-alias keys (\\\"cheap\\\", \\\"balanced\\\", \\\"frontier\\\", \\\"vision\\\") as hand-copied snapshots alongside concrete model keys, creating duplicates (\\\"frontier\\\"/\\\"glm-5.2\\\"), an unreachable entry (\\\"claude-haiku\\\"), and drift from BackendConfigGenerator.Chains dynamic resolution. PopulateModelCostRows (CostPerModel.cs:12-53) iterates all keys directly with no tier-resolution step. The view model leaks TimeZoneInfo.Local.Id (\\\"PST8PDT\\\"), uses 24-hour HH:mm format, has a PeakCachedInputRate ?? 0 bug (line 44), and formats rates culture-sensitively through XAML StringFormat. RefreshLitTiersAsync (Keys.cs:181-243) never refreshes cost cards. Three test files (CostPerModelTests.cs with 15 facts, BackendConfigGeneratorAliasConsistencyTests.cs with 1 fact in the ratchet list, and schedule/rate estimator tests using tier-alias JSON fixtures) all need updates.\",\n  \"excerpts\": [\n    \"RelayPricing.cs:30-38 \u2014 tier aliases as pricing keys: [\\\"cheap\\\"] = new(0.14, 0.28, ...), [\\\"balanced\\\"] = new(0.435, 0.87, ...), [\\\"frontier\\\"] = new(1.40, 4.40, 0.26), [\\\"glm-5.2\\\"] = new(1.40, 4.40, 0.26), [\\\"vision\\\"] = new(0.20, 0.88)\",\n    \"RelayPricing.cs:44 \u2014 unreachable entry: [\\\"claude-haiku\\\"] = new(1.0, 5.0, 0.10, 1.25)\",\n    \"CostPerModel.cs:16 \u2014 PopulateModelCostRows iterates all RelayPricing.Default keys directly: foreach (var (key, pricing) in RelayPricing.Default)\",\n    \"CostPerModel.cs:44 \u2014 PeakCachedInputRate bug: (pricing.CachedInput ?? 0) * window.Multiplier (should be ?? pricing.Input)\",\n    \"CostPerModel.cs:73 \u2014 24-hour format: TimeOnly.FromDateTime(localDateTime).ToString(\\\"HH:mm\\\")\",\n    \"CostPerModel.cs:40 \u2014 leaked POSIX zone ID: DisplayTimezoneLabel = TimeZoneInfo.Local.Id\",\n    \"CostPerModel.cs:57-59 \u2014 inconsistent 'same as input': only when rate is null, not when equal to Input\",\n    \"CostPerModel.axaml:30,48 \u2014 XAML StringFormat for rates and blank cached-input: Text=\\\"{Binding InputRate, StringFormat='${0} per 1M tokens'}\\\"\",\n    \"RelayCostEstimator.cs:95 \u2014 no tier-alias resolution: if (!RelayPricing.Default.TryGetValue(model, out var pricing)) returns Priced=false\",\n    \"BackendConfigGeneratorAliasConsistencyTests.cs:47 \u2014 asserts tier names are in RelayPricing.Default.Keys: Assert.Contains(balancedTier, pricingAliases)\"\n  ],\n  \"repro\": \"1. Open Settings \u2192 Cost Per LLM Model: observe cards titled 'cheap', 'balanced', 'frontier', 'vision' alongside concrete models; 'frontier' and 'glm-5.2' have identical rates. 2. DeepSeek window header: '18:00 \u2013 21:00 ( Asia/Shanghai \u2192 PST8PDT )' \u2014 24-hour, POSIX TZ ID. 3. Vision card: 'Cached input: $ per 1M tokens' (blank). 4. Cheap card: 'Cache write: $0.14 per 1M tokens' (no 'same as input' annotation despite CacheWrite==Input). 5. Change cheap\u2192kimi-k2 in Live Tiers; cost panel still shows deepseek-v4-flash rates. 6. dotnet test --filter CostPerModelTests \u2014 15 facts pass against tier-alias keys. 7. dotnet test --filter BackendConfigGeneratorAliasConsistencyTests \u2014 asserts tier names in pricing keys (will fail after re-key).\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Plan: 04-cost-panel-concrete-models\\n\\n### Layer 1: Core \u2014 concrete pricing keys + effective rates\\n\\n**`src/VisualRelay.Core/Costs/RelayPricing.cs`**\\n- Delete tier-alias entries: `[\\\"cheap\\\"]`, `[\\\"balanced\\\"]`, `[\\\"frontier\\\"]`, `[\\\"vision\\\"]`.\\n- Delete unreachable `[\\\"claude-haiku\\\"]`.\\n- Add concrete-key entries with identical rates and comments:\\n  - `[\\\"deepseek-v4-flash\\\"] = new(0.14, 0.28, 0.0028, 0.14) { Windows = DeepseekPeakWindows }`\\n  - `[\\\"deepseek-v4-pro\\\"] = new(0.435, 0.87, 0.003625, 0.435) { Windows = DeepseekPeakWindows }`\\n  - `[\\\"hf-qwen3-vl-235b\\\"] = new(0.20, 0.88)`\\n- Keep all other entries (`glm-5.2`, `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2`) unchanged.\\n- Add two computed properties to `ModelPricing`:\\n  ```csharp\\n  public double EffectiveCachedInput => CachedInput ?? Input;\\n  public double EffectiveCacheWrite => CacheWrite ?? Input;\\n  ```\\n\\n**`src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs`**\\n- Add `DefaultTierResolution` static property next to `Chains`:\\n  ```csharp\\n  public static IReadOnlyDictionary<string, string> DefaultTierResolution { get; } =\\n      Chains.ToDictionary(\\n          kv => kv.Key,\\n          kv => kv.Value[0].Model == FallbackTier ? FallbackFloorModel : kv.Value[0].Model,\\n          StringComparer.Ordinal);\\n  ```\\n\\n**`src/VisualRelay.Core/Costs/RelayCostEstimator.cs`**\\n- In `EstimateReport`, replace the single `RelayPricing.Default.TryGetValue(model, \u2026)` with:\\n  ```csharp\\n  if (!RelayPricing.Default.TryGetValue(model, out var pricing) &&\\n      !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(model, out var concrete) &&\\n        RelayPricing.Default.TryGetValue(concrete, out pricing)))\\n  { \u2026 unpriced \u2026 }\\n  ```\\n- Replace `pricing.CachedInput ?? pricing.Input` with `pricing.EffectiveCachedInput`.\\n- Replace `pricing.CacheWrite ?? pricing.Input` with `pricing.EffectiveCacheWrite`.\\n- Keep `RelayCostEstimate.Model` as the originally requested name.\\n\\n### Layer 2: View model \u2014 badges, effective rates, preformatted invariant strings\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.CostPerModel.cs`**\\n- Change `PopulateModelCostRows()` signature to `public void PopulateModelCostRows(IReadOnlyDictionary<string, string>? tierAssignments = null)`.\\n- When `tierAssignments` is null, use `BackendConfigGenerator.DefaultTierResolution` as the assignment.\\n- Compute card set: union of `RelayPricing.Default.Keys` and the assignment values (so an override pointing at a model with no pricing entry still yields a card, marked unpriced).\\n- Per card compute `TierBadges` \u2014 the tier names from the assignment whose assigned model matches this card's model key, ordered by a fixed `TierOrder` array:\\n  ```csharp\\n  private static readonly string[] TierOrder =\\n      [\\\"cheap\\\", \\\"balanced\\\", \\\"frontier\\\", \\\"vision\\\", \\\"claude\\\", \\\"fallback\\\"];\\n  ```\\n- Sort cards: models with badges first (by first badge's `TierOrder` index), then unassigned models by ordinal model name.\\n- `IsActive` = has at least one badge. `IsPriced` = has a `RelayPricing.Default` entry.\\n- Add invariant-culture formatting helpers:\\n  ```csharp\\n  private static string FormatRate(double rate) =>\\n      \\\"$\\\" + rate.ToString(\\\"0.######\\\", CultureInfo.InvariantCulture) + \\\" per 1M tokens\\\";\\n\\n  private static string FormatRateRelativeToInput(double effective, double input) =>\\n      effective == input ? FormatRate(effective) + \\\" (same as input)\\\" : FormatRate(effective);\\n  ```\\n- Base rows: `InputDisplay`, `OutputDisplay`, `CachedInputDisplay`, `CacheWriteDisplay` (using effective rates + `FormatRateRelativeToInput` where equal to input).\\n- Peak rows: same helpers on `effective * multiplier` values. Fixes the `?? 0` bug.\\n- Window `Headline`: convert source time to local using existing `ConvertWindowTimeToLocal` math but format with `h:mm tt` (12-hour) + literal `\\\"your time\\\"`. E.g. `\\\"6:00 PM \u2013 9:00 PM your time \u2014 2\u00d7 peak pricing\\\"`.\\n- Window `SourceNote`: source times formatted with `h:mm tt` + `\\\"in Asia/Shanghai\\\"`. E.g. `\\\"(9:00 AM \u2013 12:00 PM in Asia/Shanghai)\\\"`.\\n- On `TimeZoneInfo.FindSystemTimeZoneById` exception: `Headline` uses source times with `\\\"in Asia/Shanghai\\\"` in place of `\\\"your time\\\"`, `SourceNote` = empty.\\n- Never display `TimeZoneInfo.Local.Id`.\\n- Delete `FormatCacheWriteDisplay` and all raw `double`/`double?` rate properties from `ModelCostRow`.\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.ModelCostRow.cs`**\\n- Replace `InputRate`, `OutputRate`, `CachedInputRate`, `CacheWriteRate` (double/double?) with display strings: `InputDisplay`, `OutputDisplay`, `CachedInputDisplay`, `CacheWriteDisplay` (all `string`).\\n- Remove `DisplayName` (was always identical to `ModelKey`).\\n- Remove `CacheWriteDisplay` (moved to `CacheWriteDisplay` above).\\n- Add `TierBadges` (`ObservableCollection<string>`), `IsActive` (`bool`), `IsPriced` (`bool`).\\n- Replace `ModelCostWindowRow`'s `StartTimeDisplay`, `EndTimeDisplay`, `SourceTimezoneLabel`, `DisplayTimezoneLabel`, `Multiplier`, `PeakInputRate`\u2013`PeakCacheWriteDisplay` with:\\n  - `Headline` (string) \u2014 one TextBlock for the local-time window header.\\n  - `SourceNote` (string) \u2014 optional source-time note.\\n  - `PeakInputDisplay`, `PeakOutputDisplay`, `PeakCachedInputDisplay`, `PeakCacheWriteDisplay` (strings).\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs`**\\n- At the end of `RefreshLitTiersAsync` (after `_suppressLitTierPersist = false;` but before the `catch`), rebuild cost cards from the just-computed resolution:\\n  ```csharp\\n  var assignments = LitTierRows\\n      .Where(r => !string.IsNullOrWhiteSpace(r.SelectedModel) && r.SelectedModel != \\\"(key missing)\\\")\\n      .ToDictionary(\\n          r => r.Tier,\\n          r => r.SelectedModel == \\\"fallback\\\"\\n              ? BackendConfigGenerator.DefaultTierResolution[\\\"fallback\\\"]\\n              : r.SelectedModel,\\n          StringComparer.Ordinal);\\n  PopulateModelCostRows(assignments);\\n  ```\\n\\n**`src/VisualRelay.App/ViewModels/MainWindowViewModel.cs`**\\n- `LoadInitialAsync` already calls `PopulateModelCostRows()` (parameterless). No change needed \u2014 will now use the default resolution.\\n\\n### Layer 3: XAML \u2014 badges, active styling, unpriced state\\n\\n**`src/VisualRelay.App/Views/Controls/CostPerModel.axaml`**\\n- Card header: horizontal StackPanel with `ModelKey` TextBlock + ItemsControl for `TierBadges` (small badge chips: Border CornerRadius=\\\"8\\\" Padding=\\\"6,1\\\" Background=\\\"#2E4B6E\\\", TextBlock FontSize=\\\"10\\\" Foreground=\\\"#CFE0F5\\\").\\n- Active cards: header Foreground `#F2F5FA`. Inactive cards (`IsActive` false): header Foreground `#9AA3B1`. Use two TextBlocks toggled by `IsVisible`.\\n- Rate rows: bind `InputDisplay`, `OutputDisplay`, `CachedInputDisplay`, `CacheWriteDisplay` with **no `StringFormat`**.\\n- Wrap rate rows + windows in a container with `IsVisible=\\\"{Binding IsPriced}\\\"`. Sibling TextBlock `\\\"pricing not configured for this model\\\"` (Foreground `#7F8794`, FontSize `12`) with `IsVisible=\\\"{Binding !IsPriced}\\\"`.\\n- Window header: two TextBlocks: `Headline` (Foreground `#E0A458`) + `SourceNote` (FontSize `10` Foreground `#7F8794`, `IsVisible` via `StringConverters.IsNotNullOrEmpty`).\\n- Peak rows: bind `PeakInputDisplay`, `PeakOutputDisplay`, `PeakCachedInputDisplay`, `PeakCacheWriteDisplay` (no StringFormat).\\n\\n### Test updates\\n\\n**`tests/VisualRelay.Tests/CostPerModelTests.cs`** \u2014 full rewrite (~15 facts):\\n1. No card's `ModelKey` is a tier alias.\\n2. No duplicate `ModelKey` values.\\n3. Default resolution badges: `deepseek-v4-flash`\u2192`cheap`, `deepseek-v4-pro`\u2192`balanced`, `glm-5.2`\u2192`frontier`; `kimi-k2`/`gpt-5` are unbadged, `IsActive==false`.\\n4. Ordering: every badged card precedes every unbadged card; first card is the `cheap` tier's model.\\n5. Explicit assignments win: `[\\\"cheap\\\"]=\\\"kimi-k2\\\"` puts badge on `kimi-k2`, leaves `deepseek-v4-flash` unbadged.\\n6. Unpriced assignment: `[\\\"vision\\\"]=\\\"hf-qwen3-vl-30b\\\"` \u2192 card with that key, `IsPriced==false`, `vision` badge.\\n7. `CachedInputDisplay` for `hf-qwen3-coder-next` (null `CachedInput`) = `\\\"$0.3 per 1M tokens (same as input)\\\"`.\\n8. `CacheWriteDisplay` for `deepseek-v4-flash` (0.14 == input) ends with `\\\"(same as input)\\\"`; for `claude-opus-1m` = `\\\"$6.25 per 1M tokens\\\"` with no annotation.\\n9. Peak `PeakCachedInputDisplay` on `deepseek-v4-flash` starts with `\\\"$0.0056\\\"` (effective \u00d7 2, not `?? 0`). `PeakCacheWriteDisplay` carries `\\\"(same as input)\\\"`.\\n10. Culture safety: set `CultureInfo.CurrentCulture` to `de-DE`, call `PopulateModelCostRows()`, assert rate string contains `.` not `,`; restore in `finally`.\\n11. Window `Headline` matches `^\\\\d{1,2}:\\\\d{2} [AP]M \u2013 \\\\d{1,2}:\\\\d{2} [AP]M your time \u2014 2\u00d7 peak pricing$`.\\n12. Window `SourceNote` = `\\\"(9:00 AM \u2013 12:00 PM in Asia/Shanghai)\\\"` for first DeepSeek window.\\n13. Idempotency: calling `PopulateModelCostRows()` twice yields same card count.\\n14. Parameterless call uses default resolution (same as explicit `null`).\\n15. `hf-qwen3-vl-235b` carries the `vision` badge.\\n\\n**`tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs`** \u2014 rewrite single fact:\\n- Every tier alias in `Chains.Keys` has a `DefaultTierResolution` entry.\\n- Every `DefaultTierResolution` value has a `RelayPricing.Default` entry.\\n- `RelayPricing.Default.Keys` contains none of `Chains.Keys` (no tier alias as pricing key).\\n- Keep existing swival-toml tier-name assertions.\\n\\n**`tests/VisualRelay.Tests/RelayCostEstimatorTests.cs`** \u2014 add 2 facts:\\n1. Report `model:\\\"cheap\\\"` and `model:\\\"deepseek-v4-flash\\\"` with identical token stats \u2192 identical `CostUsd`, both `Priced==true`.\\n2. Report `model:\\\"frontier\\\"` prices at glm-5.2 rates.\\nExisting `model:\\\"nonexistent-model-xyz\\\"` stays `Priced==false` (no change).\\n\\n**`tests/VisualRelay.Tests/RelayPricingRateTests.cs`** \u2014 add 2 facts:\\n1. `EffectiveCachedInput` returns explicit value when set.\\n2. `EffectiveCachedInput` and `EffectiveCacheWrite` return `Input` when null.\\n\\n**`tests/VisualRelay.Tests/RelayPricingScheduleTests.cs`** and **`RelayPricingScheduleEdgeTests.cs`** \u2014 no changes. Their `model:\\\"cheap\\\"`/`model:\\\"balanced\\\"` JSON fixtures stay as tier aliases; the estimator now resolves them through `DefaultTierResolution` to the same concrete keys with identical rates, so all assertions pass unchanged.\\n\\n### Ratchet check\\n- `BackendConfigGeneratorAliasConsistencyTests` is in the oversized-family prefix list. It currently has 1 [Fact]; after rewrite it still has 1 [Fact]. No baseline bump needed.\\n- No other touched test files are in the oversized-family prefix list.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Costs/RelayPricing.cs\",\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\",\n    \"src/VisualRelay.Core/Costs/RelayCostEstimator.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.CostPerModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.ModelCostRow.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs\",\n    \"src/VisualRelay.App/Views/Controls/CostPerModel.axaml\",\n    \"tests/VisualRelay.Tests/CostPerModelTests.cs\",\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs\",\n    \"tests/VisualRelay.Tests/RelayCostEstimatorTests.cs\",\n    \"tests/VisualRelay.Tests/RelayPricingRateTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 6, untracked deleted: 1.\n\n> **Manifest merge (stage 5)**: added 2 authored test file(s).\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/CostPerModelTests.cs\",\n    \"tests/VisualRelay.Tests/CostPerModelTests.Display.cs\",\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs\",\n    \"tests/VisualRelay.Tests/RelayCostEstimatorTests.cs\",\n    \"tests/VisualRelay.Tests/RelayCostEstimatorTests.Tiers.cs\",\n    \"tests/VisualRelay.Tests/RelayPricingRateTests.cs\"\n  ],\n  \"rationale\": \"All 58 targeted tests pass (20 CostPerModel, 1 BackendConfig consistency, 16 RelayCostEstimator, 9 RelayPricingRate, 12 RelayPricingSchedule). The file-size ratchet guard also passes. CostPerModelTests was split into .cs (187 lines) + .Display.cs (128 lines). RelayCostEstimatorTests split into .cs (280 lines) + .Tiers.cs (85 lines). BackendConfigGenerator.cs had DefaultTierResolution moved to BackendConfigGenerator.TierResolution.cs to stay under 300 lines. The three core layers were implemented: (1) RelayPricing.Default re-keyed to concrete-model-only with EffectiveCachedInput/EffectiveCacheWrite computed properties; (2) BackendConfigGenerator.DefaultTierResolution added; (3) RelayCostEstimator.EstimateReport resolves tier aliases through DefaultTierResolution; (4) View model PopulateModelCostRows takes optional tierAssignments, computes badges/sorting/preformatted invariant-culture strings/fixed window headlines; (5) Keys.cs wires live refresh after RefreshLitTiersAsync; (6) XAML renders badge chips, active/inactive states, unpriced fallback, preformatted rate strings, window headline+source note with no StringFormat on currency/time values.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented all three layers of the fix for the Cost Per LLM Model panel. Layer 1 (Core): Re-keyed RelayPricing.Default to concrete models only (deepseek-v4-flash, deepseek-v4-pro, glm-5.2, hf-qwen3-vl-235b, claude-opus-1m, claude-sonnet, gpt-5, hf-qwen3-coder-next, kimi-k2), deleted tier aliases and unreachable claude-haiku, added EffectiveCachedInput/EffectiveCacheWrite computed properties to ModelPricing. Added BackendConfigGenerator.DefaultTierResolution in a new partial file (BackendConfigGenerator.TierResolution.cs) to keep main file under 300 lines. Updated RelayCostEstimator.EstimateReport to resolve tier aliases through DefaultTierResolution and use Effective* properties. Layer 2 (View model): Rewrote PopulateModelCostRows with optional tierAssignments parameter, tier badges via TierOrder, invariant-culture preformatted rate strings, 12-hour 'your time' window headlines, and SourceNote. Updated ModelCostRow/ModelCostWindowRow to expose only display strings and badge/active/priced flags. Wired live refresh in RefreshLitTiersAsync via Keys.cs. Layer 3 (XAML): Rewrote CostPerModel.axaml with badge chips, active/inactive header styling, priced/unpriced container toggles, headline+source note TextBlocks, and no StringFormat on any currency/time binding. All tests pass: 46 in targeted run, 3018 passed/0 failed in full suite.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "I've completed a thorough review of the implementation across all three layers, the tests, and the guard constraints. Here's my assessment:\n\n## Review Summary\n\n**Layer 1 (Core):**\n- `RelayPricing.Default` correctly re-keyed to concrete models only (tier aliases + `claude-haiku` deleted, concrete equivalents added with identical rates). `EffectiveCachedInput`/`EffectiveCacheWrite` added to `ModelPricing`.\n- `DefaultTierResolution` added \u2014 in a new partial file `BackendConfigGenerator.TierResolution.cs` rather than the main file. This is a justified deviation: the main file is at 293 lines and adding the code would breach the 300-line `FileSizeGuard`. The code matches the spec exactly.\n- `RelayCostEstimator.EstimateReport` resolves tier aliases via `DefaultTierResolution`, keeps `Model` as the requested name, uses `Effective*` properties, and has the required XML doc.\n\n**Layer 2 (View model):**\n- `PopulateModelCostRows` takes optional `tierAssignments`, builds the union of pricing keys + assignment values, computes `TierBadges` via `TierOrder`, sorts correctly (badged first by badge index, then unbadged by ordinal name), and formats all rates with `InvariantCulture`. The `?? 0` peak-cached-input bug is fixed (uses `EffectiveCachedInput * multiplier`). Window `Headline` uses 12-hour \"your time\" format; `SourceNote` shows source times; catch path never leaks `TimeZoneInfo.Local.Id`.\n- `ModelCostRow` exposes only display strings + flags (no raw doubles, no `DisplayName`).\n- Live refresh wired at the end of `RefreshLitTiersAsync`; `LoadInitialAsync` keeps the parameterless call.\n\n**Layer 3 (XAML):**\n- Badge chips, active/inactive header toggle, priced/unpriced container toggle, \"pricing not configured\" fallback, headline + source note TextBlocks. Verified: **no `StringFormat`** anywhere in the control.\n\n**Tests:**\n- All required cases covered (no tier-alias keys, badges, ordering, explicit assignments, unpriced cards, effective-rate display, peak rows, culture safety, window headline pattern, source note, idempotency).\n- Consistency test rewritten with correct invariants (still 1 `[Fact]` \u2014 ratchet safe).\n- Schedule tests unchanged with tier-alias JSON fixtures (proving alias resolution).\n\n**Verification:** Build succeeds (0 warnings, 0 errors). All 58 targeted tests pass. SplitGuard passes (baseline 175 maintained).\n\nThe implementation is complete and correct with no blocking issues.\n\n```json\n{ \"verdict\": \"pass\", \"issues\": [] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 19,
+    "tool_calls_total": 25,
+    "tool_calls_succeeded": 25,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 19,
+    "total_llm_time_s": 248.323,
+    "prompt_cache": {
+      "cached_tokens": 804864,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 9.323,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.86,
+      "prompt_tokens_est": 15578,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Costs/RelayPricing.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Costs/RelayCostEstimator.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.CostPerModel.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.ModelCostRow.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 24978
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 8.479,
+      "prompt_tokens_est": 22113,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/Views/Controls/CostPerModel.axaml"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/CostPerModelTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 44110
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 8.366,
+      "prompt_tokens_est": 32741,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/CostPerModelTests.Display.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayCostEstimatorTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayCostEstimatorTests.Tiers.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayPricingRateTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 31500
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 8.202,
+      "prompt_tokens_est": 41828,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Configuration"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayPricingScheduleTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayPricingScheduleEdgeTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 15845
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 7.443,
+      "prompt_tokens_est": 46385,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "src/VisualRelay.Core/Configuration/BackendConfigGenerator*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.179,
+      "result_length": 208
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "PopulateModelCostRows",
+        "path": "src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 416
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestky/Dev/visual-relay && git status && echo \"===DIFF STAT===\" && git diff --stat HEAD"
+      },
+      "succeeded": true,
+      "duration_s": 0.095,
+      "result_length": 100
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.935,
+      "prompt_tokens_est": 46708,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.TierResolution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 655
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 225,
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 993
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestky/Dev/visual-relay/ && git status && echo \"===DIFF STAT===\" && git diff --stat HEAD"
+      },
+      "succeeded": true,
+      "duration_s": 0.073,
+      "result_length": 101
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 5.422,
+      "prompt_tokens_est": 47250,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestky/Dev/visual-relay && git status && echo \"===DIFF STAT===\" && git diff --stat HEAD"
+      },
+      "succeeded": true,
+      "duration_s": 0.08,
+      "result_length": 100
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 6.443,
+      "prompt_tokens_est": 47347,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "pwd && ls -d */ 2>/dev/null; git status 2>&1 | head -50"
+      },
+      "succeeded": true,
+      "duration_s": 0.111,
+      "result_length": 1480
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 11.008,
+      "prompt_tokens_est": 47796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "git diff HEAD -- src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs | head -20; echo \"=== checking if main file changed ===\"; git diff --stat HEAD -- src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.119,
+      "result_length": 38
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.App/Views/Controls/CostPerModel.axaml",
+        "pattern": "StringFormat"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 17
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 32.374,
+      "prompt_tokens_est": 48107,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*Guard*"
+      },
+      "succeeded": true,
+      "duration_s": 0.143,
+      "result_length": 1864
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*Split*"
+      },
+      "succeeded": true,
+      "duration_s": 0.106,
+      "result_length": 382
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.618,
+      "prompt_tokens_est": 50937,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.cs",
+        "pattern": "BackendConfigGeneratorAliasConsistency|CostPerModelTests|RelayCostEstimatorTests|RelayPricingRateTests|BackendConfigGenerator\\.cs|baseline|OversizedFamily"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 625
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 7.831,
+      "prompt_tokens_est": 51170,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.cs",
+        "offset": 180,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3637
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 18.941,
+      "prompt_tokens_est": 52070,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/FileSizeGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5743
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs src/VisualRelay.Core/Configuration/BackendConfigGenerator.TierResolution.cs src/VisualRelay.Core/Configuration/BackendConfigGenerator.Selectable.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.074,
+      "result_length": 251
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 39.027,
+      "prompt_tokens_est": 54573,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test VisualRelay.slnx --filter \"FullyQualifiedName~CostPerModelTests|FullyQualifiedName~BackendConfigGeneratorAliasConsistencyTests|FullyQualifiedName~RelayCostEstimatorTests|FullyQualifiedName~RelayPricingRateTests|FullyQualifiedName~RelayPricingScheduleTests|FullyQualifiedName~RelayPricingScheduleEdgeTests\" --no-build 2>&1 | tail -40",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 1.993,
+      "result_length": 321
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 7.61,
+      "prompt_tokens_est": 57139,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build VisualRelay.slnx --nologo 2>&1 | tail -8",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 4.062,
+      "result_length": 346
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 7.189,
+      "prompt_tokens_est": 57334,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "for f in tests/VisualRelay.Tests/BackendConfigGeneratorAliasConsistencyTests*.cs tests/VisualRelay.Tests/CostPerModelTests*.cs tests/VisualRelay.Tests/RelayCostEstimatorTests*.cs tests/VisualRelay.Tests/RelayPricingRateTests*.cs; do echo \"=== $f ===\"; grep -c '\\[Fact\\]' \"$f\"; done"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 388
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 8.587,
+      "prompt_tokens_est": 57577,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test VisualRelay.slnx --filter \"FullyQualifiedName~SplitGuardVerificationTests\" --no-build 2>&1 | tail -8",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 2.149,
+      "result_length": 322
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 32.136,
+      "prompt_tokens_est": 57831,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me review the implementation against the spec requirements systematically.\n\n## Layer 1: Core\n\n**RelayPricing.cs** \u2014 \u2713 Re-keyed to concrete models only:\n- `deepseek-v4-flash` (0.14, 0.28, 0.0028, 0.14) with DeepseekPeakWindows \u2713\n- `deepseek-v4-pro` (0.435, 0.87, 0.003625, 0.435) with DeepseekPeakWindows \u2713\n- `glm-5.2` (1.40, 4.40, 0.26) \u2713 (frontier deleted, glm-5.2 stays)\n- `hf-qwen3-vl-235b` (0.20, 0.88) \u2713 (vision replaced)\n- `claude-opus-1m`, `claude-sonnet`, `gpt-5`, `hf-qwen3-coder-next`, `kimi-k2` unchanged \u2713\n- `claude-haiku` deleted \u2713\n- `EffectiveCachedInput` / `EffectiveCacheWrite` added \u2713\n\n**BackendConfigGenerator.DefaultTierResolution** \u2014 In a new partial file `BackendConfigGenerator.TierResolution.cs`. The spec said \"In BackendConfigGenerator.cs (main file, next to Chains)\". The implementation put it in a separate partial file. The stage-5 summary noted: \"BackendConfigGenerator.cs had DefaultTierResolution moved to BackendConfigGenerator.TierResolution.cs to stay under 300 lines.\" The main file is 293 lines, and adding ~10 lines would make it 303 \u2014 over the 300-line FileSizeGuard limit. So splitting was necessary. This is a reasonable deviation since the spec also requires the build/guard to pass. The code is functionally identical to what the spec requested. This is acceptable.\n\nThe implementation matches the spec's code exactly:\n```csharp\nChains.ToDictionary(\n    kv => kv.Key,\n    kv => kv.Value[0].Model == FallbackTier ? FallbackFloorModel : kv.Value[0].Model,\n    StringComparer.Ordinal);\n```\n\u2713\n\nWait \u2014 the spec code references `FallbackTier` and `FallbackFloorModel`. In the main file these are `private const`. The partial file accesses them. Since it's a partial class, private members are accessible. \u2713\n\n**RelayCostEstimator.cs** \u2014 \u2713\n- Tier-alias resolution via DefaultTierResolution \u2713\n- `RelayCostEstimate.Model` kept as originally requested name \u2713\n- XML doc added explaining approximation \u2713\n- `pricing.EffectiveCachedInput` / `pricing.EffectiveCacheWrite` used \u2713\n\n## Layer 2: View model\n\n**PopulateModelCostRows** \u2014 \u2713\n- Signature with `IReadOnlyDictionary<string, string>? tierAssignments = null` \u2713\n- Null \u2192 DefaultTierResolution \u2713\n- Union of pricing keys + assignment values \u2713\n- TierBadges computed \u2713\n- TierOrder = [\"cheap\", \"balanced\", \"frontier\", \"vision\", \"claude\", \"fallback\"] \u2713\n- Sort: badged first (by first badge's TierOrder index), then unbadged by ordinal \u2713\n- IsActive = has badge \u2713, IsPriced = has pricing entry \u2713\n- FormatRate / FormatRateRelativeToInput with InvariantCulture \u2713\n- Base rows use effective rates \u2713\n- Peak rows use effective rates (fixes ?? 0 bug) \u2713\n- FormatCacheWriteDisplay deleted \u2713\n- Raw double properties deleted from ModelCostRow \u2713\n- DisplayName dropped \u2713\n\n**Window header** \u2014 \u2713\n- Headline: local times, 12-hour (\"h:mm tt\"), \"your time\" \u2713\n- SourceNote: source times, \"in Asia/Shanghai\" \u2713\n- Catch path: Headline uses source times with \"in Asia/Shanghai\", SourceNote empty \u2713\n- Never displays TimeZoneInfo.Local.Id \u2713\n\n**ModelCostRow** \u2014 \u2713\n- Only display strings + ModelKey, TierBadges, IsActive, IsPriced, HasWindows, Windows \u2713\n- No raw rate properties \u2713\n\n**Keys.cs** \u2014 \u2713\n- Live refresh wired at end of RefreshLitTiersAsync \u2713\n- assignments built from LitTierRows \u2713\n- fallback \u2192 DefaultTierResolution[\"fallback\"] \u2713\n\n**MainWindowViewModel.cs** \u2014 \u2713\n- LoadInitialAsync calls PopulateModelCostRows() (parameterless) \u2713\n\n## Layer 3: XAML\n\n**CostPerModel.axaml** \u2014 \u2713\n- Badge chips (Border CornerRadius=\"8\" Padding=\"6,1\" Background=\"#2E4B6E\", TextBlock FontSize=\"10\" Foreground=\"#CFE0F5\") \u2713\n- Active/inactive header with two TextBlocks toggled by IsVisible \u2713\n- Rate rows bind display strings with no StringFormat \u2713 (verified: no StringFormat in file)\n- Priced/unpriced container toggle \u2713\n- \"pricing not configured for this model\" TextBlock \u2713\n- Window header: Headline (#E0A458) + SourceNote (#7F8794, FontSize 10, IsVisible via StringConverters.IsNotNullOrEmpty) \u2713\n- Peak rows bind new display strings \u2713\n\n## Tests\n\n**CostPerModelTests.cs** \u2014 covers all required cases:\n- No tier alias as ModelKey \u2713\n- No duplicates \u2713\n- Default badges \u2713\n- Ordering \u2713\n- First card is cheap model \u2713\n- Explicit assignment wins \u2713\n- Unpriced assignment \u2713\n- Idempotency \u2713\n- Culture safety \u2713\n- Window headline pattern \u2713\n- Window source note \u2713\n- Plus extra (parameterless default, all priced, vision badge, never contains platform tz id)\n\n**BackendConfigGeneratorAliasConsistencyTests.cs** \u2014 rewritten:\n- Every tier has DefaultTierResolution entry \u2713\n- Every DefaultTierResolution value has pricing entry \u2713\n- No tier alias as pricing key \u2713\n- Swival toml assertions kept \u2713\n- Still 1 [Fact] (ratchet safe) \u2713\n\n**RelayCostEstimatorTests.Tiers.cs** \u2014 added:\n- cheap vs deepseek-v4-flash identical cost \u2713\n- frontier prices at glm-5.2 rates \u2713\n\n**RelayPricingRateTests.cs** \u2014 added effective-rate facts \u2713\n\n**Schedule tests** \u2014 unchanged, still use tier-alias JSON fixtures \u2713\n\nEverything looks correct. Let me verify a couple of edge concerns.\n\n1. The spec says \"Keep the existing parameterless-style call in LoadInitialAsync\". The implementation kept `PopulateModelCostRows()` \u2014 \u2713\n\n2. The spec mentions CostPerModel.axaml.cs in the constraints (\"No changes outside the files named above plus the listed tests\") \u2014 but the manifest doesn't list CostPerModel.axaml.cs. Let me check if it was modified. It's not in the git status, so it wasn't touched. Good.\n\n3. The manifest lists `src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs` but the actual change to add DefaultTierResolution was in a NEW file `BackendConfigGenerator.TierResolution.cs`. The stage-5 note explains this was to stay under 300 lines. The main BackendConfigGenerator.cs was NOT modified (confirmed by git diff --stat showing nothing). This is a reasonable engineering decision \u2014 the spec's constraint \"No changes outside the files named above\" is slightly violated by adding a new file, but the alternative (putting it in the main file) would fail the FileSizeGuard. The stage-5 summary explicitly documents this decision. This is acceptable.\n\nWait, actually \u2014 is adding a new file a problem? The constraint says \"No changes outside the files named above plus the listed tests.\" Adding `BackendConfigGenerator.TierResolution.cs` is technically a new file outside the named manifest. But the stage-5 author-tests stage added it and documented the reason. The manifest in stage 4 lists `BackendConfigGenerator.cs` \u2014 the intent was to add DefaultTierResolution to the BackendConfigGenerator class. Whether it's in the main file or a partial is an implementation detail. Given the FileSizeGuard constraint, this was the right call. Not a blocking issue.\n\n4. Let me double-check: does the spec's test requirement about \"Peak rows on deepseek-v4-flash: PeakCachedInputDisplay starts with $0.0056\" hold? \n   - deepseek-v4-flash: CachedInput = 0.0028, so EffectiveCachedInput = 0.0028\n   - Multiplier = 2.0\n   - PeakCachedInput = 0.0028 * 2.0 = 0.0056\n   - FormatRate(0.0056) = \"$0.0056 per 1M tokens\"\n   - The test asserts StartsWith(\"$0.0056\") \u2713\n   \n   Wait, the peak cached input relative to input: peakInput = 0.14 * 2 = 0.28, peakCachedInput = 0.0056. 0.0056 != 0.28, so no \"same as input\" annotation. The test only checks StartsWith(\"$0.0056\"). \u2713\n\n5. PeakCacheWriteDisplay for deepseek-v4-flash:\n   - CacheWrite = 0.14, EffectiveCacheWrite = 0.14\n   - peakCacheWrite = 0.14 * 2 = 0.28\n   - peakInput = 0.14 * 2 = 0.28\n   - 0.28 == 0.28, so \"same as input\" annotation \u2713\n   - Test asserts EndsWith(\"(same as input)\") \u2713\n\nAll looks correct. The implementation is complete and correct. Let me verify one more thing \u2014 the SourceNote test expects \"(9:00 AM \u2013 12:00 PM in Asia/Shanghai)\" for the first DeepSeek window. The first window is `new(new(9, 0), new(12, 0), \"Asia/Shanghai\", 2.0)`. SourceNote formats StartLocal (9:00) and EndLocal (12:00) with \"h:mm tt\" \u2192 \"9:00 AM\" and \"12:00 PM\". Result: \"(9:00 AM \u2013 12:00 PM in Asia/Shanghai)\" \u2713\n\nThe implementation is complete and correct. All 58 targeted tests pass, build succeeds, SplitGuard passes.",
+        "thought_number": 1,
+        "next_thought_needed": false,
+        "total_thoughts": 1,
+        "mode": "new"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 15.854,
+      "prompt_tokens_est": 60245,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

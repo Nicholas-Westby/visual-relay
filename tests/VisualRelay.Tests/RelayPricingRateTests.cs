@@ -140,4 +140,34 @@ public sealed class RelayPricingRateTests
         Assert.Equal("hf-qwen3-coder-next", cost.Model);
         Assert.Equal(0.0003663, cost.CostUsd, precision: 10);
     }
+
+    // ── Effective-rate helpers ─────────────────────────────────────
+
+    [Fact]
+    public void EffectiveCachedInput_ReturnsExplicitValueWhenSet()
+    {
+        var pricing = new ModelPricing(0.14, 0.28, CachedInput: 0.0028, CacheWrite: 0.14);
+        Assert.Equal(0.0028, pricing.EffectiveCachedInput);
+    }
+
+    [Fact]
+    public void EffectiveCachedInput_ReturnsInputWhenNull()
+    {
+        var pricing = new ModelPricing(0.20, 0.88);
+        Assert.Equal(0.20, pricing.EffectiveCachedInput);
+    }
+
+    [Fact]
+    public void EffectiveCacheWrite_ReturnsExplicitValueWhenSet()
+    {
+        var pricing = new ModelPricing(5.0, 25.0, CachedInput: 0.50, CacheWrite: 6.25);
+        Assert.Equal(6.25, pricing.EffectiveCacheWrite);
+    }
+
+    [Fact]
+    public void EffectiveCacheWrite_ReturnsInputWhenNull()
+    {
+        var pricing = new ModelPricing(1.40, 4.40, CachedInput: 0.26);
+        Assert.Equal(1.40, pricing.EffectiveCacheWrite);
+    }
 }

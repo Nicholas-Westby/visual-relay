@@ -4,7 +4,7 @@ using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
-public sealed class RelayCostEstimatorTests
+public sealed partial class RelayCostEstimatorTests
 {
     // ── MoneyFormatter ──────────────────────────────────────────
 

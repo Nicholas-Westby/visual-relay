@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using VisualRelay.Core.Configuration;
 
 namespace VisualRelay.Core.Costs;
 
@@ -27,6 +28,14 @@ public static class RelayCostEstimator
 
     /// <summary>
     /// Estimate the USD cost for a single-stage report file.
+    ///
+    /// When the recorded model name is a tier alias (e.g. "cheap", "balanced"),
+    /// it is resolved to a concrete model via
+    /// <see cref="BackendConfigGenerator.DefaultTierResolution"/> before pricing.
+    /// Per-run tier overrides are not recorded in reports, so the *default*
+    /// resolution is used — this is an accepted approximation that is strictly
+    /// better than the previous hand-copied snapshot, which had the same
+    /// staleness plus drift.
     ///
     /// Token accounting model (per-turn incremental, NOT cumulative-sum-minus-cached):
     /// Each turn's <c>prompt_tokens_est</c> in the timeline is the CUMULATIVE context
@@ -92,7 +101,9 @@ public static class RelayCostEstimator
         var (cachedTokens, cacheWriteTokens) = ReadPromptCache(stats);
         var duration = ReadDouble(stats, "total_llm_time_s") + ReadDouble(stats, "total_tool_time_s");
 
-        if (!RelayPricing.Default.TryGetValue(model, out var pricing))
+        if (!RelayPricing.Default.TryGetValue(model, out var pricing) &&
+            !(BackendConfigGenerator.DefaultTierResolution.TryGetValue(model, out var concrete) &&
+              RelayPricing.Default.TryGetValue(concrete, out pricing)))
         {
             return new RelayCostEstimate(model, 0, false, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);
         }
@@ -100,12 +111,10 @@ public static class RelayCostEstimator
         var instant = evaluationInstant ?? ReadTimestamp(report);
         var multiplier = GetScheduleMultiplier(pricing, instant);
 
-        var cachedRate = pricing.CachedInput ?? pricing.Input;
-        var cacheWriteRate = pricing.CacheWrite ?? pricing.Input;
         var usd = (
             uncachedTokens * pricing.Input +
-            cachedTokens * cachedRate +
-            cacheWriteTokens * cacheWriteRate +
+            cachedTokens * pricing.EffectiveCachedInput +
+            cacheWriteTokens * pricing.EffectiveCacheWrite +
             outputTokens * pricing.Output
         ) * multiplier / 1_000_000d;
         return new RelayCostEstimate(model, usd, true, uncachedTokens, cachedTokens, outputTokens, duration, cacheWriteTokens, llmCalls.Length);

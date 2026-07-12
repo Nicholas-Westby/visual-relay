@@ -1,80 +1,187 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
+using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Costs;
 
 namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    private static readonly string[] TierOrder =
+        ["cheap", "balanced", "frontier", "vision", "claude", "fallback"];
+
     [ObservableProperty]
     private ObservableCollection<ModelCostRow> _modelCostRows = [];
 
-    public void PopulateModelCostRows()
+    /// <summary>
+    /// Populate the cost-panel cards from pricing data and tier assignments.
+    /// When <paramref name="tierAssignments"/> is <c>null</c>, the default
+    /// tier→concrete-model resolution (<see cref="BackendConfigGenerator.DefaultTierResolution"/>)
+    /// is used so the panel reflects the auto-resolution before keys are loaded.
+    /// The card list is the union of <see cref="RelayPricing.Default"/> keys and
+    /// the assignment values, so an override pointing at a model with no pricing
+    /// entry still yields a card (marked unpriced).
+    /// </summary>
+    public void PopulateModelCostRows(IReadOnlyDictionary<string, string>? tierAssignments = null)
     {
+        tierAssignments ??= BackendConfigGenerator.DefaultTierResolution;
+
         ModelCostRows.Clear();
 
-        foreach (var (key, pricing) in RelayPricing.Default)
+        // Union of pricing keys and assignment values.
+        var allModelKeys = new HashSet<string>(RelayPricing.Default.Keys, StringComparer.Ordinal);
+        foreach (var v in tierAssignments.Values)
+            allModelKeys.Add(v);
+
+        // Build model → tier-badges mapping.
+        var modelBadges = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var (tier, model) in tierAssignments)
         {
+            if (!modelBadges.TryGetValue(model, out var badges))
+            {
+                badges = new List<string>();
+                modelBadges[model] = badges;
+            }
+            badges.Add(tier);
+        }
+
+        // Sort badges per model by TierOrder.
+        foreach (var (_, badges) in modelBadges)
+            badges.Sort((a, b) => TierOrderIndex(a).CompareTo(TierOrderIndex(b)));
+
+        var rows = new List<ModelCostRow>();
+        foreach (var modelKey in allModelKeys)
+        {
+            var badges = modelBadges.TryGetValue(modelKey, out var b)
+                ? b
+                : new List<string>();
+            var isPriced = RelayPricing.Default.TryGetValue(modelKey, out var pricing);
+
             var row = new ModelCostRow
             {
-                ModelKey = key,
-                DisplayName = key,
-                InputRate = pricing.Input,
-                OutputRate = pricing.Output,
-                CachedInputRate = pricing.CachedInput,
-                CacheWriteRate = pricing.CacheWrite,
-                CacheWriteDisplay = FormatCacheWriteDisplay(pricing.CacheWrite),
-                HasWindows = pricing.Windows is { Count: > 0 },
+                ModelKey = modelKey,
+                IsActive = badges.Count > 0,
+                IsPriced = isPriced,
             };
 
-            if (pricing.Windows is { Count: > 0 })
+            foreach (var badge in badges)
+                row.TierBadges.Add(badge);
+
+            if (isPriced && pricing is not null)
             {
-                foreach (var window in pricing.Windows)
+                row.InputDisplay = FormatRate(pricing.Input);
+                row.OutputDisplay = FormatRate(pricing.Output);
+                row.CachedInputDisplay = FormatRateRelativeToInput(
+                    pricing.EffectiveCachedInput, pricing.Input);
+                row.CacheWriteDisplay = FormatRateRelativeToInput(
+                    pricing.EffectiveCacheWrite, pricing.Input);
+                row.HasWindows = pricing.Windows is { Count: > 0 };
+
+                if (pricing.Windows is { Count: > 0 })
                 {
-                    var peakCacheWriteRate = (pricing.CacheWrite ?? pricing.Input) * window.Multiplier;
-                    row.Windows.Add(new ModelCostWindowRow
+                    foreach (var window in pricing.Windows)
                     {
-                        StartTimeDisplay = ConvertWindowTimeToLocal(window.StartLocal, window.TimeZoneId),
-                        EndTimeDisplay = ConvertWindowTimeToLocal(window.EndLocal, window.TimeZoneId),
-                        SourceTimezoneLabel = window.TimeZoneId,
-                        DisplayTimezoneLabel = TimeZoneInfo.Local.Id,
-                        Multiplier = window.Multiplier,
-                        PeakInputRate = pricing.Input * window.Multiplier,
-                        PeakOutputRate = pricing.Output * window.Multiplier,
-                        PeakCachedInputRate = (pricing.CachedInput ?? 0) * window.Multiplier,
-                        PeakCacheWriteRate = peakCacheWriteRate,
-                        PeakCacheWriteDisplay = FormatCacheWriteDisplay(peakCacheWriteRate),
-                    });
+                        var peakInput = pricing.Input * window.Multiplier;
+                        var peakOutput = pricing.Output * window.Multiplier;
+                        var peakCachedInput = pricing.EffectiveCachedInput * window.Multiplier;
+                        var peakCacheWrite = pricing.EffectiveCacheWrite * window.Multiplier;
+
+                        row.Windows.Add(new ModelCostWindowRow
+                        {
+                            Headline = BuildWindowHeadline(window),
+                            SourceNote = BuildWindowSourceNote(window),
+                            PeakInputDisplay = FormatRate(peakInput),
+                            PeakOutputDisplay = FormatRate(peakOutput),
+                            PeakCachedInputDisplay = FormatRateRelativeToInput(
+                                peakCachedInput, peakInput),
+                            PeakCacheWriteDisplay = FormatRateRelativeToInput(
+                                peakCacheWrite, peakInput),
+                        });
+                    }
                 }
             }
 
-            ModelCostRows.Add(row);
+            rows.Add(row);
         }
+
+        // Sort: badged cards first (by first badge's TierOrder index),
+        // then unbadged cards by ordinal model name.
+        rows.Sort((a, b) =>
+        {
+            var aHas = a.TierBadges.Count > 0;
+            var bHas = b.TierBadges.Count > 0;
+            if (aHas && !bHas) return -1;
+            if (!aHas && bHas) return 1;
+            if (aHas)
+            {
+                var ai = TierOrderIndex(a.TierBadges[0]);
+                var bi = TierOrderIndex(b.TierBadges[0]);
+                return ai.CompareTo(bi);
+            }
+            return string.CompareOrdinal(a.ModelKey, b.ModelKey);
+        });
+
+        foreach (var row in rows)
+            ModelCostRows.Add(row);
     }
 
-    private static string FormatCacheWriteDisplay(double? rate)
-    {
-        if (rate is null)
-            return "same as input";
-        return $"${rate.Value} per 1M tokens";
-    }
+    // ── Rate formatting helpers ──────────────────────────────────────────
 
-    private static string ConvertWindowTimeToLocal(TimeOnly sourceTime, string sourceTimeZoneId)
+    private static string FormatRate(double rate) =>
+        "$" + rate.ToString("0.######", CultureInfo.InvariantCulture) + " per 1M tokens";
+
+    private static string FormatRateRelativeToInput(double effective, double input) =>
+        effective == input
+            ? FormatRate(effective) + " (same as input)"
+            : FormatRate(effective);
+
+    // ── Window display helpers ───────────────────────────────────────────
+
+    private static string BuildWindowHeadline(RateWindow window)
     {
         try
         {
-            var sourceTz = TimeZoneInfo.FindSystemTimeZoneById(sourceTimeZoneId);
-            // Use today's date — the date is irrelevant for daily recurring windows;
-            // we only need to map the time-of-day from the source timezone to local.
-            var today = DateOnly.FromDateTime(DateTime.UtcNow);
-            var sourceDateTime = today.ToDateTime(sourceTime, DateTimeKind.Unspecified);
-            var utcDateTime = TimeZoneInfo.ConvertTimeToUtc(sourceDateTime, sourceTz);
-            var localDateTime = TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, TimeZoneInfo.Local);
-            return TimeOnly.FromDateTime(localDateTime).ToString("HH:mm");
+            var tz = TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId);
+            var start = ConvertWindowTimeToLocalDisplay(window.StartLocal, tz);
+            var end = ConvertWindowTimeToLocalDisplay(window.EndLocal, tz);
+            return $"{start} – {end} your time — {window.Multiplier.ToString("0.#", CultureInfo.InvariantCulture)}× peak pricing";
         }
         catch
         {
-            return sourceTime.ToString("HH:mm");
+            var start = window.StartLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
+            var end = window.EndLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
+            return $"{start} – {end} in {window.TimeZoneId} — {window.Multiplier.ToString("0.#", CultureInfo.InvariantCulture)}× peak pricing";
         }
+    }
+
+    private static string BuildWindowSourceNote(RateWindow window)
+    {
+        try
+        {
+            TimeZoneInfo.FindSystemTimeZoneById(window.TimeZoneId); // validate
+            var start = window.StartLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
+            var end = window.EndLocal.ToString("h:mm tt", CultureInfo.InvariantCulture);
+            return $"({start} – {end} in {window.TimeZoneId})";
+        }
+        catch
+        {
+            return string.Empty;
+        }
+    }
+
+    private static string ConvertWindowTimeToLocalDisplay(TimeOnly sourceTime, TimeZoneInfo sourceTz)
+    {
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var sourceDateTime = today.ToDateTime(sourceTime, DateTimeKind.Unspecified);
+        var utcDateTime = TimeZoneInfo.ConvertTimeToUtc(sourceDateTime, sourceTz);
+        var localDateTime = TimeZoneInfo.ConvertTimeFromUtc(utcDateTime, TimeZoneInfo.Local);
+        return TimeOnly.FromDateTime(localDateTime).ToString("h:mm tt", CultureInfo.InvariantCulture);
+    }
+
+    private static int TierOrderIndex(string tier)
+    {
+        var i = Array.IndexOf(TierOrder, tier);
+        return i >= 0 ? i : int.MaxValue;
     }
 }
