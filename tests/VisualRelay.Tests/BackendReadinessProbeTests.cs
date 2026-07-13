@@ -117,7 +117,14 @@ public sealed class BackendReadinessProbeTests
                     : new BackendReadiness(false, "transient blip"));
         }
 
-        var result = await BackendReadinessProbe.CheckWithRetryAsync(Probe);
+        var time = new ManualTimeProvider();
+        var probeTask = BackendReadinessProbe.CheckWithRetryAsync(Probe, timeProvider: time);
+        while (!probeTask.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(500));
+            await Task.Yield();
+        }
+        var result = await probeTask;
 
         Assert.True(result.IsReady);
         Assert.Null(result.Message);
@@ -134,7 +141,14 @@ public sealed class BackendReadinessProbeTests
             return Task.FromResult(new BackendReadiness(false, "backend down"));
         }
 
-        var result = await BackendReadinessProbe.CheckWithRetryAsync(Probe);
+        var time = new ManualTimeProvider();
+        var probeTask = BackendReadinessProbe.CheckWithRetryAsync(Probe, timeProvider: time);
+        while (!probeTask.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(500));
+            await Task.Yield();
+        }
+        var result = await probeTask;
 
         Assert.False(result.IsReady);
         Assert.False(string.IsNullOrWhiteSpace(result.Message));
@@ -235,7 +249,14 @@ public sealed class BackendReadinessProbeTests
 
         // Must not throw — the delegate overload catches exceptions from the
         // probe and returns not-ready.
-        var result = await BackendReadinessProbe.CheckWithRetryAsync(Probe);
+        var time = new ManualTimeProvider();
+        var probeTask = BackendReadinessProbe.CheckWithRetryAsync(Probe, timeProvider: time);
+        while (!probeTask.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(500));
+            await Task.Yield();
+        }
+        var result = await probeTask;
 
         Assert.False(result.IsReady);
         Assert.False(string.IsNullOrWhiteSpace(result.Message));

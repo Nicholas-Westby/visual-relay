@@ -71,13 +71,15 @@ public static class BackendReadinessProbe
         TimeSpan timeout,
         int maxAttempts = DefaultRetryAttempts,
         TimeSpan? retryBackoff = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeProvider? timeProvider = null)
     {
         return CheckWithRetryAsync(
             ct => CheckAsync(baseUrl, timeout, ct),
             maxAttempts,
             retryBackoff,
-            cancellationToken);
+            cancellationToken,
+            timeProvider);
     }
 
     // Retries a probe delegate up to maxAttempts times with retryBackoff
@@ -91,8 +93,10 @@ public static class BackendReadinessProbe
         Func<CancellationToken, Task<BackendReadiness>> probe,
         int maxAttempts = DefaultRetryAttempts,
         TimeSpan? retryBackoff = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         var backoff = retryBackoff ?? DefaultRetryBackoff;
         BackendReadiness lastResult = default;
 
@@ -114,7 +118,7 @@ public static class BackendReadinessProbe
             {
                 try
                 {
-                    await Task.Delay(backoff, cancellationToken);
+                    await Task.Delay(backoff, tp, cancellationToken);
                 }
                 catch (OperationCanceledException)
                 {
