@@ -76,7 +76,10 @@ public static class RelayStages
             "check, lint, format, build, or screenshot gate — " +
             "the harness runs the full gate at its Verify/Commit stages. " +
             SelfVerifyStopRule + " " +
-            "Do not edit files.",
+            "Do not edit files. Paths named on the 'Protected paths' line of your input (the tasks " +
+            "directory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part " +
+            "of the diff under review — even when untracked: pending specs for OTHER tasks " +
+            "legitimately appear there mid-drain, so never flag them as stray content.",
         "Visual-review" =>
             "You are reviewing rendered screenshots of the application built from the current " +
             "working tree, plus the task's own attached images. Read the PNG files listed in your " +
@@ -96,7 +99,11 @@ public static class RelayStages
             "it legitimately. Resolving means an edit, not repeated re-runs. " +
             SelfVerifyStopRule + " " +
             "Make MINIMAL, diff-scoped edits: change only what the task requires and " +
-            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.",
+            "do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets. " +
+            "Never delete, edit, or revert anything under the paths named on the 'Protected paths' " +
+            "line of your input — pending specs for other tasks legitimately sit there untracked " +
+            "mid-drain. If review flagged such a path, record it in your summary as " +
+            "skipped-by-policy instead of acting on it.",
         "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically. Do not edit files. Do NOT execute the test suite yourself — the harness has already run it mechanically; use the captured output in ## Verify output below for your summary.",
         "Fix-verify" =>
             "Fix all failures from the full test suite gate shown in ## Verify command. " +

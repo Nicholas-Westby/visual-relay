@@ -22,6 +22,11 @@ public sealed partial class SwivalSubagentRunner
             "## Manifest",
             invocation.Manifest.Count > 0 ? string.Join('\n', invocation.Manifest) : "(not set yet)"
         };
+        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))
+        {
+            // Right after "Working directory:" so every stage sees it before the task input.
+            parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/");
+        }
         if (!string.IsNullOrWhiteSpace(invocation.TaskContext))
         {
             parts.AddRange(["", "## Task context", invocation.TaskContext]);

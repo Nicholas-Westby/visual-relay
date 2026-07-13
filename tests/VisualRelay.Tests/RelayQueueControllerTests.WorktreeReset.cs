@@ -114,4 +114,37 @@ public sealed partial class RelayQueueControllerWorktreeResetTests
         // State reflects that at least one task needs review.
         Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);
     }
+
+    [Fact]
+    public async Task DrainAsync_FlaggedTask_LogsResetRemoved()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("alpha", "# Alpha — will flag with dirty tree\n");
+        repo.WriteTask("beta", "# Beta — must inherit clean tree\n");
+
+        var sim = RelayDriverTestHelpers.InitSim(repo);
+        sim.Seed(repo.Root, "src/app.cs", "original");
+        sim.Commit(repo.Root, "seed");
+
+        foreach (var tid in new[] { "alpha", "beta" })
+        {
+            var snapshotDir = Path.Combine(repo.Root, ".relay", tid);
+            Directory.CreateDirectory(snapshotDir);
+            File.WriteAllText(Path.Combine(snapshotDir, "pre-run-untracked.txt"), "");
+        }
+
+        var runner = new DirtyThenCleanAssertingRunner();
+        var controller = new RelayQueueController(repo.Root, runner, gitInvoker: sim);
+
+        await controller.RefreshAsync();
+        await controller.DrainAsync();
+
+        // The drain log must contain a reset-removed line for alpha.
+        var drainLogs = Directory.GetFiles(Path.Combine(repo.Root, ".relay"), "drain-*.log");
+        Assert.Single(drainLogs);
+        var log = await File.ReadAllTextAsync(drainLogs[0]);
+        Assert.Contains("reset-removed", log, StringComparison.Ordinal);
+        Assert.Contains("1 untracked file(s)", log, StringComparison.Ordinal);
+    }
 }

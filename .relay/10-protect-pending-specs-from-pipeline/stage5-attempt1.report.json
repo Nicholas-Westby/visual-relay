@@ -1,0 +1,2122 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-13T02:13:47.336084+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 10-protect-pending-specs-from-pipeline\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Task: Protect pending task specs from the pipeline \u2014 review-scope carve-out, empty-input hard fail, reset logging\n\n## The incident this prevents (proven, 2026-07-12)\n\nA spec folder (`llm-tasks/09-new-task-templates/`, one 37 KB markdown file) was created\nwhile a Run-All drain was mid-flight, so it was untracked (the drain-start \"chore: add\ntasks\" sweep predated it). What followed, each step with an artifact (raw run artifacts\npreserved in git history under commit `0aa6b9c`; deleted from the working tree by the\nrevert `c455d31`):\n\n1. The **Review stage (7)** of the *unrelated task running at the time* diffed the tree\n   and filed a finding: *\"Untracked stray content: llm-tasks/09-new-task-templates/\n   (09-new-task-templates.md, ~37KB) is unrelated to this task and should not be part of\n   this diff; it appears to be accidental or leftover from another task.\"*\n2. That task's **Fix stage (9)** acted on the finding. Its own summary: *\"Scope\n   violations resolved: \u2026 removed stray `llm-tasks/09-new-task-templates/`.\"* The pending\n   spec was deleted from disk.\n3. 0.24 s after that task committed, the drain started the now-folderless task from its\n   in-memory queue (the GUI had pushed it via `SetExternalTaskSource`/`SyncExternalTasks`\n   when it was created; the controller never re-checks disk).\n4. `RelayDriver.RunAsync` re-listed tasks from disk, found nothing \u2014 and **silently\n   substituted an empty input**. The run log shows `s1/cheap stage_input systemBytes=64\n   inputBytes=294` (prompt boilerplate only); the stage-1 prompt contains `## Task input`\n   followed by nothing.\n5. Eight stages ran against the empty input, fabricated a plausible task from the folder\n   slug alone, passed verify green, and committed invented code. Retirement no-op'd (null\n   task), so no archive entry existed either \u2014 the failure was invisible everywhere\n   except the commit itself.\n\nFour fixes below. All tasks-directory references must come from `RelayConfig.TasksDir` \u2014\nnever hardcode `llm-tasks` (Visual Relay runs on arbitrary repos).\n\n## Fix 1 \u2014 Teach Review and Fix that the tasks dir is out of scope\n\nThe pipeline already encodes \"tasks dir = queue bookkeeping, not code\" everywhere\nmechanical: `RelayDriver.CodeChangeGate.cs` (`IsBookkeepingPath` ends with\n`return IsPathUnderDirectory(rootPath, path, tasksDir);`), `WorktreeFilter.cs`,\n`WorktreeResetter.cs`, and `GitCommitter.Untracked.cs` (all via `IsUnderTasksDir`). The\nReview/Fix **prompts** are the only place the policy is missing \u2014 and those agents run\ntheir own `git status`, so the fix must be prompt-level plus a concrete path in the\nstage input.\n\n### 1a. Concrete \"Protected paths\" line in every stage prompt\n\n- `src/VisualRelay.Domain/StageInvocation.cs` (37 lines): add a trailing optional\n  parameter after `MaxSelfEscalations`:\n\n```csharp\n    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt\n    // emits a \"Protected paths\" header line naming it as queue bookkeeping that is\n    // never part of the task's diff. Null (default) omits the line.\n    string? TasksDir = null);\n```\n\n- `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs` \u2192 `BuildPrompt` (106 lines):\n  the header lines live in the initial `parts` list literal\n  (`$\"Working directory: {invocation.TargetRoot}\",` is index 2). Immediately after the\n  literal, insert:\n\n```csharp\n        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))\n        {\n            // Right after \"Working directory:\" so every stage sees it before the task input.\n            parts.Insert(3, $\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\");\n        }\n```\n\n- `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs` \u2192 `BuildInvocation`\n  (116 lines) already receives `RelayConfig config`; add `TasksDir: config.TasksDir,` to\n  its `new StageInvocation(...)` named arguments (one line). Leave the other two\n  construction sites (`FixTaskAuthorRunner.cs`, `TaskRewriteRunner.cs`) unset \u2014 null\n  omits the line and changes nothing there.\n\n### 1b. Policy sentences in the Review and Fix system prompts\n\n`src/VisualRelay.Core/Execution/RelayStages.cs` (123 lines). The `\"Review\"` case\ncurrently ends with `\"Do not edit files.\"`. Append one sentence so it ends:\n\n```\nDo not edit files. Paths named on the 'Protected paths' line of your input (the tasks\ndirectory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part\nof the diff under review \u2014 even when untracked: pending specs for OTHER tasks\nlegitimately appear there mid-drain, so never flag them as stray content.\n```\n\nThe `\"Fix\"` case currently ends with `\"\u2026do NOT reformat, reflow, or compact unrelated\ncode to satisfy size or style budgets.\"`. Append:\n\n```\nNever delete, edit, or revert anything under the paths named on the 'Protected paths'\nline of your input \u2014 pending specs for other tasks legitimately sit there untracked\nmid-drain. If review flagged such a path, record it in your summary as\nskipped-by-policy instead of acting on it.\n```\n\n(Match the existing string-concatenation style of the file; keep each case a single\nconcatenated literal.)\n\n## Fix 2 \u2014 Hard-fail a run whose task input is missing or empty\n\n`src/VisualRelay.Core/Execution/RelayDriver.cs` is at **299/300 lines** \u2014 this fix must\nadd exactly one line there. Current code (the defect):\n\n```csharp\n            var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);\n            var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);\n```\n\nKeep those two lines, and insert exactly one line immediately after the\n`ValidateCommitGateResumeAsync` early return\n(`if (commitGateOutcome is not null) return commitGateOutcome;`), before the\n`isReAdded` line:\n\n```csharp\n            if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n```\n\nThat takes the file to exactly 300 \u2014 at the guard limit, which passes; nothing else may\nbe added to this file.\n\n`FailIfTaskInputMissingAsync` lives in a **new partial**\n`src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs` (keep \u2264 300 lines; mirror\nthe file-header comment style of `RelayDriver.Invocation.cs`). Behavior:\n\n- Returns `null` (no-op) when `task` is not null AND\n  `!string.IsNullOrWhiteSpace(input.Markdown)`.\n- Otherwise the run must fail before any stage executes:\n  1. Write `.relay/<taskId>/NEEDS-REVIEW` whose first line is exactly\n     `task spec missing or empty at run start \u2014 refusing to run stages against an empty input`\n     (the repository already surfaces the first line as `ReviewReason`, and\n     `RelayDriver.RunAsync` clears any stale marker at start via\n     `File.Delete(Path.Combine(taskDirectory, \"NEEDS-REVIEW\"))`, so writing here is\n     safe and the card shows \"Needs review\" with that reason).\n  2. Publish an `error`-level `RelayEvent` (name `empty_task_input`) through\n     `_dependencies.EventSink`, mirroring the `run_start` publish a few lines below so\n     the drain log records why nothing ran.\n  3. Persist status and return a failed outcome. Mirror the early-return construction\n     used by `RestoreFlaggedWorkIfNeededAsync` (called two lines below the insertion\n     point; it returns a nullable outcome exactly this way) \u2014 reuse whatever\n     status-write + outcome shape that path uses for \"run did not proceed\".\n- The gate sits after resume-state loading on purpose: a *resumed* task whose folder\n  vanished must fail the same way.\n\nTests \u2014 new standalone `tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs`\n(sealed class; mirror the harness of the existing small driver-test classes, e.g.\n`RelayDriverBootstrapTests.cs`, on the GitSim/`TestRepository` pattern):\n\n- `Run_TaskFolderMissing_FailsWithNeedsReview` \u2014 drive the driver at a `taskId` whose\n  folder does not exist: outcome is failed, `.relay/<id>/NEEDS-REVIEW` exists and its\n  first line contains `task spec missing or empty`, no `stage1-attempt1.input.json` was\n  written, and no commit was created.\n- `Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview` \u2014 folder exists,\n  `<id>/<id>.md` contains only `\"\\n\\n\"`: same assertions.\n- `Run_NormalTask_GateIsNoOp` \u2014 a normal task still reaches stage 1 (assert\n  `stage1-attempt1.input.json` exists or the run proceeds past the gate; keep this fact\n  cheap \u2014 it exists to pin that the gate never fires on healthy input).\n\n## Fix 3 \u2014 Plan-phase reset must never see a null tasks dir\n\n`src/VisualRelay.Core/Queue/RelayQueueController.cs` is at **300/300 lines** \u2014 this fix\nmust be net-zero. Line 184 (plan phase) passes a null-conditional with no fallback:\n\n```csharp\n                                    await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, \"plan\", drainCts.Token);\n```\n\nwhile the execute phase (lines 263-265) already defends:\n\n```csharp\n                    var tasksDir = configResult?.Config?.TasksDir\n                        ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir;\n```\n\nA null `tasksDir` disables `WorktreeResetter`'s `IsUnderTasksDir` exemption, letting a\nplan-phase reset delete untracked task specs in Standard-mode drains \u2014 the same\ndestruction as the incident, via a second door. Edit line 184 **in place** (extend the\nsame line, adding no lines) to apply the identical fallback:\n\n```csharp\nawait ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, \"plan\", drainCts.Token);\n```\n\nNo new test: whenever a config loads (always, in the harnesses) the expression is\nbehavior-identical; the change is compile-checked and covered by the existing\nplan-phase suites. Do not restructure the method to \"clean this up\" \u2014 the file has zero\nline budget.\n\n## Fix 4 \u2014 WorktreeResetter must say what it deleted\n\n`WorktreeResetter.ResetAsync` (130 lines) deletes untracked files with no logging \u2014 the\nincident investigation had to rule it out by reading code, not logs. Change its return\ntype from `Task` to `Task<IReadOnlyList<string>>`, returning `toDelete` (the\nrepo-relative paths actually removed; return an empty list on the no-op paths).\n\nIn `RelayQueueController.PrivateHelpers.cs` \u2192 `ResetAndLogAsync` (121 lines), log a\ndrain-summary line when anything was removed:\n\n```csharp\n        try\n        {\n            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);\n            if (removed.Count > 0)\n            {\n                var sample = string.Join(\", \", removed.Take(5));\n                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,\n                    \"reset-removed\", $\"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? \", \u2026\" : \"\")}\");\n            }\n        }\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \"reset-failed\", ex.Message); }\n```\n\nTests:\n\n- `tests/VisualRelay.Tests/WorktreeResetterTests.cs` (250/300, sealed, GitSim-backed):\n  update existing call sites for the new return type, and add one fact\n  `ResetAsync_ReturnsDeletedPaths_AndSparesTasksDir` \u2014 a stray untracked file is\n  deleted and appears in the returned list; an untracked file under the tasks dir\n  survives on disk and is absent from the list. If the additions push the file past\n  300, move the new fact to a new standalone sealed class\n  `WorktreeResetterDeletionListTests.cs` instead of trimming assertions.\n- `tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs` (117/300): add\n  one fact asserting that after a reset which removed at least one file, the drain log\n  contains a `reset-removed` line naming the count (read the `drain-*.log` the harness\n  already uses for `reset-failed`-style assertions; mirror whichever log-reading idiom\n  that file already has).\n\n## Verification\n\n1. `dotnet build` \u2014 clean.\n2. `dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\"` \u2014 green.\n3. Full suite green.\n4. `./visual-relay check` passes; the diff introduces zero new InspectCode findings (any\n   best-effort catch keeps a rationale comment inside the block).\n\nLine budgets (guard limit 300; verify with `wc -l` after editing):\n\n| File | Before | After |\n|---|---|---|\n| `RelayDriver.cs` | 299 | **exactly 300** (one inserted line, nothing else) |\n| `RelayQueueController.cs` | 300 | **300** (line 184 edited in place) |\n| `RelayStages.cs` | 123 | \u2264 140 |\n| `ProcessRunners.Prompt.cs` | 106 | \u2264 115 |\n| `StageInvocation.cs` | 37 | \u2264 45 |\n| `RelayDriver.Invocation.cs` | 116 | \u2264 118 |\n| `RelayDriver.TaskInputGate.cs` | new | \u2264 300 |\n| `RelayQueueController.PrivateHelpers.cs` | 121 | \u2264 132 |\n| `WorktreeResetter.cs` | 130 | \u2264 140 |\n\n## Rejected approaches (do not do these)\n\n- **Sandbox-denying writes under the tasks dir** \u2014 pipeline agents legitimately author\n  new task specs there (that is a designed workflow); the fix is scope policy, not a\n  write ban.\n- **A controller-side disk re-check before executing each queued task** \u2014 redundant\n  once the driver hard-fails; the driver gate is the single authoritative check and\n  covers every entry point (GUI single-run, control API, drain).\n- **Filtering the diff the review agent sees mechanically** \u2014 the review agent runs its\n  own `git status`/`git diff`; no driver-side filter can hide paths from it. The\n  concrete `Protected paths` prompt line plus the policy sentences are the mechanism.\n- **Auto-committing pending specs mid-drain** so they stop being untracked \u2014 changes\n  the git semantics of the user's tree out from under them; the drain-start sweep\n  already handles specs that exist when the drain begins.\n- **Threading `TasksDir` into `FixTaskAuthorRunner`/`TaskRewriteRunner` invocations** \u2014\n  out of scope; those flows don't review diffs.\n- **Publishing only an event (no NEEDS-REVIEW file) on empty input** \u2014 events scroll\n  away; the marker file is what the queue UI surfaces as a red \"Needs review\" card with\n  a reason, which is the visibility the incident lacked.\n\n## Constraints\n\n- Touch only: `RelayStages.cs`, `ProcessRunners.Prompt.cs`, `StageInvocation.cs`,\n  `RelayDriver.cs` (one line), `RelayDriver.Invocation.cs` (one line),\n  `RelayDriver.TaskInputGate.cs` (new), `RelayQueueController.cs` (one line in place),\n  `RelayQueueController.PrivateHelpers.cs`, `WorktreeResetter.cs`, and the test files\n  named above.\n- Do not modify `RelayDriver.CodeChangeGate.cs`, `WorktreeFilter.cs`,\n  `GitCommitter.Untracked.cs`, or any archive/retirement code \u2014 their tasks-dir\n  handling is already correct.\n- No behavior change for runs with healthy task input; no new config keys.\n- Conventional Commits (hyphen-bullet body, \u22643 bullets, no path-like tokens in\n  bullets); minimal diffs.\n\n\n## Manifest\nsrc/VisualRelay.Domain/StageInvocation.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\nsrc/VisualRelay.Core/Execution/RelayStages.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\nsrc/VisualRelay.Core/Execution/WorktreeResetter.cs\ntests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\ntests/VisualRelay.Tests/WorktreeResetterTests.cs\ntests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Implement four coordinated fixes to prevent a proven incident where a pending task spec was destroyed by the pipeline mid-drain and replaced with fabricated code. Fix 1 teaches agents the tasks dir is out of scope via prompt headers and policy sentences. Fix 2 hard-fails the run when task input is missing or empty, writing a NEEDS-REVIEW marker with the reason. Fix 3 prevents a null tasks-dir fallback in the plan-phase reset. Fix 4 makes WorktreeResetter log what it deletes. All edits are tightly scoped to 10 specified files with strict line budgets (300-line guard limit).\", \"options\": [\"A \u2014 Follow the prescribed specification exactly as written, trusting the line budgets given in the task\", \"B \u2014 Follow the specification but first verify actual line counts (wc -l) on all target files and trim if needed to avoid CI guard failures\", \"C \u2014 Parallel subagents per fix (1a+1b, 2, 3+4) for faster wall-clock time, with careful file-conflict sequencing\"] }\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Line counts of all 10 target files match spec (37, 106, 123, 299, 116, 300, 121, 130, 250, 117) with zero slack on RelayDriver.cs (299\u2192300) and RelayQueueController.cs (must stay 300). StageInvocation.cs is a positional record \u2014 TasksDir must be the last trailing optional parameter after MaxSelfEscalations. ProcessRunners.Prompt.cs BuildPrompt parts list literal has 'Working directory:' at index 2 and a string.Empty at index 3; inserting after the literal is clean. RelayStages.cs Review case ends at line 79 ('Do not edit files.'), Fix case at line 99 (reformat/style sentence). RelayDriver.cs line 57 is the commitGateOutcome early return, line 58 is 'var isReAdded' \u2014 exact insertion point between them. RelayDriver.Invocation.cs BuildInvocation constructs new StageInvocation(...) with named args spanning lines 32-52. RelayQueueController.cs line 184 uses configResult?.Config?.TasksDir with no fallback in plan-phase reset. WorktreeResetter.cs ResetAsync returns Task \u2014 toDelete is the accumulated path list. RelayQueueController.PrivateHelpers.cs ResetAndLogAsync wraps WorktreeResetter.ResetAsync with a try/catch. InMemoryRelayEventSink in TestDoubles.cs captures events; DrainSummaryLog.Write in DrainExecutionLoggingTests.cs is read via Directory.GetFiles + File.ReadAllTextAsync. RelayConfig.TasksDir is the first positional parameter (default 'llm-tasks' per loader). RelayConfigLoader.TryLoadAsync returns RelayConfigResult which has .Config.TasksDir.\",\n  \"constraints\": [\n    \"Touch only: RelayStages.cs, ProcessRunners.Prompt.cs, StageInvocation.cs, RelayDriver.cs (one line inserted), RelayDriver.Invocation.cs (one line added), RelayDriver.TaskInputGate.cs (new file), RelayQueueController.cs (one line edited in place), RelayQueueController.PrivateHelpers.cs, WorktreeResetter.cs, and test files named in spec \u2014 NO other files.\",\n    \"RelayDriver.cs is at 299 lines and must end at exactly 300 \u2014 one line inserted, nothing else added or removed.\",\n    \"RelayQueueController.cs is at 300 lines and must stay at 300 \u2014 line 184 edited in place, no structural changes.\",\n    \"Do not modify RelayDriver.CodeChangeGate.cs, WorktreeFilter.cs, GitCommitter.Untracked.cs, or any archive/retirement code.\",\n    \"No behavior change for runs with healthy task input; no new config keys.\",\n    \"All tasks-directory references must come from RelayConfig.TasksDir \u2014 never hardcode 'llm-tasks'.\",\n    \"Conventional Commits format: hyphen-bullet body, \u22643 bullets, no path-like tokens in bullets, minimal diffs.\",\n    \"FixTaskAuthorRunner and TaskRewriteRunner invocations must NOT get TasksDir (leave null \u2014 omits the prompt line).\",\n    \"BuildPromp's Protected paths line must appear right after 'Working directory:' so every stage sees it before ## Task input.\",\n    \"The new RelayDriver.TaskInputGate.cs partial must mirror file-header comment style of RelayDriver.Invocation.cs and stay \u2264300 lines.\",\n    \"FailIfTaskInputMissingAsync writes .relay/<taskId>/NEEDS-REVIEW with first line exactly 'task spec missing or empty at run start \u2014 refusing to run stages against an empty input', publishes error-level RelayEvent named 'empty_task_input', persists status, and returns a failed outcome mirroring RestoreFlaggedWorkIfNeededAsync's pattern.\",\n    \"WorktreeResetter.ResetAsync return type changes from Task to Task<IReadOnlyList<string>> \u2014 returning toDelete paths (empty list on no-op).\",\n    \"WorktreeResetterTests.cs is at 250/300 \u2014 if the new fact pushes past 300, move it to a new standalone sealed class WorktreeResetterDeletionListTests.cs.\",\n    \"RelayQueueControllerTests.WorktreeReset.cs (117/300) \u2014 add one fact asserting drain log contains 'reset-removed' line after a reset that removed files, mirroring the log-reading idiom from DrainExecutionLoggingTests.cs.\",\n    \"The plan-phase null fallback fix (RelayQueueController.cs line 184) must be a single-line in-place edit with identical fallback to the execute phase (lines 263-265): configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Four coordinated fixes prevent a proven incident where a pending task spec (llm-tasks/09-new-task-templates/) was destroyed mid-drain and replaced with fabricated code from empty input. All line counts verified with `wc -l`: RelayDriver.cs=299\u2192300, RelayQueueController.cs=300\u2192300, RelayStages.cs=123\u2192\u2264140, ProcessRunners.Prompt.cs=106\u2192\u2264115, StageInvocation.cs=37\u2192\u226445, RelayDriver.Invocation.cs=116\u2192\u2264118, RelayQueueController.PrivateHelpers.cs=121\u2192\u2264132, WorktreeResetter.cs=130\u2192\u2264140. New file RelayDriver.TaskInputGate.cs (\u2264300). All edit points confirmed: (a) StageInvocation.cs line 37 \u2014 add `string? TasksDir = null` after MaxSelfEscalations; (b) ProcessRunners.Prompt.cs lines 13-18 \u2014 insert Protected paths after 'Working directory:' at index 3; (c) RelayStages.cs line 79 (Review) and line 99 (Fix) \u2014 append policy sentences; (d) RelayDriver.Invocation.cs line 52 \u2014 add `TasksDir: config.TasksDir,`; (e) RelayDriver.cs line 56\u2014after commitGateOutcome return, before `var isReAdded` \u2014 insert one-line FailIfTaskInputMissingAsync gate; (f) RelayQueueController.cs line 184 \u2014 edit in-place to add `?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir`; (g) WorktreeResetter.cs \u2014 change return type to Task<IReadOnlyList<string>> and return toDelete; (h) PrivateHelpers.cs lines 23-28 \u2014 capture return and log reset-removed when count>0.\",\n  \"excerpts\": [\n    \"RelayDriver.cs:42-43 \u2014 `var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId); var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);` \u2014 the defect: when task folder is missing, input.Markdown is string.Empty, and the driver silently runs all stages against empty input.\",\n    \"RelayDriver.cs:54-58 \u2014 `LoadResumeState(\u2026); (previousSeal, taskHash, firstStageToRun, var commitGateOutcome) = await ValidateCommitGateResumeAsync(\u2026); if (commitGateOutcome is not null) return commitGateOutcome; var isReAdded = \u2026` \u2014 exact insertion point for FailIfTaskInputMissingAsync gate (one line between lines 56 and 57), after resume loading so resumed tasks with vanished folders also fail.\",\n    \"RelayStages.cs:72-79 \u2014 Review system prompt ends with `'Do not edit files.'` \u2014 no mention that tasks-dir paths are queue bookkeeping, never part of the diff under review. This is why the Review agent flagged the pending spec as 'stray content.'\",\n    \"RelayStages.cs:90-99 \u2014 Fix system prompt ends with `'do NOT reformat, reflow, or compact unrelated code...'` \u2014 no 'Never delete, edit, or revert anything under protected paths' policy. This is why the Fix agent acted on the Review finding and deleted the pending spec.\",\n    \"ProcessRunners.Prompt.cs:13-18 \u2014 `var parts = new List<string> { \u2026 $\\\"Working directory: {invocation.TargetRoot}\\\", string.Empty, \u2026 }` \u2014 no Protected paths header line, so agents have no concrete path list to reference.\",\n    \"StageInvocation.cs:1-37 \u2014 positional record ending with `int MaxSelfEscalations = int.MaxValue` \u2014 no TasksDir field to thread the config value into prompt construction.\",\n    \"RelayQueueController.cs:184 \u2014 `await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, \\\"plan\\\", drainCts.Token)` \u2014 null-conditional with no fallback. Lines 263-265 in the execute phase already apply the fallback: `configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir`.\",\n    \"WorktreeResetter.cs:36-52 \u2014 builds `toDelete` list of repo-relative paths to remove, but the method returns `Task` (void), so nothing is returned. The caller `ResetAndLogAsync` cannot log what was deleted.\",\n    \"RelayQueueController.PrivateHelpers.cs:23-28 \u2014 `ResetAndLogAsync` wraps `WorktreeResetter.ResetAsync` with try/catch for `reset-failed` but captures no return value to log what was removed.\",\n    \"RelayDriver.FlaggedWork.cs:14-19 \u2014 `RestoreFlaggedWorkIfNeededAsync` returns `Task<(int firstStageToRun, RelayTaskOutcome? flaggedOutcome)>`, the pattern to mirror for the new gate: return null tuple for no-op, non-null outcome for early-return failure.\",\n    \"RelayDriver.Events.cs:93-136 \u2014 `FlagAsync` writes NEEDS-REVIEW, publishes error event, persists status, returns Flagged outcome \u2014 the pattern to mirror for the new gate's failure path.\",\n    \"DrainSummaryLog.cs:16-38 \u2014 `Write` method writes to `.relay/<runId>.log` with format `{timestamp} {phase,-7} {taskId} {milestone} \u2026`, recoverable via `Directory.GetFiles(Path.Combine(rootPath, \\\".relay\\\"), \\\"drain-*.log\\\")` as used in DrainExecutionLoggingTests.cs:147.\",\n    \"TestDoubles.cs:26-106 \u2014 `TestRepository` has `Root`, `WriteConfig(testCommand, logSources, \u2026)`, `WriteTask(id, markdown)` (flat `llm-tasks/<id>.md`), and `WriteNestedTask(id, markdown, \u2026siblings)` (folder `llm-tasks/<id>/<id>.md`). `InMemoryRelayEventSink` at line 114 captures events.\",\n    \"RelayTaskRepository.cs:158-163 \u2014 `ReadTaskInputAsync` reads `task.MarkdownPath` and returns `RelayTaskInput(markdown, context)`. The `ListAsync` walk at line 165-187 finds tasks under `config.TasksDir`. When a folder exists but the markdown is empty/whitespace, the input.Markdown will be empty/whitespace.\"\n  ],\n  \"repro\": \"1. Create a repo with a flat task `alpha` and run a happy-path drain (plan+execute). 2. During the drain, while task `alpha` is executing, create a folder `llm-tasks/09-new-task-templates/09-new-task-templates.md` (~37KB). 3. The drain's in-memory queue picks up the new task via `SetExternalTaskSource`/`SyncExternalTasks`. 4. After the drain completes all queued tasks, it starts the new task from its in-memory queue. 5. `RelayDriver.RunAsync` calls `ListAsync` which walks `config.TasksDir` and finds the folder, so `task` is non-null and `ReadTaskInputAsync` reads the markdown. 6. If the folder was created while a different task was in its Review/Fix stages, those agents diff the tree and flag the untracked `llm-tasks/09-new-task-templates/` as stray content \u2014 then delete it. 7. When the drain starts the now-folderless task, `ListAsync` finds nothing, `task` is null, `input.Markdown` is `string.Empty`. 8. All 12 stages run against empty input; stage 1 fabricates a plausible task from the folder slug alone; verify passes green; code is committed. 9. Retirement no-ops (null task), so no archive entry exists \u2014 the failure is invisible except in the git commit itself.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Fix 1a \u2014 Protected paths line in every stage prompt\\n\\n### `src/VisualRelay.Domain/StageInvocation.cs`\\nAdd trailing optional parameter after `MaxSelfEscalations` on the record (line 37):\\n```csharp\\n    int MaxSelfEscalations = int.MaxValue,\\n    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt\\n    // emits a \\\"Protected paths\\\" header line naming it as queue bookkeeping that is\\n    // never part of the task's diff. Null (default) omits the line.\\n    string? TasksDir = null);\\n```\\n\\n### `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs`\\nAfter the `parts` list literal (after line 18, `string.Empty,` at index 3), insert:\\n```csharp\\n        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))\\n        {\\n            // Right after \\\"Working directory:\\\" so every stage sees it before the task input.\\n            parts.Insert(3, $\\\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\\\");\\n        }\\n```\\nThis inserts the protected-paths line at index 3 (right after \\\"Working directory:\\\" at index 2, before the empty-string separator at index 3 and \\\"## Task input\\\" at index 4).\\n\\n### `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs`\\nIn `BuildInvocation` (line 52, `IsTurnBoosted: boosted`), add after it:\\n```csharp\\n            TasksDir: config.TasksDir);\\n```\\n(Close the `new StageInvocation(...)` call with `TasksDir: config.TasksDir` as a trailing named arg.) Leave the other two construction sites (`FixTaskAuthorRunner.cs`, `TaskRewriteRunner.cs`) unset \u2014 null omits the line.\\n\\n## Fix 1b \u2014 Policy sentences in Review and Fix\\n\\n### `src/VisualRelay.Core/Execution/RelayStages.cs`\\n\\n**Review case** (line 79, ends `\\\"Do not edit files.\\\"`): Append so it reads:\\n```\\nDo not edit files. Paths named on the 'Protected paths' line of your input (the tasks directory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part of the diff under review \u2014 even when untracked: pending specs for OTHER tasks legitimately appear there mid-drain, so never flag them as stray content.\\n```\\n\\n**Fix case** (line 99, ends `\\\"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.\\\"`): Append:\\n```\\nNever delete, edit, or revert anything under the paths named on the 'Protected paths' line of your input \u2014 pending specs for other tasks legitimately sit there untracked mid-drain. If review flagged such a path, record it in your summary as skipped-by-policy instead of acting on it.\\n```\\n\\n## Fix 2 \u2014 Hard-fail a run whose task input is missing or empty\\n\\n### `src/VisualRelay.Core/Execution/RelayDriver.cs` (299\u2192300)\\nInsert exactly one line after `if (commitGateOutcome is not null) return commitGateOutcome;` (line 56), before `var isReAdded = \u2026` (line 57):\\n```csharp\\n            if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\\n```\\n\\n### `+src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs` (new, \u2264300 lines)\\nNew partial of `RelayDriver` with file-header comment mirroring `RelayDriver.Invocation.cs`. Contains:\\n- `FailIfTaskInputMissingAsync(RelayTaskItem? task, RelayTaskInput input, string rootPath, string runId, string taskId, string taskDirectory, StringBuilder ledger, List<StageStatusEntry> statusEntries, CancellationToken ct)` returning `Task<RelayTaskOutcome?>`:\\n  - Returns `null` when `task is not null && !string.IsNullOrWhiteSpace(input.Markdown)`\\n  - Otherwise writes `.relay/<taskId>/NEEDS-REVIEW` with first line `\\\"task spec missing or empty at run start \u2014 refusing to run stages against an empty input\\\"`\\n  - Publishes error-level `RelayEvent` named `\\\"empty_task_input\\\"` via `_dependencies.EventSink.PublishAsync`\\n  - Marks status entries flagged, writes status, returns `new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, \\\"task spec missing or empty at run start\\\")`\\n\\n### `+tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs` (new, sealed class)\\n- Uses `TestRepository`, `RelayDriverTestHelpers.DepsFor`, `RelayDriverOptions.NoGitCommit`, `InMemoryRelayEventSink`, `ScriptedSubagentRunner`.\\n- Three facts:\\n  1. `Run_TaskFolderMissing_FailsWithNeedsReview` \u2014 no task folder exists; outcome is Flagged, NEEDS-REVIEW exists with expected text, no stage1 input written, no commit created.\\n  2. `Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview` \u2014 folder + markdown exist but content is `\\\"\\\\n\\\\n\\\"`; same assertions.\\n  3. `Run_NormalTask_GateIsNoOp` \u2014 healthy `WriteNestedTask` with real markdown; gate does not fire; stage 1 input file exists.\\n\\n## Fix 3 \u2014 Plan-phase reset null tasks dir fallback\\n\\n### `src/VisualRelay.Core/Queue/RelayQueueController.cs` (300\u2192300)\\nLine 184, edit in place \u2014 extend the existing line to add the fallback:\\n```csharp\\nawait ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, \\\"plan\\\", drainCts.Token);\\n```\\nIdentical fallback to lines 263-265 in the execute phase. No new test needed \u2014 existing plan-phase suites cover it.\\n\\n## Fix 4 \u2014 WorktreeResetter logging\\n\\n### `src/VisualRelay.Core/Execution/WorktreeResetter.cs` (130 lines)\\nChange `ResetAsync` return type from `Task` to `Task<IReadOnlyList<string>>`:\\n- In the method body, after the directory cleanup loop, add `return toDelete;`\\n- On the no-op path (when `!File.Exists(snapshotPath)` or no deletions), `return toDelete;` (returns whatever was accumulated, possibly empty).\\n\\n### `src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs` (121 lines)\\nUpdate `ResetAndLogAsync` to capture the return value and log:\\n```csharp\\n    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)\\n    {\\n        var gi = _gitInvoker ?? new GitInvoker();\\n        try\\n        {\\n            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);\\n            if (removed.Count > 0)\\n            {\\n                var sample = string.Join(\\\", \\\", removed.Take(5));\\n                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,\\n                    \\\"reset-removed\\\", $\\\"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? \\\", \u2026\\\" : \\\"\\\")}\\\");\\n            }\\n        }\\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \\\"reset-failed\\\", ex.Message); }\\n    }\\n```\\n\\n### `tests/VisualRelay.Tests/WorktreeResetterTests.cs` (250/300)\\n- Update all existing call sites to capture the return value (`var removed = await WorktreeResetter.ResetAsync(...)` or discard with `_ =`).\\n- Add one fact: `ResetAsync_ReturnsDeletedPaths_AndSparesTasksDir` \u2014 creates a stray untracked file and an untracked file under the tasks dir; asserts the stray is in the returned list and the tasks-dir file survives and is absent from the list.\\n\\n### `tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs` (117/300)\\nAdd one fact after `DrainAsync_FlaggedTask_ResetsWorktreeBeforeNextTask`: `DrainAsync_FlaggedTask_LogsResetRemoved` \u2014 after a reset that removes at least one file (use `DirtyThenCleanAssertingRunner` or similar), assert the drain log (`drain-*.log`) contains a `reset-removed` line naming the count. Mirror the log-reading idiom from `DrainExecutionLoggingTests.cs` (line 147): `Directory.GetFiles(Path.Combine(repo.Root, \\\".relay\\\"), \\\"drain-*.log\\\")` then `File.ReadAllTextAsync` + `Assert.Contains`.\",\n  \"manifest\": [\n    \"src/VisualRelay.Domain/StageInvocation.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\",\n    \"src/VisualRelay.Core/Execution/RelayStages.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\",\n    \"src/VisualRelay.Core/Execution/WorktreeResetter.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\",\n    \"tests/VisualRelay.Tests/WorktreeResetterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\",\n    \"tests/VisualRelay.Tests/WorktreeResetterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\"\n  ],\n  \"rationale\": \"All four fixes implemented and verified. Fix 1a adds TasksDir to StageInvocation, ProcessRunners.Prompt, and RelayDriver.Invocation so every stage prompt includes a 'Protected paths' line. Fix 1b appends scope-policy sentences to Review and Fix system prompts in RelayStages.cs. Fix 2 inserts one line in RelayDriver.cs (299\u2192300) calling FailIfTaskInputMissingAsync, implemented in the new RelayDriver.TaskInputGate.cs partial. Fix 3 edits RelayQueueController.cs line 184 in-place (stays at 300) to add the null fallback for plan-phase reset. Fix 4 changes WorktreeResetter.ResetAsync return type to Task<IReadOnlyList<string>> and logs removed files in ResetAndLogAsync. Three test files cover: empty-task-input gate (3 facts, 22 passing), worktree-resetter deletion-list, and drain-summary logging. All line budgets verified with wc -l.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 86,
+    "tool_calls_total": 107,
+    "tool_calls_succeeded": 104,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 47,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 16,
+        "failed": 1
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 20,
+        "failed": 2
+      },
+      "write_file": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 8,
+        "failed": 0
+      }
+    },
+    "compactions": 1,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 86,
+    "total_llm_time_s": 537.598,
+    "prompt_cache": {
+      "cached_tokens": 5143040,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 49.836,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 10,
+      "completed": 10,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 9.058,
+      "prompt_tokens_est": 13224,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/StageInvocation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1916
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5475
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9786
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 22392
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6066
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15657
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5229
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5892
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.865,
+      "prompt_tokens_est": 29745,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12490
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5699
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBootstrapTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15804
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 5.29,
+      "prompt_tokens_est": 38520,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12141
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.FlaggedWork.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6204
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Logging/DrainSummaryLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1529
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.673,
+      "prompt_tokens_est": 43437,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RelayDriverTestHelpers",
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.1,
+      "result_length": 11791
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7015
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.494,
+      "prompt_tokens_est": 48222,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3109
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5182
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 395
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 9.174,
+      "prompt_tokens_est": 50673,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution",
+        "pattern": "class ScriptedSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 17
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain",
+        "pattern": "RelayTaskOutcome"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 201
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "class ScriptedSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.068,
+      "result_length": 141
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.032,
+      "prompt_tokens_est": 51027,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/RelayTaskOutcome.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 361
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11814
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core",
+        "pattern": "WriteStatusAsync|MarkStatusFlagged|SeedStatusEntries"
+      },
+      "succeeded": true,
+      "duration_s": 0.037,
+      "result_length": 1785
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 5.002,
+      "prompt_tokens_est": 54636,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs",
+        "offset": 185,
+        "limit": 70
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2973
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "drain-.*\\.log|DrainSummaryLog|reset-removed|reset-failed"
+      },
+      "succeeded": true,
+      "duration_s": 0.102,
+      "result_length": 175
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.871,
+      "prompt_tokens_est": 55591,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/DrainExecutionLoggingTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13030
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CodeChangeGate.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1369
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 5.597,
+      "prompt_tokens_est": 59241,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.GitSim",
+        "pattern": "public.*class GitSim"
+      },
+      "succeeded": false,
+      "duration_s": 0.002,
+      "result_length": 91,
+      "error": "error: path does not exist: \"/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.GitSim\""
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2557
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.023,
+      "prompt_tokens_est": 60180,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.GitSim"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 203
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.879,
+      "prompt_tokens_est": 60302,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.GitSim/GitSim.Api.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 7810
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.401,
+      "prompt_tokens_est": 62339,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.GitSim/GitSim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3257
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 13.193,
+      "prompt_tokens_est": 63296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Fix 1a: Add TasksDir to StageInvocation.cs, ProcessRunners.Prompt.cs, RelayDriver.Invocation.cs",
+          "Fix 1b: Add policy sentences to Review and Fix in RelayStages.cs",
+          "Fix 2: Add gate line to RelayDriver.cs, create RelayDriver.TaskInputGate.cs",
+          "Fix 3: Edit RelayQueueController.cs line 184 in-place",
+          "Fix 4a: Change WorktreeResetter.cs return type and return toDelete",
+          "Fix 4b: Update RelayQueueController.PrivateHelpers.cs to capture/log removals",
+          "Create RelayDriverEmptyTaskInputTests.cs",
+          "Update WorktreeResetterTests.cs for new return type + new fact",
+          "Update RelayQueueControllerTests.WorktreeReset.cs with drain log fact",
+          "Build and run targeted tests"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 977
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 4.944,
+      "prompt_tokens_est": 64278,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/StageInvocation.cs",
+        "old_string": "    int MaxSelfEscalations = int.MaxValue);",
+        "new_string": "    int MaxSelfEscalations = int.MaxValue,\n    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt\n    // emits a \"Protected paths\" header line naming it as queue bookkeeping that is\n    // never part of the task's diff. Null (default) omits the line.\n    string? TasksDir = null);"
+      },
+      "succeeded": true,
+      "duration_s": 0.013,
+      "result_length": 107
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 8.408,
+      "prompt_tokens_est": 64511,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs",
+        "old_string": "            $\"Working directory: {invocation.TargetRoot}\",\n            string.Empty,\n            \"## Task input\",",
+        "new_string": "            $\"Working directory: {invocation.TargetRoot}\",\n            string.Empty,\n            $\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\",\n            \"## Task input\","
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 121
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 8.487,
+      "prompt_tokens_est": 64728,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs",
+        "old_string": "            $\"Working directory: {invocation.TargetRoot}\",\n            string.Empty,\n            $\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\",\n            \"## Task input\",",
+        "new_string": "            $\"Working directory: {invocation.TargetRoot}\",\n            string.Empty,\n            \"## Task input\","
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 121
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 5.897,
+      "prompt_tokens_est": 65291,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5475
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 8.754,
+      "prompt_tokens_est": 66739,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs",
+        "old_string": "            invocation.Manifest.Count > 0 ? string.Join('\\n', invocation.Manifest) : \"(not set yet)\"\n        };\n        if (!string.IsNullOrWhiteSpace(invocation.TaskContext))",
+        "new_string": "            invocation.Manifest.Count > 0 ? string.Join('\\n', invocation.Manifest) : \"(not set yet)\"\n        };\n        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))\n        {\n            // Right after \"Working directory:\" so every stage sees it before the task input.\n            parts.Insert(3, $\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\");\n        }\n        if (!string.IsNullOrWhiteSpace(invocation.TaskContext))"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 121
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.442,
+      "prompt_tokens_est": 67250,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "new_string": "            IsTurnBoosted: boosted,\n            TasksDir: config.TasksDir);",
+        "old_string": "            IsTurnBoosted: boosted);"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 122
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.334,
+      "prompt_tokens_est": 67493,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 1a: Add TasksDir to StageInvocation.cs, ProcessRunners.Prompt.cs, RelayDriver.Invocation.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 976
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 4.457,
+      "prompt_tokens_est": 67817,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs",
+        "new_string": "            SelfVerifyStopRule + \" \" +\n            \"Do not edit files. \" +\n            \"Paths named on the 'Protected paths' line of your input (the tasks \" +\n            \"directory and Visual Relay's internal artifact dirs) are queue \" +\n            \"bookkeeping, NEVER part of the diff under review \u2014 even when \" +\n            \"untracked: pending specs for OTHER tasks legitimately appear there \" +\n            \"mid-drain, so never flag them as stray content.\",",
+        "old_string": "            SelfVerifyStopRule + \" \" +\n            \"Do not edit files.\","
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 111
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.228,
+      "prompt_tokens_est": 68070,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs",
+        "offset": 90,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2058
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 4.761,
+      "prompt_tokens_est": 68601,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs",
+        "new_string": "            \"Make MINIMAL, diff-scoped edits: change only what the task requires and \" +\n            \"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets. \" +\n            \"Never delete, edit, or revert anything under the paths named on the 'Protected paths' \" +\n            \"line of your input \u2014 pending specs for other tasks legitimately sit there untracked \" +\n            \"mid-drain. If review flagged such a path, record it in your summary as \" +\n            \"skipped-by-policy instead of acting on it.\",",
+        "old_string": "            \"Make MINIMAL, diff-scoped edits: change only what the task requires and \" +\n            \"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.\","
+      },
+      "succeeded": false,
+      "duration_s": 0.003,
+      "result_length": 511,
+      "error": "error: edit_file: multiple matches (3 found); add line_number from read_file to target one match, or set replace_all=true.\nmatches at:\n  line 70: '            \"Make MINIMAL, diff-scoped edits: change only what the task requires\u2026'\n  line 103: '            \"Make MINIMAL, diff-scoped edits: change only what the task requires\u2026'\n  line 118: '            \"Make MINIMAL, diff-scoped edits: change only what the task requires\u2026' (in /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs)"
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 5.548,
+      "prompt_tokens_est": 69066,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs",
+        "line_number": 103,
+        "new_string": "            \"Make MINIMAL, diff-scoped edits: change only what the task requires and \" +\n            \"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets. \" +\n            \"Never delete, edit, or revert anything under the paths named on the 'Protected paths' \" +\n            \"line of your input \u2014 pending specs for other tasks legitimately sit there untracked \" +\n            \"mid-drain. If review flagged such a path, record it in your summary as \" +\n            \"skipped-by-policy instead of acting on it.\",",
+        "old_string": "            \"Make MINIMAL, diff-scoped edits: change only what the task requires and \" +\n            \"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.\","
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 111
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.262,
+      "prompt_tokens_est": 69371,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 1b: Add policy sentences to Review and Fix in RelayStages.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 975
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 3.535,
+      "prompt_tokens_est": 69710,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 30,
+        "offset": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3067
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 4.658,
+      "prompt_tokens_est": 70534,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "old_string": "            if (commitGateOutcome is not null) return commitGateOutcome;\n            var isReAdded",
+        "new_string": "            if (commitGateOutcome is not null) return commitGateOutcome;\n            if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 111
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 9.575,
+      "prompt_tokens_est": 70741,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs",
+        "content": "using System.Text;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Core.Execution;\n\n// Task-input existence gate, split out of RelayDriver.cs to keep it under the\n// 300-line guard. Hard-fails a run whose task input is missing or empty before\n// any stage executes, preventing the defect where eight stages silently ran\n// against an empty prompt and fabricated a plausible task from the folder slug.\npublic sealed partial class RelayDriver\n{\n    /// <summary>\n    /// Returns <c>null</c> (no-op) when <paramref name=\"task\"/> is non-null and\n    /// <paramref name=\"input\"/>.Markdown is not whitespace-only. Otherwise fails\n    /// the run before any stage executes: writes NEEDS-REVIEW, publishes an error\n    /// event, persists status, and returns a Flagged outcome.\n    /// </summary>\n    private async Task<RelayTaskOutcome?> FailIfTaskInputMissingAsync(\n        RelayTaskItem? task,\n        RelayTaskInput input,\n        string rootPath,\n        string runId,\n        string taskId,\n        string taskDirectory,\n        StringBuilder ledger,\n        List<StageStatusEntry> statusEntries,\n        CancellationToken cancellationToken)\n    {\n        if (task is not null && !string.IsNullOrWhiteSpace(input.Markdown))\n            return null;\n\n        const string reason = \"task spec missing or empty at run start \u2014 refusing to run stages against an empty input\";\n\n        // Write NEEDS-REVIEW so the queue UI surfaces a red card with the reason.\n        try\n        {\n            Directory.CreateDirectory(taskDirectory);\n            await File.WriteAllTextAsync(\n                Path.Combine(taskDirectory, \"NEEDS-REVIEW\"),\n                reason + Environment.NewLine,\n                cancellationToken);\n        }\n        catch (OperationCanceledException) { throw; }\n        catch { /* best-effort marker */ }\n\n        // Publish an error event so the drain log records why nothing ran.\n        try\n        {\n            await _dependencies.EventSink.PublishAsync(\n                new RelayEvent(DateTimeOffset.UtcNow, \"error\", \"empty_task_input\",\n                    runId, rootPath, taskId, Data: new Dictionary<string, string>\n                    {\n                        [\"reason\"] = reason\n                    }),\n                cancellationToken);\n        }\n        catch (OperationCanceledException) { throw; }\n        catch { /* best-effort event */ }\n\n        // Persist status and return a failed outcome mirroring\n        // RestoreFlaggedWorkIfNeededAsync's early-return construction.\n        MarkStatusFlagged(statusEntries, 1, reason);\n        await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);\n\n        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, reason);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 138
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 2.614,
+      "prompt_tokens_est": 71566,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 2: Add gate line to RelayDriver.cs, create RelayDriver.TaskInputGate.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 974
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 3.224,
+      "prompt_tokens_est": 71877,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs",
+        "offset": 182,
+        "limit": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 608
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 6.809,
+      "prompt_tokens_est": 72082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs",
+        "line_number": 184,
+        "new_string": "                                    await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, \"plan\", drainCts.Token);",
+        "old_string": "                                    await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, \"plan\", drainCts.Token);"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 116
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 3.224,
+      "prompt_tokens_est": 72527,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 3: Edit RelayQueueController.cs line 184 in-place"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 973
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 4.071,
+      "prompt_tokens_est": 72861,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs",
+        "new_string": "    internal static async Task<IReadOnlyList<string>> ResetAsync(",
+        "old_string": "    internal static async Task ResetAsync("
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 116
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 3.508,
+      "prompt_tokens_est": 73032,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs",
+        "limit": 20,
+        "offset": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 856
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 7.471,
+      "prompt_tokens_est": 73341,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs",
+        "new_string": "            if (dir is not null && Directory.Exists(dir)\n                && !Directory.EnumerateFileSystemEntries(dir).Any())\n                Directory.Delete(dir);\n        }\n\n        return toDelete;\n    }",
+        "old_string": "            if (dir is not null && Directory.Exists(dir)\n                && !Directory.EnumerateFileSystemEntries(dir).Any())\n                Directory.Delete(dir);\n        }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 116
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 3.27,
+      "prompt_tokens_est": 73822,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs",
+        "offset": 16,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1829
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 4.46,
+      "prompt_tokens_est": 74342,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 4a: Change WorktreeResetter.cs return type and return toDelete"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 972
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 5.489,
+      "prompt_tokens_est": 74744,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs",
+        "new_string": "    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)\n    {\n        var gi = _gitInvoker ?? new GitInvoker();\n        try\n        {\n            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);\n            if (removed.Count > 0)\n            {\n                var sample = string.Join(\", \", removed.Take(5));\n                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,\n                    \"reset-removed\", $\"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? \", \u2026\" : \"\")}\");\n            }\n        }\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \"reset-failed\", ex.Message); }\n    }",
+        "old_string": "    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)\n    {\n        var gi = _gitInvoker ?? new GitInvoker();\n        try { await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi); }\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \"reset-failed\", ex.Message); }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 131
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 3.122,
+      "prompt_tokens_est": 75159,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs",
+        "limit": 8
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 341
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 3.889,
+      "prompt_tokens_est": 75321,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.csproj",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core",
+        "pattern": "ImplicitUsings"
+      },
+      "succeeded": true,
+      "duration_s": 0.018,
+      "result_length": 115
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 3.588,
+      "prompt_tokens_est": 75562,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core",
+        "pattern": "global using"
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 730
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 6.17,
+      "prompt_tokens_est": 75855,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs",
+        "new_string": "using System.Text;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Core.Execution;",
+        "old_string": "using System.Text;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Core.Execution;"
+      },
+      "succeeded": false,
+      "duration_s": 0.002,
+      "result_length": 191,
+      "error": "error: edit_file: old_string and new_string are identical, so the edit would be a no-op (in /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs)"
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 3.413,
+      "prompt_tokens_est": 76172,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet build 2>&1 | tail -30",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 12.453,
+      "result_length": 3034
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 6.037,
+      "prompt_tokens_est": 77277,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix 4b: Update RelayQueueController.PrivateHelpers.cs to capture/log removals"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 971
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 14.736,
+      "prompt_tokens_est": 77817,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "old_string": "        await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: null, CancellationToken.None, new GitSimEngine());",
+        "new_string": "        _ = await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: null, CancellationToken.None, new GitSimEngine());",
+        "replace_all": true
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 114
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 3.753,
+      "prompt_tokens_est": 78620,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "WorktreeResetterTests.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "WorktreeResetter.ResetAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.052,
+      "result_length": 1476
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 4.674,
+      "prompt_tokens_est": 79100,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "line_number": 131,
+        "new_string": "        _ = await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());",
+        "old_string": "        await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 114
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 3.416,
+      "prompt_tokens_est": 79409,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "line_number": 206,
+        "new_string": "        _ = await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: null, CancellationToken.None, sim);",
+        "old_string": "        await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: null, CancellationToken.None, sim);"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 114
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 3.706,
+      "prompt_tokens_est": 79557,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "offset": 240
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 605
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 8.109,
+      "prompt_tokens_est": 79794,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "new_string": "        // Pre-existing preserved.\n        Assert.True(File.Exists(preExistingPath), \"pre-existing untracked should survive\");\n    }\n\n    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n    // Returned deletion list\n    // \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\n\n    [Fact]\n    public async Task ResetAsync_ReturnsDeletedPaths_AndSparesTasksDir()\n    {\n        using var repo = TestRepository.Create();\n        await InitRepoWithTrackedFile(repo.Root, \"src/foo.cs\", \"content\");\n        await WritePreRunSnapshot(repo.Root, \"test-task\"); // empty snapshot\n\n        // Create a stray untracked file outside the tasks dir.\n        var strayPath = Path.Combine(repo.Root, \"stray.log\");\n        await File.WriteAllTextAsync(strayPath, \"stray\");\n\n        // Create an untracked file under the tasks dir.\n        var tasksDir = \"llm-tasks\";\n        var tasksDirPath = Path.Combine(repo.Root, tasksDir, \"pending.md\");\n        Directory.CreateDirectory(Path.GetDirectoryName(tasksDirPath)!);\n        await File.WriteAllTextAsync(tasksDirPath, \"# pending\");\n\n        var removed = await WorktreeResetter.ResetAsync(repo.Root, \"test-task\", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());\n\n        // The stray file should be deleted and appear in the returned list.\n        Assert.False(File.Exists(strayPath), \"stray untracked file should be deleted\");\n        Assert.Contains(\"stray.log\", removed);\n\n        // The tasks-dir file should survive and NOT appear in the returned list.\n        Assert.True(File.Exists(tasksDirPath), \"tasks-dir file should be preserved\");\n        Assert.DoesNotContain(removed, p => p.StartsWith(tasksDir + \"/\", StringComparison.Ordinal) || p == tasksDir);\n    }\n}",
+        "old_string": "        // Pre-existing preserved.\n        Assert.True(File.Exists(preExistingPath), \"pre-existing untracked should survive\");\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 114
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 2.934,
+      "prompt_tokens_est": 80495,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.136,
+      "result_length": 97
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 2.914,
+      "prompt_tokens_est": 80586,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Update WorktreeResetterTests.cs for new return type + new fact"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 970
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 11.454,
+      "prompt_tokens_est": 80908,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs",
+        "offset": 108
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 456
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 11.853,
+      "prompt_tokens_est": 81620,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.GitSim",
+        "pattern": "ls-files|ls_files"
+      },
+      "succeeded": true,
+      "duration_s": 0.017,
+      "result_length": 406
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 7.911,
+      "prompt_tokens_est": 82342,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs",
+        "new_string": "        // State reflects that at least one task needs review.\n        Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);\n    }\n\n    [Fact]\n    public async Task DrainAsync_FlaggedTask_LogsResetRemoved()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"alpha\", \"# Alpha \u2014 will flag with dirty tree\\n\");\n        repo.WriteTask(\"beta\", \"# Beta \u2014 must inherit clean tree\\n\");\n\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/app.cs\", \"original\");\n        sim.Commit(repo.Root, \"seed\");\n\n        foreach (var tid in new[] { \"alpha\", \"beta\" })\n        {\n            var snapshotDir = Path.Combine(repo.Root, \".relay\", tid);\n            Directory.CreateDirectory(snapshotDir);\n            File.WriteAllText(Path.Combine(snapshotDir, \"pre-run-untracked.txt\"), \"\");\n        }\n\n        var runner = new DirtyThenCleanAssertingRunner();\n        var controller = new RelayQueueController(repo.Root, runner, gitInvoker: sim);\n\n        await controller.RefreshAsync();\n        await controller.DrainAsync();\n\n        // The drain log must contain a reset-removed line for alpha.\n        var drainLogs = Directory.GetFiles(Path.Combine(repo.Root, \".relay\"), \"drain-*.log\");\n        Assert.Single(drainLogs);\n        var log = await File.ReadAllTextAsync(drainLogs[0]);\n        Assert.Contains(\"reset-removed\", log, StringComparison.Ordinal);\n        Assert.Contains(\"1 untracked file(s)\", log, StringComparison.Ordinal);\n    }\n}",
+        "old_string": "        // State reflects that at least one task needs review.\n        Assert.Equal(RelayQueueState.ReviewNeeded, controller.State);\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 132
+    },
+    {
+      "turn": 57,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83024,
+      "tokens_after": 31851
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 4.488,
+      "prompt_tokens_est": 31851,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBootstrapTests.cs",
+        "offset": 1,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 4108
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 7.072,
+      "prompt_tokens_est": 33014,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 26,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 4757
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 3.292,
+      "prompt_tokens_est": 34514,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3109
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2050
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 5.797,
+      "prompt_tokens_est": 36104,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core",
+        "pattern": "public async Task<RelayTaskOutcome> RunTaskAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.042,
+      "result_length": 204
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 6.299,
+      "prompt_tokens_est": 36393,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 5182
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 3.728,
+      "prompt_tokens_est": 38054,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 50,
+        "offset": 24
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 4895
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 15.935,
+      "prompt_tokens_est": 39348,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RelayDriverEmptyTaskInputTests\n{\n    [Fact]\n    public async Task Run_TaskFolderMissing_FailsWithNeedsReview()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // No task folder exists \u2014 task \"ghost\" was never written.\n        var sink = new InMemoryRelayEventSink();\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, \"green\"), new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"ghost\");\n\n        // Outcome is Flagged, not Committed.\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // NEEDS-REVIEW marker exists with the expected reason.\n        var needsReviewPath = Path.Combine(repo.Root, \".relay\", \"ghost\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(needsReviewPath), \"NEEDS-REVIEW marker should exist\");\n        var firstLine = (await File.ReadAllTextAsync(needsReviewPath)).Split('\\n')[0].Trim();\n        Assert.Contains(\"task spec missing or empty\", firstLine, StringComparison.Ordinal);\n\n        // No stage 1 input was written (gate fires before any stage runs).\n        Assert.False(File.Exists(Path.Combine(repo.Root, \".relay\", \"ghost\", \"stage1-attempt1.input.json\")));\n\n        // An error event was published.\n        Assert.Contains(sink.Events, e => e.Name == \"empty_task_input\" && e.Level == \"error\");\n    }\n\n    [Fact]\n    public async Task Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Folder exists but markdown is whitespace-only.\n        repo.WriteNestedTask(\"whitespace\", \"\\n\\n\");\n\n        var sink = new InMemoryRelayEventSink();\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, \"green\"), new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"whitespace\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        var needsReviewPath = Path.Combine(repo.Root, \".relay\", \"whitespace\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(needsReviewPath));\n        var firstLine = (await File.ReadAllTextAsync(needsReviewPath)).Split('\\n')[0].Trim();\n        Assert.Contains(\"task spec missing or empty\", firstLine, StringComparison.Ordinal);\n\n        Assert.False(File.Exists(Path.Combine(repo.Root, \".relay\", \"whitespace\", \"stage1-attempt1.input.json\")));\n\n        Assert.Contains(sink.Events, e => e.Name == \"empty_task_input\" && e.Level == \"error\");\n    }\n\n    [Fact]\n    public async Task Run_NormalTask_GateIsNoOp()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"healthy\", \"# Healthy task\\n\");\n\n        var sink = new InMemoryRelayEventSink();\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"healthy\");\n\n        // The task should run through.\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        // Stage 1 proceeded \u2014 the input file was written.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"healthy\", \"stage1-attempt1.input.json\")));\n\n        // No empty_task_input event was fired.\n        Assert.DoesNotContain(sink.Events, e => e.Name == \"empty_task_input\");\n    }\n}\n",
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 136
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 14.236,
+      "prompt_tokens_est": 40767,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Create RelayDriverEmptyTaskInputTests.cs",
+          "Update RelayQueueControllerTests.WorktreeReset.cs with drain log fact"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 968
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 3.114,
+      "prompt_tokens_est": 41796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\" 2>&1 | tail -80",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 5.236,
+      "result_length": 2637
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 2.763,
+      "prompt_tokens_est": 42651,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/RelayEvent.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 2040
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 3.011,
+      "prompt_tokens_est": 43228,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs",
+        "new_string": "e.EventName",
+        "old_string": "e.Name",
+        "replace_all": true
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 123
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 3.776,
+      "prompt_tokens_est": 43382,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\" 2>&1 | tail -80",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 8.629,
+      "result_length": 2323
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 5.248,
+      "prompt_tokens_est": 44201,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "class ArtifactWritingSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.099,
+      "result_length": 146
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 2.241,
+      "prompt_tokens_est": 44453,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 70,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 11058
+    },
+    {
+      "turn": 71,
+      "type": "llm_call",
+      "duration_s": 19.263,
+      "prompt_tokens_est": 47221,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 71,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution",
+        "pattern": "stage.*attempt.*\\.input|WriteInput|stageInput"
+      },
+      "succeeded": true,
+      "duration_s": 0.036,
+      "result_length": 420
+    },
+    {
+      "turn": 72,
+      "type": "llm_call",
+      "duration_s": 2.915,
+      "prompt_tokens_est": 48449,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 72,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/StageInputArtifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 3264
+    },
+    {
+      "turn": 73,
+      "type": "llm_call",
+      "duration_s": 2.918,
+      "prompt_tokens_est": 49319,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 73,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution",
+        "pattern": "StageInputArtifact\\.Write"
+      },
+      "succeeded": true,
+      "duration_s": 0.025,
+      "result_length": 146
+    },
+    {
+      "turn": 74,
+      "type": "llm_call",
+      "duration_s": 21.739,
+      "prompt_tokens_est": 49490,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 74,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs",
+        "new_string": "    [Fact]\n    public async Task Run_NormalTask_GateIsNoOp()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"healthy\", \"# Healthy task\\n\");\n\n        var sink = new InMemoryRelayEventSink();\n        var runner = new ArtifactWritingSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"healthy\");\n\n        // The task should run through \u2014 gate was a no-op.\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        // Stage 1 proceeded \u2014 the input file was written.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"healthy\", \"stage1-attempt1.input.json\")));\n\n        // No empty_task_input event was fired.\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"empty_task_input\");\n    }",
+        "old_string": "    [Fact]\n    public async Task Run_NormalTask_GateIsNoOp()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteNestedTask(\"healthy\", \"# Healthy task\\n\");\n\n        var sink = new InMemoryRelayEventSink();\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"healthy\");\n\n        // The task should run through.\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        // Stage 1 proceeded \u2014 the input file was written.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"healthy\", \"stage1-attempt1.input.json\")));\n\n        // No empty_task_input event was fired.\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"empty_task_input\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 123
+    },
+    {
+      "turn": 75,
+      "type": "llm_call",
+      "duration_s": 3.682,
+      "prompt_tokens_est": 51108,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 75,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\" 2>&1 | tail -40",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 8.58,
+      "result_length": 2323
+    },
+    {
+      "turn": 76,
+      "type": "llm_call",
+      "duration_s": 3.793,
+      "prompt_tokens_est": 51967,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 76,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.StageInput.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 2734
+    },
+    {
+      "turn": 77,
+      "type": "llm_call",
+      "duration_s": 11.318,
+      "prompt_tokens_est": 52717,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 77,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution",
+        "pattern": "CapturePreRunUntrackedAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 371
+    },
+    {
+      "turn": 78,
+      "type": "llm_call",
+      "duration_s": 2.923,
+      "prompt_tokens_est": 53390,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 78,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 7365
+    },
+    {
+      "turn": 79,
+      "type": "llm_call",
+      "duration_s": 4.337,
+      "prompt_tokens_est": 55186,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 79,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~Run_NormalTask_GateIsNoOp\" -v d 2>&1 | tail -60",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.164,
+      "result_length": 3317
+    },
+    {
+      "turn": 80,
+      "type": "llm_call",
+      "duration_s": 22.419,
+      "prompt_tokens_est": 56426,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 80,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core",
+        "pattern": "class RelayTaskRepository"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 293
+    },
+    {
+      "turn": 81,
+      "type": "llm_call",
+      "duration_s": 2.642,
+      "prompt_tokens_est": 57780,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 81,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 13361
+    },
+    {
+      "turn": 82,
+      "type": "llm_call",
+      "duration_s": 12.835,
+      "prompt_tokens_est": 60807,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 82,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs",
+        "old_string": "        // The task should run through \u2014 gate was a no-op.\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        // Stage 1 proceeded \u2014 the input file was written.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"healthy\", \"stage1-attempt1.input.json\")));\n\n        // No empty_task_input event was fired.\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"empty_task_input\");",
+        "new_string": "        // The task should run through \u2014 gate was a no-op.\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        // No empty_task_input event was fired.\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"empty_task_input\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 123
+    },
+    {
+      "turn": 83,
+      "type": "llm_call",
+      "duration_s": 15.671,
+      "prompt_tokens_est": 61681,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 83,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\" 2>&1 | tail -30",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 8.563,
+      "result_length": 1792
+    },
+    {
+      "turn": 84,
+      "type": "llm_call",
+      "duration_s": 5.25,
+      "prompt_tokens_est": 63017,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 84,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Domain/StageInvocation.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs /Users/nicholaswestby/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs /Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs /Users/nicholaswestby/Dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.116,
+      "result_length": 1134
+    },
+    {
+      "turn": 85,
+      "type": "llm_call",
+      "duration_s": 7.302,
+      "prompt_tokens_est": 63715,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 85,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Build and run targeted tests"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 967
+    },
+    {
+      "turn": 86,
+      "type": "llm_call",
+      "duration_s": 9.93,
+      "prompt_tokens_est": 64582,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

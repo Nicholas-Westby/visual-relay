@@ -23,7 +23,16 @@ public sealed partial class RelayQueueController
     private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)
     {
         var gi = _gitInvoker ?? new GitInvoker();
-        try { await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi); }
+        try
+        {
+            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);
+            if (removed.Count > 0)
+            {
+                var sample = string.Join(", ", removed.Take(5));
+                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                    "reset-removed", $"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? ", …" : "")}");
+            }
+        }
         catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, "reset-failed", ex.Message); }
     }
 

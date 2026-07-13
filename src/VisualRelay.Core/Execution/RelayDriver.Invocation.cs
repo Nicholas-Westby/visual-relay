@@ -49,7 +49,8 @@ public sealed partial class RelayDriver
             PinnedSwivalProfileContent: pinnedSwivalProfileContent,
             AbsoluteCeilingMs: ceilingMs,
             VerifyOutputPath: verifyOutputPath,
-            IsTurnBoosted: boosted);
+            IsTurnBoosted: boosted,
+            TasksDir: config.TasksDir);
     }
 
     private StageInvocation BuildStageInvocation(

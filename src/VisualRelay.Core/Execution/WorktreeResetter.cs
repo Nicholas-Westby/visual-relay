@@ -13,7 +13,7 @@ internal static class WorktreeResetter
     /// Resets the worktree to HEAD after a flagged task, leaving the next task
     /// with a clean slate.  Safe to call with any repo: no-ops on non-git roots.
     /// </summary>
-    internal static async Task ResetAsync(
+    internal static async Task<IReadOnlyList<string>> ResetAsync(
         string rootPath,
         string taskId,
         string? tasksDir,
@@ -62,6 +62,8 @@ internal static class WorktreeResetter
                 && !Directory.EnumerateFileSystemEntries(dir).Any())
                 Directory.Delete(dir);
         }
+
+        return toDelete;
     }
 
     private static async Task<IReadOnlySet<string>> ReadSnapshotAsync(

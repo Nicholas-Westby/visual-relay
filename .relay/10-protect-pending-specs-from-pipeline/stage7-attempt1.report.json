@@ -1,0 +1,845 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-13T02:45:54.641269+00:00",
+  "task": "# Relay stage 7: Review\nTask: 10-protect-pending-specs-from-pipeline\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Task: Protect pending task specs from the pipeline \u2014 review-scope carve-out, empty-input hard fail, reset logging\n\n## The incident this prevents (proven, 2026-07-12)\n\nA spec folder (`llm-tasks/09-new-task-templates/`, one 37 KB markdown file) was created\nwhile a Run-All drain was mid-flight, so it was untracked (the drain-start \"chore: add\ntasks\" sweep predated it). What followed, each step with an artifact (raw run artifacts\npreserved in git history under commit `0aa6b9c`; deleted from the working tree by the\nrevert `c455d31`):\n\n1. The **Review stage (7)** of the *unrelated task running at the time* diffed the tree\n   and filed a finding: *\"Untracked stray content: llm-tasks/09-new-task-templates/\n   (09-new-task-templates.md, ~37KB) is unrelated to this task and should not be part of\n   this diff; it appears to be accidental or leftover from another task.\"*\n2. That task's **Fix stage (9)** acted on the finding. Its own summary: *\"Scope\n   violations resolved: \u2026 removed stray `llm-tasks/09-new-task-templates/`.\"* The pending\n   spec was deleted from disk.\n3. 0.24 s after that task committed, the drain started the now-folderless task from its\n   in-memory queue (the GUI had pushed it via `SetExternalTaskSource`/`SyncExternalTasks`\n   when it was created; the controller never re-checks disk).\n4. `RelayDriver.RunAsync` re-listed tasks from disk, found nothing \u2014 and **silently\n   substituted an empty input**. The run log shows `s1/cheap stage_input systemBytes=64\n   inputBytes=294` (prompt boilerplate only); the stage-1 prompt contains `## Task input`\n   followed by nothing.\n5. Eight stages ran against the empty input, fabricated a plausible task from the folder\n   slug alone, passed verify green, and committed invented code. Retirement no-op'd (null\n   task), so no archive entry existed either \u2014 the failure was invisible everywhere\n   except the commit itself.\n\nFour fixes below. All tasks-directory references must come from `RelayConfig.TasksDir` \u2014\nnever hardcode `llm-tasks` (Visual Relay runs on arbitrary repos).\n\n## Fix 1 \u2014 Teach Review and Fix that the tasks dir is out of scope\n\nThe pipeline already encodes \"tasks dir = queue bookkeeping, not code\" everywhere\nmechanical: `RelayDriver.CodeChangeGate.cs` (`IsBookkeepingPath` ends with\n`return IsPathUnderDirectory(rootPath, path, tasksDir);`), `WorktreeFilter.cs`,\n`WorktreeResetter.cs`, and `GitCommitter.Untracked.cs` (all via `IsUnderTasksDir`). The\nReview/Fix **prompts** are the only place the policy is missing \u2014 and those agents run\ntheir own `git status`, so the fix must be prompt-level plus a concrete path in the\nstage input.\n\n### 1a. Concrete \"Protected paths\" line in every stage prompt\n\n- `src/VisualRelay.Domain/StageInvocation.cs` (37 lines): add a trailing optional\n  parameter after `MaxSelfEscalations`:\n\n```csharp\n    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt\n    // emits a \"Protected paths\" header line naming it as queue bookkeeping that is\n    // never part of the task's diff. Null (default) omits the line.\n    string? TasksDir = null);\n```\n\n- `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs` \u2192 `BuildPrompt` (106 lines):\n  the header lines live in the initial `parts` list literal\n  (`$\"Working directory: {invocation.TargetRoot}\",` is index 2). Immediately after the\n  literal, insert:\n\n```csharp\n        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))\n        {\n            // Right after \"Working directory:\" so every stage sees it before the task input.\n            parts.Insert(3, $\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\");\n        }\n```\n\n- `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs` \u2192 `BuildInvocation`\n  (116 lines) already receives `RelayConfig config`; add `TasksDir: config.TasksDir,` to\n  its `new StageInvocation(...)` named arguments (one line). Leave the other two\n  construction sites (`FixTaskAuthorRunner.cs`, `TaskRewriteRunner.cs`) unset \u2014 null\n  omits the line and changes nothing there.\n\n### 1b. Policy sentences in the Review and Fix system prompts\n\n`src/VisualRelay.Core/Execution/RelayStages.cs` (123 lines). The `\"Review\"` case\ncurrently ends with `\"Do not edit files.\"`. Append one sentence so it ends:\n\n```\nDo not edit files. Paths named on the 'Protected paths' line of your input (the tasks\ndirectory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part\nof the diff under review \u2014 even when untracked: pending specs for OTHER tasks\nlegitimately appear there mid-drain, so never flag them as stray content.\n```\n\nThe `\"Fix\"` case currently ends with `\"\u2026do NOT reformat, reflow, or compact unrelated\ncode to satisfy size or style budgets.\"`. Append:\n\n```\nNever delete, edit, or revert anything under the paths named on the 'Protected paths'\nline of your input \u2014 pending specs for other tasks legitimately sit there untracked\nmid-drain. If review flagged such a path, record it in your summary as\nskipped-by-policy instead of acting on it.\n```\n\n(Match the existing string-concatenation style of the file; keep each case a single\nconcatenated literal.)\n\n## Fix 2 \u2014 Hard-fail a run whose task input is missing or empty\n\n`src/VisualRelay.Core/Execution/RelayDriver.cs` is at **299/300 lines** \u2014 this fix must\nadd exactly one line there. Current code (the defect):\n\n```csharp\n            var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId);\n            var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);\n```\n\nKeep those two lines, and insert exactly one line immediately after the\n`ValidateCommitGateResumeAsync` early return\n(`if (commitGateOutcome is not null) return commitGateOutcome;`), before the\n`isReAdded` line:\n\n```csharp\n            if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n```\n\nThat takes the file to exactly 300 \u2014 at the guard limit, which passes; nothing else may\nbe added to this file.\n\n`FailIfTaskInputMissingAsync` lives in a **new partial**\n`src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs` (keep \u2264 300 lines; mirror\nthe file-header comment style of `RelayDriver.Invocation.cs`). Behavior:\n\n- Returns `null` (no-op) when `task` is not null AND\n  `!string.IsNullOrWhiteSpace(input.Markdown)`.\n- Otherwise the run must fail before any stage executes:\n  1. Write `.relay/<taskId>/NEEDS-REVIEW` whose first line is exactly\n     `task spec missing or empty at run start \u2014 refusing to run stages against an empty input`\n     (the repository already surfaces the first line as `ReviewReason`, and\n     `RelayDriver.RunAsync` clears any stale marker at start via\n     `File.Delete(Path.Combine(taskDirectory, \"NEEDS-REVIEW\"))`, so writing here is\n     safe and the card shows \"Needs review\" with that reason).\n  2. Publish an `error`-level `RelayEvent` (name `empty_task_input`) through\n     `_dependencies.EventSink`, mirroring the `run_start` publish a few lines below so\n     the drain log records why nothing ran.\n  3. Persist status and return a failed outcome. Mirror the early-return construction\n     used by `RestoreFlaggedWorkIfNeededAsync` (called two lines below the insertion\n     point; it returns a nullable outcome exactly this way) \u2014 reuse whatever\n     status-write + outcome shape that path uses for \"run did not proceed\".\n- The gate sits after resume-state loading on purpose: a *resumed* task whose folder\n  vanished must fail the same way.\n\nTests \u2014 new standalone `tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs`\n(sealed class; mirror the harness of the existing small driver-test classes, e.g.\n`RelayDriverBootstrapTests.cs`, on the GitSim/`TestRepository` pattern):\n\n- `Run_TaskFolderMissing_FailsWithNeedsReview` \u2014 drive the driver at a `taskId` whose\n  folder does not exist: outcome is failed, `.relay/<id>/NEEDS-REVIEW` exists and its\n  first line contains `task spec missing or empty`, no `stage1-attempt1.input.json` was\n  written, and no commit was created.\n- `Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview` \u2014 folder exists,\n  `<id>/<id>.md` contains only `\"\\n\\n\"`: same assertions.\n- `Run_NormalTask_GateIsNoOp` \u2014 a normal task still reaches stage 1 (assert\n  `stage1-attempt1.input.json` exists or the run proceeds past the gate; keep this fact\n  cheap \u2014 it exists to pin that the gate never fires on healthy input).\n\n## Fix 3 \u2014 Plan-phase reset must never see a null tasks dir\n\n`src/VisualRelay.Core/Queue/RelayQueueController.cs` is at **300/300 lines** \u2014 this fix\nmust be net-zero. Line 184 (plan phase) passes a null-conditional with no fallback:\n\n```csharp\n                                    await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, \"plan\", drainCts.Token);\n```\n\nwhile the execute phase (lines 263-265) already defends:\n\n```csharp\n                    var tasksDir = configResult?.Config?.TasksDir\n                        ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir;\n```\n\nA null `tasksDir` disables `WorktreeResetter`'s `IsUnderTasksDir` exemption, letting a\nplan-phase reset delete untracked task specs in Standard-mode drains \u2014 the same\ndestruction as the incident, via a second door. Edit line 184 **in place** (extend the\nsame line, adding no lines) to apply the identical fallback:\n\n```csharp\nawait ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, \"plan\", drainCts.Token);\n```\n\nNo new test: whenever a config loads (always, in the harnesses) the expression is\nbehavior-identical; the change is compile-checked and covered by the existing\nplan-phase suites. Do not restructure the method to \"clean this up\" \u2014 the file has zero\nline budget.\n\n## Fix 4 \u2014 WorktreeResetter must say what it deleted\n\n`WorktreeResetter.ResetAsync` (130 lines) deletes untracked files with no logging \u2014 the\nincident investigation had to rule it out by reading code, not logs. Change its return\ntype from `Task` to `Task<IReadOnlyList<string>>`, returning `toDelete` (the\nrepo-relative paths actually removed; return an empty list on the no-op paths).\n\nIn `RelayQueueController.PrivateHelpers.cs` \u2192 `ResetAndLogAsync` (121 lines), log a\ndrain-summary line when anything was removed:\n\n```csharp\n        try\n        {\n            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);\n            if (removed.Count > 0)\n            {\n                var sample = string.Join(\", \", removed.Take(5));\n                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,\n                    \"reset-removed\", $\"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? \", \u2026\" : \"\")}\");\n            }\n        }\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \"reset-failed\", ex.Message); }\n```\n\nTests:\n\n- `tests/VisualRelay.Tests/WorktreeResetterTests.cs` (250/300, sealed, GitSim-backed):\n  update existing call sites for the new return type, and add one fact\n  `ResetAsync_ReturnsDeletedPaths_AndSparesTasksDir` \u2014 a stray untracked file is\n  deleted and appears in the returned list; an untracked file under the tasks dir\n  survives on disk and is absent from the list. If the additions push the file past\n  300, move the new fact to a new standalone sealed class\n  `WorktreeResetterDeletionListTests.cs` instead of trimming assertions.\n- `tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs` (117/300): add\n  one fact asserting that after a reset which removed at least one file, the drain log\n  contains a `reset-removed` line naming the count (read the `drain-*.log` the harness\n  already uses for `reset-failed`-style assertions; mirror whichever log-reading idiom\n  that file already has).\n\n## Verification\n\n1. `dotnet build` \u2014 clean.\n2. `dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\"` \u2014 green.\n3. Full suite green.\n4. `./visual-relay check` passes; the diff introduces zero new InspectCode findings (any\n   best-effort catch keeps a rationale comment inside the block).\n\nLine budgets (guard limit 300; verify with `wc -l` after editing):\n\n| File | Before | After |\n|---|---|---|\n| `RelayDriver.cs` | 299 | **exactly 300** (one inserted line, nothing else) |\n| `RelayQueueController.cs` | 300 | **300** (line 184 edited in place) |\n| `RelayStages.cs` | 123 | \u2264 140 |\n| `ProcessRunners.Prompt.cs` | 106 | \u2264 115 |\n| `StageInvocation.cs` | 37 | \u2264 45 |\n| `RelayDriver.Invocation.cs` | 116 | \u2264 118 |\n| `RelayDriver.TaskInputGate.cs` | new | \u2264 300 |\n| `RelayQueueController.PrivateHelpers.cs` | 121 | \u2264 132 |\n| `WorktreeResetter.cs` | 130 | \u2264 140 |\n\n## Rejected approaches (do not do these)\n\n- **Sandbox-denying writes under the tasks dir** \u2014 pipeline agents legitimately author\n  new task specs there (that is a designed workflow); the fix is scope policy, not a\n  write ban.\n- **A controller-side disk re-check before executing each queued task** \u2014 redundant\n  once the driver hard-fails; the driver gate is the single authoritative check and\n  covers every entry point (GUI single-run, control API, drain).\n- **Filtering the diff the review agent sees mechanically** \u2014 the review agent runs its\n  own `git status`/`git diff`; no driver-side filter can hide paths from it. The\n  concrete `Protected paths` prompt line plus the policy sentences are the mechanism.\n- **Auto-committing pending specs mid-drain** so they stop being untracked \u2014 changes\n  the git semantics of the user's tree out from under them; the drain-start sweep\n  already handles specs that exist when the drain begins.\n- **Threading `TasksDir` into `FixTaskAuthorRunner`/`TaskRewriteRunner` invocations** \u2014\n  out of scope; those flows don't review diffs.\n- **Publishing only an event (no NEEDS-REVIEW file) on empty input** \u2014 events scroll\n  away; the marker file is what the queue UI surfaces as a red \"Needs review\" card with\n  a reason, which is the visibility the incident lacked.\n\n## Constraints\n\n- Touch only: `RelayStages.cs`, `ProcessRunners.Prompt.cs`, `StageInvocation.cs`,\n  `RelayDriver.cs` (one line), `RelayDriver.Invocation.cs` (one line),\n  `RelayDriver.TaskInputGate.cs` (new), `RelayQueueController.cs` (one line in place),\n  `RelayQueueController.PrivateHelpers.cs`, `WorktreeResetter.cs`, and the test files\n  named above.\n- Do not modify `RelayDriver.CodeChangeGate.cs`, `WorktreeFilter.cs`,\n  `GitCommitter.Untracked.cs`, or any archive/retirement code \u2014 their tasks-dir\n  handling is already correct.\n- No behavior change for runs with healthy task input; no new config keys.\n- Conventional Commits (hyphen-bullet body, \u22643 bullets, no path-like tokens in\n  bullets); minimal diffs.\n\n\n## Manifest\nsrc/VisualRelay.Domain/StageInvocation.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\nsrc/VisualRelay.Core/Execution/RelayStages.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\nsrc/VisualRelay.Core/Execution/WorktreeResetter.cs\ntests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\ntests/VisualRelay.Tests/WorktreeResetterTests.cs\ntests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Implement four coordinated fixes to prevent a proven incident where a pending task spec was destroyed by the pipeline mid-drain and replaced with fabricated code. Fix 1 teaches agents the tasks dir is out of scope via prompt headers and policy sentences. Fix 2 hard-fails the run when task input is missing or empty, writing a NEEDS-REVIEW marker with the reason. Fix 3 prevents a null tasks-dir fallback in the plan-phase reset. Fix 4 makes WorktreeResetter log what it deletes. All edits are tightly scoped to 10 specified files with strict line budgets (300-line guard limit).\", \"options\": [\"A \u2014 Follow the prescribed specification exactly as written, trusting the line budgets given in the task\", \"B \u2014 Follow the specification but first verify actual line counts (wc -l) on all target files and trim if needed to avoid CI guard failures\", \"C \u2014 Parallel subagents per fix (1a+1b, 2, 3+4) for faster wall-clock time, with careful file-conflict sequencing\"] }\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Line counts of all 10 target files match spec (37, 106, 123, 299, 116, 300, 121, 130, 250, 117) with zero slack on RelayDriver.cs (299\u2192300) and RelayQueueController.cs (must stay 300). StageInvocation.cs is a positional record \u2014 TasksDir must be the last trailing optional parameter after MaxSelfEscalations. ProcessRunners.Prompt.cs BuildPrompt parts list literal has 'Working directory:' at index 2 and a string.Empty at index 3; inserting after the literal is clean. RelayStages.cs Review case ends at line 79 ('Do not edit files.'), Fix case at line 99 (reformat/style sentence). RelayDriver.cs line 57 is the commitGateOutcome early return, line 58 is 'var isReAdded' \u2014 exact insertion point between them. RelayDriver.Invocation.cs BuildInvocation constructs new StageInvocation(...) with named args spanning lines 32-52. RelayQueueController.cs line 184 uses configResult?.Config?.TasksDir with no fallback in plan-phase reset. WorktreeResetter.cs ResetAsync returns Task \u2014 toDelete is the accumulated path list. RelayQueueController.PrivateHelpers.cs ResetAndLogAsync wraps WorktreeResetter.ResetAsync with a try/catch. InMemoryRelayEventSink in TestDoubles.cs captures events; DrainSummaryLog.Write in DrainExecutionLoggingTests.cs is read via Directory.GetFiles + File.ReadAllTextAsync. RelayConfig.TasksDir is the first positional parameter (default 'llm-tasks' per loader). RelayConfigLoader.TryLoadAsync returns RelayConfigResult which has .Config.TasksDir.\",\n  \"constraints\": [\n    \"Touch only: RelayStages.cs, ProcessRunners.Prompt.cs, StageInvocation.cs, RelayDriver.cs (one line inserted), RelayDriver.Invocation.cs (one line added), RelayDriver.TaskInputGate.cs (new file), RelayQueueController.cs (one line edited in place), RelayQueueController.PrivateHelpers.cs, WorktreeResetter.cs, and test files named in spec \u2014 NO other files.\",\n    \"RelayDriver.cs is at 299 lines and must end at exactly 300 \u2014 one line inserted, nothing else added or removed.\",\n    \"RelayQueueController.cs is at 300 lines and must stay at 300 \u2014 line 184 edited in place, no structural changes.\",\n    \"Do not modify RelayDriver.CodeChangeGate.cs, WorktreeFilter.cs, GitCommitter.Untracked.cs, or any archive/retirement code.\",\n    \"No behavior change for runs with healthy task input; no new config keys.\",\n    \"All tasks-directory references must come from RelayConfig.TasksDir \u2014 never hardcode 'llm-tasks'.\",\n    \"Conventional Commits format: hyphen-bullet body, \u22643 bullets, no path-like tokens in bullets, minimal diffs.\",\n    \"FixTaskAuthorRunner and TaskRewriteRunner invocations must NOT get TasksDir (leave null \u2014 omits the prompt line).\",\n    \"BuildPromp's Protected paths line must appear right after 'Working directory:' so every stage sees it before ## Task input.\",\n    \"The new RelayDriver.TaskInputGate.cs partial must mirror file-header comment style of RelayDriver.Invocation.cs and stay \u2264300 lines.\",\n    \"FailIfTaskInputMissingAsync writes .relay/<taskId>/NEEDS-REVIEW with first line exactly 'task spec missing or empty at run start \u2014 refusing to run stages against an empty input', publishes error-level RelayEvent named 'empty_task_input', persists status, and returns a failed outcome mirroring RestoreFlaggedWorkIfNeededAsync's pattern.\",\n    \"WorktreeResetter.ResetAsync return type changes from Task to Task<IReadOnlyList<string>> \u2014 returning toDelete paths (empty list on no-op).\",\n    \"WorktreeResetterTests.cs is at 250/300 \u2014 if the new fact pushes past 300, move it to a new standalone sealed class WorktreeResetterDeletionListTests.cs.\",\n    \"RelayQueueControllerTests.WorktreeReset.cs (117/300) \u2014 add one fact asserting drain log contains 'reset-removed' line after a reset that removed files, mirroring the log-reading idiom from DrainExecutionLoggingTests.cs.\",\n    \"The plan-phase null fallback fix (RelayQueueController.cs line 184) must be a single-line in-place edit with identical fallback to the execute phase (lines 263-265): configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Four coordinated fixes prevent a proven incident where a pending task spec (llm-tasks/09-new-task-templates/) was destroyed mid-drain and replaced with fabricated code from empty input. All line counts verified with `wc -l`: RelayDriver.cs=299\u2192300, RelayQueueController.cs=300\u2192300, RelayStages.cs=123\u2192\u2264140, ProcessRunners.Prompt.cs=106\u2192\u2264115, StageInvocation.cs=37\u2192\u226445, RelayDriver.Invocation.cs=116\u2192\u2264118, RelayQueueController.PrivateHelpers.cs=121\u2192\u2264132, WorktreeResetter.cs=130\u2192\u2264140. New file RelayDriver.TaskInputGate.cs (\u2264300). All edit points confirmed: (a) StageInvocation.cs line 37 \u2014 add `string? TasksDir = null` after MaxSelfEscalations; (b) ProcessRunners.Prompt.cs lines 13-18 \u2014 insert Protected paths after 'Working directory:' at index 3; (c) RelayStages.cs line 79 (Review) and line 99 (Fix) \u2014 append policy sentences; (d) RelayDriver.Invocation.cs line 52 \u2014 add `TasksDir: config.TasksDir,`; (e) RelayDriver.cs line 56\u2014after commitGateOutcome return, before `var isReAdded` \u2014 insert one-line FailIfTaskInputMissingAsync gate; (f) RelayQueueController.cs line 184 \u2014 edit in-place to add `?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir`; (g) WorktreeResetter.cs \u2014 change return type to Task<IReadOnlyList<string>> and return toDelete; (h) PrivateHelpers.cs lines 23-28 \u2014 capture return and log reset-removed when count>0.\",\n  \"excerpts\": [\n    \"RelayDriver.cs:42-43 \u2014 `var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken)).FirstOrDefault(x => x.Id == taskId); var input = task is null ? new RelayTaskInput(string.Empty, null) : await repository.ReadTaskInputAsync(task, cancellationToken);` \u2014 the defect: when task folder is missing, input.Markdown is string.Empty, and the driver silently runs all stages against empty input.\",\n    \"RelayDriver.cs:54-58 \u2014 `LoadResumeState(\u2026); (previousSeal, taskHash, firstStageToRun, var commitGateOutcome) = await ValidateCommitGateResumeAsync(\u2026); if (commitGateOutcome is not null) return commitGateOutcome; var isReAdded = \u2026` \u2014 exact insertion point for FailIfTaskInputMissingAsync gate (one line between lines 56 and 57), after resume loading so resumed tasks with vanished folders also fail.\",\n    \"RelayStages.cs:72-79 \u2014 Review system prompt ends with `'Do not edit files.'` \u2014 no mention that tasks-dir paths are queue bookkeeping, never part of the diff under review. This is why the Review agent flagged the pending spec as 'stray content.'\",\n    \"RelayStages.cs:90-99 \u2014 Fix system prompt ends with `'do NOT reformat, reflow, or compact unrelated code...'` \u2014 no 'Never delete, edit, or revert anything under protected paths' policy. This is why the Fix agent acted on the Review finding and deleted the pending spec.\",\n    \"ProcessRunners.Prompt.cs:13-18 \u2014 `var parts = new List<string> { \u2026 $\\\"Working directory: {invocation.TargetRoot}\\\", string.Empty, \u2026 }` \u2014 no Protected paths header line, so agents have no concrete path list to reference.\",\n    \"StageInvocation.cs:1-37 \u2014 positional record ending with `int MaxSelfEscalations = int.MaxValue` \u2014 no TasksDir field to thread the config value into prompt construction.\",\n    \"RelayQueueController.cs:184 \u2014 `await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir, drainRunId, \\\"plan\\\", drainCts.Token)` \u2014 null-conditional with no fallback. Lines 263-265 in the execute phase already apply the fallback: `configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir`.\",\n    \"WorktreeResetter.cs:36-52 \u2014 builds `toDelete` list of repo-relative paths to remove, but the method returns `Task` (void), so nothing is returned. The caller `ResetAndLogAsync` cannot log what was deleted.\",\n    \"RelayQueueController.PrivateHelpers.cs:23-28 \u2014 `ResetAndLogAsync` wraps `WorktreeResetter.ResetAsync` with try/catch for `reset-failed` but captures no return value to log what was removed.\",\n    \"RelayDriver.FlaggedWork.cs:14-19 \u2014 `RestoreFlaggedWorkIfNeededAsync` returns `Task<(int firstStageToRun, RelayTaskOutcome? flaggedOutcome)>`, the pattern to mirror for the new gate: return null tuple for no-op, non-null outcome for early-return failure.\",\n    \"RelayDriver.Events.cs:93-136 \u2014 `FlagAsync` writes NEEDS-REVIEW, publishes error event, persists status, returns Flagged outcome \u2014 the pattern to mirror for the new gate's failure path.\",\n    \"DrainSummaryLog.cs:16-38 \u2014 `Write` method writes to `.relay/<runId>.log` with format `{timestamp} {phase,-7} {taskId} {milestone} \u2026`, recoverable via `Directory.GetFiles(Path.Combine(rootPath, \\\".relay\\\"), \\\"drain-*.log\\\")` as used in DrainExecutionLoggingTests.cs:147.\",\n    \"TestDoubles.cs:26-106 \u2014 `TestRepository` has `Root`, `WriteConfig(testCommand, logSources, \u2026)`, `WriteTask(id, markdown)` (flat `llm-tasks/<id>.md`), and `WriteNestedTask(id, markdown, \u2026siblings)` (folder `llm-tasks/<id>/<id>.md`). `InMemoryRelayEventSink` at line 114 captures events.\",\n    \"RelayTaskRepository.cs:158-163 \u2014 `ReadTaskInputAsync` reads `task.MarkdownPath` and returns `RelayTaskInput(markdown, context)`. The `ListAsync` walk at line 165-187 finds tasks under `config.TasksDir`. When a folder exists but the markdown is empty/whitespace, the input.Markdown will be empty/whitespace.\"\n  ],\n  \"repro\": \"1. Create a repo with a flat task `alpha` and run a happy-path drain (plan+execute). 2. During the drain, while task `alpha` is executing, create a folder `llm-tasks/09-new-task-templates/09-new-task-templates.md` (~37KB). 3. The drain's in-memory queue picks up the new task via `SetExternalTaskSource`/`SyncExternalTasks`. 4. After the drain completes all queued tasks, it starts the new task from its in-memory queue. 5. `RelayDriver.RunAsync` calls `ListAsync` which walks `config.TasksDir` and finds the folder, so `task` is non-null and `ReadTaskInputAsync` reads the markdown. 6. If the folder was created while a different task was in its Review/Fix stages, those agents diff the tree and flag the untracked `llm-tasks/09-new-task-templates/` as stray content \u2014 then delete it. 7. When the drain starts the now-folderless task, `ListAsync` finds nothing, `task` is null, `input.Markdown` is `string.Empty`. 8. All 12 stages run against empty input; stage 1 fabricates a plausible task from the folder slug alone; verify passes green; code is committed. 9. Retirement no-ops (null task), so no archive entry exists \u2014 the failure is invisible except in the git commit itself.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Fix 1a \u2014 Protected paths line in every stage prompt\\n\\n### `src/VisualRelay.Domain/StageInvocation.cs`\\nAdd trailing optional parameter after `MaxSelfEscalations` on the record (line 37):\\n```csharp\\n    int MaxSelfEscalations = int.MaxValue,\\n    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt\\n    // emits a \\\"Protected paths\\\" header line naming it as queue bookkeeping that is\\n    // never part of the task's diff. Null (default) omits the line.\\n    string? TasksDir = null);\\n```\\n\\n### `src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs`\\nAfter the `parts` list literal (after line 18, `string.Empty,` at index 3), insert:\\n```csharp\\n        if (!string.IsNullOrWhiteSpace(invocation.TasksDir))\\n        {\\n            // Right after \\\"Working directory:\\\" so every stage sees it before the task input.\\n            parts.Insert(3, $\\\"Protected paths (queue bookkeeping \u2014 never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/\\\");\\n        }\\n```\\nThis inserts the protected-paths line at index 3 (right after \\\"Working directory:\\\" at index 2, before the empty-string separator at index 3 and \\\"## Task input\\\" at index 4).\\n\\n### `src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs`\\nIn `BuildInvocation` (line 52, `IsTurnBoosted: boosted`), add after it:\\n```csharp\\n            TasksDir: config.TasksDir);\\n```\\n(Close the `new StageInvocation(...)` call with `TasksDir: config.TasksDir` as a trailing named arg.) Leave the other two construction sites (`FixTaskAuthorRunner.cs`, `TaskRewriteRunner.cs`) unset \u2014 null omits the line.\\n\\n## Fix 1b \u2014 Policy sentences in Review and Fix\\n\\n### `src/VisualRelay.Core/Execution/RelayStages.cs`\\n\\n**Review case** (line 79, ends `\\\"Do not edit files.\\\"`): Append so it reads:\\n```\\nDo not edit files. Paths named on the 'Protected paths' line of your input (the tasks directory and Visual Relay's internal artifact dirs) are queue bookkeeping, NEVER part of the diff under review \u2014 even when untracked: pending specs for OTHER tasks legitimately appear there mid-drain, so never flag them as stray content.\\n```\\n\\n**Fix case** (line 99, ends `\\\"do NOT reformat, reflow, or compact unrelated code to satisfy size or style budgets.\\\"`): Append:\\n```\\nNever delete, edit, or revert anything under the paths named on the 'Protected paths' line of your input \u2014 pending specs for other tasks legitimately sit there untracked mid-drain. If review flagged such a path, record it in your summary as skipped-by-policy instead of acting on it.\\n```\\n\\n## Fix 2 \u2014 Hard-fail a run whose task input is missing or empty\\n\\n### `src/VisualRelay.Core/Execution/RelayDriver.cs` (299\u2192300)\\nInsert exactly one line after `if (commitGateOutcome is not null) return commitGateOutcome;` (line 56), before `var isReAdded = \u2026` (line 57):\\n```csharp\\n            if (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\\n```\\n\\n### `+src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs` (new, \u2264300 lines)\\nNew partial of `RelayDriver` with file-header comment mirroring `RelayDriver.Invocation.cs`. Contains:\\n- `FailIfTaskInputMissingAsync(RelayTaskItem? task, RelayTaskInput input, string rootPath, string runId, string taskId, string taskDirectory, StringBuilder ledger, List<StageStatusEntry> statusEntries, CancellationToken ct)` returning `Task<RelayTaskOutcome?>`:\\n  - Returns `null` when `task is not null && !string.IsNullOrWhiteSpace(input.Markdown)`\\n  - Otherwise writes `.relay/<taskId>/NEEDS-REVIEW` with first line `\\\"task spec missing or empty at run start \u2014 refusing to run stages against an empty input\\\"`\\n  - Publishes error-level `RelayEvent` named `\\\"empty_task_input\\\"` via `_dependencies.EventSink.PublishAsync`\\n  - Marks status entries flagged, writes status, returns `new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Flagged, null, null, \\\"task spec missing or empty at run start\\\")`\\n\\n### `+tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs` (new, sealed class)\\n- Uses `TestRepository`, `RelayDriverTestHelpers.DepsFor`, `RelayDriverOptions.NoGitCommit`, `InMemoryRelayEventSink`, `ScriptedSubagentRunner`.\\n- Three facts:\\n  1. `Run_TaskFolderMissing_FailsWithNeedsReview` \u2014 no task folder exists; outcome is Flagged, NEEDS-REVIEW exists with expected text, no stage1 input written, no commit created.\\n  2. `Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview` \u2014 folder + markdown exist but content is `\\\"\\\\n\\\\n\\\"`; same assertions.\\n  3. `Run_NormalTask_GateIsNoOp` \u2014 healthy `WriteNestedTask` with real markdown; gate does not fire; stage 1 input file exists.\\n\\n## Fix 3 \u2014 Plan-phase reset null tasks dir fallback\\n\\n### `src/VisualRelay.Core/Queue/RelayQueueController.cs` (300\u2192300)\\nLine 184, edit in place \u2014 extend the existing line to add the fallback:\\n```csharp\\nawait ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, \\\"plan\\\", drainCts.Token);\\n```\\nIdentical fallback to lines 263-265 in the execute phase. No new test needed \u2014 existing plan-phase suites cover it.\\n\\n## Fix 4 \u2014 WorktreeResetter logging\\n\\n### `src/VisualRelay.Core/Execution/WorktreeResetter.cs` (130 lines)\\nChange `ResetAsync` return type from `Task` to `Task<IReadOnlyList<string>>`:\\n- In the method body, after the directory cleanup loop, add `return toDelete;`\\n- On the no-op path (when `!File.Exists(snapshotPath)` or no deletions), `return toDelete;` (returns whatever was accumulated, possibly empty).\\n\\n### `src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs` (121 lines)\\nUpdate `ResetAndLogAsync` to capture the return value and log:\\n```csharp\\n    private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)\\n    {\\n        var gi = _gitInvoker ?? new GitInvoker();\\n        try\\n        {\\n            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);\\n            if (removed.Count > 0)\\n            {\\n                var sample = string.Join(\\\", \\\", removed.Take(5));\\n                DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,\\n                    \\\"reset-removed\\\", $\\\"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? \\\", \u2026\\\" : \\\"\\\")}\\\");\\n            }\\n        }\\n        catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, \\\"reset-failed\\\", ex.Message); }\\n    }\\n```\\n\\n### `tests/VisualRelay.Tests/WorktreeResetterTests.cs` (250/300)\\n- Update all existing call sites to capture the return value (`var removed = await WorktreeResetter.ResetAsync(...)` or discard with `_ =`).\\n- Add one fact: `ResetAsync_ReturnsDeletedPaths_AndSparesTasksDir` \u2014 creates a stray untracked file and an untracked file under the tasks dir; asserts the stray is in the returned list and the tasks-dir file survives and is absent from the list.\\n\\n### `tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs` (117/300)\\nAdd one fact after `DrainAsync_FlaggedTask_ResetsWorktreeBeforeNextTask`: `DrainAsync_FlaggedTask_LogsResetRemoved` \u2014 after a reset that removes at least one file (use `DirtyThenCleanAssertingRunner` or similar), assert the drain log (`drain-*.log`) contains a `reset-removed` line naming the count. Mirror the log-reading idiom from `DrainExecutionLoggingTests.cs` (line 147): `Directory.GetFiles(Path.Combine(repo.Root, \\\".relay\\\"), \\\"drain-*.log\\\")` then `File.ReadAllTextAsync` + `Assert.Contains`.\",\n  \"manifest\": [\n    \"src/VisualRelay.Domain/StageInvocation.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs\",\n    \"src/VisualRelay.Core/Execution/RelayStages.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\",\n    \"src/VisualRelay.Core/Execution/WorktreeResetter.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\",\n    \"tests/VisualRelay.Tests/WorktreeResetterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 8, untracked deleted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs\",\n    \"tests/VisualRelay.Tests/WorktreeResetterTests.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs\"\n  ],\n  \"rationale\": \"All four fixes implemented and verified. Fix 1a adds TasksDir to StageInvocation, ProcessRunners.Prompt, and RelayDriver.Invocation so every stage prompt includes a 'Protected paths' line. Fix 1b appends scope-policy sentences to Review and Fix system prompts in RelayStages.cs. Fix 2 inserts one line in RelayDriver.cs (299\u2192300) calling FailIfTaskInputMissingAsync, implemented in the new RelayDriver.TaskInputGate.cs partial. Fix 3 edits RelayQueueController.cs line 184 in-place (stays at 300) to add the null fallback for plan-phase reset. Fix 4 changes WorktreeResetter.ResetAsync return type to Task<IReadOnlyList<string>> and logs removed files in ResetAndLogAsync. Three test files cover: empty-task-input gate (3 facts, 22 passing), worktree-resetter deletion-list, and drain-summary logging. All line budgets verified with wc -l.\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Implemented all four fixes: Fix 1a adds TasksDir to StageInvocation/ProcessRunners.Prompt/RelayDriver.Invocation for a 'Protected paths' prompt header; Fix 1b appends scope-policy sentences to Review and Fix stages in RelayStages.cs; Fix 2 inserts one line in RelayDriver.cs (299\u2192300) calling FailIfTaskInputMissingAsync in new RelayDriver.TaskInputGate.cs (84 lines) with a plan-phase worktree exemption; Fix 3 edits RelayQueueController.cs line 184 in-place (stays at 300) with null fallback; Fix 4 changes WorktreeResetter return type to Task<IReadOnlyList<string>> and logs removed files in ResetAndLogAsync. Targeted tests: 22/22 pass. Full suite: 3061 passed, 0 failed, 113 skipped. All line budgets verified within guard limits.\" }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "I have all the evidence I need. Let me finalize my assessment.\n\n## Summary of findings\n\n**Build & tests**: Clean build (0 warnings). Targeted tests 22/22 pass. Plan/two-phase tests 35/35 pass. Full suite 3061 passed/0 failed/113 skipped.\n\n**Line budgets**: All within guard limits (verified via `wc -l`).\n\n**Verified correct**:\n- Fix 1a (Protected paths line): `TasksDir` added to `StageInvocation`, `BuildPrompt` inserts at index 3, `RelayDriver.Invocation.cs` threads `config.TasksDir`.\n- Fix 1b (policy sentences): Appended to Review and Fix cases in `RelayStages.cs`, matching string-concat style.\n- Fix 3 (plan-phase null fallback): `RelayQueueController.cs` line 184 edited in-place, stays at 300 lines.\n- Fix 4 (WorktreeResetter logging): Return type \u2192 `Task<IReadOnlyList<string>>`, `ResetAndLogAsync` logs `reset-removed`, both test facts present.\n- Plan-phase exemption (deviation): Necessary and correct \u2014 the detached planning worktree lacks the tasks dir; 35/35 plan tests pass.\n\n**Issues found**:\n\n1. **Out-of-scope deletion of a protected spec file** (CRITICAL, touch-list violation): The working-tree diff includes `D llm-tasks/09-new-task-templates/09-new-task-templates.md` \u2014 a tracked 37 KB pending task spec that is exactly the artifact this task exists to protect. It's pre-existing ambient state (deleted by prior revert `c455d31`), not introduced by the implementer's 10 source/test files, but it IS part of the diff that would be committed \u2014 a touch-list violation carrying an out-of-scope deletion of a protected artifact.\n\n2. **New InspectCode finding \u2014 `CollectionWasModified`** (DEFECT): `RelayDriver.TaskInputGate.cs` lines 62-70 iterate `statusEntries` with `foreach` then assign back by index (`statusEntries[idx] = e with {...}`), which throws `InvalidOperationException` on the next `MoveNext()` (List indexer setter bumps `_version`). InspectCode flags `[PossibleInvalidOperationExceptionCollectionWasModified]`. Latent today (entries are seeded \"Waiting\", never \"Pending\", so the branch never runs), but it's a real defect and a new finding. The codebase's established pattern is the index-based `MarkStatusFlagged(entries, stageNum, reason)` helper (`RelayDriver.Artifacts.cs:237`) \u2014 the foreach should call that instead.\n\n3. **New InspectCode finding \u2014 `UnusedParameter`** : `RelayDriver.TaskInputGate.cs` line 27 \u2014 parameter `ledger` is never used. The spec-prescribed signature includes it, but the implementation never appends to it. InspectCode flags `[UnusedParameter.Local]`. Should append a ledger line (mirroring `FlagAsync` in `RelayDriver.Events.cs`) or drop the parameter.\n\nBoth Issue 2 and 3 are new InspectCode findings in the newly-created file, violating the spec's explicit requirement: \"./visual-relay check passes; the diff introduces zero new InspectCode findings.\" The `./visual-relay check` gate reports 5 findings total \u2014 2 new (both in `RelayDriver.TaskInputGate.cs`) and 3 pre-existing (in untouched files `TaskTemplates.cs`, `SwivalSubagentRunnerSandboxTests.SkipDirs.cs`, `SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs`).\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"Out-of-scope deletion of protected spec file: the working-tree diff carries `D llm-tasks/09-new-task-templates/09-new-task-templates.md` (tracked, 37 KB) \u2014 not in the allowed 10-file touch list, and exactly the artifact this task protects. Pre-existing ambient state (deleted by prior revert c455d31), not introduced by the implementer's source/test edits, but it WILL be part of the committed diff. Must be restored (git checkout) so the commit only contains the 10 allowed files.\", \"New InspectCode finding (defect): RelayDriver.TaskInputGate.cs:62-70 uses `foreach (var e in statusEntries)` then `statusEntries[idx] = e with {...}` at line 68 \u2014 List<T> indexer setter bumps _version so the next MoveNext throws InvalidOperationException (Collection was modified). InspectCode flags [PossibleInvalidOperationExceptionCollectionWasModified]. Latent (statuses seed as \\\"Waiting\\\" not \\\"Pending\\\" so the branch never runs), but still a real defect + new finding. Fix: replace the foreach+index-assign with the existing index-based `MarkStatusFlagged(statusEntries, e.Stage, reason)` helper (RelayDriver.Artifacts.cs:237) the rest of the codebase uses.\", \"New InspectCode finding: RelayDriver.TaskInputGate.cs:27 parameter `ledger` is never used \u2014 InspectCode flags [UnusedParameter.Local]. The spec-prescribed signature includes it but the implementation never writes to it. Fix: append a one-line ledger entry mirroring FlagAsync (RelayDriver.Events.cs), or drop the parameter from signature and call site. Either way resolves the finding so `./visual-relay check` introduces zero new findings as the spec requires.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 26,
+    "tool_calls_total": 44,
+    "tool_calls_succeeded": 42,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 18,
+        "failed": 0
+      },
+      "read_multiple_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 8,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 12,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 2
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 26,
+    "total_llm_time_s": 811.953,
+    "prompt_cache": {
+      "cached_tokens": 904256,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 185.164,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 0,
+      "restores": 1,
+      "cancels": 0,
+      "blocked": 1,
+      "force_restores": 1,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 10.25,
+      "prompt_tokens_est": 13701,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git diff --stat HEAD 2>/dev/null | head -50; echo \"---WC---\"; wc -l src/VisualRelay.Domain/StageInvocation.cs src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs src/VisualRelay.Core/Execution/RelayStages.cs src/VisualRelay.Core/Execution/RelayDriver.cs src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs src/VisualRelay.Core/Queue/RelayQueueController.cs src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs src/VisualRelay.Core/Execution/WorktreeResetter.cs tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs tests/VisualRelay.Tests/WorktreeResetterTests.cs tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs 2>/dev/null"
+      },
+      "succeeded": true,
+      "duration_s": 0.099,
+      "result_length": 1523
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 14.6,
+      "prompt_tokens_est": 14490,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git log --oneline -8 && echo \"---STATUS---\" && git status --short"
+      },
+      "succeeded": true,
+      "duration_s": 0.131,
+      "result_length": 1212
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git diff HEAD -- llm-tasks/09-new-task-templates/ 2>/dev/null | head -20; echo \"---LS---\"; ls -la llm-tasks/09-new-task-templates/ 2>/dev/null; echo \"exit: $?\""
+      },
+      "succeeded": true,
+      "duration_s": 0.082,
+      "result_length": 1263
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 18.199,
+      "prompt_tokens_est": 15806,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Is the deletion staged? ===\" && git diff --cached --stat 2>/dev/null | head; echo \"=== When was file last touched in history ===\" && git log --oneline -3 -- llm-tasks/09-new-task-templates/09-new-task-templates.md; echo \"=== Check if deletion present at HEAD~ vs now (stash list) ===\" && git stash list 2>/dev/null | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.17,
+      "result_length": 253
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git diff HEAD -- src/VisualRelay.Domain/StageInvocation.cs src/VisualRelay.Core/Execution/ProcessRunners.Prompt.cs src/VisualRelay.Core/Execution/RelayStages.cs src/VisualRelay.Core/Execution/RelayDriver.cs src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 7843
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 10.829,
+      "prompt_tokens_est": 18482,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/WorktreeResetter.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayDriverEmptyTaskInputTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 20587
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Is deletion staged? (git diff --cached) ===\" && git diff --cached --name-status 2>/dev/null | head; echo \"=== reflog / commits touching the spec file ===\" && git log --all --oneline -5 -- llm-tasks/09-new-task-templates/09-new-task-templates.md 2>/dev/null; echo \"=== Is there a backup in stash? ===\" && git stash show -p stash@{0} --stat 2>/dev/null | grep -i \"09-new-task\" | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.148,
+      "result_length": 211
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 8.557,
+      "prompt_tokens_est": 23870,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/WorktreeResetterTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayQueueControllerTests.WorktreeReset.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 21901
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "PlanningWorktree|plan-phase|plan phase|plan_worktree",
+        "path": "src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.061,
+      "result_length": 2194
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 49.447,
+      "prompt_tokens_est": 30313,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/PlanPhaseRunner.cs",
+        "offset": 120,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2807
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/PlanningWorktree.cs",
+        "offset": 1,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4176
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== reflog ===\" && git reflog -10 2>/dev/null | head -15; echo \"=== When was the file added to HEAD? ===\" && git show --stat 6e7be64 2>/dev/null | grep \"09-new-task\" | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.129,
+      "result_length": 1150
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 12.697,
+      "prompt_tokens_est": 35066,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 15,
+        "offset": 38
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1316
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Core/Queue/RelayQueueController.cs",
+        "pattern": "plan|Plan|RunPlan|RunPlanning|PlanPhase|firstStageToRun|LastStageToRun",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 6073
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Check the spec deletion is pre-existing (not from this task's edits) ===\"; echo \"HEAD is 6e7be64 (the implementer's base)\"; echo \"The file is deleted in WORKING TREE only (git status shows 'D')\"; echo \"Is it deleted in HEAD? (show committed blob size):\"; git cat-file -s HEAD:llm-tasks/09-new-task-templates/09-new-task-templates.md 2>/dev/null || echo \"NOT IN HEAD (already absent at base)\""
+      },
+      "succeeded": true,
+      "duration_s": 0.099,
+      "result_length": 239
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 119.389,
+      "prompt_tokens_est": 37297,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Is llm-tasks gitignored? ===\" && git check-ignore llm-tasks/09-new-task-templates/09-new-task-templates.md 2>/dev/null; echo \"exit: $?\"; echo \"=== .gitignore entries mentioning tasks ===\" && grep -n -i \"task\" .gitignore 2>/dev/null | head; echo \"=== Tracked files under llm-tasks at HEAD ===\" && git ls-tree -r --name-only HEAD -- llm-tasks/ 2>/dev/null | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.13,
+      "result_length": 1033
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "tests/VisualRelay.Tests",
+        "pattern": "RunPlanPhaseAsync|PlanPhase|planSubagentRunnerFactory|TwoPhase|ParallelPlan",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.087,
+      "result_length": 8928
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 52.912,
+      "prompt_tokens_est": 46135,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet build 2>&1 | tail -8",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 4.246,
+      "result_length": 322
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/PlanPhaseTestDoubles.cs",
+        "limit": 70
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3845
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 7.719,
+      "prompt_tokens_est": 50096,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~RelayDriverEmptyTaskInputTests|FullyQualifiedName~WorktreeResetterTests|FullyQualifiedName~RelayQueueControllerTests\" 2>&1 | tail -25",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 5.111,
+      "result_length": 1792
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/PlanPhaseRunnerTests.cs",
+        "limit": 60,
+        "offset": 59
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3308
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 10.131,
+      "prompt_tokens_est": 51598,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Is llm-tasks tracked in the main repo? ===\" && git ls-files llm-tasks/ | head -5; echo \"=== gitignore for llm-tasks ===\" && grep -n \"llm-tasks\\|llm_tasks\\|tasks\" .gitignore 2>/dev/null; echo \"=== Are task .md files tracked? ===\" && git ls-files 'llm-tasks/*.md' | head -3"
+      },
+      "succeeded": true,
+      "duration_s": 0.133,
+      "result_length": 783
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/PlanPhaseTestDoubles.cs",
+        "limit": 90,
+        "offset": 71
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4277
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 45.267,
+      "prompt_tokens_est": 53137,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~PlanPhaseRunnerTests|FullyQualifiedName~RelayQueueControllerTwoPhaseTests|FullyQualifiedName~RelayQueueControllerParallelTests|FullyQualifiedName~NoCommitContaminationTests|FullyQualifiedName~DrainExecutionLoggingTests|FullyQualifiedName~PlanningWorktree\" 2>&1 | tail -15",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 6.462,
+      "result_length": 1676
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageInvocation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2197
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 10.774,
+      "prompt_tokens_est": 56522,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Confirm the spec deletion is NOT touched by the implementer's files ===\" && echo \"The 10 allowed files are all src/tests. The deletion is llm-tasks/09-new-task-templates/...\"; echo \"\"; echo \"=== Check if deletion was present BEFORE this task (look at the base commit tree) ===\"; echo \"HEAD (base) = 6e7be64\"; git ls-tree HEAD -- llm-tasks/09-new-task-templates/ 2>/dev/null | head; echo \"\"; echo \"=== Is the file in the stash backup? ===\"; git stash show -p stash@{0} 2>/dev/null | grep -A2 \"09-new-task-templates.md\" | head -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.13,
+      "result_length": 429
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --no-build 2>&1 | tail -8",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 53.937,
+      "result_length": 883
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 7.56,
+      "prompt_tokens_est": 57264,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && ./visual-relay check 2>&1 | tail -30",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 113.468,
+      "result_length": 1217
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 8.957,
+      "prompt_tokens_est": 57749,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && cat /Users/nicholaswestby/.config/swival/cache/visual-relay/inspectcode/inspectcode.sarif.json 2>/dev/null | python3 -c \"\nimport json,sys\nd=json.load(sys.stdin)\nfor run in d.get('runs',[]):\n    for r in run.get('results',[]):\n        loc=r.get('locations',[{}])[0].get('physicalLocation',{})\n        art=loc.get('artifactLocation',{}).get('uri','?')\n        reg=loc.get('region',{})\n        msg=r.get('message',{}).get('text','?')[:160]\n        rule=r.get('ruleId','?')\n        print(f'{art}:{reg.get(\\\"startLine\\\",\\\"?\\\")} [{rule}] {msg}')\n\" 2>/dev/null"
+      },
+      "succeeded": true,
+      "duration_s": 0.222,
+      "result_length": 760
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 89.09,
+      "prompt_tokens_est": 58192,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 37,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 1949
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "pattern": "statusEntries|StageStatusEntry|WriteStatusAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4544
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 9.121,
+      "prompt_tokens_est": 64517,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs",
+        "limit": 15,
+        "offset": 61
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 639
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Core/Execution",
+        "pattern": "MarkStatus|statusEntries\\[.*\\] ="
+      },
+      "succeeded": true,
+      "duration_s": 0.045,
+      "result_length": 2385
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 5.608,
+      "prompt_tokens_est": 65405,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs",
+        "limit": 45,
+        "offset": 205
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2206
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Core/Execution/RelayDriver.Events.cs",
+        "pattern": "MarkStatusFlagged|MarkStatus|statusEntries"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 663
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 177.587,
+      "prompt_tokens_est": 66224,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me analyze the two new InspectCode findings in the TaskInputGate file carefully.\n\nFinding 1: `PossibleInvalidOperationException: Collection was modified` at line 68.\n\nThe code:\n```csharp\nforeach (var e in statusEntries)   // line 62\n{\n    if (e.Status == \"Pending\")\n    {\n        var idx = e.Stage - 1;\n        if (idx >= 0 && idx < statusEntries.Count)\n            statusEntries[idx] = e with { Status = \"Flagged\", Error = reason };  // line 68\n    }\n}\n```\n\nThis iterates `statusEntries` via foreach (which uses the list's enumerator) and assigns back into the SAME list by index during enumeration. In .NET, `List<T>`'s enumerator tracks a version number. When you do `list[i] = newItem`, it calls the indexer's setter, which increments `_version`. On the next `MoveNext()` of the foreach, the enumerator checks the version and throws `InvalidOperationException: Collection was modified`.\n\nBUT WAIT \u2014 there's a subtlety. The assignment `statusEntries[idx] = e with {...}` only happens when `e.Status == \"Pending\"`. The question is: does any entry have status \"Pending\" at this point?\n\nLet me look at SeedStatusEntries to understand the initial state. The gate fires early \u2014 after ValidateCommitGateResumeAsync but before any stage runs. Let me check what SeedStatusEntries produces and whether ValidateCommitGateResumeAsync / LoadResumeState modifies statuses.\n\nActually, let me think about this more carefully. The List<T> indexer setter DOES increment version. From the .NET reference source:\n```csharp\npublic T this[int index] {\n    set {\n        ...\n        _version++;\n        _items[index] = value;\n    }\n}\n```\n\nAnd List.Enumerator.MoveNext:\n```csharp\npublic bool MoveNext() {\n    ...\n    if (_version != _list._version) ThrowHelper.ThrowInvalidOperationException_InvalidOperation_EnumFailedVersion();\n    ...\n}\n```\n\nSo IF any entry has Status==\"Pending\", the assignment at line 68 increments _version, and the next MoveNext() throws.\n\nBUT \u2014 this is caught by the try/catch at line 73-80:\n```csharp\ncatch (OperationCanceledException) { throw; }\ncatch { /* Best-effort marker/event/status \u2014 still return the failed outcome. */ }\n```\n\nThe `catch` (without OperationCanceledException) catches the InvalidOperationException. So the WriteStatusAsync at line 71 would be SKIPPED (the exception is thrown at line 68 during the foreach, jumping out before line 71). Then the catch swallows it, and the method returns the flagged outcome at line 82.\n\nSo the effect: if any status entry is \"Pending\", the status.json is NOT written (the write is skipped because the exception aborts the block before WriteStatusAsync). The NEEDS-REVIEW marker (written at line 46) and the event (published at line 51) WERE already written before the loop. The outcome is still returned as Flagged.\n\nIs this a real defect? It means status.json won't reflect the flagged state. The test `Run_TaskFolderMissing_FailsWithNeedsReview` doesn't check status.json contents \u2014 it checks NEEDS-REVIEW marker, outcome status, no stage input, and the event. So the test passes despite the bug.\n\nWait \u2014 but does the exception actually get thrown? Let me verify: does SeedStatusEntries produce entries with Status \"Pending\"? Let me check. The spec says statusEntries are seeded at line 28 `var statusEntries = SeedStatusEntries();`. At the gate point (line 57), the statuses haven't been modified by stage runs yet (no stage has run). \n\nLet me check SeedStatusEntries \u2014 if initial status is \"Pending\" or \"Waiting\". If \"Waiting\", then `e.Status == \"Pending\"` is false and the assignment never happens, so no exception.\n\nActually, this is the crux. Let me check SeedStatusEntries and the StageStatusEntry initial status. This determines whether the bug actually manifests at runtime or is just a static-analysis false-ish positive.\n\nEither way, the InspectCode finding is NEW (introduced by this task's new file) and the spec requires \"zero new InspectCode findings.\" Even if it's a latent issue that doesn't fire in practice, it's a code-quality finding that the gate flags. The spec explicitly says: \"the diff introduces zero new InspectCode findings (any best-effort catch keeps a rationale comment inside the block).\"\n\nHmm, that parenthetical \"(any best-effort catch keeps a rationale comment inside the block)\" is interesting. It suggests the spec anticipates that a best-effort catch (like the one at line 77-80) is acceptable IF it keeps a rationale comment. The catch block at line 77-80 has the comment \"// Best-effort marker/event/status \u2014 still return the failed outcome.\" So maybe the implementer intended the catch to be the suppression mechanism.\n\nBut the CollectionWasModified finding is specifically about line 68 (the assignment in the foreach), not about the catch. The catch already has a rationale comment. So the question is whether the CollectionWasModified finding counts as a \"new finding\" that must be resolved.\n\nThe spec says zero new findings. There are 2 new findings in this new file:\n1. CollectionWasModified at line 68\n2. UnusedParameter.Local at line 27 ('ledger' is never used)\n\nFinding 2 (unused 'ledger' parameter): The spec's prescribed signature for FailIfTaskInputMissingAsync includes `ledger` as a parameter. But the implementation never uses it. Looking at the spec:\n\"FailIfTaskInputMissingAsync lives in a new partial... Behavior: ... Persist status and return a failed outcome. Mirror the early-return construction used by RestoreFlaggedWorkIfNeededAsync (called two lines below the insertion point; it returns a nullable outcome exactly this way) \u2014 reuse whatever status-write + outcome shape that path uses for 'run did not proceed'.\"\n\nThe spec describes the parameters in Fix 2 as: `FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken)`. So `ledger` IS in the prescribed signature. But the implementation added `tasksDir` (not in spec) AND the ledger is unused.\n\nActually wait \u2014 the call site in RelayDriver.cs line 57:\n```csharp\nif (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n```\n\nThe implementer added `config.TasksDir` as a parameter (for the plan-phase exemption). The spec's prescribed call was:\n```csharp\nif (await FailIfTaskInputMissingAsync(task, input, rootPath, runId, taskId, taskDirectory, ledger, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n```\n(no config.TasksDir). So the implementer deviated by adding tasksDir.\n\nOK so let me summarize the issues I've found:\n\nISSUE A (CRITICAL): The working-tree diff includes deletion of `llm-tasks/09-new-task-templates/09-new-task-templates.md` \u2014 a tracked pending task spec NOT in the allowed touch list. This is the EXACT artifact the task is designed to protect. However \u2014 I need to be careful here. This deletion is in the working tree as a pre-existing condition (the file is tracked at HEAD, deleted on disk). The implementer's 10 touched files are all src/tests. The question is: is this deletion something the implementer introduced, or was it already deleted before the implementer started?\n\nThe task description's \"incident\" section says: \"raw run artifacts preserved in git history under commit 0aa6b9c; deleted from the working tree by the revert c455d31\". So the spec file was deleted from the working tree by a prior revert. This means the deletion predates this task. The implementer did NOT introduce it. BUT \u2014 the git status shows it as part of the working-tree diff. If the harness commits the working tree, this deletion would be included. That's a problem for the commit, but it's not something the implementer's code changes caused.\n\nActually, let me reconsider. The review stage (my job) is to classify issues in the actual diff. The diff (working tree vs HEAD) includes this deletion. Whether the implementer caused it or not, it IS in the diff that will be committed. This is a touch-list violation: the constraints say \"Touch only: [10 files]\". The deletion of the spec file is an 11th file being touched. This is a real issue that must be flagged.\n\nHowever \u2014 I should consider whether this is within the implementer's control. The deletion was pre-existing. The implementer may not have been able to restore it (and restoring a 37KB spec file is out of scope for a code task). Still, for the review verdict, I must note that the committed diff would include an out-of-scope deletion of a protected artifact.\n\nActually, wait. Let me re-read the task. This is the REVIEW stage (stage 7). My job is to \"Review the actual diff and classify issues.\" The implementer already did stages 5 and 6 (author-tests and implement). The diff is what the implementer produced. If the spec file deletion was pre-existing (before the implementer started), it's not really \"the implementer's diff\" \u2014 it's ambient working-tree state. But it WILL be part of what gets committed unless restored.\n\nLet me be precise: the git status shows ` D llm-tasks/09-new-task-templates/09-new-task-templates.md` (space-D = deleted in working tree, not staged). This is pre-existing ambient state. The implementer did not touch it. But it's in the diff. I should flag it as an issue that the committed diff would carry an out-of-scope deletion, but note it appears pre-existing rather than implementer-introduced.\n\nHmm, but actually \u2014 the more I think about it, the review should focus on what the implementer changed. The 10 files in the manifest are the implementer's changes. The spec file deletion is ambient. Let me focus my verdict on the implementer's actual code changes.\n\nISSUE B (REAL DEFECT): The `FailIfTaskInputMissingAsync` foreach loop (lines 62-70) assigns into `statusEntries` by index during enumeration, which throws `InvalidOperationException: Collection was modified` if any entry has Status==\"Pending\". This is flagged by InspectCode as a real defect. Whether or not it manifests at runtime depends on whether SeedStatusEntries produces \"Pending\" entries. Let me verify this. The existing codebase uses `MarkStatusFlagged` / `MarkStatus` helpers (index-based, NOT foreach) precisely to avoid this. The implementer should have used `MarkStatusFlagged(statusEntries, e.Stage, reason)` instead of the inline foreach+index pattern. This is a deviation from the established pattern AND a real InspectCode finding.\n\nISSUE C (SPEC DEVIATION \u2014 possibly justified): The implementer added a `tasksDir` parameter and a plan-phase worktree exemption (lines 31-36, 35) NOT in the spec. The spec's prescribed behavior: \"Returns null (no-op) when task is not null AND !string.IsNullOrWhiteSpace(input.Markdown). Otherwise the run must fail.\" The implementer added: \"When task is null and the tasks directory itself is absent from disk, return null (plan-phase worktree).\" This is a NECESSARY correction \u2014 without it, the plan phase (which runs in a detached worktree without the tasks dir) would hard-fail every task. The plan-phase tests (35/35) confirm this. So this deviation is justified and correct. BUT \u2014 it's an undocumented deviation from the spec. The implementer's stage-6 summary says \"with a plan-phase worktree exemption\" so they acknowledged it. This is acceptable \u2014 it's a necessary fix for a spec blind spot, and it's well-commented.\n\nISSUE D (NEW INSPECTCODE FINDING): `UnusedParameter.Local: Parameter 'ledger' is never used` at line 27. The spec's prescribed signature includes `ledger`, but the implementation never uses it. The spec says the gate should \"mirror RestoreFlaggedWorkIfNeededAsync\" and \"reuse whatever status-write + outcome shape that path uses.\" RestoreFlaggedWorkIfNeededAsync takes ledger but the gate doesn't write to it. This is a new InspectCode finding. The spec requires zero new findings. This should be resolved \u2014 either by using ledger (append a line) or by removing the parameter. But the spec's prescribed call site passes ledger... Actually the spec says the signature should include ledger. Hmm. The cleanest fix would be to append a ledger line (like other gates do) OR suppress with a rationale. But this is a finding that must be addressed.\n\nLet me verify whether SeedStatusEntries produces \"Pending\" status to determine if Issue B is a runtime-throwing defect or latent.",
+        "thought_number": 1,
+        "next_thought_needed": true
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 6.729,
+      "prompt_tokens_est": 69175,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Core/Execution",
+        "pattern": "SeedStatusEntries"
+      },
+      "succeeded": true,
+      "duration_s": 0.029,
+      "result_length": 374
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "path": "src/VisualRelay.Domain",
+        "pattern": "StageStatusEntry|record StageStatus|Status =|Pending|Waiting"
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 743
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 6.679,
+      "prompt_tokens_est": 69541,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs",
+        "limit": 15,
+        "offset": 195
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 656
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageStatus.cs",
+        "limit": 36,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1272
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 29.674,
+      "prompt_tokens_est": 70113,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "summary": "## Review of task 10-protect-pending-specs-from-pipeline\n\n### Files verified (all line budgets OK)\n- StageInvocation.cs: 41 lines (\u226445). Adds `string? TasksDir = null` trailing param. \u2713\n- ProcessRunners.Prompt.cs: 111 (\u2264115). Inserts Protected paths at index 3 after \"Working directory:\". \u2713\n- RelayStages.cs: 130 (\u2264140). Review + Fix policy sentences appended correctly, matching concat style. \u2713\n- RelayDriver.cs: 300 (exactly 300). One line inserted at line 57 calling FailIfTaskInputMissingAsync. NOTE: call passes `config.TasksDir` (extra param not in spec's prescribed signature \u2014 needed for plan-phase exemption). \u2713\n- RelayDriver.Invocation.cs: 117 (\u2264118). Adds `TasksDir: config.TasksDir` named arg. \u2713\n- RelayDriver.TaskInputGate.cs: 84 (new, \u2264300). New partial. \u2713\n- RelayQueueController.cs: 300 (stays 300). Line 184 edited in-place with null fallback. \u2713\n- RelayQueueController.PrivateHelpers.cs: 130 (\u2264132). ResetAndLogAsync captures return + logs reset-removed. \u2713\n- WorktreeResetter.cs: 132 (\u2264140). Return type changed to Task<IReadOnlyList<string>>, returns toDelete. \u2713\n- Tests: RelayDriverEmptyTaskInputTests.cs (97), WorktreeResetterTests.cs (282), RelayQueueControllerTests.WorktreeReset.cs (150). All within budget.\n\n### Build & test results\n- `dotnet build`: clean, 0 warnings, 0 errors. \u2713\n- Targeted tests: 22/22 pass. \u2713\n- Plan-phase + two-phase tests: 35/35 pass (confirms plan-phase exemption works). \u2713\n- Full suite: 3061 passed, 0 failed, 113 skipped. \u2713\n\n### CRITICAL ISSUE: Out-of-scope spec file deletion in working tree\ngit status shows ` D llm-tasks/09-new-task-templates/09-new-task-templates.md` \u2014 a TRACKED pending task spec (37KB) deleted in the working tree. This file is NOT in the allowed touch list (constraints: \"Touch only\" the 10 src/test files). This is EXACTLY the artifact this task exists to PROTECT from deletion. The file exists at HEAD (commit 6e7be64, blob 0a28fa7, 37347 bytes). It was deleted from the working tree by a prior revert (c455d31 per task description). It appears PRE-EXISTING (ambient working-tree state, not introduced by the implementer's 10 code files which are all src/tests). BUT it IS part of the working-tree diff that would be committed. This is a touch-list violation that must be flagged \u2014 the committed diff would carry an out-of-scope deletion of a protected artifact.\n\n### DEFECT in RelayDriver.TaskInputGate.cs \u2014 foreach + index-assign throws InvalidOperationException\nLines 62-70:\n```csharp\nforeach (var e in statusEntries)   // line 62 \u2014 enumerates the list\n{\n    if (e.Status == \"Pending\")     // line 64\n    {\n        var idx = e.Stage - 1;\n        if (idx >= 0 && idx < statusEntries.Count)\n            statusEntries[idx] = e with { Status = \"Flagged\", Error = reason };  // line 68 \u2014 List<T> indexer setter increments _version \u2192 next MoveNext() throws InvalidOperationException\n    }\n}\n```\n`List<T>` indexer setter increments the internal version counter; foreach's MoveNext detects the mismatch and throws `InvalidOperationException: Collection was modified`. InspectCode flags this as `PossibleInvalidOperationExceptionCollectionWasModified` at line 68 \u2014 a NEW finding.\n\nRuntime impact: SeedStatusEntries (RelayDriver.Artifacts.cs:195-203) seeds ALL entries with Status=\"Waiting\", NOT \"Pending\". So at the gate point (line 57, before any stage runs, for a non-resumed task), `e.Status == \"Pending\"` is FALSE for all entries \u2192 the assignment never executes \u2192 no exception thrown. For a RESUMED task, LoadResumeState may set some entries to other statuses but the condition checks \"Pending\" which is never a seeded status. So the defect is LATENT (doesn't throw in practice) but is still a real code-smell + InspectCode finding. The established codebase pattern uses `MarkStatusFlagged(statusEntries, stageNumber, reason)` (RelayDriver.Artifacts.cs:237-242, index-based NOT foreach) to avoid exactly this. The implementer should have used that helper.\n\nThe try/catch at lines 73-80 (catches non-cancellation exceptions) would swallow the InvalidOperationException if it did throw, skipping WriteStatusAsync \u2014 meaning status.json wouldn't reflect the flagged state. The catch has a rationale comment \"// Best-effort marker/event/status \u2014 still return the failed outcome.\" but it's catching a bug, not genuine I/O best-effort.\n\n### NEW InspectCode finding: UnusedParameter 'ledger'\n`FailIfTaskInputMissingAsync` line 27: parameter `ledger` is never used. InspectCode flags `UnusedParameter.Local`. The spec's prescribed signature includes `ledger`, and the call site passes it, but the implementation never writes to it. Spec requires \"zero new InspectCode findings.\" Should append a ledger line (like other gates: FlagAsync in RelayDriver.Events.cs writes to ledger) or use the parameter.\n\n### InspectCode gate result\n`./visual-relay check` reports 5 findings at/above SUGGESTION floor:\n1. RelayDriver.TaskInputGate.cs:68 [PossibleInvalidOperationExceptionCollectionWasModified] \u2014 NEW (this task's new file)\n2. src/VisualRelay.Core/Tasks/TaskTemplates.cs:121 [RedundantJumpStatement] \u2014 PRE-EXISTING (TaskTemplates.cs not touched by this task)\n3. tests/.../SwivalSubagentRunnerSandboxTests.SkipDirs.cs:2 [RedundantUsingDirective] \u2014 PRE-EXISTING\n4. tests/.../SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs:2 [RedundantUsingDirective] \u2014 PRE-EXISTING\n5. RelayDriver.TaskInputGate.cs:27 [UnusedParameter.Local] \u2014 NEW (this task's new file)\nSo 2 NEW findings (both in the new TaskInputGate file) \u2014 violates \"zero new InspectCode findings.\"\n\n### Justified spec deviation: plan-phase worktree exemption (NOT an issue)\nTaskInputGate lines 31-36 add a `tasksDir` param + exemption: when `task is null && !Directory.Exists(tasksDir)`, return null (plan phase runs in detached worktree without tasks dir). This is NOT in the spec but is NECESSARY \u2014 without it, plan phase (PlanPhaseRunner creates detached git worktree at PlanningWorktree.cs:47-59, copies only config not tasks dir per CopyConfigIntoWorktree) would hard-fail every task. 35/35 plan-phase tests pass with the exemption. The implementer acknowledged it in stage-6 summary. Well-commented. This is a correct fix for a spec blind spot."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 43,
+      "error": "error: summary exceeds 4000 character limit"
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 21.251,
+      "prompt_tokens_est": 71720,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "summary": "## Review of task 10-protect-pending-specs-from-pipeline\n\n### Line budgets \u2014 all OK\nStageInvocation.cs=41(\u226445), ProcessRunners.Prompt.cs=111(\u2264115), RelayStages.cs=130(\u2264140), RelayDriver.cs=300(exact), RelayDriver.Invocation.cs=117(\u2264118), RelayDriver.TaskInputGate.cs=84(new,\u2264300), RelayQueueController.cs=300(stays 300), RelayQueueController.PrivateHelpers.cs=130(\u2264132), WorktreeResetter.cs=132(\u2264140), tests 97/282/150. All within budget.\n\n### Build & tests\ndotnet build: 0 warnings/errors. Targeted tests 22/22 pass. Plan+two-phase tests 35/35 pass. Full suite 3061 passed/0 failed/113 skipped.\n\n### ISSUE 1 (CRITICAL): Out-of-scope deletion of a protected spec file\ngit status shows ` D llm-tasks/09-new-task-templates/09-new-task-templates.md` (tracked, 37KB) deleted in working tree. NOT in the allowed touch list (10 src/test files only). This is EXACTLY the artifact this task protects from deletion. File exists at HEAD (6e7be64, blob 0a28fa7). Appears PRE-EXISTING (ambient state from prior revert c455d31; implementer's 10 files are all src/tests). But it IS part of the working-tree diff that would be committed \u2014 a touch-list violation carrying an out-of-scope deletion of a protected artifact.\n\n### ISSUE 2 (DEFECT): foreach + index-assign throws InvalidOperationException\nRelayDriver.TaskInputGate.cs lines 62-70: `foreach (var e in statusEntries)` then `statusEntries[idx] = e with {...}` at line 68. List<T> indexer setter increments _version; next MoveNext throws InvalidOperationException. InspectCode flags [PossibleInvalidOperationExceptionCollectionWasModified] at line 68 \u2014 a NEW finding. LATENT at runtime: SeedStatusEntries (RelayDriver.Artifacts.cs:200) seeds all entries Status=\"Waiting\" (never \"Pending\"), so `e.Status==\"Pending\"` is false and assignment never executes. But still a real defect + finding. Codebase pattern is MarkStatusFlagged(entries, stageNum, reason) (Artifacts.cs:237, index-based not foreach). The try/catch at 73-80 would swallow it, skipping WriteStatusAsync (status.json not updated).\n\n### ISSUE 3 (NEW FINDING): UnusedParameter 'ledger'\nTaskInputGate.cs line 27: parameter `ledger` never used. InspectCode [UnusedParameter.Local]. Spec prescribed signature includes ledger + call site passes it, but impl never writes to it. Spec requires zero new InspectCode findings. Should append a ledger line (like FlagAsync in RelayDriver.Events.cs) or remove param.\n\n### InspectCode gate: 2 NEW findings\n`./visual-relay check` = 5 findings. 2 are NEW in TaskInputGate.cs (Issue 2 + Issue 3). 3 are pre-existing (TaskTemplates.cs:121, two SwivalSubagentRunnerSandboxTests .cs files \u2014 none touched by this task). Violates \"zero new InspectCode findings.\"\n\n### Justified deviation (NOT an issue): plan-phase exemption\nTaskInputGate lines 31-36 add tasksDir param + exemption: when task is null AND tasksDir absent from disk, return null. NOT in spec but NECESSARY \u2014 plan phase (PlanPhaseRunner\u2192PlanningWorktree detached worktree, copies only config not tasks dir) would hard-fail every task without it. 35/35 plan tests pass. Well-commented. Correct fix for spec blind spot. Call site (RelayDriver.cs:57) passes config.TasksDir to support this."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 128,
+      "error": "error: scope is dirty (run_shell_command). Call `snapshot restore force=true` to override, or `snapshot cancel` to keep context."
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 22.481,
+      "prompt_tokens_est": 72601,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "force": true,
+        "summary": "## Review of task 10-protect-pending-specs-from-pipeline\n\n### Line budgets \u2014 all OK\nStageInvocation.cs=41(\u226445), ProcessRunners.Prompt.cs=111(\u2264115), RelayStages.cs=130(\u2264140), RelayDriver.cs=300(exact), RelayDriver.Invocation.cs=117(\u2264118), RelayDriver.TaskInputGate.cs=84(new,\u2264300), RelayQueueController.cs=300(stays 300), RelayQueueController.PrivateHelpers.cs=130(\u2264132), WorktreeResetter.cs=132(\u2264140), tests 97/282/150.\n\n### Build & tests\ndotnet build: 0 warnings/errors. Targeted tests 22/22 pass. Plan+two-phase 35/35 pass. Full suite 3061 passed/0 failed/113 skipped.\n\n### ISSUE 1 (CRITICAL): Out-of-scope deletion of a protected spec file\ngit status: ` D llm-tasks/09-new-task-templates/09-new-task-templates.md` (tracked, 37KB) deleted in working tree. NOT in allowed touch list (10 src/test files). This is EXACTLY the artifact this task protects from deletion. File exists at HEAD (6e7be64, blob 0a28fa7). Appears PRE-EXISTING (ambient state from prior revert c455d31; implementer's 10 files are all src/tests). But it IS part of the working-tree diff that would be committed \u2014 touch-list violation carrying out-of-scope deletion of a protected artifact.\n\n### ISSUE 2 (DEFECT): foreach + index-assign throws InvalidOperationException\nRelayDriver.TaskInputGate.cs lines 62-70: `foreach (var e in statusEntries)` then `statusEntries[idx] = e with {...}` at line 68. List<T> indexer setter increments _version; next MoveNext throws InvalidOperationException. InspectCode flags [PossibleInvalidOperationExceptionCollectionWasModified] at line 68 \u2014 NEW finding. LATENT: SeedStatusEntries (Artifacts.cs:200) seeds all \"Waiting\" (never \"Pending\"), so `e.Status==\"Pending\"` is false, assignment never runs. Still real defect+finding. Codebase pattern: MarkStatusFlagged(entries, stageNum, reason) (Artifacts.cs:237, index-based). try/catch at 73-80 would swallow it, skipping WriteStatusAsync.\n\n### ISSUE 3 (NEW FINDING): UnusedParameter 'ledger'\nTaskInputGate.cs line 27: `ledger` never used. InspectCode [UnusedParameter.Local]. Spec prescribed signature includes ledger + call site passes it, but impl never writes to it. Should append a ledger line (like FlagAsync in RelayDriver.Events.cs) or remove param.\n\n### InspectCode gate: 2 NEW findings\n`./visual-relay check` = 5 findings. 2 NEW in TaskInputGate.cs (Issue 2+3). 3 pre-existing (TaskTemplates.cs:121, two SwivalSubagentRunnerSandboxTests files \u2014 not touched). Violates \"zero new InspectCode findings.\"\n\n### Justified deviation (NOT an issue): plan-phase exemption\nTaskInputGate lines 31-36 add tasksDir param + exemption: task null AND tasksDir absent \u2192 return null. NOT in spec but NECESSARY \u2014 plan phase (PlanPhaseRunner\u2192PlanningWorktree detached worktree, copies config not tasks dir) would hard-fail every task without it. 35/35 plan tests pass. Well-commented. Call site RelayDriver.cs:57 passes config.TasksDir."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 85
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 12.768,
+      "prompt_tokens_est": 71502,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && echo \"=== Files modified by implementer (10 files) ===\" && git diff --name-only HEAD; echo \"=== untracked new files ===\" && git ls-files --others --exclude-standard | grep -E \"\\.cs$\"; echo \"=== InspectCode findings files ===\"; echo \"src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs (NEW - touched)\"; echo \"src/VisualRelay.Core/Tasks/TaskTemplates.cs (NOT touched)\"; echo \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs (NOT touched)\"; echo \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs (NOT touched)\""
+      },
+      "succeeded": true,
+      "duration_s": 0.134,
+      "result_length": 1124
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 43.677,
+      "prompt_tokens_est": 72039,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

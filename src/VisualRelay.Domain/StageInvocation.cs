@@ -34,4 +34,8 @@ public sealed record StageInvocation(
     // The driver's fix-verify loop passes 0 because IT owns the (external, verify-red)
     // escalation across its iterations — so the inner RunAsync must not also escalate
     // (which would double-count the 3-run budget for that stage).
-    int MaxSelfEscalations = int.MaxValue);
+    int MaxSelfEscalations = int.MaxValue,
+    // Repo-relative tasks directory (RelayConfig.TasksDir). When set, BuildPrompt
+    // emits a "Protected paths" header line naming it as queue bookkeeping that is
+    // never part of the task's diff. Null (default) omits the line.
+    string? TasksDir = null);
