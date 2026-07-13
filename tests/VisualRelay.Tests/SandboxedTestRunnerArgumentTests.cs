@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -22,16 +23,16 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("bun test");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, args.Take(6));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, args.Take(8));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/bin/sh", args[6]);
+        Assert.Equal("/bin/sh", args[8]);
         // -c and the command MUST be separate ArgumentList entries. SandboxedTestRunner
         // uses the IEnumerable<string> ProcessCapture overload, which adds each entry
         // verbatim (no quote-splitting); a merged `-c "bun test"` entry reaches /bin/sh
         // as one unparseable arg → exit 2 (every sandboxed verify falsely red).
-        Assert.Equal("-c", args[7]);
-        Assert.Equal("bun test", args[8]);
+        Assert.Equal("-c", args[9]);
+        Assert.Equal("bun test", args[10]);
     }
 
     [Fact]
@@ -45,11 +46,11 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("/path/to/guard.sh arg1");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, args.Take(6));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, args.Take(8));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/path/to/guard.sh", args[6]);
-        Assert.Equal("arg1", args[7]);
+        Assert.Equal("/path/to/guard.sh", args[8]);
+        Assert.Equal("arg1", args[9]);
     }
 
     // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
@@ -61,7 +62,7 @@ public sealed class SandboxedTestRunnerArgumentTests
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         // --silent is the quiet default (output-only); it sits after the rollback flags, before --.
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
             prefix);
     }
 
@@ -70,7 +71,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     {
         var config = TestConfig();
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" }, prefix);
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, prefix);
     }
 
     [Fact]
@@ -80,14 +81,14 @@ public sealed class SandboxedTestRunnerArgumentTests
         var swi = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var ver = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" }, swi.Take(4));
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" }, ver.Take(4));
-        Assert.Equal("--rollback", swi[4]);
-        Assert.Equal("--no-rollback-prompt", swi[5]);
-        Assert.Equal("--silent", swi[6]);
-        Assert.Equal("--", swi[7]);
-        Assert.Equal("--silent", ver[4]);
-        Assert.Equal("--", ver[5]);
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, swi.Take(6));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir }, ver.Take(6));
+        Assert.Equal("--rollback", swi[6]);
+        Assert.Equal("--no-rollback-prompt", swi[7]);
+        Assert.Equal("--silent", swi[8]);
+        Assert.Equal("--", swi[9]);
+        Assert.Equal("--silent", ver[6]);
+        Assert.Equal("--", ver[7]);
         Assert.Equal(swi.Count - 2, ver.Count);
     }
 
@@ -115,8 +116,10 @@ public sealed class SandboxedTestRunnerArgumentTests
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
-        Assert.Equal("--silent", prefix[6]);
-        Assert.Equal("--", prefix[7]);
+        Assert.Equal("-a", prefix[6]);
+        Assert.Equal(TemplatesDir, prefix[7]);
+        Assert.Equal("--silent", prefix[8]);
+        Assert.Equal("--", prefix[9]);
     }
 
     [Fact]
@@ -227,6 +230,7 @@ public sealed class SandboxedTestRunnerArgumentTests
     // The VR-owned profile abs path the prefix now carries (--profile <abs>),
     // resolved from the real process env exactly as production does.
     private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 
     private static RelayConfig TestConfig() =>
         new("llm-tasks", "true", "true", [],

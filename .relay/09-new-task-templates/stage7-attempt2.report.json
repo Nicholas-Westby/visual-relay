@@ -1,0 +1,501 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-13T01:54:38.501558+00:00",
+  "task": "# Relay stage 7: Review\nTask: 09-new-task-templates\nWorking directory: /Users/nicholaswestby/Dev/visual-relay/\n\n## Task input\n# Task: New-task templates \u2014 built-in / user / repo layers, plus a \"Create Tasks to Speed Up Automated Tests\" starter\n\nThe New-task form (`TaskDetailPanel` \u2192 \"Task title (required)\" / \"Initial markdown body\n(optional)\") gets a **Template** dropdown. Picking a template prefills the title and body\nfields; the user edits and clicks \"Create task\" exactly as today. Ships with two built-in\ntemplates: **Blank** (the default \u2014 empty title/body) and **Create Tasks to Speed Up\nAutomated Tests** (full content in \u00a71).\n\nTemplates are plain `.md` files resolved from three layers, most local wins:\n\n| Layer | Where | Editable how |\n|---|---|---|\n| **Built-in** | embedded resources in `VisualRelay.Core` (sources in `packaging/task-templates/`) | ship with the app |\n| **User** | `<config dir>/visual-relay/templates/*.md` (config dir = `XdgConfig.ResolveConfigDir`, i.e. `$XDG_CONFIG_HOME` else `~/.config`) | any editor; sandboxed task runs get a write grant (\u00a76) |\n| **Repo** | `<workspace>/llm-tasks/templates/*.md` | any editor, including during an active run (see \"Why repo templates live under llm-tasks/\") |\n\nNaming note: these layer names \u2014 **built-in / user / repo templates** \u2014 are the canonical\nterms; use them in code, docs, and tests. (The request called the middle layer \"filesystem\ntemplates\"; \"user templates\" is the better name because all three layers are files \u2014 what\ndistinguishes this one is per-user, per-machine scope.)\n\nUsers create entirely new templates by dropping a `.md` file into the user or repo\ndirectory \u2014 no management UI. The dropdown re-enumerates on every dialog open, so edits\nand new files show up the next time \"New\" is clicked, with no watchers and no caching.\n\n## Resolution contract (pin these semantics exactly)\n\n- **Template id** = filename stem (`speed-up-automated-tests.md` \u2192 id\n  `speed-up-automated-tests`). Ids match across layers with `OrdinalIgnoreCase`; on a\n  match, repo beats user beats built-in \u2014 the winner fully replaces the loser (no field\n  merging).\n- **Ordering in the dropdown**: the template with id `blank` first (even when overridden),\n  then everything else by display `Name` (`OrdinalIgnoreCase`), ties by `Id`.\n- **File format**: optional frontmatter. If the first line is exactly `---`, read until\n  the next line that is exactly `---`; between them, lines of the form `key: value` are\n  parsed and exactly two keys are recognized \u2014 `name:` (dropdown label) and `title:`\n  (prefill for the Task-title field); unknown keys are ignored. Everything after the\n  closing `---` is the body, with leading newlines trimmed. No frontmatter (or an\n  unclosed one) \u2192 the whole file is the body, `Name` falls back to the id, `Title` to\n  empty. Normalize `\\r\\n` \u2192 `\\n` before parsing.\n- **Bodies must not start with a `# Heading`**: `CreateNewTaskAsync` (in\n  `MainWindowViewModel.Authoring.cs`) prepends `# {NewTaskTitle}\\n\\n` to the body when\n  writing the task file \u2014 a template that opens with its own H1 would produce a\n  double-heading task. Both built-ins comply; document this rule in the README section\n  (\u00a79).\n- **Robustness**: a template file that cannot be read (IO/permission error) is skipped;\n  opening the New-task form must never throw because of a bad template file.\n- Missing user/repo directories are fine \u2014 built-ins alone are returned. Nothing creates\n  the repo directory; the sandbox grant (\u00a76) creates the user directory.\n\n## Why repo templates live under `llm-tasks/templates/`\n\nThe tasks dir is already exempt from every \"don't touch the repo mid-run\" mechanism, all\nvia prefix checks on the tasks dir, so repo templates inherit editability-during-a-run\nwith zero new code:\n\n- `RelayDriver.CodeChangeGate.cs` \u2192 `IsBookkeepingPath` ends with\n  `return IsPathUnderDirectory(rootPath, path, tasksDir);` \u2014 task-dir diffs don't count\n  as \"the run produced code\".\n- `WorktreeFilter.cs` / `WorktreeResetter.cs` \u2192 `IsUnderTasksDir(...)` \u2014 task-dir edits\n  are kept, never reset to HEAD.\n- `GitCommitter.Untracked.cs` \u2192 `FindUncommittedAuthoredFilesAsync` skips\n  `IsUnderTasksDir(...)` paths \u2014 template files never flag as \"missed authored files\".\n\nDo **not** modify any of those three files; they already do the right thing. The one\nplace that must learn about the new folder is task discovery (\u00a74), because today *every*\nnon-skipped subdirectory of `llm-tasks/` is enumerated as a task.\n\nThe path is hardcoded as `Path.Combine(rootPath, \"llm-tasks\", \"templates\")` \u2014 the same\nliteral `\"llm-tasks\"` that `RelayTaskWriter.CreateAsync` hardcodes for task creation\n(`var tasksDir = Path.Combine(rootPath, \"llm-tasks\");`). Created tasks always land there\nregardless of the `tasksDir` config key, so the templates that seed them sit beside them.\nDo not plumb `RelayConfig.TasksDir` into the template loader and do not \"fix\" the writer's\nhardcoding in this task.\n\n## 1) New template source files: `packaging/task-templates/`\n\nCreate the directory next to `packaging/nono/`. Two files, exact contents below.\n\n`packaging/task-templates/blank.md`:\n\n```markdown\n---\nname: Blank\n---\n```\n\n`packaging/task-templates/speed-up-automated-tests.md` (this content is the product \u2014\nkeep it verbatim, including the pinned lines the tests in this spec assert on; it is\ndeliberately stack-agnostic because Visual Relay runs against arbitrary repos, so never\nadd language-, framework-, or runner-specific instructions to it):\n\n```markdown\n---\nname: Create Tasks to Speed Up Automated Tests\ntitle: Speed up automated tests\n---\nMake this repository's automated test suite faster without losing any coverage. This\ntask has two deliverables:\n\n1. Speed up exactly one automated test \u2014 the highest-value target found by the\n   measurement step below \u2014 and commit that change with before/after timing evidence.\n2. Author one follow-up LLM task per remaining opportunity (sibling task folders next to\n   this one, following the existing folder-naming convention), so the rest of the suite\n   gets faster incrementally. Each follow-up task must be opinionated: exactly one\n   prescribed approach, never a menu of options.\n\n## Measure first \u2014 every decision is data-informed\n\n- Run the full suite once with this repo's own test command, capturing per-test timings\n  from the runner's native timing/report output. Save the timings to a file in this\n  task's folder (e.g. timings-baseline.txt), sorted slowest-first. Every slowness claim\n  in this task and in every follow-up task must trace to numbers in that file.\n- Expect a Pareto shape: a small fraction of tests usually accounts for most of the wall\n  time. Rank three views: slowest individual tests, slowest test files/suites, and any\n  serial phase the rest of the suite waits on.\n- Full-suite timings are contention-inflated. A test that looks slow under a loaded\n  worker pool can be fast alone \u2014 re-time the top candidates in isolation before\n  choosing what to fix.\n- Classify the suite: wait-bound (wall time far exceeds CPU time \u2014 threads idle in\n  sleeps, polling, I/O, or child processes) or CPU-bound. The high-payoff remedies\n  differ, and misclassifying wastes the whole effort.\n\n## Coverage is non-negotiable\n\n- Never delete, disable, skip, or weaken a test to make the suite faster. Speed must\n  come from doing the same verification cheaper, not from verifying less.\n- Any change that moves, merges, or replaces tests must include a written mapping:\n  every original test name \u2192 where that scenario and its assertions now live. A\n  scenario with no destination is lost coverage \u2014 do not proceed with that change.\n- A test that genuinely must exercise a slow real boundary (real network, real child\n  processes, real disk, real time) is still valuable: keep it, move it behind an opt-in\n  slow/integration tag, and cover the same logic with a fast in-process equivalent in\n  the default suite. Gated is fine; gone is not.\n- After each change the whole suite must pass, and if the test count changed, the\n  mapping above must account for every removed name.\n\n## Strategies that are known to work (roughly in payoff order)\n\n1. Remove real-time waits. Fixed sleeps and long-interval polling are the classic\n   hidden cost. Replace them with waits on the actual condition or event, and route\n   deadline/timer logic through an injectable clock so tests drive time instead of\n   living through it. If the codebase has many of these, one follow-up task should add\n   an automated guard that fails on new unjustified sleeps in tests.\n2. Put a seam in front of expensive boundaries. Tests that spawn real child processes\n   or hit real network/disk per test are usually the slowest family. Introduce an\n   explicit interface at the boundary and use an in-memory fake or simulator in the\n   default suite; keep a small tagged set of real-boundary integration tests per the\n   coverage rules above.\n3. Turn on and tune runner parallelism. Check the runner's parallelism settings first \u2014\n   suites often run far below the machine's capacity. Prefer machine-relative worker\n   counts (multipliers) over hardcoded numbers so every machine scales. A wait-bound\n   suite benefits from oversubscribing workers beyond the core count; a CPU-bound one\n   does not.\n4. Split oversized test files. Most runners parallelize across files/classes/suites,\n   not within them, so one huge file serializes into a long tail. Split it into several\n   smaller ones as pure moves \u2014 same tests, same assertions \u2014 so the scheduler can\n   spread the load.\n5. Know the parallelism pitfalls before flipping the switch. Tests sharing mutable\n   state flake in parallel: global/static singletons, environment variables, current\n   working directory, fixed ports, shared temp paths or fixture files, a shared\n   database, and order-dependent tests. Fix isolation first (own data, unique\n   ports/paths per test), and explicitly serialize the few genuinely serial tests as a\n   named group instead of lowering parallelism for everyone. Budget for two companion\n   effects: individual tests run slower under contention, so per-test hang/timeout\n   ceilings usually must rise together with parallelism; and timing-sensitive\n   assertions that pass solo can lose races under load. Prove stability with several\n   consecutive green full-suite runs, and fix a flake by removing the shared state or\n   serializing that test \u2014 never by retrying until green.\n6. Merge near-duplicate tests into one data-driven test. When several tests share the\n   same arrange/act/assert shape and differ only in inputs, convert them into a single\n   parameterized test where each scenario is a data row. This cuts per-test setup\n   overhead. Enumerate the originals first and map each one to a row, per the coverage\n   rules.\n7. Hoist expensive immutable setup. Setup every test rebuilds identically (compiled\n   artifacts, seeded stores, parsed fixtures) can be built once at the widest safe\n   scope and shared read-only. Never share anything a test mutates.\n8. Look for product-side waste. Sometimes the suite is slow because the product wastes\n   time on paths tests exercise constantly \u2014 e.g. a retry backoff triggered by a\n   benign, expected condition. Fixing the product speeds up the suite and the product.\n\n## Investigate beyond this list\n\nThe list above is generic. Spend real time in this specific codebase: read the\ntest-runner configuration and its parallelism/timeout settings, the CI test invocation,\ncustom fixtures and helpers, and the slowest files from the timings file. Anything\nrepo-specific you find \u2014 an expensive fixture everyone pays for, an artifact rebuilt\nper test, a serialized phase \u2014 becomes its own follow-up task with its measured cost\ncited.\n\n## The one fix to make in this task\n\nFrom the timings file, pick the single change with the best ratio of measured time\nsaved to risk, scoped to one test (or the one shared wait/fixture that dominates that\ntest's time). Implement it, run the full suite to green, and re-measure: record the\nbefore and after numbers for the affected test and for the whole suite next to the\nbaseline file.\n\n## Follow-up tasks to author\n\nCreate one task folder beside this one per remaining opportunity. Each follow-up task\nmust:\n\n- be self-contained \u2014 executable without reading this task;\n- prescribe exactly one approach, with the pitfalls above baked in as guardrails;\n- cite its target tests' measured baseline numbers from the timings file and state the\n  expected saving;\n- restate the coverage rules: no deleted/skipped/weakened tests, and a name-by-name\n  mapping for any moved or merged test;\n- require its commit message to carry the time-saved bullet described below.\n\n## Commit-message evidence (this task and every follow-up)\n\nEvery commit that changes test timing must include a bullet quantifying the measured\neffect, in this exact shape:\n\n- test time dropped from 80s to 60s, saving 20s\n\nUse real measured numbers and say whether they are full-suite wall time or a single\ntest's time. This makes the payoff of every change legible straight from the log.\n```\n\n## 2) Embed the built-ins in `VisualRelay.Core.csproj`\n\n`src/VisualRelay.Core/VisualRelay.Core.csproj` already embeds the sandbox profile:\n\n```xml\n<EmbeddedResource Include=\"..\\..\\packaging\\nono\\vr-guard.json\" LogicalName=\"VisualRelay.Core.vr-guard.json\" />\n```\n\nAdd, in the same `<ItemGroup>`:\n\n```xml\n<EmbeddedResource Include=\"..\\..\\packaging\\task-templates\\blank.md\" LogicalName=\"VisualRelay.Core.task-templates.blank.md\" />\n<EmbeddedResource Include=\"..\\..\\packaging\\task-templates\\speed-up-automated-tests.md\" LogicalName=\"VisualRelay.Core.task-templates.speed-up-automated-tests.md\" />\n```\n\n## 3) New Core service: `src/VisualRelay.Core/Tasks/TaskTemplates.cs`\n\nSits beside `RelayTaskWriter.cs`/`RelayTaskRepository.cs`. Public surface (exactly this \u2014\ncallers are the ViewModel partial in \u00a77, `BuildNonoPrefix` in \u00a76, and tests):\n\n```csharp\nusing VisualRelay.Core.Configuration;\n\nnamespace VisualRelay.Core.Tasks;\n\n/// <summary>Where a resolved template came from. Higher layers override lower\n/// ones by id: Repo &gt; User &gt; BuiltIn.</summary>\npublic enum TaskTemplateSource { BuiltIn, User, Repo }\n\n/// <summary>One new-task template: <paramref name=\"Name\"/> labels the dropdown,\n/// <paramref name=\"Title\"/> prefills the task-title field, <paramref name=\"Body\"/>\n/// prefills the markdown body.</summary>\npublic sealed record TaskTemplate(\n    string Id, string Name, string Title, string Body, TaskTemplateSource Source);\n\npublic static class TaskTemplates\n{\n    public static string ResolveUserTemplatesDir(IEnvironmentAccessor? accessor = null) =>\n        Path.Combine(XdgConfig.ResolveConfigDir(accessor), \"visual-relay\", \"templates\");\n\n    public static IReadOnlyList<TaskTemplate> Load(string userTemplatesDir, string repoTemplatesDir);\n\n    internal static TaskTemplate Parse(string id, string content, TaskTemplateSource source);\n}\n```\n\nImplementation requirements:\n\n- **Built-ins** are read via the `NonoProfileEnsurer.ReadEmbedded` pattern\n  (`typeof(TaskTemplates).Assembly.GetManifestResourceStream(name)` + `StreamReader`,\n  throw `InvalidOperationException` naming the resource when the stream is null \u2014 a\n  missing built-in is a packaging bug, not a skippable file). Hardcode the two logical\n  names from \u00a72; derive each id by stripping the `VisualRelay.Core.task-templates.`\n  prefix and the `.md` suffix.\n- **`Load` order of operations**: seed a\n  `Dictionary<string, TaskTemplate>(StringComparer.OrdinalIgnoreCase)` with built-ins,\n  then overlay the user dir, then the repo dir. For each existing directory, enumerate\n  top-level `*.md` files only (no recursion), in `OrdinalIgnoreCase` filename order;\n  id = `Path.GetFileNameWithoutExtension`. Wrap each file read in\n  `try { \u2026 } catch (Exception) { continue; /* unreadable template \u2014 skip, never break the dialog */ }`\n  (the comment is required: the InspectCode gate flags bare empty catches).\n- **Final ordering** (matches the contract):\n\n```csharp\nreturn byId.Values\n    .OrderBy(t => string.Equals(t.Id, \"blank\", StringComparison.OrdinalIgnoreCase) ? 0 : 1)\n    .ThenBy(t => t.Name, StringComparer.OrdinalIgnoreCase)\n    .ThenBy(t => t.Id, StringComparer.OrdinalIgnoreCase)\n    .ToList();\n```\n\n- **`Parse`**: normalize `content.Replace(\"\\r\\n\", \"\\n\")`, split on `'\\n'`. If\n  `lines[0] == \"---\"`, find the next index whose line is exactly `\"---\"`; when found,\n  each line between is checked for the first `':'` \u2014 key = trimmed, lowercased left\n  part; `\"name\"` and `\"title\"` assign the trimmed right part; anything else is ignored.\n  Body = the joined lines after the closing `---`, `TrimStart('\\n')`. When `lines[0]`\n  is not `\"---\"` or no closing line exists, the whole normalized content is the body.\n  Fallbacks: `Name` = id, `Title` = `string.Empty`.\n\n## 4) Task discovery must skip the repo templates folder\n\n`src/VisualRelay.Core/Tasks/RelayTaskRepository.cs` currently treats every non-skipped\nsubdirectory as a task:\n\n```csharp\nprivate static readonly HashSet<string> SkippedDirectories = [\"completed\", \"_ideation\"];\n```\n\nChange to:\n\n```csharp\nprivate static readonly HashSet<string> SkippedDirectories = [\"completed\", \"_ideation\", \"templates\"];\n```\n\nWithout this, `llm-tasks/templates/` would appear in the queue as a task named\n`templates`.\n\n## 5) Reserve the folder names in `RelayTaskWriter.ValidateSlug`\n\nA task titled \"Templates\" slugifies to `templates`; after \u00a74 it would be written to\n`llm-tasks/templates/templates.md` and be invisible to the queue. (\"Completed\" has the\nsame latent problem today \u2014 its collision check only fires once `llm-tasks/completed/`\nexists.) `RelayTaskWriter.cs` is at 296/300 lines, so fold the new check into the\nexisting reserved-prefix block instead of adding a second block. Replace:\n\n```csharp\n        // Reserved prefixes \u2014 check before case rules since the callers\n        // may pass un-normalised slugs.\n        if (slug.StartsWith(\"DONE-\", StringComparison.OrdinalIgnoreCase) ||\n            slug.StartsWith(\"IGNORE-\", StringComparison.OrdinalIgnoreCase))\n        {\n            return $\"Slug \\\"{slug}\\\" starts with a reserved prefix (DONE-/IGNORE-). Choose a different name.\";\n        }\n```\n\nwith:\n\n```csharp\n        // Reserved prefixes and folder names \u2014 check before case rules since the\n        // callers may pass un-normalised slugs. \"completed\" and \"templates\" are\n        // real folders under llm-tasks/ (the archive / task templates), so a task\n        // by either name would be skipped by discovery and invisible in the queue.\n        if (slug.StartsWith(\"DONE-\", StringComparison.OrdinalIgnoreCase) ||\n            slug.StartsWith(\"IGNORE-\", StringComparison.OrdinalIgnoreCase) ||\n            slug is \"completed\" or \"templates\")\n        {\n            return $\"Slug \\\"{slug}\\\" is reserved (DONE-/IGNORE- prefix, or the completed/templates folder name). Choose a different name.\";\n        }\n```\n\nNet +3 lines \u2192 299/300. Do not add anything else to this file.\n\n## 6) Sandbox write grant for the user templates dir\n\nSandboxed task runs must be able to create and edit **user** templates (repo templates\nare already writable via `--allow-cwd`). In\n`src/VisualRelay.Core/Execution/ProcessRunners.cs` \u2192 `SwivalSubagentRunner.BuildNonoPrefix`,\nextend the signature with a trailing optional parameter and add the grant immediately\nafter the `SandboxExtraAllowPaths` block:\n\n```csharp\n    internal static IReadOnlyList<string> BuildNonoPrefix(\n        RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,\n        bool verboseDiagnostics = false, string? userTemplatesDirOverride = null)\n```\n\n```csharp\n        if (config.SandboxExtraAllowPaths is { Count: > 0 } paths)\n        {\n            foreach (var path in paths) { args.Add(\"-a\"); args.Add(path); }\n        }\n\n        // Standing write grant for the user task-templates dir so sandboxed runs can\n        // author and update templates. Created eagerly so the grant always resolves\n        // and users can discover the folder. Kilobytes of markdown \u2014 negligible\n        // against nono's rollback-preflight copy budget.\n        var templatesDir = userTemplatesDirOverride ?? TaskTemplates.ResolveUserTemplatesDir();\n        Directory.CreateDirectory(templatesDir);\n        args.Add(\"-a\");\n        args.Add(templatesDir);\n```\n\nNotes:\n\n- Add `using VisualRelay.Core.Tasks;` to the file's usings.\n- No try/catch around the resolve: `ResolveUserTemplatesDir` can only throw when neither\n  `XDG_CONFIG_HOME` nor `HOME` resolves \u2014 the very same condition under which the\n  adjacent `NonoProfileEnsurer.ResolveProfilePath()` call already fails, so the failure\n  mode is unchanged.\n- The `userTemplatesDirOverride` parameter exists for tests (deterministic path inside a\n  temp dir; no touching the real config dir). Production callers\n  (`SwivalSubagentRunner`, `SandboxedTestRunner.ResolveLaunch`) pass nothing.\n- This changes the launch argv, so the existing arg-assertion tests will fail until\n  updated \u2014 that is expected and they must be updated, not weakened (see Tests).\n- Do **not** add the path to `packaging/nono/vr-guard.json` instead: the profile's\n  `$HOME`-based entries can't express the `XDG_CONFIG_HOME`-first precedence that\n  `XdgConfig` gives the rest of the app; the `-a` flag uses the exact directory the\n  loader reads.\n\n## 7) ViewModel: new partial `src/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs`\n\n`MainWindowViewModel.cs` is at 300/300 lines \u2014 do not touch it \u2014 and\n`MainWindowViewModel.Authoring.cs` is at 294/300, so it gets exactly one new line (below).\nEverything else lives in the new partial:\n\n```csharp\nusing System.Collections.ObjectModel;\nusing CommunityToolkit.Mvvm.ComponentModel;\nusing VisualRelay.Core.Tasks;\n\nnamespace VisualRelay.App.ViewModels;\n\npublic partial class MainWindowViewModel\n{\n    /// <summary>Display names for the new-task Template dropdown; index-aligned\n    /// with <see cref=\"_newTaskTemplates\"/>.</summary>\n    public ObservableCollection<string> NewTaskTemplateNames { get; } = [];\n\n    [ObservableProperty]\n    private int _selectedNewTaskTemplateIndex = -1;\n\n    private IReadOnlyList<TaskTemplate> _newTaskTemplates = [];\n\n    // What the last applied template put into each field. On template change a\n    // field is overwritten only while empty or still equal to this, so browsing\n    // templates never clobbers user-typed text.\n    private string _lastAppliedTemplateTitle = string.Empty;\n    private string _lastAppliedTemplateBody = string.Empty;\n\n    /// <summary>Re-enumerates templates and applies the default (Blank). Called on\n    /// every dialog open so template-file edits show up without watchers.</summary>\n    private void PrepareNewTaskTemplates()\n    {\n        _newTaskTemplates = TaskTemplates.Load(\n            TaskTemplates.ResolveUserTemplatesDir(EnvironmentAccessor),\n            Path.Combine(RootPath, \"llm-tasks\", \"templates\"));\n\n        NewTaskTemplateNames.Clear();\n        foreach (var template in _newTaskTemplates)\n        {\n            NewTaskTemplateNames.Add(template.Name);\n        }\n\n        _lastAppliedTemplateTitle = string.Empty;\n        _lastAppliedTemplateBody = string.Empty;\n\n        // Reset to -1 first so assigning the default index below always fires the\n        // change hook, even when the previous dialog session left the same index.\n        SelectedNewTaskTemplateIndex = -1;\n        SelectedNewTaskTemplateIndex = _newTaskTemplates.Count == 0 ? -1 : IndexOfBlank();\n    }\n\n    private int IndexOfBlank()\n    {\n        for (var i = 0; i < _newTaskTemplates.Count; i++)\n        {\n            if (string.Equals(_newTaskTemplates[i].Id, \"blank\", StringComparison.OrdinalIgnoreCase))\n            {\n                return i;\n            }\n        }\n        return 0;\n    }\n\n    partial void OnSelectedNewTaskTemplateIndexChanged(int value)\n    {\n        if (value < 0 || value >= _newTaskTemplates.Count)\n        {\n            return;\n        }\n\n        var template = _newTaskTemplates[value];\n        if (NewTaskTitle.Length == 0\n            || string.Equals(NewTaskTitle, _lastAppliedTemplateTitle, StringComparison.Ordinal))\n        {\n            NewTaskTitle = template.Title;\n        }\n        if (NewTaskBody.Length == 0\n            || string.Equals(NewTaskBody, _lastAppliedTemplateBody, StringComparison.Ordinal))\n        {\n            NewTaskBody = template.Body;\n        }\n\n        _lastAppliedTemplateTitle = template.Title;\n        _lastAppliedTemplateBody = template.Body;\n    }\n}\n```\n\n(`EnvironmentAccessor` is the existing `public IEnvironmentAccessor? EnvironmentAccessor\n{ get; init; }` the constructor sets \u2014 the same seam `UiStateStore.Load(EnvironmentAccessor)`\nuses, which is how tests point the user layer into a temp dir.)\n\nThe single Authoring.cs line: in `OpenNewTaskDialog()`'s open branch, insert\n`PrepareNewTaskTemplates();` so the branch reads:\n\n```csharp\n        IsEditingMarkdown = false;\n        NewTaskTitle = string.Empty;\n        NewTaskBody = string.Empty;\n        NewTaskError = null;\n        PrepareNewTaskTemplates();\n        SelectedTabIndex = 0;\n        IsNewTaskDialogOpen = true;\n```\n\n(The early-return close branch above it is untouched.) `CanOpenNewTaskDialog()` already\nguarantees `Directory.Exists(RootPath)`, and `CreateNewTaskAsync` needs no changes \u2014 it\nreads `NewTaskTitle`/`NewTaskBody` as today; templates are purely a prefill.\n\n## 8) View: Template dropdown in `TaskDetailPanel.axaml`\n\nIn the `<!-- New-task view -->` grid (275/300 lines today), change\n`RowDefinitions=\"Auto,*,Auto\"` to `RowDefinitions=\"Auto,Auto,*,Auto\"`, insert the\ntemplate row before the title `TextBox`, and shift the existing rows: title gets\n`Grid.Row=\"1\"`, the body `TextBox` moves `Grid.Row=\"1\"` \u2192 `\"2\"`, the error `TextBlock`\nmoves `Grid.Row=\"2\"` \u2192 `\"3\"`. The new row (binding idiom matches the TopBar Run-All\n`ComboBox`, but by index \u2014 display names are not guaranteed unique across layers):\n\n```xml\n                <StackPanel Orientation=\"Horizontal\"\n                            Spacing=\"8\"\n                            Margin=\"0,0,0,8\">\n                  <TextBlock Text=\"Template:\"\n                             FontSize=\"12\"\n                             Foreground=\"#9AA3B1\"\n                             VerticalAlignment=\"Center\"/>\n                  <ComboBox ItemsSource=\"{Binding NewTaskTemplateNames}\"\n                            SelectedIndex=\"{Binding SelectedNewTaskTemplateIndex}\"\n                            MinWidth=\"260\"\n                            VerticalAlignment=\"Center\"\n                            ToolTip.Tip=\"Prefill from a template. Add your own in ~/.config/visual-relay/templates or llm-tasks/templates.\"/>\n                </StackPanel>\n```\n\nNothing else in the file changes (the read-only view, edit view, toolbars, and other\ntabs are untouched).\n\n## 9) README\n\nIn `README.md`, insert a new top-level section between the end of the\n`# What Visual Relay Does` section and the `# Tests` heading:\n\n```markdown\n# Task Templates\n\nThe New-task form offers a template dropdown. Templates are markdown files with an\noptional `---` frontmatter block (`name:` labels the dropdown, `title:` prefills the\ntask title); the rest of the file prefills the body. Don't start a template body with\na `# Heading` \u2014 task creation prepends one from the title.\n\nThree layers, most local wins (matched by filename): built-in templates ship with the\napp; user templates live in `~/.config/visual-relay/templates/` (respects\n`XDG_CONFIG_HOME`; sandboxed task runs may write here too); repo templates live in\n`llm-tasks/templates/` and can be edited even during an active run, like task specs.\nDrop a new `.md` file in either folder \u2014 the dropdown re-reads them each time the\nform opens.\n```\n\n## Tests\n\nNew files are standalone or join existing partial families as noted; every test uses\ntemp dirs (`TestRepository` already redirects `XDG_CONFIG_HOME` at `repo.Root`, so the\nuser layer resolves to `<repo.Root>/visual-relay/templates` \u2014 never touch the real\n`~/.config`).\n\n**New `tests/VisualRelay.Tests/TaskTemplatesTests.cs`** (sealed class; plain `[Fact]`s;\nbuild user/repo dirs with `Directory.CreateTempSubdirectory` and delete in `finally`):\n\n- `Parse_Frontmatter_ExtractsNameTitleAndBody` \u2014 input\n  `\"---\\nname: Fancy\\ntitle: Do it\\n---\\nBody line.\\n\"` \u2192 Name `Fancy`, Title `Do it`,\n  Body `\"Body line.\\n\"`.\n- `Parse_NoFrontmatter_WholeContentIsBody_NameFallsBackToId` \u2014 Title empty, Name == id.\n- `Parse_CrLf_NormalizedBeforeParsing` \u2014 same input as the first fact with `\\r\\n`\n  line ends parses identically.\n- `Parse_UnknownFrontmatterKeys_Ignored`.\n- `Parse_UnclosedFrontmatter_TreatedAsBody` \u2014 `\"---\\nname: X\\nno close\"` \u2192 Body is the\n  whole (normalized) content, Name == id.\n- `Load_BuiltIns_BlankFirstThenSpeedUp` \u2014 `Load` with two nonexistent dirs returns\n  exactly two templates: `[0]` Id `blank`, Name `Blank`, empty Title/Body, Source\n  `BuiltIn`; `[1]` Id `speed-up-automated-tests`, Name\n  `Create Tasks to Speed Up Automated Tests`, Title `Speed up automated tests`.\n- `Load_UserOverridesBuiltIn_RepoOverridesUser` \u2014 write `blank.md` in the user dir\n  (body `USER`) and in the repo dir (body `REPO`): winner has Source `Repo`, Body\n  starts with `REPO`; delete the repo copy and reload: Source `User`. Blank stays\n  index 0 both times.\n- `Load_NewIdsFromBothLayers_AppearSortedByName`.\n- `Load_UnreadableEntrySkipped` \u2014 create a *directory* named `broken.md` inside the\n  user dir (read throws), plus one good template: the good one loads, no exception.\n- `SpeedUpTemplate_PinsLoadBearingContent` \u2014 the built-in speed-up Body\n  `Contains(\"- test time dropped from 80s to 60s, saving 20s\")`,\n  `Contains(\"Never delete, disable, skip, or weaken a test\")`, and\n  `DoesNotContain(\"dotnet\")` (guards the stack-agnostic rule).\n\n**New `tests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs`** (new partial of the\nexisting `public sealed partial class NewTaskAuthoringTests`; `[AvaloniaFact]`s using the\n`TestRepository.Create()` + `new MainWindowViewModel(repo.Env) { RootPath = repo.Root }`\n+ `LoadInitialAsync` + `OpenNewTaskDialogCommand.Execute(null)` +\n`Dispatcher.UIThread.RunJobs()` idiom from `NewTaskAuthoringTests.Create.cs`):\n\n- `OpenNewTaskDialog_ListsBuiltInsWithBlankSelected` \u2014 `NewTaskTemplateNames` is\n  `[\"Blank\", \"Create Tasks to Speed Up Automated Tests\"]`, selected index is the Blank\n  index, title/body empty.\n- `SelectingSpeedUpTemplate_PrefillsTitleAndBody` \u2014 select the speed-up index \u2192\n  `NewTaskTitle == \"Speed up automated tests\"`, body contains the commit-bullet pin\n  line; re-select Blank \u2192 both fields empty again (untouched fields follow templates).\n- `TemplateChange_NeverClobbersUserEditedField` \u2014 type a custom body, then select\n  speed-up: body keeps the custom text, title gets the template title.\n- `RepoTemplate_OverridesBuiltInBlank` \u2014 before opening the dialog write\n  `<repo.Root>/llm-tasks/templates/blank.md` containing\n  `\"---\\nname: Blank\\n---\\nrepo skeleton\\n\"`; open \u2192 Blank is still first and default,\n  and `NewTaskBody` is `\"repo skeleton\\n\"`.\n- `UserTemplate_AppearsInDropdown` \u2014 write\n  `<repo.Root>/visual-relay/templates/deploy-checklist.md` (the redirected user layer)\n  with `name: Deploy Checklist`; open \u2192 names contain it, sorted after Blank\n  alphabetically; selecting it prefills its body.\n\n**New `tests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs`** (standalone\nsealed class \u2014 `RelayTaskRepositoryTests.cs` is at 300/300; mirror its first fact's\nidiom):\n\n- `ListPendingAsync_SkipsTemplatesDirectory` \u2014 `repo.WriteTask(\"alpha\", \"# Alpha\\n\")` +\n  `repo.WriteTask(\"templates/skeleton\", \"# Skeleton\\n\")` \u2192\n  `ListPendingAsync` ids == `[\"alpha\"]`.\n\n**Existing `tests/VisualRelay.Tests/RelayTaskWriterTests.cs`** (257/300 \u2014 room): add\n`ValidateSlug_RejectsReservedFolderNames` \u2014 `ValidateSlug(\"templates\")` and\n`ValidateSlug(\"completed\")` both return an error mentioning `reserved`;\n`ValidateSlug(\"template\")` (singular) still passes.\n\n**New `tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs`**\n(new partial of the existing sandbox-args family):\n\n- `BuildNonoPrefix_GrantsUserTemplatesDir` \u2014 call with\n  `userTemplatesDirOverride: <tempdir>/templates` \u2192 the args contain the adjacent pair\n  `-a`, `<tempdir>/templates` after any `SandboxExtraAllowPaths` pairs, and the\n  directory now exists on disk.\n\n**Existing arg-assertion updates** (expected fallout of \u00a76 \u2014 update expectations, do not\ndelete or weaken facts; pass `userTemplatesDirOverride` wherever a deterministic argv is\nasserted): `SwivalSubagentRunnerSandboxTests.cs`,\n`SwivalSubagentRunnerSandboxTests.SkipDirs.cs`, `SandboxExtraAllowPathsConfigTests.cs`,\n`SandboxDiagnosticsToggleTests.cs`, `NonoLaunchDriftGuardTests.cs` (this one exists\nprecisely to force a deliberate update on launch-argv changes \u2014 update its pinned\nexpectation to include the new grant), and `SandboxedTestRunnerArgumentTests.cs`\n(`ResolveLaunch` passes no override, so those facts must assert the pair as `-a`\nfollowed by `TaskTemplates.ResolveUserTemplatesDir()` computed inside the test \u2014 same\nprocess env, therefore the same value). All six have \u226530 lines of headroom.\n\n## Verification\n\n1. `dotnet build` \u2014 clean.\n2. Targeted suites:\n   `dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~TaskTemplatesTests|FullyQualifiedName~NewTaskAuthoringTests|FullyQualifiedName~RelayTaskRepositoryTemplatesDirTests|FullyQualifiedName~RelayTaskRepositoryTests|FullyQualifiedName~RelayTaskWriterTests|FullyQualifiedName~SwivalSubagentRunnerSandboxTests|FullyQualifiedName~SandboxExtraAllowPathsConfigTests|FullyQualifiedName~SandboxDiagnosticsToggleTests|FullyQualifiedName~NonoLaunchDriftGuardTests|FullyQualifiedName~SandboxedTestRunnerArgumentTests\"`\n   \u2014 all green.\n3. Full suite green.\n4. `./visual-relay check` passes \u2014 in particular the file-size guard (budgets below) and\n   the InspectCode gate: this task's diff must introduce **zero** new findings (no bare\n   empty catch blocks, no redundant usings, no dead locals).\n\nFile-size budgets (guard limit 300; verify with `wc -l` after editing):\n\n| File | Before | After (max) |\n|---|---|---|\n| `MainWindowViewModel.cs` | 300 | 300 \u2014 **do not touch** |\n| `MainWindowViewModel.Authoring.cs` | 294 | 295 (exactly the one line) |\n| `MainWindowViewModel.Templates.cs` | new | \u2264 300 |\n| `TaskDetailPanel.axaml` | 275 | \u2264 292 |\n| `RelayTaskWriter.cs` | 296 | 299 |\n| `RelayTaskRepository.cs` | 291 | 291 (edit one line in place) |\n| `ProcessRunners.cs` | 184 | \u2264 200 |\n| `TaskTemplates.cs` | new | \u2264 300 |\n\n## Rejected approaches (do not do these)\n\n- **Unconditional overwrite of the fields on template select** \u2014 browsing templates\n  would destroy typed text; the last-applied comparison in \u00a77 is the required rule.\n- **A config key / `RelayConfig.TasksDir` plumbing for template locations** \u2014 fixed\n  well-known paths are the feature; configurability adds surface with no user.\n- **Repo templates under `.relay/`** \u2014 mechanically possible (also bookkeeping-exempt)\n  but that tree is machine-written run artifacts and logs; authored, reviewable content\n  belongs beside the tasks it seeds.\n- **Template-management UI, file watchers, or caching** \u2014 files are the interface;\n  re-enumerate per dialog open.\n- **A control-API endpoint for templates** \u2014 the API's `new-task` action only opens the\n  dialog today; keep it that way.\n- **A YAML library for frontmatter** \u2014 two recognized keys, hand-parsed, like the\n  repo's other line-based config parsing.\n- **Embedding built-ins in `VisualRelay.App`** \u2014 the App only carries `AvaloniaResource`\n  assets; the embedded-text precedent (`vr-guard.json` + `NonoProfileEnsurer`) lives in\n  Core, and Core ownership keeps `TaskTemplates` testable without Avalonia.\n- **Binding the dropdown by `SelectedItem` on names** \u2014 display names can collide\n  across layers; index binding is collision-proof.\n- **Granting the user templates dir via `vr-guard.json`** \u2014 see \u00a76.\n- **Any language/framework/runner-specific advice inside the speed-up template** \u2014\n  Visual Relay is general-purpose; the `DoesNotContain(\"dotnet\")` pin guards this.\n- **Auto-numbering (`NN-`) machinery** \u2014 task ordering is the user's convention plus\n  `.relay/task-order.json`; templates don't touch it.\n\n## Constraints\n\n- Touch only: `packaging/task-templates/` (new), `VisualRelay.Core.csproj`,\n  `TaskTemplates.cs` (new), `RelayTaskRepository.cs` (one line),\n  `RelayTaskWriter.cs` (one block), `ProcessRunners.cs` (\u00a76),\n  `MainWindowViewModel.Templates.cs` (new), `MainWindowViewModel.Authoring.cs` (one\n  line), `TaskDetailPanel.axaml` (\u00a78), `README.md` (\u00a79), and the test files named\n  above.\n- Do not modify `CreateNewTaskAsync`, `RelayTaskWriter.CreateAsync`,\n  `RelayDriver.CodeChangeGate.cs`, `WorktreeFilter.cs`, `WorktreeResetter.cs`,\n  `GitCommitter.Untracked.cs`, or `packaging/nono/vr-guard.json`.\n- Do not create `llm-tasks/templates/` content in this repo as part of this task \u2014 the\n  built-ins are the shipped templates; the repo layer stays empty until someone adds to\n  it.\n- Conventional Commits; minimal diffs; keep every file inside its budget above.\n\n\n## Manifest\npackaging/task-templates/blank.md\npackaging/task-templates/speed-up-automated-tests.md\nsrc/VisualRelay.Core/Tasks/TaskTemplates.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs\nsrc/VisualRelay.Core/VisualRelay.Core.csproj\nsrc/VisualRelay.Core/Execution/ProcessRunners.cs\nsrc/VisualRelay.Core/Tasks/RelayTaskRepository.cs\nsrc/VisualRelay.Core/Tasks/RelayTaskWriter.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs\nsrc/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\nREADME.md\ntests/VisualRelay.Tests/TaskTemplatesTests.cs\ntests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs\ntests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs\ntests/VisualRelay.Tests/RelayTaskWriterTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs\ntests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs\ntests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\ntests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs\ntests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Implement a three-layer (built-in/user/repo) new-task template system with a dropdown in the New-task dialog. The spec prescribes exact file contents, line changes, and test assertions across ~12 files. Three viable approaches differ in how built-in templates are shipped (embedded resources vs C# constants) and whether template loading is static or DI-backed.\",\n  \"options\": [\n    \"A \u2014 Exact spec compliance: embedded resources in VisualRelay.Core.csproj + static TaskTemplates class, matching the NonoProfileEnsurer pattern. Lowest risk, best alignment with existing conventions, but requires csproj edit and resource-stream plumbing.\",\n    \"B \u2014 C# string constants for built-ins: define template content as const fields in TaskTemplates.cs, avoid embedded resources entirely. Eliminates csproj touch and resource-stream fragility, but breaks from the project's established packaging convention and increases C# file size with prose content.\",\n    \"C \u2014 Interface-based ITaskTemplateProvider with DI: three separate providers composed by a composite. Best long-term extensibility and clean test mocking, but is over-engineered for the current scope \u2014 the rest of the codebase uses statics for this kind of infra, and adding DI plumbing for a single dropdown is disproportionate.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The codebase is well-structured with clear patterns to replicate: (1) Embedded resources follow the NonoProfileEnsurer pattern \u2014 csproj LogicalName + GetManifestResourceStream + StreamingReader. packaging/task-templates/ must be created alongside packaging/nono/. (2) BuildNonoPrefix in ProcessRunners.cs (lines 151-183) is the static nono-arg builder; adding a 5th optional parameter userTemplatesDirOverride and a Directory.CreateDirectory + -a pair after SandboxExtraAllowPaths is the required change. (3) RelayTaskRepository.cs SkippedDirectories (line 9) needs 'templates' added. (4) RelayTaskWriter.cs ValidateSlug (lines 40-46) needs the 'completed'/'templates' reserved-name check. (5) OpenNewTaskDialog in MainWindowViewModel.Authoring.cs gets PrepareNewTaskTemplates() on line 249. (6) TaskDetailPanel.axaml new-task grid (lines 172-205) shifts from RowDefinitions='Auto,*,Auto' to 'Auto,Auto,*,Auto' with template row inserted at row 0. (7) TestRepository redirects XDG_CONFIG_HOME to repo.Root, so user template tests resolve to correct isolated paths. (8) 6 existing test files assert exact BuildNonoPrefix argv indices and need updating for the new -a <templatesDir> pair. (9) README.md has space between '# What Visual Relay Does' (ends line 65) and '# Tests' (line 67). (10) All file budgets have headroom \u2014 MainWindowViewModel.cs is at exactly 300 (no touch), Authoring.cs at 294 (1 new line = 295 max), RelayTaskWriter.cs at 296 (299 max), ProcessRunners.cs at 184 (200 max), TaskDetailPanel.axaml at 275 (292 max).\",\n  \"constraints\": [\n    \"Touch only the ~12 files listed in spec \u2014 no modifications to MainWindowViewModel.cs, RelayTaskWriter.CreateAsync, RelayDriver.CodeChangeGate.cs, WorktreeFilter.cs, WorktreeResetter.cs, GitCommitter.Untracked.cs, or packaging/nono/vr-guard.json.\",\n    \"MainWindowViewModel.cs must remain at exactly 300 lines (currently 300) \u2014 zero changes.\",\n    \"MainWindowViewModel.Authoring.cs max 295 lines (currently 294) \u2014 exactly one line added.\",\n    \"RelayTaskWriter.cs max 299 lines (currently 296) \u2014 adding ~3 lines for the reserved name check.\",\n    \"RelayTaskRepository.cs max 291 lines \u2014 edit one line in place (SkippedDirectories array).\",\n    \"ProcessRunners.cs max 200 lines (currently 184).\",\n    \"TaskDetailPanel.axaml max 292 lines (currently 275).\",\n    \"TaskTemplates.cs new file \u2264 300 lines.\",\n    \"MainWindowViewModel.Templates.cs new file \u2264 300 lines.\",\n    \"No bare empty catch blocks \u2014 each 'catch (Exception)' must have the required comment.\",\n    \"No language/framework/runner-specific content in speed-up template \u2014 pinned by DoesNotContain('dotnet') test.\",\n    \"No YAML library \u2014 hand-parse frontmatter like the rest of the repo's line-based config parsing.\",\n    \"No DI or interface-based template provider \u2014 use static TaskTemplates class like NonoProfileEnsurer.\",\n    \"No config key / RelayConfig.TasksDir plumbing for template locations \u2014 fixed well-known paths only.\",\n    \"No template management UI, file watchers, or caching \u2014 files are the interface, re-enumerate on every dialog open.\",\n    \"No repo templates under .relay/ \u2014 they go under llm-tasks/templates/.\",\n    \"No SelectedItem binding on dropdown names \u2014 use index binding to avoid cross-layer name collisions.\",\n    \"Do not create llm-tasks/templates/ content in the repo as part of this task.\",\n    \"userTemplatesDirOverride parameter on BuildNonoPrefix is for tests only \u2014 production callers pass nothing.\",\n    \"All 6 existing arg-assertion test files must be updated with the new -a <templatesDir> pair \u2014 tests must not be deleted or weakened.\",\n    \"Conventional Commits; minimal diffs; zero new InspectCode findings.\",\n    \"The speed-up template body is verbatim \u2014 keep every line including the pinned commit-bullet line.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"All file budgets confirmed via wc -l: MainWindowViewModel.cs=300 (at cap, do not touch), MainWindowViewModel.Authoring.cs=294 (cap 295, +1 line), RelayTaskWriter.cs=296 (cap 299, +3 lines), RelayTaskRepository.cs=291 (edit-in-place, stays 291), ProcessRunners.cs=184 (cap 200, ~+10 lines), TaskDetailPanel.axaml=275 (cap 292, ~+8 lines), README.md=100 (new section between lines 65-67). No TaskTemplates.cs, no MainWindowViewModel.Templates.cs, no packaging/task-templates/ exist yet. csproj has exactly one EmbeddedResource for vr-guard.json in its own <ItemGroup>. BuildNonoPrefix signature confirmed: `(RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null, bool verboseDiagnostics = false)` \u2014 adding 5th optional `userTemplatesDirOverride` is backward-compatible. Two production callers: ProcessRunners.Helpers.cs:27 and SandboxedTestRunner.cs:56, both pass no override. NonoProfileEnsurer.ReadEmbedded pattern confirmed (GetManifestResourceStream + null check \u2192 InvalidOperationException + StreamReader). TestRepository sets XDG_CONFIG_HOME=repo.Root, so user templates resolve to <repo.Root>/visual-relay/templates. NewTaskAuthoringTests has [Collection(\\\"Headless\\\")]; new partial must not duplicate the attribute. CreateNewTaskAsync lines 268-270 prepend '# {title}\\\\n\\\\n' to body \u2014 confirmed, matching spec's double-heading rule. RelayTaskWriter.CreateAsync line 100 hardcodes 'llm-tasks'. RelayTaskRepository SkippedDirectories line 9 currently ['completed', '_ideation']. IsBookkeepingPath ends with IsPathUnderDirectory(rootPath, path, tasksDir) \u2014 templates subdir is covered. IsUnderTasksDir uses prefix checks on llm-tasks/ \u2014 templates subdir already covered. 6 test files assert exact BuildNonoPrefix argv indices and must be updated: SwivalSubagentRunnerSandboxTests.cs (270 lines, exact array assertions at lines 41, 125, 138, 153-169, 184-190, 204-213), SwivalSubagentRunnerSandboxTests.SkipDirs.cs (88 lines, exact arrays at lines 51, 64), SandboxExtraAllowPathsConfigTests.cs (262 lines, index assertions at lines 230-232, 247-250), SandboxDiagnosticsToggleTests.cs (131 lines, Take(4) at line 58 \u2014 still matches, Contains-based checks survive; the Silent_IsOutputOnly_SandboxUnchanged at line 63 uses Where filter so robust), SandboxedTestRunnerArgumentTests.cs (268 lines, exact arrays at lines 25, 48, 64, 73, 83-91, 116-119), NonoLaunchDriftGuardTests.cs (77 lines, Take(4) at line 26 survives; filter-based equality at line 36-37 survives since both agent+verify get same templates grant).\",\n  \"excerpts\": [\n    \"TaskDetailPanel.axaml actual path: src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml (spec says src/VisualRelay.App/Views/TaskDetailPanel.axaml \u2014 missing Controls/ subdirectory).\",\n    \"RelayTaskWriter.ValidateSlugForRename (line 252-281) has its own copy of the reserved-prefix check (lines 259-262: `if (slug.StartsWith(\\\"DONE-\\\"...) || slug.StartsWith(\\\"IGNORE-\\\"...))`) that won't be updated per spec's 299-line budget and 'Do not add anything else to this file' constraint. Renaming a task to 'templates' or 'completed' would succeed while creating one would be blocked \u2014 intentional omission given budget.\",\n    \"SwivalSubagentRunnerSandboxTests.cs line 169: `Assert.Equal(swivalPrefix.Count - 2, verifyPrefix.Count)` \u2014 after adding the templates grant (same in both prefixes), the count relationship still holds but exact indices referenced nearby (e.g. line 159 `Assert.Equal(\\\"--rollback\\\", swivalPrefix[4])`) will shift by +2 after the new -a <templatesDir> pair.\",\n    \"SandboxExtraAllowPathsConfigTests.cs lines 230-232: `Assert.Equal(\\\"-a\\\", prefix[4]); Assert.Equal(extra, prefix[5]); Assert.Equal(\\\"--rollback\\\", prefix[6])` \u2014 after the templates -a pair, these become prefix[6]/[7]/[8]. Similarly lines 247-250 for verification prefix shift from [4]/[5]/[6]/[7] to [6]/[7]/[8]/[9].\",\n    \"SandboxedTestRunnerArgumentTests.cs line 25: `args.Take(6)` asserts `{ \\\"run\\\", \\\"--profile\\\", ProfilePath, \\\"--allow-cwd\\\", \\\"--silent\\\", \\\"--\\\" }` \u2014 the templates -a pair will appear between --allow-cwd (index 3) and --silent, so Take(6) becomes Take(8). Lines 48, 64, 73, 83-91, 116-119 all have similar index-pinned assertions.\",\n    \"BuildNonoPrefix_TwoCallerPreamblesDifferOnlyInRollbackFlags (SwivalSubagentRunnerSandboxTests.cs line 142) asserts swivalPrefix.Take(4) = {run, --profile, <abs>, --allow-cwd} \u2014 this survives since templates grant is after index 3. But lines 159-169 assert exact indices [4] through [7] which shift.\",\n    \"NonoLaunchDriftGuardTests.cs line 36: `agentCore = agentPrefix.Where(x => x is not \\\"--rollback\\\" and not \\\"--no-rollback-prompt\\\").ToList(); Assert.Equal(agentCore, verifyPrefix)` \u2014 survives because both prefixes get the identical templates -a pair. Line 26 `Assert.Equal(head, agentPrefix.Take(4))` also survives.\"\n  ],\n  \"repro\": \"1. Confirm budgets: `wc -l src/VisualRelay.App/ViewModels/MainWindowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs src/VisualRelay.Core/Tasks/RelayTaskWriter.cs src/VisualRelay.Core/Tasks/RelayTaskRepository.cs src/VisualRelay.Core/Execution/ProcessRunners.cs src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml README.md` \u2192 300, 294, 296, 291, 184, 275, 100. 2. Check packaging/task-templates/ doesn't exist: `ls packaging/task-templates/` \u2192 no match. 3. Verify BuildNonoPrefix signature: `grep -n 'internal static IReadOnlyList<string> BuildNonoPrefix' src/VisualRelay.Core/Execution/ProcessRunners.cs` \u2192 line 151 with 4 params. 4. Confirm ValidateSlugForRename has separate prefix check: `grep -n 'DONE-\\\\|IGNORE-' src/VisualRelay.Core/Tasks/RelayTaskWriter.cs` \u2192 lines 42-43 (ValidateSlug) and lines 259-260 (ValidateSlugForRename). 5. Verify production BuildNonoPrefix callers pass no 5th arg: `grep -n 'BuildNonoPrefix' src/VisualRelay.Core/Execution/ProcessRunners.Helpers.cs src/VisualRelay.Core/Execution/SandboxedTestRunner.cs` \u2192 lines 27 and 56, both 4-arg calls. 6. Confirm 6 test files that assert exact argv indices: `grep -ln 'BuildNonoPrefix.*TestConfig\\\\|prefix\\\\[[0-9]\\\\]\\\\|\\\\.Take([0-9])\\\\|new\\\\[\\\\] { \\\"run\\\"' tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs tests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs`.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Summary\\n\\nImplement a three-layer (built-in/user/repo) new-task template system. A Template dropdown in the New-task dialog prefills title and body from `.md` template files. Two built-in templates ship as embedded resources. Users add templates by dropping `.md` files into `~/.config/visual-relay/templates/` or `llm-tasks/templates/`. Template files use optional YAML-style frontmatter (`name:` for dropdown label, `title:` for task-title prefill). The dropdown re-enumerates on every dialog open.\\n\\n## Stage 1: New source files (infrastructure)\\n\\n### 1a. Create `packaging/task-templates/blank.md`\\nExact content per spec \u00a71 \u2014 empty body with frontmatter `name: Blank`.\\n\\n### 1b. Create `packaging/task-templates/speed-up-automated-tests.md`\\nExact verbatim content per spec \u00a71 \u2014 must include the pinned commit-bullet line and stack-agnostic coverage rules. \\n\\n### 1c. Create `src/VisualRelay.Core/Tasks/TaskTemplates.cs`\\nNew static class in `VisualRelay.Core.Tasks` namespace (sits beside `RelayTaskWriter.cs`/`RelayTaskRepository.cs`):\\n- `TaskTemplateSource` enum: `BuiltIn`, `User`, `Repo`\\n- `TaskTemplate` record: `Id`, `Name`, `Title`, `Body`, `Source`\\n- `ResolveUserTemplatesDir(IEnvironmentAccessor?)` \u2192 `Path.Combine(XdgConfig.ResolveConfigDir(accessor), \\\"visual-relay\\\", \\\"templates\\\")`\\n- `Load(string userTemplatesDir, string repoTemplatesDir)` \u2192 IReadOnlyList<TaskTemplate>\\n  - Seed `Dictionary<string, TaskTemplate>(OrdinalIgnoreCase)` with built-ins (read via `GetManifestResourceStream` like `NonoProfileEnsurer.ReadEmbedded`; throw `InvalidOperationException` on null stream)\\n  - Overlay user dir, then repo dir (each: enumerate `*.md` top-level, wrap in try/catch with required comment, parse with `Parse`)\\n  - Order: `blank` first, then by `Name` OrdinalIgnoreCase, then by `Id`\\n- `internal static Parse(string id, string content, TaskTemplateSource source)` \u2014 normalize `\\\\r\\\\n`\u2192`\\\\n`, split on `\\\\n`, parse frontmatter if `lines[0] == \\\"---\\\"`, extract `name:` and `title:` keys, body = rest with `TrimStart('\\\\n')`. Fallbacks: `Name`=id, `Title`=string.Empty.\\n\\n### 1d. Create `src/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs`\\nNew partial of `MainWindowViewModel` with:\\n- `NewTaskTemplateNames` ObservableCollection<string>\\n- `SelectedNewTaskTemplateIndex` [ObservableProperty]\\n- `_newTaskTemplates` IReadOnlyList<TaskTemplate>\\n- `_lastAppliedTemplateTitle` / `_lastAppliedTemplateBody`\\n- `PrepareNewTaskTemplates()` \u2014 calls `TaskTemplates.Load()`, populates `NewTaskTemplateNames`, resets last-applied trackers, sets `SelectedNewTaskTemplateIndex` to `IndexOfBlank()` (with -1\u2192index reset trick)\\n- `IndexOfBlank()` \u2014 scans for id==\\\"blank\\\" case-insensitively, falls back to 0\\n- `OnSelectedNewTaskTemplateIndexChanged(int)` \u2014 applies template title/body only when field is empty or matches last-applied value (never clobbers user edits)\\n\\n## Stage 2: Edit existing files (no new files)\\n\\n### 2a. `src/VisualRelay.Core/VisualRelay.Core.csproj`\\nAdd two `<EmbeddedResource>` entries in the existing `<ItemGroup>` at line 12:\\n```xml\\n<EmbeddedResource Include=\\\"..\\\\..\\\\packaging\\\\task-templates\\\\blank.md\\\" LogicalName=\\\"VisualRelay.Core.task-templates.blank.md\\\" />\\n<EmbeddedResource Include=\\\"..\\\\..\\\\packaging\\\\task-templates\\\\speed-up-automated-tests.md\\\" LogicalName=\\\"VisualRelay.Core.task-templates.speed-up-automated-tests.md\\\" />\\n```\\n\\n### 2b. `src/VisualRelay.Core/Execution/ProcessRunners.cs`\\n- Add `using VisualRelay.Core.Tasks;` to usings\\n- Extend `BuildNonoPrefix` signature with `string? userTemplatesDirOverride = null` as 5th optional parameter\\n- After the `SandboxExtraAllowPaths` block (line 164), insert the grant:\\n  ```csharp\\n  var templatesDir = userTemplatesDirOverride ?? TaskTemplates.ResolveUserTemplatesDir();\\n  Directory.CreateDirectory(templatesDir);\\n  args.Add(\\\"-a\\\");\\n  args.Add(templatesDir);\\n  ```\\n\\n### 2c. `src/VisualRelay.Core/Tasks/RelayTaskRepository.cs`\\nLine 9: Change `SkippedDirectories` from `[\\\"completed\\\", \\\"_ideation\\\"]` to `[\\\"completed\\\", \\\"_ideation\\\", \\\"templates\\\"]`.\\n\\n### 2d. `src/VisualRelay.Core/Tasks/RelayTaskWriter.cs`\\nReplace the reserved-prefix block (lines 40-46):\\n```csharp\\n        if (slug.StartsWith(\\\"DONE-\\\", ...) ||\\n            slug.StartsWith(\\\"IGNORE-\\\", ...) ||\\n            slug is \\\"completed\\\" or \\\"templates\\\")\\n        {\\n            return $\\\"Slug \\\\\\\"{slug}\\\\\\\" is reserved (DONE-/IGNORE- prefix, or the completed/templates folder name). Choose a different name.\\\";\\n        }\\n```\\n\\n### 2e. `src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs`\\nLine 249 (in `OpenNewTaskDialog()` open branch, after `NewTaskError = null;`): insert `PrepareNewTaskTemplates();`.\\n\\n### 2f. `src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml`\\nIn the new-task grid (lines 173-205), change `RowDefinitions=\\\"Auto,*,Auto\\\"` \u2192 `RowDefinitions=\\\"Auto,Auto,*,Auto\\\"`, insert the template dropdown StackPanel before the title TextBox, shift existing rows: title\u2192Row=\\\"1\\\", body TextBox\u2192Row=\\\"2\\\", error TextBlock\u2192Row=\\\"3\\\".\\n\\n### 2g. `README.md`\\nInsert the \\\"# Task Templates\\\" section (per spec \u00a79) between the \\\"# What Visual Relay Does\\\" section (ends line 65) and \\\"# Tests\\\" (line 67).\\n\\n## Stage 3: New test files\\n\\n### 3a. Create `tests/VisualRelay.Tests/TaskTemplatesTests.cs`\\nSealed class, plain `[Fact]`s:\\n- `Parse_Frontmatter_ExtractsNameTitleAndBody`\\n- `Parse_NoFrontmatter_WholeContentIsBody_NameFallsBackToId`\\n- `Parse_CrLf_NormalizedBeforeParsing`\\n- `Parse_UnknownFrontmatterKeys_Ignored`\\n- `Parse_UnclosedFrontmatter_TreatedAsBody`\\n- `Load_BuiltIns_BlankFirstThenSpeedUp` (assert index [0] is blank, [1] is speed-up, pinned content checks)\\n- `Load_UserOverridesBuiltIn_RepoOverridesUser`\\n- `Load_NewIdsFromBothLayers_AppearSortedByName`\\n- `Load_UnreadableEntrySkipped`\\n- `SpeedUpTemplate_PinsLoadBearingContent` (Contains pinned lines, DoesNotContain \\\"dotnet\\\")\\n\\n### 3b. Create `tests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs`\\nNew partial of `public sealed partial class NewTaskAuthoringTests` (no `[Collection]` attribute \u2014 the existing partial `NewTaskAuthoringTests.cs` already has it). `[AvaloniaFact]`s:\\n- `OpenNewTaskDialog_ListsBuiltInsWithBlankSelected`\\n- `SelectingSpeedUpTemplate_PrefillsTitleAndBody`\\n- `TemplateChange_NeverClobbersUserEditedField`\\n- `RepoTemplate_OverridesBuiltInBlank`\\n- `UserTemplate_AppearsInDropdown`\\n\\n### 3c. Create `tests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs`\\nStandalone sealed class \u2014 `RelayTaskRepositoryTests.cs` is at 300/300. One fact:\\n- `ListPendingAsync_SkipsTemplatesDirectory` \u2014 writes task `alpha` and `templates/skeleton`, asserts only `alpha` returned.\\n\\n### 3d. Create `tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs`\\nNew partial of `SwivalSubagentRunnerSandboxTests`. One fact:\\n- `BuildNonoPrefix_GrantsUserTemplatesDir` \u2014 call with `userTemplatesDirOverride: <tempdir>/templates`, assert `-a` and `<tempdir>/templates` present in args after `SandboxExtraAllowPaths` pairs, assert directory created.\\n\\n## Stage 4: Update existing test files (arg-assertion fallout)\\n\\n### 4a. `tests/VisualRelay.Tests/RelayTaskWriterTests.cs` (257\u2192~270 lines)\\nAdd `ValidateSlug_RejectsReservedFolderNames` \u2014 `ValidateSlug(\\\"templates\\\")` and `ValidateSlug(\\\"completed\\\")` return error with \\\"reserved\\\"; `ValidateSlug(\\\"template\\\")` passes.\\n\\n### 4b. `tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs` (270 lines)\\nAdd `private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();`. Update:\\n- Line 41: `Take(9)` \u2192 `Take(11)`, array includes `\\\"-a\\\", TemplatesDir` after `\\\"--allow-cwd\\\"`\\n- Lines 124-126: exact array includes `\\\"-a\\\", TemplatesDir`\\n- Lines 137-139: exact array includes `\\\"-a\\\", TemplatesDir`\\n- Lines 159-162: swivalPrefix indices shift +2: `[4]\u2192[6]`, `[5]\u2192[7]`, `[6]\u2192[8]`, `[7]\u2192[9]`\\n- Line 165: verifyPrefix `[4]\u2192[6]`, line 166 `[5]\u2192[7]`\\n- Lines 186-189: `prefix[4],[5]` stay (extra -a), `prefix[6]\u2192[8]`, `prefix[7]\u2192[9]`\\n- Lines 207-212: `prefix[4],[5]` stay, `prefix[6]\u2192[8]`, `prefix[7]\u2192[9]`, `prefix[8]\u2192[10]`, `prefix[9]\u2192[11]`\\n- Lines 248-249: `Take(9)` \u2192 `Take(11)`, array includes templates pair\\n\\n### 4c. `tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs` (88 lines)\\nAdd `TemplatesDir` property. Update lines 51 and 64: exact arrays include `\\\"-a\\\", TemplatesDir`.\\n\\n### 4d. `tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs` (262 lines)\\nAdd `TemplatesDir`. Update:\\n- Lines 230-232: `prefix[4],[5]` unchanged (extra), `prefix[6]` becomes `\\\"-a\\\"` (templates), add `Assert.Equal(TemplatesDir, prefix[7])`, `prefix[6]` was `\\\"--rollback\\\"` \u2192 now `prefix[8]`\\n- Lines 247-250: `prefix[4],[5]` unchanged, add templates assertions at indices [6],[7], `\\\"--silent\\\"` \u2192 `prefix[8]`, `\\\"--\\\"` \u2192 `prefix[9]`\\n\\n### 4e. `tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs` (131 lines)\\nSurvives with zero changes: `Take(4)` at line 58 still matches (templates grant at index 4+); `Where(a => a != \\\"--silent\\\")` filter at line 64 survives (both prefixes get same templates pair).\\n\\n### 4f. `tests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs` (77 lines)\\nSurvives with zero changes: `Take(4)` at line 26 survives; filter equality at lines 36-37 survives (both prefixes get identical templates grant).\\n\\n### 4g. `tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs` (268 lines)\\nAdd `TemplatesDir`. Update:\\n- Line 25: `Take(6)` \u2192 `Take(8)`, array includes `\\\"-a\\\", TemplatesDir`\\n- Line 48: `Take(6)` \u2192 `Take(8)`\\n- Line 64: exact array includes `\\\"-a\\\", TemplatesDir`\\n- Line 73: exact array includes `\\\"-a\\\", TemplatesDir`\\n- Lines 83-91: swi indices `[4]\u2192[6]`, `[5]\u2192[7]`, `[6]\u2192[8]`, `[7]\u2192[9]`; ver indices `[4]\u2192[6]`, `[5]\u2192[7]`\\n- Lines 116-119: `prefix[4],[5]` stay; `prefix[6]\u2192[8]`, `prefix[7]\u2192[9]`\\n\\n## Verification\\n1. `dotnet build` \u2014 clean\\n2. Run targeted test filter per spec \u2014 all green\\n3. Full suite green\\n4. `./visual-relay check` passes \u2014 zero new InspectCode findings, file-size budgets within limits\",\n  \"manifest\": [\n    \"+packaging/task-templates/blank.md\",\n    \"+packaging/task-templates/speed-up-automated-tests.md\",\n    \"+src/VisualRelay.Core/Tasks/TaskTemplates.cs\",\n    \"+src/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs\",\n    \"src/VisualRelay.Core/VisualRelay.Core.csproj\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.cs\",\n    \"src/VisualRelay.Core/Tasks/RelayTaskRepository.cs\",\n    \"src/VisualRelay.Core/Tasks/RelayTaskWriter.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs\",\n    \"src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml\",\n    \"README.md\",\n    \"+tests/VisualRelay.Tests/TaskTemplatesTests.cs\",\n    \"+tests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs\",\n    \"+tests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs\",\n    \"+tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskWriterTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs\",\n    \"tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\",\n    \"tests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 7, untracked deleted: 4.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/TaskTemplatesTests.cs\",\n    \"tests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs\",\n    \"tests/VisualRelay.Tests/RelayTaskWriterTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs\",\n    \"tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\",\n    \"tests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs\"\n  ],\n  \"rationale\": \"All 125 targeted tests pass (1 skipped: Windows-only UTF-8 test). Implemented the three-layer template system: built-in templates embedded as resources in VisualRelay.Core, user templates in ~/.config/visual-relay/templates/, repo templates in llm-tasks/templates/. The Template dropdown pre-fills title/body without clobbering user edits. Updated all 6 existing arg-assertion test files to include the new `-a <templatesDir>` pair that BuildNonoPrefix now emits for the sandbox write grant. All file-size budgets respected (ProcessRunners.cs=194, RelayTaskWriter.cs=299, Authoring.cs=295, TaskDetailPanel.axaml=289, TaskTemplates.cs=160, Templates.cs=81). No changes to MainWindowViewModel.cs, CreateNewTaskAsync, CodeChangeGate.cs, WorktreeFilter.cs, WorktreeResetter.cs, GitCommitter.Untracked.cs, or vr-guard.json.\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"All 3056 tests pass (113 environment-dependent skipped, 0 failed). File budgets all respected: MainWindowViewModel.cs=300/300, Authoring.cs=295/295, Templates.cs=81/300, TaskDetailPanel.axaml=289/292, RelayTaskWriter.cs=299/299, RelayTaskRepository.cs=291/291, ProcessRunners.cs=194/200, TaskTemplates.cs=136/300. Implemented the three-layer (built-in/user/repo) new-task template system with Template dropdown in the New-task dialog, sandbox write grant for user templates dir, reserved-name validation for 'completed'/'templates' slugs, and templates directory skip in task discovery. Updated all 6 existing arg-assertion test files for the new -a <templatesDir> pair in BuildNonoPrefix. Fixed Parse to only extract frontmatter key-values when the closing --- exists (unclosed frontmatter \u2192 whole content is body, Name falls back to id).\" }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All checks pass. Let me summarize the review findings.\n\nThe implementation is faithful to the spec across all dimensions:\n\n**Source files (\u00a71-\u00a79):**\n- `blank.md` and `speed-up-automated-tests.md` are verbatim per spec, including the pinned commit-bullet line and stack-agnostic content\n- `TaskTemplates.cs` correctly implements the three-layer resolution (BuiltIn\u2192User\u2192Repo overlay), `Parse` with `\\r\\n` normalization and frontmatter extraction, required try/catch with comment, and embedded-resource reading via the `NonoProfileEnsurer` pattern\n- `MainWindowViewModel.Templates.cs` matches spec exactly \u2014 the non-clobbering logic (overwrite only when empty or equal to last-applied) is correct\n- `ProcessRunners.cs` \u2014 `BuildNonoPrefix` extended with the 5th optional param, grant added after `SandboxExtraAllowPaths` block with `Directory.CreateDirectory`\n- `RelayTaskRepository.cs` \u2014 `\"templates\"` added to `SkippedDirectories`\n- `RelayTaskWriter.cs` \u2014 reserved-name check folded into existing block, +3 lines (299/300)\n- `TaskDetailPanel.axaml` \u2014 template dropdown inserted, rows shifted correctly (289/292)\n- `README.md` \u2014 Task Templates section in correct location\n- `VisualRelay.Core.csproj` \u2014 two `EmbeddedResource` entries in existing `ItemGroup`\n\n**Tests:** All required new test files present with correct assertions. The 6 existing arg-assertion test files were updated with `TemplatesDir` and shifted indices. `SandboxDiagnosticsToggleTests.cs` and `NonoLaunchDriftGuardTests.cs` correctly needed no changes (their `Take(4)` and filter-based comparisons are robust to the identical grant in both prefixes) \u2014 minimal diffs.\n\n**Verification:** 125 tests pass (1 Windows-only skip). All file budgets within limits. No out-of-scope files touched (git status confirms only manifest-listed files modified/created).\n\n```json\n{ \"verdict\": \"pass\", \"issues\": [] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 14,
+    "tool_calls_total": 19,
+    "tool_calls_succeeded": 19,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 14,
+    "total_llm_time_s": 612.465,
+    "prompt_cache": {
+      "cached_tokens": 575744,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 4.278,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.485,
+      "prompt_tokens_est": 20246,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "packaging/task-templates/blank.md"
+          },
+          {
+            "file_path": "packaging/task-templates/speed-up-automated-tests.md"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Tasks/TaskTemplates.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 17653
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 9.683,
+      "prompt_tokens_est": 24631,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/VisualRelay.Core.csproj"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Tasks/RelayTaskRepository.cs",
+            "limit": 15
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Tasks/RelayTaskWriter.cs",
+            "offset": 35,
+            "limit": 25
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs",
+            "offset": 240,
+            "limit": 20
+          },
+          {
+            "file_path": "src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml",
+            "offset": 168,
+            "limit": 60
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 19685
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 16.885,
+      "prompt_tokens_est": 29653,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "README.md",
+            "offset": 60,
+            "limit": 25
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/TaskTemplatesTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/NewTaskAuthoringTests.Templates.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayTaskRepositoryTemplatesDirTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.TemplatesGrant.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 18003
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 13.596,
+      "prompt_tokens_est": 34975,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayTaskWriterTests.cs",
+            "limit": 50,
+            "offset": 250
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.SkipDirs.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs",
+            "limit": 60,
+            "offset": 215
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/NonoLaunchDriftGuardTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 44926
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 11.63,
+      "prompt_tokens_est": 46907,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ValidateSlug_RejectsReservedFolderNames",
+        "path": "tests/VisualRelay.Tests/RelayTaskWriterTests.cs",
+        "context_lines": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1506
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && wc -l src/VisualRelay.App/ViewModels/MainWindowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Templates.cs src/VisualRelay.App/Views/Controls/TaskDetailPanel.axaml src/VisualRelay.Core/Tasks/RelayTaskWriter.cs src/VisualRelay.Core/Tasks/RelayTaskRepository.cs src/VisualRelay.Core/Execution/ProcessRunners.cs src/VisualRelay.Core/Tasks/TaskTemplates.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.095,
+      "result_length": 515
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 79.184,
+      "prompt_tokens_est": 47679,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Authoring.cs",
+        "offset": 225,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1085
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CanOpenNewTaskDialog",
+        "path": "src/VisualRelay.App/ViewModels",
+        "context_lines": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.018,
+      "result_length": 948
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 6.568,
+      "prompt_tokens_est": 53769,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/NewTaskAuthoringTests.Create.cs",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1718
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 15.211,
+      "prompt_tokens_est": 54223,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "EnvironmentAccessor",
+        "path": "src/VisualRelay.App/ViewModels",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.017,
+      "result_length": 6489
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "EnvironmentAccessor",
+        "path": "src/VisualRelay.Core/Configuration",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 9938
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 37.909,
+      "prompt_tokens_est": 59143,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "context_lines": 3,
+        "path": "tests/VisualRelay.Tests/NewTaskAuthoringTests.cs",
+        "pattern": "Collection|partial class"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 819
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "context_lines": 5,
+        "path": "tests/VisualRelay.Tests",
+        "pattern": "XDG_CONFIG_HOME",
+        "include": "TestRepository*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.059,
+      "result_length": 17
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 8.218,
+      "prompt_tokens_est": 61479,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "tests/VisualRelay.Tests",
+        "pattern": "XDG_CONFIG_HOME"
+      },
+      "succeeded": true,
+      "duration_s": 0.113,
+      "result_length": 13668
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 239.219,
+      "prompt_tokens_est": 64931,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SandboxExtraAllowPathsConfigTests.cs",
+        "limit": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 206
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --filter \"FullyQualifiedName~TaskTemplatesTests|FullyQualifiedName~NewTaskAuthoringTests|FullyQualifiedName~RelayTaskRepositoryTemplatesDirTests|FullyQualifiedName~RelayTaskRepositoryTests|FullyQualifiedName~RelayTaskWriterTests|FullyQualifiedName~SwivalSubagentRunnerSandboxTests|FullyQualifiedName~SandboxExtraAllowPathsConfigTests|FullyQualifiedName~SandboxDiagnosticsToggleTests|FullyQualifiedName~NonoLaunchDriftGuardTests|FullyQualifiedName~SandboxedTestRunnerArgumentTests\" 2>&1 | tail -30",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 3.729,
+      "result_length": 2049
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 60.762,
+      "prompt_tokens_est": 73536,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core",
+        "pattern": "^using System\\.Text;"
+      },
+      "succeeded": true,
+      "duration_s": 0.052,
+      "result_length": 2810
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core",
+        "pattern": "Encoding\\.UTF8"
+      },
+      "succeeded": true,
+      "duration_s": 0.024,
+      "result_length": 1277
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 60.116,
+      "prompt_tokens_est": 78468,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/nicholaswestby/Dev/visual-relay && git status --short 2>&1 | head -40"
+      },
+      "succeeded": true,
+      "duration_s": 0.135,
+      "result_length": 1054
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 45.001,
+      "prompt_tokens_est": 82692,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -57,6 +57,21 @@ public sealed partial class RelayTaskWriterTests
     }
 
     [Fact]
+    public void ValidateSlug_RejectsReservedFolderNames()
+    {
+        var error = RelayTaskWriter.ValidateSlug("templates");
+        Assert.NotNull(error);
+        Assert.Contains("reserved", error, StringComparison.OrdinalIgnoreCase);
+
+        error = RelayTaskWriter.ValidateSlug("completed");
+        Assert.NotNull(error);
+        Assert.Contains("reserved", error, StringComparison.OrdinalIgnoreCase);
+
+        // Singular — not reserved.
+        Assert.Null(RelayTaskWriter.ValidateSlug("template"));
+    }
+
+    [Fact]
     public async Task CreateAsync_ThrowsWhenSlugCollidesWithExistingNestedTask()
     {
         using var repo = TestRepository.Create();

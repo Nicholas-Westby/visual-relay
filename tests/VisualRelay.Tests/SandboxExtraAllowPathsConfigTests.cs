@@ -1,5 +1,6 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -229,7 +230,9 @@ public sealed class SandboxExtraAllowPathsConfigTests
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
-        Assert.Equal("--rollback", prefix[6]);
+        Assert.Equal("-a", prefix[6]);
+        Assert.Equal(TemplatesDir, prefix[7]);
+        Assert.Equal("--rollback", prefix[8]);
     }
 
     [Fact]
@@ -246,8 +249,10 @@ public sealed class SandboxExtraAllowPathsConfigTests
 
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extra, prefix[5]);
-        Assert.Equal("--silent", prefix[6]); // quiet default sits before the -- separator
-        Assert.Equal("--", prefix[7]);
+        Assert.Equal("-a", prefix[6]);
+        Assert.Equal(TemplatesDir, prefix[7]);
+        Assert.Equal("--silent", prefix[8]); // quiet default sits before the -- separator
+        Assert.Equal("--", prefix[9]);
     }
 
     private static RelayConfig TestConfig() =>
@@ -259,4 +264,6 @@ public sealed class SandboxExtraAllowPathsConfigTests
             FirstOutputTimeoutMsByTier: new Dictionary<string, int>
             { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
             FirstOutputTimeoutMs: 660_000);
+
+    private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 }

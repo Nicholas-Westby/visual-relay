@@ -6,7 +6,7 @@ namespace VisualRelay.Core.Tasks;
 
 public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gitInvoker = null)
 {
-    private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation"];
+    private static readonly HashSet<string> SkippedDirectories = ["completed", "_ideation", "templates"];
 
     private string RootPath { get; } = rootPath;
     public async Task<IReadOnlyList<RelayTaskItem>> ListPendingAsync(CancellationToken cancellationToken = default)

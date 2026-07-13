@@ -64,6 +64,20 @@ limitations; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
   tool calls, tool results, and thinking records.
 - Estimates time and monetary cost per task and per stage from Swival reports.
 
+# Task Templates
+
+The New-task form offers a template dropdown. Templates are markdown files with an
+optional `---` frontmatter block (`name:` labels the dropdown, `title:` prefills the
+task title); the rest of the file prefills the body. Don't start a template body with
+a `# Heading` — task creation prepends one from the title.
+
+Three layers, most local wins (matched by filename): built-in templates ship with the
+app; user templates live in `~/.config/visual-relay/templates/` (respects
+`XDG_CONFIG_HOME`; sandboxed task runs may write here too); repo templates live in
+`llm-tasks/templates/` and can be edited even during an active run, like task specs.
+Drop a new `.md` file in either folder — the dropdown re-reads them each time the
+form opens.
+
 # Tests
 
 To run the main test suite:

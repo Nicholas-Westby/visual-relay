@@ -1,4 +1,5 @@
 using VisualRelay.Core.Logging;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -150,7 +151,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     /// </summary>
     internal static IReadOnlyList<string> BuildNonoPrefix(
         RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,
-        bool verboseDiagnostics = false)
+        bool verboseDiagnostics = false, string? userTemplatesDirOverride = null)
     {
         // Load by absolute path, not the global profile name: NonoProfileEnsurer
         // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
@@ -162,6 +163,15 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         {
             foreach (var path in paths) { args.Add("-a"); args.Add(path); }
         }
+
+        // Standing write grant for the user task-templates dir so sandboxed runs can
+        // author and update templates. Created eagerly so the grant always resolves
+        // and users can discover the folder. Kilobytes of markdown — negligible
+        // against nono's rollback-preflight copy budget.
+        var templatesDir = userTemplatesDirOverride ?? TaskTemplates.ResolveUserTemplatesDir();
+        Directory.CreateDirectory(templatesDir);
+        args.Add("-a");
+        args.Add(templatesDir);
 
         if (skipDirs is { Count: > 0 })
         {

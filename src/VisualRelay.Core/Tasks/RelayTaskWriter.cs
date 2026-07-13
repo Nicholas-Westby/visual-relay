@@ -37,12 +37,15 @@ public static class RelayTaskWriter
             return "Slug is empty — enter a title to derive one.";
         }
 
-        // Reserved prefixes — check before case rules since the callers
-        // may pass un-normalised slugs.
+        // Reserved prefixes and folder names — check before case rules since the
+        // callers may pass un-normalised slugs. "completed" and "templates" are
+        // real folders under llm-tasks/ (the archive / task templates), so a task
+        // by either name would be skipped by discovery and invisible in the queue.
         if (slug.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ||
-            slug.StartsWith("IGNORE-", StringComparison.OrdinalIgnoreCase))
+            slug.StartsWith("IGNORE-", StringComparison.OrdinalIgnoreCase) ||
+            slug is "completed" or "templates")
         {
-            return $"Slug \"{slug}\" starts with a reserved prefix (DONE-/IGNORE-). Choose a different name.";
+            return $"Slug \"{slug}\" is reserved (DONE-/IGNORE- prefix, or the completed/templates folder name). Choose a different name.";
         }
 
         // Must be only lowercase letters, digits, and hyphens.

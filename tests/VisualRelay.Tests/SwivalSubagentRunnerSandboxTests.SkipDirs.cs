@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.Tests;
 
@@ -48,7 +49,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: null);
 
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
             prefix);
         Assert.DoesNotContain("--skip-dir", prefix);
     }
@@ -61,7 +62,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true, skipDirs: Array.Empty<string>());
 
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
             prefix);
         Assert.DoesNotContain("--skip-dir", prefix);
     }

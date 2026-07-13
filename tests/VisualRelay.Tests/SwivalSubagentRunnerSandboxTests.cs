@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using VisualRelay.Core.Tasks;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
@@ -35,11 +36,11 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // Launched process is nono, not swival.
         Assert.Equal("nono", fileName);
 
-        // Exact nono prefix: run --profile <abs> --allow-cwd --rollback --no-rollback-prompt --silent -- swival ...
+        // Exact nono prefix: run --profile <abs> --allow-cwd -a <templatesDir> --rollback --no-rollback-prompt --silent -- swival ...
         // (--silent is the quiet default — output-only; it never weakens the sandbox.)
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--", "swival" },
-            args.Take(9));
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--", "swival" },
+            args.Take(11));
 
         // Everything after `-- swival` is the swival arg list, unchanged.
         var separatorIdx = ((IList<string>)args).IndexOf("--");
@@ -122,20 +123,20 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
 
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--" },
             prefix);
     }
 
     [Fact]
     public void BuildNonoPrefix_WithoutRollback_OmitsRollbackFlags()
     {
-        // Verification path: rollback=false → run --profile <abs> --allow-cwd --silent --
+        // Verification path: rollback=false → run --profile <abs> --allow-cwd -a <templatesDir> --silent --
         var config = TestConfig();
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--silent", "--" },
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" },
             prefix);
     }
 
@@ -149,21 +150,21 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         var swivalPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
         var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        // Both start with: run --profile <abs> --allow-cwd
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" },
-            swivalPrefix.Take(4));
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd" },
-            verifyPrefix.Take(4));
+        // Both start with: run --profile <abs> --allow-cwd -a <templatesDir>
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir },
+            swivalPrefix.Take(6));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir },
+            verifyPrefix.Take(6));
 
-        // Swival has --rollback --no-rollback-prompt at 4,5, then --silent at 6, -- at 7.
-        Assert.Equal("--rollback", swivalPrefix[4]);
-        Assert.Equal("--no-rollback-prompt", swivalPrefix[5]);
-        Assert.Equal("--silent", swivalPrefix[6]);
-        Assert.Equal("--", swivalPrefix[7]);
+        // Swival has --rollback --no-rollback-prompt at 6,7, then --silent at 8, -- at 9.
+        Assert.Equal("--rollback", swivalPrefix[6]);
+        Assert.Equal("--no-rollback-prompt", swivalPrefix[7]);
+        Assert.Equal("--silent", swivalPrefix[8]);
+        Assert.Equal("--", swivalPrefix[9]);
 
-        // Verify jumps straight to --silent at 4, then -- at 5 (no rollback flags).
-        Assert.Equal("--silent", verifyPrefix[4]);
-        Assert.Equal("--", verifyPrefix[5]);
+        // Verify has --silent at 6, -- at 7 (rollback flags absent; -a <templatesDir> at 4,5).
+        Assert.Equal("--silent", verifyPrefix[6]);
+        Assert.Equal("--", verifyPrefix[7]);
 
         // Length difference is exactly 2 (the rollback flags); --silent is in both.
         Assert.Equal(swivalPrefix.Count - 2, verifyPrefix.Count);
@@ -181,12 +182,14 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false);
 
-        // Prefix: run --profile <abs> --allow-cwd -a <path> --silent --
+        // Prefix: run --profile <abs> --allow-cwd -a <extra> -a <templatesDir> --silent --
         Assert.Equal("run", prefix[0]);
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extraPath, prefix[5]);
-        Assert.Equal("--silent", prefix[6]);
-        Assert.Equal("--", prefix[7]);
+        Assert.Equal("-a", prefix[6]);
+        Assert.Equal(TemplatesDir, prefix[7]);
+        Assert.Equal("--silent", prefix[8]);
+        Assert.Equal("--", prefix[9]);
     }
 
     [Fact]
@@ -201,15 +204,17 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
 
         var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
 
-        // Prefix: run --profile <abs> --allow-cwd -a <path> --rollback --no-rollback-prompt --silent --
+        // Prefix: run --profile <abs> --allow-cwd -a <path> -a <templatesDir> --rollback --no-rollback-prompt --silent --
         // The -a flags come BEFORE --rollback; --silent (quiet default) sits last before --.
         Assert.Equal("run", prefix[0]);
         Assert.Equal("-a", prefix[4]);
         Assert.Equal(extraPath, prefix[5]);
-        Assert.Equal("--rollback", prefix[6]);
-        Assert.Equal("--no-rollback-prompt", prefix[7]);
-        Assert.Equal("--silent", prefix[8]);
-        Assert.Equal("--", prefix[9]);
+        Assert.Equal("-a", prefix[6]);
+        Assert.Equal(TemplatesDir, prefix[7]);
+        Assert.Equal("--rollback", prefix[8]);
+        Assert.Equal("--no-rollback-prompt", prefix[9]);
+        Assert.Equal("--silent", prefix[10]);
+        Assert.Equal("--", prefix[11]);
     }
 
     [Fact]
@@ -245,8 +250,8 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
 
         Assert.Equal("nono", fileName);
         Assert.Equal(
-            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "--rollback", "--no-rollback-prompt", "--silent", "--", "swival" },
-            args.Take(9));
+            new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--rollback", "--no-rollback-prompt", "--silent", "--", "swival" },
+            args.Take(11));
 
         // Swival args follow after -- swival
         var separatorIdx = ((IList<string>)args).IndexOf("--");
@@ -257,6 +262,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     // The VR-owned profile abs path the prefix now carries (--profile <abs>),
     // resolved from the real process env exactly as production does.
     private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();
+    private static string TemplatesDir => TaskTemplates.ResolveUserTemplatesDir();
 
     private static RelayConfig TestConfig() =>
         new("llm-tasks", "true", "true", [],
