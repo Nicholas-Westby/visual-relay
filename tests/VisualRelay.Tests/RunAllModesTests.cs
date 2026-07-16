@@ -15,12 +15,13 @@ public sealed partial class RunAllModesTests
     // ── Run All mode enumeration ──────────────────────────────────────────
 
     [Fact]
-    public void RunAllMode_HasStandardAndSequentialValues()
+    public void RunAllMode_HasAllValues()
     {
         var values = Enum.GetValues<RunAllMode>();
-        Assert.Equal(2, values.Length);
+        Assert.Equal(3, values.Length);
         Assert.Contains(RunAllMode.Standard, values);
         Assert.Contains(RunAllMode.Sequential, values);
+        Assert.Contains(RunAllMode.RestartBetweenTasks, values);
     }
 
     [Fact]

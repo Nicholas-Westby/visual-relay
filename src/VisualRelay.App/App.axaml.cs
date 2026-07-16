@@ -7,6 +7,8 @@ using VisualRelay.App.Services;
 using VisualRelay.App.ViewModels;
 using VisualRelay.App.Views;
 using VisualRelay.App.Views.Controls.Buttons;
+using VisualRelay.Core.Logging;
+using VisualRelay.Core.Queue;
 
 namespace VisualRelay.App;
 
@@ -42,6 +44,11 @@ public partial class App : Application
             viewModel.StartBackendMonitoring();
             viewModel.StartElapsedTimer();
             viewModel.StartObsidianBridge();
+
+            // RestartBetweenTasks resume: if a fresh handoff sidecar is
+            // present, reopen its recorded root path and auto-continue
+            // the drain. Stale sidecars are discarded loudly.
+            TryAutoResumeFromHandoff(viewModel, window);
 
             // Localhost HTTP control surface so an operator can drive the app
             // from curl exactly as if clicking its buttons (loopback-only;
@@ -79,6 +86,56 @@ public partial class App : Application
         MacDockIcon.TrySet();
 
         base.OnFrameworkInitializationCompleted();
+    }
+
+    private static void TryAutoResumeFromHandoff(MainWindowViewModel viewModel, Window window)
+    {
+        // Read the handoff from the current working directory first — the
+        // relauncher spawns the new process with WorkingDirectory set to the
+        // handoff root, so the sidecar lives at CWD/.relay/restart-handoff.json.
+        // Fall back to viewModel.RootPath (e.g. when the app was restarted
+        // manually and CWD might differ).
+        var handoff = RestartHandoff.Read(Environment.CurrentDirectory)
+            ?? RestartHandoff.Read(viewModel.RootPath);
+        if (handoff is null) return;
+
+        // Use the handoff's recorded RootPath as the authority for all
+        // subsequent operations — it's the repo the run was working on.
+        var targetRoot = handoff.RootPath;
+
+        // User pause always wins over auto-continue.
+        if (viewModel.PauseRequested) return;
+
+        var now = DateTimeOffset.UtcNow;
+        if (RestartHandoff.IsStale(handoff, now))
+        {
+            DrainSummaryLog.Write(targetRoot, handoff.DrainId,
+                "restart-resume", "stale-handoff",
+                $"age={now - handoff.Timestamp:g} root-exists={Directory.Exists(handoff.RootPath)}");
+            RestartHandoff.Delete(Environment.CurrentDirectory);
+            RestartHandoff.Delete(targetRoot);
+            return;
+        }
+
+        DrainSummaryLog.Write(targetRoot, handoff.DrainId,
+            "restart-resume", "pending",
+            $"pending={handoff.PendingCount} commit={handoff.CommitSha}");
+
+        // Consume the handoff early — the sidecar must not be left behind
+        // if the auto-drain never starts (e.g. empty queue).
+        RestartHandoff.MarkConsumed(Environment.CurrentDirectory);
+        RestartHandoff.MarkConsumed(targetRoot);
+
+        // Reopen the recorded root path so we work on the right repo.
+        viewModel.RootPath = targetRoot;
+        _ = viewModel.LoadInitialAsync();
+
+        viewModel.SelectedRunAllMode = RunAllMode.RestartBetweenTasks;
+
+        // Auto-continue the drain on the Dispatcher so UI is fully up first.
+        Avalonia.Threading.Dispatcher.UIThread.Post(
+            () => _ = viewModel.DrainQueueCommand.ExecuteAsync(null),
+            Avalonia.Threading.DispatcherPriority.Background);
     }
 
     /// <summary>

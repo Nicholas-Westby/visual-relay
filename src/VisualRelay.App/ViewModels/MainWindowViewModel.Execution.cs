@@ -99,6 +99,13 @@ public partial class MainWindowViewModel
 
             _activeDrainController = controller;
 
+            // RestartBetweenTasks: when the drain stops after a committed
+            // task the controller invokes this callback with the handoff.
+            // We capture it so we can spawn the relauncher after the drain
+            // returns and the controller is done writing the sidecar.
+            RestartHandoff? pendingRestartHandoff = null;
+            controller.OnRestartRequested = h => pendingRestartHandoff = h;
+
             // Bridge: when a new task is created mid-drain (CreateNewTaskAsync →
             // ReloadTaskListAsync), it lands in the GUI's Tasks collection but not in
             // controller.Tasks. This source lets the drain loop pull fresh task items
@@ -113,22 +120,13 @@ public partial class MainWindowViewModel
             controller.ApplyOrder(Tasks.Select(t => t.Id).ToList());
             // Remove any task that is currently being rewritten — its on-disk spec is
             // not finalised until the rewrite completes, so it must not be executed.
-            var rewritingSnapshot = new HashSet<string>(_rewritingTaskIds, StringComparer.Ordinal);
             for (var i = controller.Tasks.Count - 1; i >= 0; i--)
-            {
-                if (rewritingSnapshot.Contains(controller.Tasks[i].Id))
+                if (_rewritingTaskIds.Contains(controller.Tasks[i].Id))
                     controller.Tasks.RemoveAt(i);
-            }
 
             IReadOnlyList<RelayTaskOutcome> results;
-            try
-            {
-                results = await controller.DrainAsync(mode: SelectedRunAllMode);
-            }
-            finally
-            {
-                _activeDrainController = null;
-            }
+            try { results = await controller.DrainAsync(mode: SelectedRunAllMode); }
+            finally { _activeDrainController = null; }
 
             var flaggedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Flagged);
             var committedCount = results.Count(r => r.Status == RelayTaskOutcomeStatus.Committed);
@@ -151,6 +149,15 @@ public partial class MainWindowViewModel
 
             DropStaleRunAnchorsAfterDrain(); // drop anchors for tasks left Planned (resume re-anchors)
             await RefreshTasksAfterDrainAsync();
+
+            // RestartBetweenTasks: if the drain stopped because of a
+            // committed task, the handoff sidecar is already on disk.
+            // Now spawn the detached relauncher and shut down so the
+            // next instance can recompile and resume.
+            if (pendingRestartHandoff is not null)
+            {
+                await TriggerRestartAndShutdownAsync(pendingRestartHandoff);
+            }
         });
     }
 

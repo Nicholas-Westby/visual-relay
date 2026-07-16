@@ -8,8 +8,32 @@ public partial class MainWindowViewModel
 {
     public RunAllMode SelectedRunAllMode { get; set; } = RunAllMode.Standard;
 
-    public static IReadOnlyList<RunAllMode> RunAllModeOptions { get; } =
-        [RunAllMode.Standard, RunAllMode.Sequential];
+    /// <summary>Display option for the Run All protocol dropdown.</summary>
+    public sealed record RunAllModeOption(
+        RunAllMode Mode, string Name, string Description);
+
+    public static IReadOnlyList<RunAllModeOption> RunAllModeOptions { get; } =
+    [
+        new(RunAllMode.Standard,
+            "Standard",
+            "Plan all tasks up front, then execute"),
+        new(RunAllMode.Sequential,
+            "Sequential",
+            "One task at a time, checking for new tasks between"),
+        new(RunAllMode.RestartBetweenTasks,
+            "Restart Between Tasks",
+            "Sequential, plus the app rebuilds and relaunches after each committed task — for repos that build Visual Relay itself"),
+    ];
+
+    /// <summary>
+    /// Bridges <see cref="SelectedRunAllMode"/> to the
+    /// <see cref="RunAllModeOption"/> selected in the ComboBox.
+    /// </summary>
+    public RunAllModeOption SelectedRunAllModeOption
+    {
+        get => RunAllModeOptions.First(o => o.Mode == SelectedRunAllMode);
+        set => SelectedRunAllMode = value.Mode;
+    }
     public string Version
     {
         get

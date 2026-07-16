@@ -94,6 +94,25 @@ internal sealed class TestRepository : IDisposable
         File.WriteAllText(path, markdown);
     }
 
+    /// <summary>
+    /// Writes a <c>DONE-{id}.md</c> into <c>llm-tasks/completed/batch-001/</c>
+    /// so the repository filters it as archived.
+    /// </summary>
+    public void WriteCompletedTask(string id, string markdown)
+    {
+        var path = Path.Combine(Root, "llm-tasks", "completed", "batch-001", $"DONE-{id}.md");
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, markdown);
+    }
+
+    /// <summary>Writes a NEEDS-REVIEW marker under <c>.relay/{id}/</c>.</summary>
+    public void WriteNeedsReview(string id, string reason = "Needs review")
+    {
+        var dir = Path.Combine(Root, ".relay", id);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "NEEDS-REVIEW"), reason + Environment.NewLine);
+    }
+
     public void WriteNestedTask(string id, string markdown, params (string Name, string Content)[] siblings)
     {
         var dir = Path.Combine(Root, "llm-tasks", id);

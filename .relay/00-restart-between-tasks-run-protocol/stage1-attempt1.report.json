@@ -1,0 +1,327 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T17:54:05.464907+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 00-restart-between-tasks-run-protocol\nWorking directory: /Volumes/Tera/dev/visual-relay\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Add a \"Restart Between Tasks\" Run All protocol that relaunches the app after each task\n\nVisual Relay is developed with Visual Relay: a queue of compounding tasks is\nrun against this repo, where each task's fix only helps the NEXT task if the\napp is rebuilt and relaunched between them. Today a drain runs the same binary\nend-to-end \u2014 the 2026-07-15 drain log shows every task executing under\n`version=0.76+cfcc78d\u2026` even as those very tasks sealed newer commits, so\nfixes landed mid-drain were never live for the tasks that followed. Add a\nthird Run All protocol, **Restart Between Tasks**: identical to Sequential,\nexcept that after a task seals its commit the app persists a handoff, quits,\nrelaunches itself (which recompiles from source), reopens the same repo, and\ncontinues the queue where it left off.\n\n### Current mechanics (verified)\n\n- `RunAllMode` enum (`src/VisualRelay.Core/Queue/RunAllMode.cs`) has\n  `Standard` and `Sequential`; the dropdown options come from\n  `MainWindowViewModel.Properties.cs:12` and render in\n  `src/VisualRelay.App/Views/Controls/TopBar.axaml:124` (a plain ComboBox with\n  a tooltip describing the two modes).\n- `RelayQueueController.cs` already has per-task-boundary checkpoints: pause\n  is honored between tasks (lines ~208/223) and Sequential collects new tasks\n  at each boundary (line ~271). The restart handoff belongs at this same\n  boundary.\n- Flagged tasks get a `NEEDS-REVIEW` marker under `.relay/<task>/` and\n  queue collection already filters `!t.NeedsReview`\n  (`RelayQueueController.PrivateHelpers.cs`, `CollectNewTasks`); completed\n  tasks move to `llm-tasks/completed/`. A fresh drain therefore naturally\n  runs only the remaining pending tasks \u2014 the continuation mechanism should\n  lean on that rather than inventing a parallel queue snapshot.\n- Launch path: the `./visual-relay` bootstrap execs the C# CLI\n  (`tools/VisualRelay.Cli`) via `dotnet run`, so a source-checkout relaunch\n  IS the recompile. Published (brew) installs exec a prebuilt binary \u2014 the\n  protocol must still work there (restart without recompile, harmless).\n- The app binds the loopback control API and **fails loud on bind conflict**\n  (completed task `expose-instance-identity-and-fail-loud-on-bind-conflict`),\n  so the replacement instance must not start until the old instance has fully\n  exited. The litellm backend on `127.0.0.1:4000` is a separate process and\n  survives restarts; the new instance reconnects to it.\n- `RootPath` is not persisted anywhere today (the app opens on the launch\n  directory) \u2014 the handoff must carry it explicitly or the restarted app will\n  not be pointed at the repo the run was working on.\n\n### What to build\n\n1. **Protocol plumbing**: add `RunAllMode.RestartBetweenTasks`; it inherits\n   Sequential semantics everywhere Sequential is special-cased (e.g.\n   `skipPlanning`, boundary new-task collection).\n2. **Drain behavior**: in this mode, after a task completes at the boundary\n   checkpoint:\n   - Task **sealed a commit** \u2192 write the handoff sidecar (see 3), stop the\n     drain cleanly, and trigger the relaunch. The restart exists to load the\n     new code; a task that committed nothing (flagged) changed no code, so\n     **continue in-process to the next task instead of restarting** \u2014 this,\n     plus the NEEDS-REVIEW skip, is the double guard against a flagged task\n     causing a restart loop.\n   - Restart after the final committed task too, so the session ends on the\n     freshest build; the relaunched app then finds an empty pending queue and\n     settles idle.\n3. **Handoff + relaunch**: a sidecar (e.g. `.relay/restart-handoff.json`)\n   recording rootPath, mode, drain id, timestamp, and the remaining pending\n   count. Relaunch mechanics: spawn a detached relauncher that waits for the\n   current process to exit (control-port bind conflict otherwise), then starts\n   the app the same way it was started (source checkout \u2192 the recompiling\n   path; published \u2192 the binary). On startup, when a fresh sidecar is present:\n   reopen its rootPath, delete-or-mark the sidecar, and auto-continue Run All\n   in RestartBetweenTasks mode. Guards: a stale sidecar (old timestamp, or\n   rootPath missing) is discarded loudly, never auto-run; if a restart cycle\n   completes zero tasks, end the run with a clear drain-log event instead of\n   restarting again; a user pause always wins over auto-continue.\n4. **Custom dropdown**: replace the plain ComboBox items with a two-line item\n   template \u2014 protocol name, and beneath it one muted explanatory line for\n   ALL three protocols (e.g. Standard: \"Plan all tasks up front, then\n   execute\"; Sequential: \"One task at a time, checking for new tasks between\";\n   Restart Between Tasks: \"Sequential, plus the app rebuilds and relaunches\n   after each committed task \u2014 for repos that build Visual Relay itself\").\n   Requirements: the collapsed control shows only the compact protocol name\n   (two-line template must not bloat the closed state); the expanded popup is\n   wide enough that \"Restart Between Tasks\" and every description render\n   without truncation; description line uses the centralized theme\n   colors/font sizes with accessible contrast in both themes, not a\n   hard-coded gray; keyboard navigation and screen-reader naming\n   (`AutomationProperties`) keep working; update the tooltip at\n   `TopBar.axaml:124` to cover all three modes.\n5. **Observability**: drain-summary events for the handoff\n   (`restart-handoff`, with next pending task) and for startup continuation\n   (`restart-resume`), each stamped with the running `version=\u2026+sha` so logs\n   prove the recompile happened; `/state` exposes the selected mode and a\n   pending-handoff indicator so the control API can follow a restarting run.\n\n### Constraints\n\n- Repo-agnostic: the protocol must work pointed at any repository; nothing may\n  assume the target repo is Visual Relay (self-hosting is the motivation, not\n  a precondition).\n- Standard and Sequential behavior must be byte-for-byte unchanged.\n- No real-time sleeps in tests (TimeProvider patterns per\n  `virtualize-watchdog-test-waits`); keep files under the 300-line guard.\n- The relauncher must never leave two live instances or zero instances\n  silently: bind-conflict remains fail-loud, and a failed relaunch (e.g. the\n  new build does not start) must leave the sidecar plus a loud drain-log\n  event for diagnosis rather than retry-looping.\n\n### Tests (red first)\n\n- Controller test: RestartBetweenTasks + a task that seals a commit \u2192 drain\n  stops at the boundary with a handoff written; a flagged task \u2192 no handoff,\n  drain proceeds to the next task in-process.\n- Startup-continuation test: fresh sidecar + a queue containing one completed,\n  one needs-review, and one pending task \u2192 run auto-continues with only the\n  pending task, needs-review is skipped; stale sidecar \u2192 discarded, no\n  auto-run.\n- No-progress guard: a continuation cycle that completes zero tasks ends the\n  run (no second handoff written).\n- Headless UI test: dropdown popup contains all three items, each rendering\n  name + description; the collapsed selection box shows the name only.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual self-hosted smoke: point at this repo, queue two trivial tasks, run\n  with Restart Between Tasks, and confirm via drain logs that the second task\n  ran under a different `version=\u2026+sha` than the first.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have enough context. Let me frame the task and present solution options.\n\n---\n\n## Task framed\n\n**Goal**: Add a third Run All protocol, **Restart Between Tasks** (`RunAllMode.RestartBetweenTasks`), that behaves identically to Sequential except that after each task that seals a commit, the app persists a handoff sidecar, cleanly stops the drain, spawns a detached relauncher that outlives the current process, and re-executes the app (which recompiles from source). The new instance detects the fresh sidecar, opens the same repo, and auto-continues the drain where it left off.\n\n**Key design decisions that shape the options**:\n\n1. **Where the handoff lives**: At the per-task boundary checkpoint in `RelayQueueController.cs` (~lines 208/223/271), where pause and Sequential collection already hook in.\n2. **Relauncher mechanism**: Must outlive the current process, wait for it to fully exit (bind conflict otherwise), then re-execute the app the same way it was originally launched (source checkout \u2192 `dotnet run`; published \u2192 binary path).\n3. **Handoff encoding**: `.relay/restart-handoff.json` carrying `rootPath`, `mode`, `drainId`, `timestamp`, and `remainingPendingCount`.\n4. **Startup detection**: On launch, if the sidecar is fresh, reopen `rootPath`, delete/mark the sidecar, and auto-continue Run All in RestartBetweenTasks mode.\n\n---\n\n## Solution options\n\n### Option 1: Shell\u2011script relauncher (lightest weight)\n\nThe app writes a short shell script to a temp location (e.g. `.relay/relaunch-{drainId}.sh`), spawns it with `Process.Start` using `nohup` / `disown`, then exits. The script polls `kill -0 $PARENT_PID` in a 200\u202fms loop; once the parent is gone, it re\u2011executes the same launch command (`dotnet run --project tools/VisualRelay.Cli` or the binary path, captured in the handoff sidecar). On startup, `RelayQueueController` or a startup filter checks for a fresh sidecar, verifies it, and kicks off the automatic drain continuation.\n\n**Pros**: No new project or binary; works on any POSIX system; Windows variant uses `powershell Start-Sleep -Milliseconds` + `Wait-Process`.  \n**Cons**: Shell script fragility (quoting, signal handling, platform divergence); adds a `.sh` / `.ps1` file to the repo workspace; hard to test the script logic in\u2011process.\n\n---\n\n### Option 2: Dedicated .NET relauncher tool (`tools/VisualRelay.Relauncher/`)\n\nAdd a minimal C# console\u2011app project under `tools/VisualRelay.Relauncher/`. The main app spawns it via `dotnet run --project tools/VisualRelay.Relauncher -- <parentPid> <launchCommand>`. The tool calls `Process.GetProcessById(parentPid).WaitForExit()` (true OS\u2011level wait handle), then `Process.Start(launchCommand)`. The sidecar is still the JSON handoff; the relauncher never touches it \u2014 it only waits and re\u2011execs. This keeps the cross\u2011platform logic in tested C#, avoids shell quoting, and the tool can be unit\u2011tested with a fake process.\n\n**Pros**: Fully typed, testable, cross\u2011platform via .NET BCL; no shell interpolation; the relauncher is a 30\u2011line `Main` method.  \n**Cons**: Adds a project to the solution (build overhead, packaging); requires `dotnet run` to compile it each time in source\u2011checkout mode (but it's tiny, <1\u202fs restore+compile); slightly heavier than a shell script.\n\n---\n\n### Option 3: In\u2011process relaunch coordinator (control\u2011API\u2011mediated)\n\nInstead of a detached watcher process, the main app spawns a background *subprocess* (not a script or new tool) that is a trivial native shim \u2014 the `dotnet` CLI itself running a `-c \"while(true){Start-Sleep 1; try{Get-Process -Id $pid}catch{exit}}\"` PowerShell one\u2011liner on Windows or a `sleep`\u2011poll loop on Unix. The relauncher logic (wait + re\u2011exec) is baked into the C# code of the main app, which passes its own PID and the launch command as arguments to the one\u2011liner. This avoids adding any files or projects.\n\n**Pros**: No new project, no files written to the workspace; the relaunch loop is in C# (written once, works cross\u2011platform via `RuntimeInformation.IsOSPlatform` branching).  \n**Cons**: Fragile OS\u2011specific one\u2011liner commands; harder to diagnose failures (the one\u2011liner lives in a string); the handoff still needs the JSON sidecar; the `Start` + `WaitForExit` of a synthetic command is less idiomatic than Option 2's clean `Process.GetProcessById`.\n\n---\n\n### My recommendation\n\n**Option 2** (dedicated .NET relauncher tool) strikes the best balance: it keeps the relaunch logic in testable C#, avoids shell quoting and platform fragmentation, is a ~30\u2011line project that compiles in <1\u202fs, and the `WaitForExit` API is the correct OS\u2011level primitive. The task description's phrase \"spawn a detached relauncher\" maps directly to this architecture.\n\n```json\n{\n  \"summary\": \"Add a RestartBetweenTasks RunAll protocol. The core mechanics: (1) a new RunAllMode enum value inheriting Sequential semantics everywhere Sequential is special-cased; (2) post-commit-task handoff at the existing per-task boundary in RelayQueueController, writing .relay/restart-handoff.json with rootPath/mode/drainId/timestamp/pendingCount; (3) a detached relauncher that outlives the current process, waits for it to exit, then re-executes the same launch command; (4) startup detection that reads the fresh sidecar, opens the repo, and auto-continues the drain; (5) a two-line ComboBox item template for all three protocols in TopBar.axaml; (6) observability events (restart-handoff, restart-resume) stamped with version=\u2026+sha. Stale sidecar \u2192 discard loudly, no auto-run. No-progress guard: if a restart cycle completes zero tasks, end the run without writing a second handoff.\",\n  \"options\": [\n    \"Option 1: Shell\u2011script relauncher \u2014 write a temp shell/powershell script, spawn detached, it polls parent PID then re\u2011execs. Lightest but fragile, hard to test, platform\u2011specific quoting.\",\n    \"Option 2 (recommended): Dedicated .NET relauncher tool (tools/VisualRelay.Relauncher/) \u2014 a ~30\u2011line console app using Process.GetProcessById().WaitForExit() then Process.Start(). Fully typed, testable, cross\u2011platform, no shell.\",\n    \"Option 3: In\u2011process relaunch via OS\u2011specific one\u2011liner \u2014 spawn a synthetic PowerShell/sleep subprocess that polls PID. No new project but fragile, hard to debug, stringly\u2011typed.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 8,
+    "tool_calls_total": 16,
+    "tool_calls_succeeded": 12,
+    "tool_calls_failed": 4,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 11,
+        "failed": 4
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 8,
+    "total_llm_time_s": 55.758,
+    "prompt_cache": {
+      "cached_tokens": 54272,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.026,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.883,
+      "prompt_tokens_est": 5590,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RunAllMode.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 228,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RunAllMode.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RunAllMode.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 276,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml",
+        "offset": 115,
+        "limit": 30
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 242,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs",
+        "offset": 195,
+        "limit": 90
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 248,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.75,
+      "prompt_tokens_est": 6189,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 175
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.596,
+      "prompt_tokens_est": 6326,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/ProcessRunners.RunAsync.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4868
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/runasync-edit.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 104
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 228
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.127,
+      "prompt_tokens_est": 7648,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 139
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.418,
+      "prompt_tokens_est": 7798,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-full.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2096
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-tests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1971
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.155,
+      "prompt_tokens_est": 9039,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 359
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1275
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.361,
+      "prompt_tokens_est": 10139,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg/bg_0d0984e1a3ed.log",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 4748
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/index.jsonl",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6991
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 36.468,
+      "prompt_tokens_est": 14587,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

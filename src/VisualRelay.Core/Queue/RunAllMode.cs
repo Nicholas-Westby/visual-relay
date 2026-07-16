@@ -12,4 +12,8 @@ public enum RunAllMode
     /// <summary>Every task runs in full sequence, one at a time, with no
     /// parallel planning phase.</summary>
     Sequential,
+
+    /// <summary>Sequential, plus the app rebuilds and relaunches after each
+    /// committed task so the next task picks up the new build.</summary>
+    RestartBetweenTasks,
 }

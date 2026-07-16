@@ -1,4 +1,5 @@
 using Avalonia.Threading;
+using VisualRelay.Core.Queue;
 
 namespace VisualRelay.App.Services;
 
@@ -64,7 +65,9 @@ public sealed partial class ControlApi
                 enabled = vm.ObsidianEnabled,
                 vaultRoot = vm.ObsidianVaultRoot,
                 pollSeconds = vm.ObsidianPollSeconds
-            }
+            },
+            runAllMode = vm.SelectedRunAllMode.ToString(),
+            pendingHandoff = RestartHandoff.Read(vm.RootPath) is not null
         };
     }
 

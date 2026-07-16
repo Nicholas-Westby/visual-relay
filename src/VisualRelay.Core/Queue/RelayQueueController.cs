@@ -22,12 +22,11 @@ public sealed partial class RelayQueueController
 
     /// <summary>Two-phase constructor: when plan factories are non-null,
     /// DrainAsync runs planning in parallel worktrees before serial execute.
-    /// <paramref name="environmentAccessor"/> is forwarded to the planning phase so
-    /// each planning driver's vr-guard profile self-heal resolves through it; it is
-    /// <c>null</c> in production (real env) and a hermetic temp-XDG accessor in tests,
-    /// keeping the parallel plan phase off the user's real <c>~/.config</c>.
-    /// <paramref name="gitInvoker"/> is likewise threaded into planning and the
-    /// flagged-task worktree reset — <c>null</c> in production, a repo-bound sim in tests.</summary>
+    /// <paramref name="environmentAccessor"/> is forwarded to planning so each
+    /// driver's vr-guard profile self-heal resolves through it; null in production
+    /// (real env) and a hermetic temp-XDG accessor in tests.
+    /// <paramref name="gitInvoker"/> is threaded into planning and flagged-task
+    /// worktree reset — null in production, repo-bound sim in tests.</summary>
     public RelayQueueController(
         string rootPath,
         IRelayTaskRunner runner,
@@ -58,9 +57,8 @@ public sealed partial class RelayQueueController
         Init.RelayGitignoreWriter.EnsureWritten(RootPath);
         State = RelayQueueState.Refreshing;
         Tasks.Clear();
-        // Seed from the persisted manual order so a headless/CLI drain runs in the
-        // user's saved order — not the repository's alphabetical baseline. The same
-        // store backs the GUI's visible queue, so display and run order stay aligned.
+        // Seed from the persisted manual order so headless/CLI drains use the
+        // user's saved order, not the alphabetical baseline.
         var listed = await _repository.ListAsync(cancellationToken: cancellationToken);
         foreach (var task in new TaskOrderStore(RootPath).Apply(listed, task => task.Id))
             Tasks.Add(task);
@@ -126,7 +124,7 @@ public sealed partial class RelayQueueController
         RelayConfigResult? configResult = null;
 
         // ── Phase 1: parallel planning ──
-        var skipPlanning = mode == RunAllMode.Sequential;
+        var skipPlanning = mode is RunAllMode.Sequential or RunAllMode.RestartBetweenTasks;
 
         while (true)
         {
@@ -268,17 +266,16 @@ public sealed partial class RelayQueueController
                     Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
                 }
 
-                // Sequential: check for new tasks at each task boundary.
+                // Sequential / RestartBetweenTasks: check for new tasks at
+                // each task boundary.
                 if (skipPlanning)
-                {
-                    SyncExternalTasks();
-                    var newTasks = CollectNewTasks(Tasks, seenIds);
-                    if (newTasks.Count > 0)
-                    {
-                        foreach (var nt in newTasks) seenIds.Add(nt.Id);
-                        queue = MergeNewTasksIntoQueue(queue, newTasks, Tasks);
-                    }
-                }
+                    queue = CollectAndMergeNewTasksAtBoundary(seenIds, queue);
+
+                // RestartBetweenTasks: after a committed task, write handoff
+                // and stop the drain; flagged tasks continue in-process.
+                if (TryRestartBetweenTasks(mode, outcome, task.Id, drainRunId,
+                        queue.Count, results))
+                    return results;
 
                 if (circuitBreaker.ShouldHalt(RootPath, outcome))
                 {
@@ -290,6 +287,9 @@ public sealed partial class RelayQueueController
 
             if (skipPlanning) break;
         }
+
+        // No-progress guard for RestartBetweenTasks: consume stale handoff.
+        ConsumeHandoffIfRestartMode(mode);
 
         State = results.Any(r => r.Status == RelayTaskOutcomeStatus.Flagged)
             ? RelayQueueState.ReviewNeeded

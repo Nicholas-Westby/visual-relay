@@ -1,0 +1,1142 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T17:59:18.991118+00:00",
+  "task": "# Relay stage 3: Diagnose\nTask: 00-restart-between-tasks-run-protocol\nWorking directory: /Volumes/Tera/dev/visual-relay\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Add a \"Restart Between Tasks\" Run All protocol that relaunches the app after each task\n\nVisual Relay is developed with Visual Relay: a queue of compounding tasks is\nrun against this repo, where each task's fix only helps the NEXT task if the\napp is rebuilt and relaunched between them. Today a drain runs the same binary\nend-to-end \u2014 the 2026-07-15 drain log shows every task executing under\n`version=0.76+cfcc78d\u2026` even as those very tasks sealed newer commits, so\nfixes landed mid-drain were never live for the tasks that followed. Add a\nthird Run All protocol, **Restart Between Tasks**: identical to Sequential,\nexcept that after a task seals its commit the app persists a handoff, quits,\nrelaunches itself (which recompiles from source), reopens the same repo, and\ncontinues the queue where it left off.\n\n### Current mechanics (verified)\n\n- `RunAllMode` enum (`src/VisualRelay.Core/Queue/RunAllMode.cs`) has\n  `Standard` and `Sequential`; the dropdown options come from\n  `MainWindowViewModel.Properties.cs:12` and render in\n  `src/VisualRelay.App/Views/Controls/TopBar.axaml:124` (a plain ComboBox with\n  a tooltip describing the two modes).\n- `RelayQueueController.cs` already has per-task-boundary checkpoints: pause\n  is honored between tasks (lines ~208/223) and Sequential collects new tasks\n  at each boundary (line ~271). The restart handoff belongs at this same\n  boundary.\n- Flagged tasks get a `NEEDS-REVIEW` marker under `.relay/<task>/` and\n  queue collection already filters `!t.NeedsReview`\n  (`RelayQueueController.PrivateHelpers.cs`, `CollectNewTasks`); completed\n  tasks move to `llm-tasks/completed/`. A fresh drain therefore naturally\n  runs only the remaining pending tasks \u2014 the continuation mechanism should\n  lean on that rather than inventing a parallel queue snapshot.\n- Launch path: the `./visual-relay` bootstrap execs the C# CLI\n  (`tools/VisualRelay.Cli`) via `dotnet run`, so a source-checkout relaunch\n  IS the recompile. Published (brew) installs exec a prebuilt binary \u2014 the\n  protocol must still work there (restart without recompile, harmless).\n- The app binds the loopback control API and **fails loud on bind conflict**\n  (completed task `expose-instance-identity-and-fail-loud-on-bind-conflict`),\n  so the replacement instance must not start until the old instance has fully\n  exited. The litellm backend on `127.0.0.1:4000` is a separate process and\n  survives restarts; the new instance reconnects to it.\n- `RootPath` is not persisted anywhere today (the app opens on the launch\n  directory) \u2014 the handoff must carry it explicitly or the restarted app will\n  not be pointed at the repo the run was working on.\n\n### What to build\n\n1. **Protocol plumbing**: add `RunAllMode.RestartBetweenTasks`; it inherits\n   Sequential semantics everywhere Sequential is special-cased (e.g.\n   `skipPlanning`, boundary new-task collection).\n2. **Drain behavior**: in this mode, after a task completes at the boundary\n   checkpoint:\n   - Task **sealed a commit** \u2192 write the handoff sidecar (see 3), stop the\n     drain cleanly, and trigger the relaunch. The restart exists to load the\n     new code; a task that committed nothing (flagged) changed no code, so\n     **continue in-process to the next task instead of restarting** \u2014 this,\n     plus the NEEDS-REVIEW skip, is the double guard against a flagged task\n     causing a restart loop.\n   - Restart after the final committed task too, so the session ends on the\n     freshest build; the relaunched app then finds an empty pending queue and\n     settles idle.\n3. **Handoff + relaunch**: a sidecar (e.g. `.relay/restart-handoff.json`)\n   recording rootPath, mode, drain id, timestamp, and the remaining pending\n   count. Relaunch mechanics: spawn a detached relauncher that waits for the\n   current process to exit (control-port bind conflict otherwise), then starts\n   the app the same way it was started (source checkout \u2192 the recompiling\n   path; published \u2192 the binary). On startup, when a fresh sidecar is present:\n   reopen its rootPath, delete-or-mark the sidecar, and auto-continue Run All\n   in RestartBetweenTasks mode. Guards: a stale sidecar (old timestamp, or\n   rootPath missing) is discarded loudly, never auto-run; if a restart cycle\n   completes zero tasks, end the run with a clear drain-log event instead of\n   restarting again; a user pause always wins over auto-continue.\n4. **Custom dropdown**: replace the plain ComboBox items with a two-line item\n   template \u2014 protocol name, and beneath it one muted explanatory line for\n   ALL three protocols (e.g. Standard: \"Plan all tasks up front, then\n   execute\"; Sequential: \"One task at a time, checking for new tasks between\";\n   Restart Between Tasks: \"Sequential, plus the app rebuilds and relaunches\n   after each committed task \u2014 for repos that build Visual Relay itself\").\n   Requirements: the collapsed control shows only the compact protocol name\n   (two-line template must not bloat the closed state); the expanded popup is\n   wide enough that \"Restart Between Tasks\" and every description render\n   without truncation; description line uses the centralized theme\n   colors/font sizes with accessible contrast in both themes, not a\n   hard-coded gray; keyboard navigation and screen-reader naming\n   (`AutomationProperties`) keep working; update the tooltip at\n   `TopBar.axaml:124` to cover all three modes.\n5. **Observability**: drain-summary events for the handoff\n   (`restart-handoff`, with next pending task) and for startup continuation\n   (`restart-resume`), each stamped with the running `version=\u2026+sha` so logs\n   prove the recompile happened; `/state` exposes the selected mode and a\n   pending-handoff indicator so the control API can follow a restarting run.\n\n### Constraints\n\n- Repo-agnostic: the protocol must work pointed at any repository; nothing may\n  assume the target repo is Visual Relay (self-hosting is the motivation, not\n  a precondition).\n- Standard and Sequential behavior must be byte-for-byte unchanged.\n- No real-time sleeps in tests (TimeProvider patterns per\n  `virtualize-watchdog-test-waits`); keep files under the 300-line guard.\n- The relauncher must never leave two live instances or zero instances\n  silently: bind-conflict remains fail-loud, and a failed relaunch (e.g. the\n  new build does not start) must leave the sidecar plus a loud drain-log\n  event for diagnosis rather than retry-looping.\n\n### Tests (red first)\n\n- Controller test: RestartBetweenTasks + a task that seals a commit \u2192 drain\n  stops at the boundary with a handoff written; a flagged task \u2192 no handoff,\n  drain proceeds to the next task in-process.\n- Startup-continuation test: fresh sidecar + a queue containing one completed,\n  one needs-review, and one pending task \u2192 run auto-continues with only the\n  pending task, needs-review is skipped; stale sidecar \u2192 discarded, no\n  auto-run.\n- No-progress guard: a continuation cycle that completes zero tasks ends the\n  run (no second handoff written).\n- Headless UI test: dropdown popup contains all three items, each rendering\n  name + description; the collapsed selection box shows the name only.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual self-hosted smoke: point at this repo, queue two trivial tasks, run\n  with Restart Between Tasks, and confirm via drain logs that the second task\n  ran under a different `version=\u2026+sha` than the first.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add a RestartBetweenTasks RunAll protocol. The core mechanics: (1) a new RunAllMode enum value inheriting Sequential semantics everywhere Sequential is special-cased; (2) post-commit-task handoff at the existing per-task boundary in RelayQueueController, writing .relay/restart-handoff.json with rootPath/mode/drainId/timestamp/pendingCount; (3) a detached relauncher that outlives the current process, waits for it to exit, then re-executes the same launch command; (4) startup detection that reads the fresh sidecar, opens the repo, and auto-continues the drain; (5) a two-line ComboBox item template for all three protocols in TopBar.axaml; (6) observability events (restart-handoff, restart-resume) stamped with version=\u2026+sha. Stale sidecar \u2192 discard loudly, no auto-run. No-progress guard: if a restart cycle completes zero tasks, end the run without writing a second handoff.\",\n  \"options\": [\n    \"Option 1: Shell\u2011script relauncher \u2014 write a temp shell/powershell script, spawn detached, it polls parent PID then re\u2011execs. Lightest but fragile, hard to test, platform\u2011specific quoting.\",\n    \"Option 2 (recommended): Dedicated .NET relauncher tool (tools/VisualRelay.Relauncher/) \u2014 a ~30\u2011line console app using Process.GetProcessById().WaitForExit() then Process.Start(). Fully typed, testable, cross\u2011platform, no shell.\",\n    \"Option 3: In\u2011process relaunch via OS\u2011specific one\u2011liner \u2014 spawn a synthetic PowerShell/sleep subprocess that polls PID. No new project but fragile, hard to debug, stringly\u2011typed.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Codebase is well-structured for this addition. Key locations: RunAllMode enum (src/VisualRelay.Core/Queue/RunAllMode.cs, lines 7-14) with Standard=0, Sequential=1 \u2014 add RestartBetweenTasks=2. Dropdown wiring: MainWindowViewModel.Properties.cs line 11-12 static list, TopBar.axaml lines 119-124 ComboBox with two-mode tooltip. DrainAsync in RelayQueueController.cs line 129 uses `skipPlanning = mode == RunAllMode.Sequential` \u2014 RestartBetweenTasks must share Sequential's skipPlanning=true, new-task collection (lines 271-281), and pause checks (lines 208/223). The restart boundary belongs after execute completion around line 281 (where Sequential collects new tasks). DrainSummaryLog.Write() at line 29 already stamps `version=...` on every log line via VersionHelper.ReadInformationalVersion(). Launch path is dual: bash bootstrap detects published brew binary vs `dotnet run --project tools/VisualRelay.Cli`; LaunchCommand.cs then does `dotnet run --project src/VisualRelay.App`. Relauncher must detect which path the current instance was started with. App startup in App.axaml.cs lines 29-82 creates ViewModel, sets RootPath, calls LoadInitialAsync(), then starts servers/timers. A startup continuation hook belongs after LoadInitialAsync. ControlApi.State.cs builds /state JSON \u2014 add runAllMode and pendingHandoff fields. Test doubles in TestDoubles.cs: TestRepository (temp dir), RecordingTaskRunner (returns Committed with hash), ScriptedOutcomeTaskRunner (FIFO), ManualTimeProvider (injectable virtual time), TestWaits.ForFileAsync (event-driven file wait). RunAllModesTests.cs has structural tests (RunAllMode_HasStandardAndSequentialValues expects 2 values) needing updates. RelayQueueController.cs is exactly 300 lines \u2014 tight for the 300-line guard. VisualRelayTheme.axaml defines dark theme colors \u2014 description text should use #9AA3B1 or other theme colors, not hardcoded gray.\",\n  \"constraints\": [\n    \"Repo-agnostic: nothing may assume the target repo is Visual Relay (self-hosting is motivation, not precondition)\",\n    \"Standard and Sequential behavior must be byte-for-byte unchanged\",\n    \"No real-time sleeps in tests (use ManualTimeProvider pattern per virtualize-watchdog-test-waits)\",\n    \"Keep files under the 300-line guard (RelayQueueController.cs is exactly 300 lines currently)\",\n    \"Bind conflict must remain fail-loud (completed task expose-instance-identity-and-fail-loud-on-bind-conflict)\",\n    \"Relauncher must never leave two live instances or zero instances silently\",\n    \"Stale sidecar must be discarded loudly (logged), never auto-run\",\n    \"No-progress guard: a restart cycle completing zero tasks ends the run without writing a second handoff\",\n    \"Flagged task \u2192 no restart, continue in-process to next task (double guard with NEEDS-REVIEW skip)\",\n    \"Restart after the final committed task too (so session ends on freshest build)\",\n    \"User pause always wins over auto-continue\",\n    \"Relaunch mechanics: spawn detached relauncher that waits for current process exit (prevents bind conflict), then starts app same way it was started\",\n    \"Description text in dropdown must use centralized theme colors with accessible contrast in both themes, not hardcoded gray\",\n    \"Collapsed ComboBox must show only the compact protocol name (two-line template must not bloat closed state)\",\n    \"Expanded popup must be wide enough that all descriptions render without truncation\",\n    \"Keyboard navigation and screen-reader naming (AutomationProperties) must keep working\",\n    \"Updated tooltip at TopBar.axaml:124 must cover all three modes\",\n    \"/state must expose selected mode and pending-handoff indicator\",\n    \"Handoff sidecar path: .relay/restart-handoff.json with rootPath, mode, drainId, timestamp, pendingCount\",\n    \"Drain-summary events for restart-handoff and restart-resume stamped with version=\u2026+sha\",\n    \"RootPath is not persisted today \u2014 handoff must carry it explicitly\",\n    \"litellm backend on 127.0.0.1:4000 is separate process, survives restarts \u2014 new instance reconnects\",\n    \"Relaunched app must find empty pending queue and settle idle when all tasks are done\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"evidence\": string, \"excerpts\": string[], \"repro\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have a complete picture. Let me provide my diagnosis.\n\n---\n\n## Diagnosis\n\n### The Problem\n\nThe drain log at `.relay/drain-20260716015038.log` confirms every task on 2026-07-15 executed under the same binary:\n```\nversion=0.76+cfcc78dede9d3e3caa992ee60360c9a277a46b42\n```\n\u2026even though tasks like `inject-timeprovider-into-product-retry-delays` committed `f72da68` and `fix-visual-relay-timing-bug` committed `6a49a41`. Those commits changed the source tree, but the running binary never picked them up because the drain runs the same process end-to-end.\n\n### Root Cause\n\n`RelayQueueController.DrainAsync()` at line 108 starts, processes every task in a single call, and returns only when the queue is empty, paused, or halted. There is no mechanism to stop mid-stream, recompile, and resume. The `RunAllMode` enum has only `Standard` (parallel planning) and `Sequential` (one-at-a-time), and both run in the same process.\n\n### What Must Change (and Where)\n\n**1. `RunAllMode` enum** \u2014 `src/VisualRelay.Core/Queue/RunAllMode.cs:7-14`\n- Add `RestartBetweenTasks = 2` to the enum.\n- This file is tiny; the new value plus its XML doc comment fit easily.\n\n**2. `skipPlanning` assignment** \u2014 `src/VisualRelay.Core/Queue/RelayQueueController.cs:129`\n- Today: `var skipPlanning = mode == RunAllMode.Sequential;`\n- Must become: `var skipPlanning = mode is RunAllMode.Sequential or RunAllMode.RestartBetweenTasks;`\n- This single-line change ensures RestartBetweenTasks skips parallel planning exactly like Sequential.\n\n**3. Restart handoff at the per-task boundary** \u2014 `src/VisualRelay.Core/Queue/RelayQueueController.cs:271-281`\n- Today lines 271-281 are the Sequential new-task collection checkpoint, inside `if (skipPlanning)`.\n- In RestartBetweenTasks mode, after a task **seals a commit** (outcome.Status == Committed), the controller must:\n  - Write `.relay/restart-handoff.json` with `rootPath`, `mode`, `drainId`, `timestamp`, `pendingCount` (remaining unprocessed tasks).\n  - Write a `restart-handoff` event to the drain summary log (which `DrainSummaryLog.Write` at line 29 already stamps with `version=\u2026+sha`).\n  - Set state and return (stop the drain cleanly).\n- If the task **flagged** (outcome.Status == Flagged), emit no handoff and continue to the next task in-process (the NEEDS-REVIEW skip on `CollectNewTasks` at line 90 provides the second guard).\n- After the **final committed task**, still write the handoff so the session ends on the freshest build; the relaunched app will find an empty pending queue and settle idle.\n- **No-progress guard**: if a restart cycle starts and zero tasks commit (all flagged or empty queue), the drain ends without writing a second handoff \u2014 a `restart-noprogress` drain-log event fires instead.\n- This logic will go into a new partial class file (e.g. `RelayQueueController.RestartHandoff.cs`) to keep `RelayQueueController.cs` under its 300-line guard.\n\n**4. `DrainAsync` return contract** \u2014 `src/VisualRelay.Core/Queue/RelayQueueController.cs`\n- When RestartBetweenTasks stops mid-drain for a handoff, `State` must be set to a new value (e.g. `RelayQueueState.HandingOff` or a property on the controller) so the caller (`MainWindowViewModel.DrainQueueAsync`) can detect the handoff and trigger the relaunch.\n- The `results` list must be returned as-is so the ViewModel still sees what happened.\n\n**5. ViewModel relaunch handling** \u2014 `src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs:123-154`\n- After `controller.DrainAsync()` returns in RestartBetweenTasks mode, if a restart handoff was written, the ViewModel must:\n  - Spawn a detached relauncher process that waits for this process to exit, then launches the app the same way it started (the relauncher reads `Process.GetCurrentProcess().Id`, waits via `Process.GetProcessById().WaitForExit()`, then re-executes the launch command).\n  - Signal the app to quit (`Environment.Exit(0)` or `desktop.Shutdown()`).\n- The relauncher is a separate `.csproj` (`tools/VisualRelay.Relauncher/`) \u2014 a minimal console app that reads the handoff file, monitors the parent PID, waits for exit, then invokes the same bootstrap command.\n\n**6. Startup handoff detection** \u2014 `src/VisualRelay.App/App.axaml.cs:29-82`\n- After `viewModel.LoadInitialAsync()` (line 41), check for `.relay/restart-handoff.json`.\n- If present and **fresh** (timestamp within a reasonable window, rootPath exists):\n  - Reopen the app to the rootPath recorded in the sidecar.\n  - Write `restart-resume` to the drain summary log (stamped with current `version=\u2026+sha` \u2014 proving recompile).\n  - Delete or rename the sidecar (to prevent double-resume).\n  - Auto-continue Run All in RestartBetweenTasks mode.\n- If **stale** (old timestamp, rootPath missing): discard with a loud log message, never auto-run.\n- If **user has paused**: skip auto-continue (pause always wins).\n\n**7. Dropdown UI** \u2014 `src/VisualRelay.App/Views/Controls/TopBar.axaml:119-124` + `MainWindowViewModel.Properties.cs:11-12`\n- Replace the plain `ComboBox` with one that has an `ItemTemplate` producing two lines per expanded item: protocol name (bold) and muted description below.\n- The `ComboBox.ItemTemplate` renders the two-line item; the `ComboBox` itself uses `SelectionBoxItemTemplate` or `DisplayMemberBinding` to show only the name when collapsed.\n- Three protocol descriptions each fit on one muted line:\n  - Standard: \"Plan all tasks up front, then execute\"\n  - Sequential: \"One task at a time, checking for new tasks between\"\n  - Restart Between Tasks: \"Sequential, plus the app rebuilds and relaunches after each committed task\"\n- Description `TextBlock` uses the theme's `panelTitle` style (or inline `Foreground=\"#9AA3B1\"` / `Foreground=\"{StaticResource ...}\"`) for accessible contrast in both themes.\n- `AutomationProperties.Name` on each item for screen-reader support.\n- Update tooltip to cover all three modes.\n- Popup `MinWidth` must be wide enough (~320px) for the longest description without truncation.\n\n**8. `/state` endpoint** \u2014 `src/VisualRelay.App/Services/ControlApi.State.cs:18-69`\n- Add `runAllMode` (enum name string) and `pendingHandoff` (bool) to the state JSON snapshot. `pendingHandoff` is true when `.relay/restart-handoff.json` exists and is fresh.\n\n**9. Tests to add** (all new, under `tests/VisualRelay.Tests/`):\n\n- **`RestartBetweenTasksControllerTests`**: \n  - Committed task \u2192 drain stops, handoff file written, handoff event in drain log.\n  - Flagged task \u2192 no handoff, drain proceeds to next task in-process.\n  - No-progress guard: cycle completes zero tasks \u2192 no second handoff, drain ends normally.\n\n- **`RestartHandoffStartupTests`**:\n  - Fresh sidecar + queue with 1 completed, 1 needs-review, 1 pending \u2192 auto-continue runs only the pending task (needs-review skipped via existing `CollectNewTasks` filter).\n  - Stale sidecar \u2192 discarded, no auto-run.\n\n- **`RestartBetweenTasksDropdownTests`** (headless UI):\n  - Dropdown popup contains all three items with name + description.\n  - Collapsed selection box shows name only.\n\n- **`RunAllModesTests` updates**: \n  - `RunAllMode_HasStandardAndSequentialValues` must become `RunAllMode_HasAllThreeValues` and expect 3 values.\n\n**10. 300-line guard**: `RelayQueueController.cs` is exactly 300 lines. The restart behavior will live in a new partial class file (`RelayQueueController.RestartHandoff.cs`), and the `DrainAsync` method only gains a few lines for the handoff check + the mode comparison change.\n\n### Evidence Excerpts\n\n1. **Drain log proves version never changed** \u2014 `.relay/drain-20260716015038.log` lines 1-13 all show `version=0.76+cfcc78dede9d3e3caa992ee60360c9a277a46b42` even after commits sealed by tasks.\n\n2. **`DrainSummaryLog.Write` already stamps version** \u2014 `src/VisualRelay.Core/Logging/DrainSummaryLog.cs:29`: `line += $\" version={Domain.VersionHelper.ReadInformationalVersion()}\";` \u2014 the observability plumbing for `restart-handoff` and `restart-resume` events is already in place; new event types just call this existing method.\n\n3. **Sequential boundary at lines 271-281** \u2014 `src/VisualRelay.Core/Queue/RelayQueueController.cs:271`: `if (skipPlanning) { SyncExternalTasks(); var newTasks = CollectNewTasks(Tasks, seenIds); ... }` \u2014 this is exactly where the restart handoff belongs (after task completion, within the skipPlanning guard, after new-task collection, before circuit breaker at line 283).\n\n4. **`skipPlanning` at line 129** \u2014 `var skipPlanning = mode == RunAllMode.Sequential;` \u2014 must become a pattern match for both Sequential and RestartBetweenTasks.\n\n5. **`CollectNewTasks` already filters `!t.NeedsReview`** \u2014 `RelayQueueController.PrivateHelpers.cs:90`: `tasks.Where(t => !t.NeedsReview && !seenIds.Contains(t.Id))` \u2014 the NEEDS-REVIEW skip for flagged tasks is already implemented; a fresh drain naturally runs only pending tasks.\n\n6. **Theme colors** \u2014 `VisualRelayTheme.axaml:121-123`: `TextBlock.panelTitle` uses `Foreground=\"#9AA3B1\"` and `FontSize=\"12\"` \u2014 this is the centralized muted style the description line should use.\n\n7. **`RunAllModesTests` expects exactly 2 values** \u2014 `tests/VisualRelay.Tests/RunAllModesTests.cs:21`: `Assert.Equal(2, values.Length);` \u2014 must become 3.\n\n8. **Two-mode tooltip** \u2014 `TopBar.axaml:124`: `\"Run All mode: Standard (parallel planning) or Sequential (one at a time)\"` \u2014 must be updated.\n\n9. **`RecordingTaskRunner` returns Committed with hash** \u2014 `tests/VisualRelay.Tests/TestDoubles.cs:217`: `new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, \"hash\", \"commit\", null)` \u2014 this will trigger the restart handoff in the controller test; `ScriptedOutcomeTaskRunner` can provide Flagged outcomes to test the skip path.\n\n10. **`TestWaits.ForFileAsync` is event-driven** \u2014 `tests/VisualRelay.Tests/TestWaits.cs:13-57`: uses `FileSystemWatcher`, not polling \u2014 tests for the handoff sidecar can use this without real-time sleeps.\n\n### Reproduction\n\n```bash\n# Point at this repo, queue two tasks, run with Restart Between Tasks (after change):\ncd /path/to/visual-relay-repo\n./visual-relay launch  # opens the app\n\n# In the app: switch to \"Restart Between Tasks\" dropdown, click \"Run All\"\n# Observe drain logs: the first task runs under one version+sha,\n# the second task (after restart) runs under a different version+sha.\n\n# Current (broken) behavior:\n# All tasks in a drain run under the same version+sha, as shown in\n# .relay/drain-20260716015038.log \u2014 every line has the identical version.\n```\n\n```json\n{\n  \"evidence\": \"The drain summary log at .relay/drain-20260716015038.log proves every task on 2026-07-15 ran under the identical binary (version=0.76+cfcc78d\u2026), even as later tasks in that same drain sealed commits that changed the source tree. The root cause is that RelayQueueController.DrainAsync() processes all tasks in a single process lifetime \u2014 there is no mechanism to stop, recompile, and resume. The code locations are: (1) RunAllMode.cs:7-14 has only Standard/Sequential; (2) DrainAsync at line 129 sets skipPlanning only for Sequential; (3) the per-task boundary at lines 271-281 inside the Sequential block is where new tasks are collected but no restart logic exists; (4) MainWindowViewModel.Execution.cs:126 calls DrainAsync once and only refreshes afterward; (5) TopBar.axaml:119-124 has a plain two-mode ComboBox; (6) RunAllModesTests.cs:21 asserts exactly 2 enum values; (7) ControlApi.State.cs:18-69 builds /state JSON without mode or handoff fields; (8) App.axaml.cs:29-82 has no handoff detection on startup. DrainSummaryLog.Write already stamps version=\u2026+sha on every line (line 29), so the observability plumbing exists. The 300-line controller (exactly 300 lines) requires the restart logic in a new partial class file.\",\n  \"excerpts\": [\n    \".relay/drain-20260716015038.log:1 \u2014 2026-07-16T01:50:38.1078990+00:00 execute hoist-pipeline-test-shared-setup start version=0.76+cfcc78dede9d3e3caa992ee60360c9a277a46b42\",\n    \".relay/drain-20260716015038.log:13 \u2014 2026-07-16T06:32:08.5718560+00:00 execute fix-visual-relay-timing-bug committed version=0.76+cfcc78dede9d3e3caa992ee60360c9a277a46b42 (6a49a4144c28887858a896137d2680f10bd88a03)\",\n    \"RunAllMode.cs:7-14 \u2014 enum has Standard=0, Sequential=1; no RestartBetweenTasks value\",\n    \"RelayQueueController.cs:129 \u2014 var skipPlanning = mode == RunAllMode.Sequential; (only Sequential skips planning)\",\n    \"RelayQueueController.cs:271-281 \u2014 Sequential new-task checkpoint; restart boundary must live here\",\n    \"MainWindowViewModel.Execution.cs:126 \u2014 results = await controller.DrainAsync(mode: SelectedRunAllMode); (single drain call, no restart path)\",\n    \"TopBar.axaml:119-124 \u2014 plain ComboBox with two-mode tooltip, no item template\",\n    \"RunAllModesTests.cs:21 \u2014 Assert.Equal(2, values.Length); (expects exactly 2 enum values)\",\n    \"ControlApi.State.cs:18-69 \u2014 BuildStateSnapshot lacks runAllMode and pendingHandoff fields\",\n    \"App.axaml.cs:41 \u2014 _ = viewModel.LoadInitialAsync(); (no handoff detection after load)\",\n    \"DrainSummaryLog.cs:29 \u2014 line += $\\\" version={Domain.VersionHelper.ReadInformationalVersion()}\\\"; (version stamping already exists)\",\n    \"VisualRelayTheme.axaml:121-123 \u2014 TextBlock.panelTitle uses Foreground=#9AA3B1, FontSize=12 (centralized muted style)\",\n    \"RelayQueueController.PrivateHelpers.cs:90 \u2014 tasks.Where(t => !t.NeedsReview && !seenIds.Contains(t.Id)) (NEEDS-REVIEW filter already implemented)\",\n    \"RecordingTaskRunner TestDoubles.cs:217 \u2014 returns Committed with hash, will trigger restart in tests\",\n    \"TestWaits.ForFileAsync \u2014 event-driven file wait via FileSystemWatcher, no polling\"\n  ],\n  \"repro\": \"cd /Volumes/Tera/dev/visual-relay && cat .relay/drain-20260716015038.log | grep version= | uniq -c\\n# All 13 lines show the identical version=0.76+cfcc78d\u2026 even though two tasks sealed commits (f72da685 and 6a49a414) that changed the source tree mid-drain.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 27,
+    "tool_calls_total": 68,
+    "tool_calls_succeeded": 66,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 34,
+        "failed": 2
+      },
+      "grep": {
+        "succeeded": 27,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 27,
+    "total_llm_time_s": 203.851,
+    "prompt_cache": {
+      "cached_tokens": 1067904,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 4.631,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 14,
+      "completed": 14,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.837,
+      "prompt_tokens_est": 6958,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay",
+        "depth": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 673
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.885,
+      "prompt_tokens_est": 7240,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read RunAllMode enum",
+          "Read MainWindowViewModel.Properties.cs dropdown wiring",
+          "Read TopBar.axaml ComboBox",
+          "Read RelayQueueController.cs for boundary checkpoints",
+          "Read RelayQueueController.PrivateHelpers.cs for CollectNewTasks",
+          "Read LaunchCommand.cs / launch path",
+          "Read App.axaml.cs startup",
+          "Read ControlApi.State.cs",
+          "Read RunAllModesTests.cs",
+          "Read TestDoubles.cs for test infrastructure",
+          "Read VisualRelayTheme.axaml for colors",
+          "Read drain log for version evidence",
+          "Check existing tests and drain summary infrastructure",
+          "Check .relay/ directory structure"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 990
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.888,
+      "prompt_tokens_est": 7655,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RunAllMode.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 523
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml",
+        "offset": 110,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1047
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/RelayQueueController.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 104,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/RelayQueueController.cs\""
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.65,
+      "prompt_tokens_est": 8182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayQueueController",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.353,
+      "result_length": 1303
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "MainWindowViewModel.Properties",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.19,
+      "result_length": 17
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RunAllModeOptions",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.19,
+      "result_length": 398
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.796,
+      "prompt_tokens_est": 8681,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 15741
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5639
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2754
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.76,
+      "prompt_tokens_est": 14484,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read RunAllMode enum",
+          "Read MainWindowViewModel.Properties.cs dropdown wiring",
+          "Read TopBar.axaml ComboBox",
+          "Read RelayQueueController.cs for boundary checkpoints",
+          "Read RelayQueueController.PrivateHelpers.cs for CollectNewTasks"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 985
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.182,
+      "prompt_tokens_est": 14860,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class LaunchCommand"
+      },
+      "succeeded": true,
+      "duration_s": 0.233,
+      "result_length": 108
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class App",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App"
+      },
+      "succeeded": true,
+      "duration_s": 0.015,
+      "result_length": 98
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "ControlApi",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.038,
+      "result_length": 1481
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class DrainSummaryLog"
+      },
+      "succeeded": true,
+      "duration_s": 0.187,
+      "result_length": 109
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class VersionHelper"
+      },
+      "succeeded": true,
+      "duration_s": 0.186,
+      "result_length": 200
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.678,
+      "prompt_tokens_est": 15475,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Cli/Commands/LaunchCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2209
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/App.axaml.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7198
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Services/ControlApi.State.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6040
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Logging/DrainSummaryLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1529
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/VersionHelper.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3664
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.4,
+      "prompt_tokens_est": 20552,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RunAllModesTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12202
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestDoubles"
+      },
+      "succeeded": true,
+      "duration_s": 0.208,
+      "result_length": 17
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.axaml",
+        "pattern": "VisualRelayTheme"
+      },
+      "succeeded": true,
+      "duration_s": 0.109,
+      "result_length": 144
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestRepository"
+      },
+      "succeeded": true,
+      "duration_s": 0.19,
+      "result_length": 116
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class RecordingTaskRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.189,
+      "result_length": 127
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.639,
+      "prompt_tokens_est": 23873,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 12141
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Styles/VisualRelayTheme.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10803
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Services/ControlApi.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13877
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.821,
+      "prompt_tokens_est": 32821,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerDrainTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10400
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "DrainQueueAsync\\|async.*Drain\\|void Drain\"",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 17
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "DrainQueueCommand",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 888
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.697,
+      "prompt_tokens_est": 35820,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "async.*DrainQueue|DrainAsync\\(|RunAllMode",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.013,
+      "result_length": 750
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "DrainLifecycleCallbacks"
+      },
+      "succeeded": true,
+      "duration_s": 0.208,
+      "result_length": 2736
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ProcessLauncher"
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 219
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.462,
+      "prompt_tokens_est": 36865,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13058
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/DrainLifecycleCallbacks.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1567
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Cli/ProcessLauncher.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3789
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 5.184,
+      "prompt_tokens_est": 41338,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13959
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4893
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs",
+        "offset": 200,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 994
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 4.014,
+      "prompt_tokens_est": 46433,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerNewTaskDiscoveryTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13035
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestWaits"
+      },
+      "succeeded": true,
+      "duration_s": 0.263,
+      "result_length": 95
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 4.788,
+      "prompt_tokens_est": 49674,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestWaits.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2874
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/Views/Controls/TopBar.axaml"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6251
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class RelayQueueControllerTests"
+      },
+      "succeeded": true,
+      "duration_s": 0.216,
+      "result_length": 124
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.721,
+      "prompt_tokens_est": 51846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12731
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": ".relay/**",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.205,
+      "result_length": 7124
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerTwoPhaseTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9550
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 4.919,
+      "prompt_tokens_est": 59789,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class RelayTaskRepository"
+      },
+      "succeeded": true,
+      "duration_s": 0.223,
+      "result_length": 927
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.relay/drain-20260716015038.log"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2696
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.relay/ACTIVE/info.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 126
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 12.055,
+      "prompt_tokens_est": 61405,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13361
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/DrainCircuitBreaker.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 114,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/DrainCircuitBreaker.cs\""
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 4.572,
+      "prompt_tokens_est": 64969,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class DrainCircuitBreaker"
+      },
+      "succeeded": true,
+      "duration_s": 0.339,
+      "result_length": 115
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.DrainCleanup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1247
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TimeProvider",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.04,
+      "result_length": 5363
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 29.84,
+      "prompt_tokens_est": 66762,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/DrainExecutionLoggingTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 13030
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class MainWindowViewModel\"",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.016,
+      "result_length": 17
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 3.707,
+      "prompt_tokens_est": 71898,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read LaunchCommand.cs / launch path",
+          "Read App.axaml.cs startup",
+          "Read ControlApi.State.cs",
+          "Read RunAllModesTests.cs",
+          "Read TestDoubles.cs for test infrastructure",
+          "Read VisualRelayTheme.axaml for colors",
+          "Read drain log for version evidence",
+          "Check existing tests and drain summary infrastructure",
+          "Check .relay/ directory structure"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 976
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.453,
+      "prompt_tokens_est": 72303,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunBusyAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 679
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record RelayTaskOutcome"
+      },
+      "succeeded": true,
+      "duration_s": 0.33,
+      "result_length": 108
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 3.125,
+      "prompt_tokens_est": 72612,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/RelayTaskOutcome.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 361
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+        "offset": 180,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1486
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 3.811,
+      "prompt_tokens_est": 73189,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 60,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3170
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class MainWindowViewModel\\b"
+      },
+      "succeeded": true,
+      "duration_s": 0.201,
+      "result_length": 3934
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 2.967,
+      "prompt_tokens_est": 74961,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record RelayTaskItem"
+      },
+      "succeeded": true,
+      "duration_s": 0.223,
+      "result_length": 101
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 65.001,
+      "prompt_tokens_est": 75047,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
