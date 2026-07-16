@@ -1,5 +1,4 @@
-using System.Diagnostics;
-using VisualRelay.Core.Queue;
+using VisualRelay.Relauncher;
 
 if (args.Length == 0)
 {
@@ -28,7 +27,7 @@ if (parentPid < 0 || string.IsNullOrWhiteSpace(rootPath))
 // won't hit a bind-conflict on the control port.
 try
 {
-    using var parent = Process.GetProcessById(parentPid);
+    using var parent = System.Diagnostics.Process.GetProcessById(parentPid);
     parent.WaitForExit();
 }
 catch (ArgumentException)
@@ -36,38 +35,4 @@ catch (ArgumentException)
     // Parent already exited — safe to proceed.
 }
 
-// Read the handoff to discover the relaunch command.
-var handoff = RestartHandoff.Read(rootPath);
-if (handoff?.RelaunchCommand is not { Length: > 0 } cmd)
-{
-    // Fallback: restart using the bootstrap script if available.
-    var scriptDir = Environment.GetEnvironmentVariable("VISUAL_RELAY_SCRIPT_DIR");
-    if (!string.IsNullOrWhiteSpace(scriptDir))
-    {
-        var appProj = Path.Combine(scriptDir, "src", "VisualRelay.App");
-        cmd = ["dotnet", "run", "--project", appProj];
-    }
-    else
-    {
-        Console.Error.WriteLine("No relaunch command available in handoff or environment");
-        return 1;
-    }
-}
-
-var startInfo = new ProcessStartInfo
-{
-    FileName = cmd[0],
-    WorkingDirectory = rootPath,
-    CreateNoWindow = false,
-    UseShellExecute = false,
-};
-
-// Build arguments from remaining elements.
-if (cmd.Length > 1)
-{
-    foreach (var a in cmd.Skip(1))
-        startInfo.ArgumentList.Add(a);
-}
-
-Process.Start(startInfo);
-return 0;
+return await Relauncher.RunAsync(rootPath);

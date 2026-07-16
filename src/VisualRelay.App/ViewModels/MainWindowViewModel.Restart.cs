@@ -23,27 +23,31 @@ public partial class MainWindowViewModel
             return;
         }
 
-        // Rewrite the handoff with the RelaunchCommand populated so the
-        // detached relauncher can discover the command directly — avoids
-        // relying on environment-variable fallbacks alone.
+        var appRestartCmd = BuildAppRestartArgs();
+
+        // Rewrite the handoff with both the relauncher command (for records)
+        // and the true app-restart command so the relauncher knows what to
+        // spawn — never conflate the two.
         _ = RestartHandoff.Write(
             handoff.RootPath,
             new RelayTaskOutcome(handoff.CommitSha, RelayTaskOutcomeStatus.Committed,
                 handoff.CommitSha, handoff.CommitSha, null),
             handoff.DrainId,
             handoff.PendingCount,
-            [relaunchArgs.Value.Process, relaunchArgs.Value.Arguments]);
+            relaunchCommand: [relaunchArgs.Value.Process, .. relaunchArgs.Value.Arguments],
+            appRestartCommand: appRestartCmd);
 
         try
         {
             var startInfo = new System.Diagnostics.ProcessStartInfo
             {
                 FileName = relaunchArgs.Value.Process,
-                Arguments = relaunchArgs.Value.Arguments,
                 WorkingDirectory = handoff.RootPath,
                 CreateNoWindow = true,
                 UseShellExecute = false,
             };
+            foreach (var a in relaunchArgs.Value.Arguments)
+                startInfo.ArgumentList.Add(a);
             System.Diagnostics.Process.Start(startInfo);
         }
         catch (Exception ex)
@@ -57,7 +61,35 @@ public partial class MainWindowViewModel
         Environment.Exit(0);
     }
 
-    private static (string Process, string Arguments)? BuildRelaunchArgs(
+    /// <summary>
+    /// Builds the argv to restart THE APP the same way it was started.
+    /// Source checkout → <c>dotnet run --project …/VisualRelay.App</c>;
+    /// published install → the published binary path.
+    /// </summary>
+    private static string[]? BuildAppRestartArgs()
+    {
+        var scriptDir = Environment.GetEnvironmentVariable("VISUAL_RELAY_SCRIPT_DIR");
+        if (!string.IsNullOrWhiteSpace(scriptDir))
+        {
+            var appProj = Path.Combine(scriptDir, "src", "VisualRelay.App",
+                "VisualRelay.App.csproj");
+            return ["dotnet", "run", "--project", appProj, "--"];
+        }
+
+        var appPath = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(appPath))
+            return [appPath];
+
+        return null;
+    }
+
+    /// <summary>
+    /// Builds the argv to spawn <c>VisualRelay.Relauncher</c>. Returns a
+    /// proper <c>string[]</c> for Arguments — never a pre-joined shell
+    /// command line — so the caller can feed each element individually into
+    /// <c>ProcessStartInfo.ArgumentList</c>.
+    /// </summary>
+    private static (string Process, string[] Arguments)? BuildRelaunchArgs(
         int parentPid, string rootPath)
     {
         var scriptDir = Environment.GetEnvironmentVariable("VISUAL_RELAY_SCRIPT_DIR");
@@ -65,7 +97,9 @@ public partial class MainWindowViewModel
         {
             var proj = Path.Combine(scriptDir, "tools", "VisualRelay.Relauncher");
             return ("dotnet",
-                $"run --project \"{proj}\" -- --parent-pid {parentPid} --root-path \"{rootPath}\"");
+                ["run", "--project", proj, "--",
+                 "--parent-pid", parentPid.ToString(),
+                 "--root-path", rootPath]);
         }
 
         var appPath = Environment.ProcessPath;
@@ -75,7 +109,9 @@ public partial class MainWindowViewModel
             var exe = Path.Combine(appDir, "VisualRelay.Relauncher");
             if (OperatingSystem.IsWindows()) exe += ".exe";
             if (File.Exists(exe))
-                return (exe, $"--parent-pid {parentPid} --root-path \"{rootPath}\"");
+                return (exe,
+                    ["--parent-pid", parentPid.ToString(),
+                     "--root-path", rootPath]);
         }
 
         return null;

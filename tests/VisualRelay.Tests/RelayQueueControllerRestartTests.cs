@@ -222,6 +222,7 @@ public sealed class RelayQueueControllerRestartTests
             PendingCount: 0,
             CommitSha: "sha",
             RelaunchCommand: null,
+            AppRestartCommand: null,
             Mode: RunAllMode.RestartBetweenTasks);
 
         // missingRoot does NOT exist → IsStale must return true.

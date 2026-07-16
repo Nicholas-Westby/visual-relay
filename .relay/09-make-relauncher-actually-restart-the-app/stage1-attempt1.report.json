@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T22:38:41.620121+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 09-make-relauncher-actually-restart-the-app\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Make the RestartBetweenTasks relauncher actually restart the app\n\nThe first live RestartBetweenTasks boundary stranded the drain: on 2026-07-16\ntask `01-unquote-git-paths-for-non-ascii-filenames` sealed at 19:59:05Z, the\nhandoff was written, the app quit \u2014 and nothing ever came back. The sidecar\nsat unconsumed for over an hour, no process survived, and the drain log's\nlast line is the `restart-handoff` event. Recovery required a human to\nfreshen the sidecar and relaunch by hand, once per boundary.\n\n### Evidence (verified)\n\n- Drain log `.relay/drain-20260716192649.log`: `restart-handoff (pending=7)`\n  at 19:59:05.45, then nothing \u2014 no `restart-resume`, no failure event.\n  The on-disk `.relay/restart-handoff.json` (mtime 12:59 local) was never\n  consumed; `ps` shows no app or relauncher process an hour later. The\n  relauncher DID build and run (its `bin/Debug` outputs are stamped 12:59).\n- **Bug 1 \u2014 the handoff records the wrong command.**\n  `MainWindowViewModel.Restart.cs:29-35` rewrites the handoff with\n  `RelaunchCommand = [Process, Arguments]` \u2014 the pair used to spawn the\n  RELAUNCHER (`[\"dotnet\", \"run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026\"]`,\n  confirmed in the stranded sidecar). But the relauncher\n  (`tools/VisualRelay.Relauncher/Program.cs:40-55`) reads\n  `handoff.RelaunchCommand` as the command to restart THE APP. Executed as\n  recorded, the relauncher respawns itself, not the app; the actual app\n  restart command is recorded nowhere.\n- **Bug 2 \u2014 the argv shape is wrong even for what it records.** The two\n  elements are `FileName` plus ONE pre-joined argument string, but\n  `Program.cs:66-70` feeds `cmd.Skip(1)` into `ProcessStartInfo.ArgumentList`,\n  which escapes each element as a single argv token. `dotnet` therefore\n  received the entire `run --project \u2026 -- --parent-pid \u2026` line as one\n  argument, failed immediately, and the relauncher exited 0.\n- **Bug 3 \u2014 total silence on failure.** The relauncher writes nothing to the\n  drain log, does not check whether the spawned process survived or the new\n  instance came up, and its stderr goes to inherited stdio that dies with\n  the chain. Task 00's constraint \u2014 \"a failed relaunch \u2026 must leave the\n  sidecar plus a loud drain-log event for diagnosis\" \u2014 is unmet: the sidecar\n  is left only by accident, and no event is written.\n- Knock-on: `RestartHandoff.IsStale` (`RestartHandoff.cs:98-100`) discards\n  handoffs older than 5 minutes, so by the time a human notices the strand,\n  a plain relaunch silently drops the continuation too.\n\n### What to build\n\n1. **Record the app-restart command, separately and correctly.** The handoff\n   must carry a true argv array for restarting THE APP \"the same way it was\n   started\" (source checkout \u2192 the recompiling path, e.g. the bootstrap\n   script or `dotnet run --project src/VisualRelay.App`; published install \u2192\n   the published binary), one argument per element, never a pre-joined\n   command line. How the relauncher itself is spawned is a separate concern\n   and must not be conflated with this field.\n2. **Spawn correctly.** The relauncher passes each argv element through as\n   one `ArgumentList` entry. It must never target `VisualRelay.Relauncher`\n   as the thing to restart.\n3. **Verify and report.** After spawning, the relauncher confirms the new\n   instance actually arrived (the sidecar gets consumed, or the control\n   port answers, within a bounded wait) before exiting success. On any\n   failure \u2014 spawn throws, child dies, no arrival \u2014 it writes a loud\n   drain-log event (it already references Core; `DrainSummaryLog` is\n   available) and leaves the sidecar in place for diagnosis.\n4. **Keep the existing guards intact:** bind-conflict remains fail-loud (the\n   relauncher still waits for the parent pid), the no-progress guard and\n   5-minute staleness window stay, and a user pause still wins over\n   auto-continue.\n\n### Constraints\n\n- Repo-agnostic: nothing may assume the target repo is Visual Relay; paths\n  come from the handoff/environment, not hardcoded checkout layout.\n- No shell string-joining anywhere in the chain \u2014 argv arrays end to end.\n- Keep files under the 300-line guard; use TimeProvider patterns for any\n  waits in tests (no real-time sleeps).\n\n### Tests (red first)\n\n- Handoff round-trip: the recorded `RelaunchCommand` targets the app (not\n  `VisualRelay.Relauncher`) and is a real argv array \u2014 no element contains\n  a multi-token command line (fails today on both counts).\n- Relauncher spawn test against a fake app (a script that records its argv\n  and writes a marker): relauncher started with a handoff pointing at the\n  fake app spawns it with exactly the recorded argv, waits for arrival, and\n  exits 0 (fails today: it would respawn itself with a mangled argv).\n- Failure path: handoff whose argv points at a nonexistent binary \u2192 the\n  relauncher exits nonzero, the sidecar remains, and a drain-log event\n  describing the failure exists (fails today: silent exit 0).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual self-hosted smoke: two trivial queued tasks under Restart Between\n  Tasks; confirm via drain log that the boundary produces `restart-handoff`\n  followed by a `restart-resume` from a NEW pid/version with no human help.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on my analysis of the task description and the available artifacts, here's my synthesis:\n\n## Summary\n\nThe `RestartBetweenTasks` boundary is broken because the relauncher restarts itself instead of the app due to three bugs: (1) `RestartHandoff.RelaunchCommand` is overwritten with the relauncher's own spawn command instead of the app restart command, (2) the argv is serialized as a pre-joined string but consumed as individual `ArgumentList` entries, causing `dotnet` to fail silently, and (3) the relauncher exits 0 without verification, logging, or preserving the sidecar. The fix must separate the two commands (relauncher spawn vs. app restart), enforce proper argv arrays end-to-end, add post-spawn verification with a bounded wait, and write drain-log events on failure.\n\n```json\n{\n  \"summary\": \"The RestartBetweenTasks relauncher restarts itself instead of the app because RestartHandoff.RelaunchCommand is overwritten with the relauncher's own spawn command (not the app's), the argv shape is a pre-joined string mis-consumed as individual ArgumentList entries, and the relauncher exits 0 silently regardless of outcome. The fix must record the app-restart command as a proper argv array, spawn correctly using ArgumentList, verify the app starts within a bounded wait, and write drain-log events on failure while keeping existing guards intact.\",\n  \"options\": [\n    \"Add a dedicated `AppRestartCommand` (string[]) field to `RestartHandoff`. `MainWindowViewModel.Restart.cs` populates it with the correct app-restart argv (bootstrap script or `dotnet run --project src/VisualRelay.App`), leaving `RelaunchCommand` for how the relauncher itself is spawned. The relauncher (`Program.cs`) reads `AppRestartCommand`, passes each element individually via `ArgumentList`, verifies arrival (sidecar consumed or control port responds within a bounded wait using `TimeProvider`), and writes a drain-log event + exits non-zero on any failure, preserving the sidecar.\",\n    \"Fix `RelaunchCommand` in-place: change `MainWindowViewModel.Restart.cs` to write the app restart argv there instead of the relauncher command, and fix the serialization to emit a proper `string[]` (not a 2-element array with a pre-joined string). The relauncher spawns from this field with correct `ArgumentList` usage, plus verification and drain-log reporting as in option 1. Less code churn but conflates the two commands in the same field, risking future confusion.\",\n    \"Bootstrap-config approach: write a small companion file (`.relay/app-restart.json`) alongside the handoff that contains the app-restart argv. The relauncher reads this file instead of `RelaunchCommand`. This decouples the handoff schema from process-spawning concerns entirely but adds an extra file to manage and coordinate. Same spawn/verify/report logic as option 1.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 6,
+    "tool_calls_total": 10,
+    "tool_calls_succeeded": 8,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 8,
+        "failed": 1
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 1
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 6,
+    "total_llm_time_s": 28.541,
+    "prompt_cache": {
+      "cached_tokens": 28672,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.004,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.264,
+      "prompt_tokens_est": 5191,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 146,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 146,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.559,
+      "prompt_tokens_est": 5415,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 175
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.198,
+      "prompt_tokens_est": 5510,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 139
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/extract_timings.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 465
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.194,
+      "prompt_tokens_est": 5889,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4672
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14466
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.286,
+      "prompt_tokens_est": 10817,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 359
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/runasync-edit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 104
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 17.04,
+      "prompt_tokens_est": 11178,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

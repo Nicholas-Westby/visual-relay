@@ -16,6 +16,7 @@ public sealed record RestartHandoff(
     int PendingCount,
     string CommitSha,
     string[]? RelaunchCommand,
+    string[]? AppRestartCommand,
     RunAllMode Mode)
 {
     private const string FileName = "restart-handoff.json";
@@ -32,7 +33,8 @@ public sealed record RestartHandoff(
         RelayTaskOutcome outcome,
         string drainId,
         int pendingCount,
-        string[]? relaunchCommand = null)
+        string[]? relaunchCommand = null,
+        string[]? appRestartCommand = null)
     {
         var handoff = new RestartHandoff(
             RootPath: rootPath,
@@ -41,6 +43,7 @@ public sealed record RestartHandoff(
             PendingCount: pendingCount,
             CommitSha: outcome.CommitSha ?? "unknown",
             RelaunchCommand: relaunchCommand,
+            AppRestartCommand: appRestartCommand,
             Mode: RunAllMode.RestartBetweenTasks);
 
         try

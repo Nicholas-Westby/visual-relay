@@ -1,0 +1,188 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T23:50:12.105106+00:00",
+  "task": "# Relay stage 10: Verify\nTask: 09-make-relauncher-actually-restart-the-app\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Make the RestartBetweenTasks relauncher actually restart the app\n\nThe first live RestartBetweenTasks boundary stranded the drain: on 2026-07-16\ntask `01-unquote-git-paths-for-non-ascii-filenames` sealed at 19:59:05Z, the\nhandoff was written, the app quit \u2014 and nothing ever came back. The sidecar\nsat unconsumed for over an hour, no process survived, and the drain log's\nlast line is the `restart-handoff` event. Recovery required a human to\nfreshen the sidecar and relaunch by hand, once per boundary.\n\n### Evidence (verified)\n\n- Drain log `.relay/drain-20260716192649.log`: `restart-handoff (pending=7)`\n  at 19:59:05.45, then nothing \u2014 no `restart-resume`, no failure event.\n  The on-disk `.relay/restart-handoff.json` (mtime 12:59 local) was never\n  consumed; `ps` shows no app or relauncher process an hour later. The\n  relauncher DID build and run (its `bin/Debug` outputs are stamped 12:59).\n- **Bug 1 \u2014 the handoff records the wrong command.**\n  `MainWindowViewModel.Restart.cs:29-35` rewrites the handoff with\n  `RelaunchCommand = [Process, Arguments]` \u2014 the pair used to spawn the\n  RELAUNCHER (`[\"dotnet\", \"run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026\"]`,\n  confirmed in the stranded sidecar). But the relauncher\n  (`tools/VisualRelay.Relauncher/Program.cs:40-55`) reads\n  `handoff.RelaunchCommand` as the command to restart THE APP. Executed as\n  recorded, the relauncher respawns itself, not the app; the actual app\n  restart command is recorded nowhere.\n- **Bug 2 \u2014 the argv shape is wrong even for what it records.** The two\n  elements are `FileName` plus ONE pre-joined argument string, but\n  `Program.cs:66-70` feeds `cmd.Skip(1)` into `ProcessStartInfo.ArgumentList`,\n  which escapes each element as a single argv token. `dotnet` therefore\n  received the entire `run --project \u2026 -- --parent-pid \u2026` line as one\n  argument, failed immediately, and the relauncher exited 0.\n- **Bug 3 \u2014 total silence on failure.** The relauncher writes nothing to the\n  drain log, does not check whether the spawned process survived or the new\n  instance came up, and its stderr goes to inherited stdio that dies with\n  the chain. Task 00's constraint \u2014 \"a failed relaunch \u2026 must leave the\n  sidecar plus a loud drain-log event for diagnosis\" \u2014 is unmet: the sidecar\n  is left only by accident, and no event is written.\n- Knock-on: `RestartHandoff.IsStale` (`RestartHandoff.cs:98-100`) discards\n  handoffs older than 5 minutes, so by the time a human notices the strand,\n  a plain relaunch silently drops the continuation too.\n\n### What to build\n\n1. **Record the app-restart command, separately and correctly.** The handoff\n   must carry a true argv array for restarting THE APP \"the same way it was\n   started\" (source checkout \u2192 the recompiling path, e.g. the bootstrap\n   script or `dotnet run --project src/VisualRelay.App`; published install \u2192\n   the published binary), one argument per element, never a pre-joined\n   command line. How the relauncher itself is spawned is a separate concern\n   and must not be conflated with this field.\n2. **Spawn correctly.** The relauncher passes each argv element through as\n   one `ArgumentList` entry. It must never target `VisualRelay.Relauncher`\n   as the thing to restart.\n3. **Verify and report.** After spawning, the relauncher confirms the new\n   instance actually arrived (the sidecar gets consumed, or the control\n   port answers, within a bounded wait) before exiting success. On any\n   failure \u2014 spawn throws, child dies, no arrival \u2014 it writes a loud\n   drain-log event (it already references Core; `DrainSummaryLog` is\n   available) and leaves the sidecar in place for diagnosis.\n4. **Keep the existing guards intact:** bind-conflict remains fail-loud (the\n   relauncher still waits for the parent pid), the no-progress guard and\n   5-minute staleness window stay, and a user pause still wins over\n   auto-continue.\n\n### Constraints\n\n- Repo-agnostic: nothing may assume the target repo is Visual Relay; paths\n  come from the handoff/environment, not hardcoded checkout layout.\n- No shell string-joining anywhere in the chain \u2014 argv arrays end to end.\n- Keep files under the 300-line guard; use TimeProvider patterns for any\n  waits in tests (no real-time sleeps).\n\n### Tests (red first)\n\n- Handoff round-trip: the recorded `RelaunchCommand` targets the app (not\n  `VisualRelay.Relauncher`) and is a real argv array \u2014 no element contains\n  a multi-token command line (fails today on both counts).\n- Relauncher spawn test against a fake app (a script that records its argv\n  and writes a marker): relauncher started with a handoff pointing at the\n  fake app spawns it with exactly the recorded argv, waits for arrival, and\n  exits 0 (fails today: it would respawn itself with a mangled argv).\n- Failure path: handoff whose argv points at a nonexistent binary \u2192 the\n  relauncher exits nonzero, the sidecar remains, and a drain-log event\n  describing the failure exists (fails today: silent exit 0).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual self-hosted smoke: two trivial queued tasks under Restart Between\n  Tasks; confirm via drain log that the boundary produces `restart-handoff`\n  followed by a `restart-resume` from a NEW pid/version with no human help.\n\n\n## Manifest\nsrc/VisualRelay.Core/Queue/RestartHandoff.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Restart.cs\ntools/VisualRelay.Relauncher/Program.cs\ntools/VisualRelay.Relauncher/Relauncher.cs\ntools/VisualRelay.Relauncher/VisualRelay.Relauncher.csproj\ntests/VisualRelay.Tests/VisualRelay.Tests.csproj\ntests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\ntests/VisualRelay.Tests/RelauncherTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The RestartBetweenTasks relauncher restarts itself instead of the app because RestartHandoff.RelaunchCommand is overwritten with the relauncher's own spawn command (not the app's), the argv shape is a pre-joined string mis-consumed as individual ArgumentList entries, and the relauncher exits 0 silently regardless of outcome. The fix must record the app-restart command as a proper argv array, spawn correctly using ArgumentList, verify the app starts within a bounded wait, and write drain-log events on failure while keeping existing guards intact.\",\n  \"options\": [\n    \"Add a dedicated `AppRestartCommand` (string[]) field to `RestartHandoff`. `MainWindowViewModel.Restart.cs` populates it with the correct app-restart argv (bootstrap script or `dotnet run --project src/VisualRelay.App`), leaving `RelaunchCommand` for how the relauncher itself is spawned. The relauncher (`Program.cs`) reads `AppRestartCommand`, passes each element individually via `ArgumentList`, verifies arrival (sidecar consumed or control port responds within a bounded wait using `TimeProvider`), and writes a drain-log event + exits non-zero on any failure, preserving the sidecar.\",\n    \"Fix `RelaunchCommand` in-place: change `MainWindowViewModel.Restart.cs` to write the app restart argv there instead of the relauncher command, and fix the serialization to emit a proper `string[]` (not a 2-element array with a pre-joined string). The relauncher spawns from this field with correct `ArgumentList` usage, plus verification and drain-log reporting as in option 1. Less code churn but conflates the two commands in the same field, risking future confusion.\",\n    \"Bootstrap-config approach: write a small companion file (`.relay/app-restart.json`) alongside the handoff that contains the app-restart argv. The relauncher reads this file instead of `RelaunchCommand`. This decouples the handoff schema from process-spawning concerns entirely but adds an extra file to manage and coordinate. Same spawn/verify/report logic as option 1.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The RestartBetweenTasks relauncher flow has three confirmed bugs. Bug 1: `MainWindowViewModel.Restart.cs:29-35` overwrites `RestartHandoff.RelaunchCommand` with the relauncher's own spawn command (`[Process, Arguments]` built by `BuildRelaunchArgs` for spawning `VisualRelay.Relauncher`), but `Program.cs:40-55` (the relauncher) reads that field as the command to restart THE APP \u2014 so it respawns itself. Bug 2: the 2-element array carries a pre-joined argument string as element [1], yet `Program.cs:66-70` feeds `cmd.Skip(1)` into `ArgumentList.Add()`, which escapes the entire pre-joined line as one argv token \u2014 `dotnet` receives `\\\"run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026\\\"` as a single argument and fails immediately. Bug 3: `Program.cs:72-73` spawns the process and `return 0` regardless of outcome \u2014 no verification the spawned process survived, no drain-log write, no arrival check. The `RestartHandoff` record (`RestartHandoff.cs:12-19`) has only `RelaunchCommand` (`string[]?`) as the process-spawning field; it needs a dedicated `AppRestartCommand` field for the true app restart argv. The correct app restart command for source-checkout is `[\\\"dotnet\\\", \\\"run\\\", \\\"--project\\\", \\\"<SCRIPT_DIR>/src/VisualRelay.App/VisualRelay.App.csproj\\\", \\\"--\\\"]` (mirroring `LaunchCommand.cs:37-39`); for published install it is `[\\\"<SCRIPT_DIR>/app/VisualRelay.App\\\"]`. The `BuildRelaunchArgs` method in `MainWindowViewModel.Restart.cs:60-82` already distinguishes source-checkout vs published paths via `VISUAL_RELAY_SCRIPT_DIR` and `Environment.ProcessPath` \u2014 a similar `BuildAppRestartArgs` can produce the correct argv. `DrainSummaryLog.Write` (available to the relauncher via the Core reference) appends to `.relay/<runId>.log` and can report arrival or failure. `ManualTimeProvider` already exists in tests for virtual-clock waits. The 300-line guard leaves room in all relevant files (`RestartHandoff.cs:106 lines`, `Program.cs:73 lines`, `MainWindowViewModel.Restart.cs:83 lines`).\",\n  \"constraints\": [\n    \"Repo-agnostic: nothing may assume the target repo is Visual Relay; paths come from the handoff/environment, not hardcoded checkout layout\",\n    \"No shell string-joining anywhere in the chain \u2014 argv arrays end to end\",\n    \"Keep files under the 300-line guard\",\n    \"Use TimeProvider patterns for any waits in tests (no real-time sleeps)\",\n    \"Existing guards must stay intact: bind-conflict (relauncher waits for parent PID), no-progress guard (ConsumeHandoffIfRestartMode), 5-minute staleness window (IsStale), user pause wins over auto-continue\",\n    \"A failed relaunch must leave the sidecar in place plus a loud drain-log event for diagnosis\",\n    \"The relauncher must verify the new instance actually arrived (sidecar consumed or control port answers within a bounded wait) before exiting success\",\n    \"On any failure \u2014 spawn throws, child dies, no arrival \u2014 write a drain-log event and exit non-zero\",\n    \"DrainSummaryLog.Write signature: (string rootPath, string runId, string taskId, string phase, string milestone, string? detail = null)\",\n    \"The handoff record needs a dedicated AppRestartCommand array (not reusing RelaunchCommand)\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Three independent, confirmed bugs prevent the RestartBetweenTasks relauncher from working. Bug 1: MainWindowViewModel.Restart.cs:29-35 overwrites RestartHandoff.RelaunchCommand with the relauncher's own spawn command (['dotnet', 'run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026']), but Program.cs:40-55 reads that field as the app restart command \u2014 the relauncher spawns itself, not the app. The consumed handoff file at .relay/restart-handoff.json.consumed proves this: RelaunchCommand targets VisualRelay.Relauncher, not VisualRelay.App. Bug 2: BuildRelaunchArgs produces a 2-element array where element [1] is a pre-joined argument string, but Program.cs:66-70 feeds it into ProcessStartInfo.ArgumentList.Add() which treats each element as one argv token \u2014 dotnet receives the entire joined string as a single literal argument and fails immediately. Bug 3: Program.cs:72-73 spawns the process and returns 0 unconditionally \u2014 no verification the child survived, no drain-log write, no sidecar-consumption check. Drain logs confirm every RestartBetweenTasks boundary stranded: drain-20260716192649.log shows restart-handoff at 19:59:05 then a 73-minute gap until human restart-resume at 21:12:33; drain-20260716211235.log in turn strands from 22:33:13 until human restart at 22:38:03. The relauncher has zero references to DrainSummaryLog, so failure events are never written. Knock-on: RestartHandoff.IsStale discards handoffs older than 5 minutes, so even after the relauncher fix, the auto-resume path would reject handoffs from any protracted strand.\",\n  \"excerpts\": [\n    \"MainWindowViewModel.Restart.cs:35 \u2014 [relaunchArgs.Value.Process, relaunchArgs.Value.Arguments] overwrites RelaunchCommand with relauncher-spawn command\",\n    \"MainWindowViewModel.Restart.cs:66-68 \u2014 BuildRelaunchArgs returns ('dotnet', 'run --project \\\".../VisualRelay.Relauncher\\\" -- --parent-pid \u2026') \u2014 a pre-joined argument string\",\n    \"Program.cs:40-41 \u2014 var handoff = RestartHandoff.Read(rootPath); if (handoff?.RelaunchCommand is not { Length: > 0 } cmd) \u2014 reads field expecting APP restart command\",\n    \"Program.cs:66-70 \u2014 foreach (var a in cmd.Skip(1)) startInfo.ArgumentList.Add(a); \u2014 treats pre-joined string as one argv token\",\n    \"Program.cs:72-73 \u2014 Process.Start(startInfo); return 0; \u2014 no verification, no drain-log, silent exit\",\n    \"restart-handoff.json.consumed \u2014 \\\"RelaunchCommand\\\": [\\\"dotnet\\\", \\\"run --project \\\\\\\"/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Relauncher\\\\\\\" -- --parent-pid 68605 --root-path \\\\\\\"/Volumes/Tera/dev/visual-relay/\\\\\\\"\\\"]\",\n    \"drain-20260716192649.log \u2014 restart-handoff at 19:59:05.45, then 73-minute gap, restart-resume at 21:12:33 (human relaunch)\",\n    \"RestartHandoff.cs:98-99 \u2014 (now - handoff.Timestamp).TotalMinutes > 5 \u2014 staleness window rejects handoffs from any strand >5 min\",\n    \"App.axaml.cs:110 \u2014 IsStale check discards and deletes stale handoffs before auto-resume\"\n  ],\n  \"repro\": \"1. Set Run All mode to Restart Between Tasks. 2. Queue two trivial tasks that both commit. 3. Start drain. First task runs and commits. 4. App writes restart-handoff.json with RelaunchCommand=['dotnet', 'run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026'], spawns the relauncher via dotnet run, and exits. 5. Relauncher starts, waits for parent PID to exit, reads handoff. 6. RelaunchCommand is non-null, so the fallback is skipped. 7. Relauncher spawns dotnet with ArgumentList containing one element\u2014\u2014the entire pre-joined string\u2014\u2014dotnet fails immediately (unknown command 'run --project \u2026/VisualRelay.Relauncher -- --parent-pid \u2026'). 8. Relauncher exits 0. No drain-log event written. Sidecar remains unconsumed. 9. App never restarts. Human must notice the strand and manually relaunch within 5 minutes, or the handoff goes stale and is discarded with no continuation.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"Add `AppRestartCommand` (string[]?) to `RestartHandoff` to carry the true app-restart argv, separate from `RelaunchCommand` (how the relauncher is spawned). Fix `MainWindowViewModel.Restart.cs` to build both argv arrays as proper string[] (no pre-joined strings), populate both fields in the handoff rewrite, and spawn the relauncher via `ArgumentList`. Extract the relauncher core into an internal `Relauncher.RunAsync` method accepting `TimeProvider`; it reads `AppRestartCommand`, spawns the app with correct `ArgumentList`, polls for sidecar consumption within a bounded virtual-clock wait, and writes a drain-log event + exits non-zero on any failure. Add `InternalsVisibleTo` + project reference so tests call `RunAsync` directly with `ManualTimeProvider`. Three new tests: handoff round-trip argv shape, fake-app spawn success, and nonexistent-binary failure path. Update two existing tests for the new record field.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Queue/RestartHandoff.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Restart.cs\",\n    \"tools/VisualRelay.Relauncher/Program.cs\",\n    \"+tools/VisualRelay.Relauncher/Relauncher.cs\",\n    \"tools/VisualRelay.Relauncher/VisualRelay.Relauncher.csproj\",\n    \"tests/VisualRelay.Tests/VisualRelay.Tests.csproj\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\",\n    \"+tests/VisualRelay.Tests/RelauncherTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 5, untracked deleted: 3.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelauncherTests.cs\"\n  ],\n  \"rationale\": \"Added 3 tests that verify the handoff AppRestartCommand round-trip as a proper argv array targeting the app (not the relauncher), the relauncher spawn+arrive success path using /bin/rm as a fake app, and the nonexistent-binary failure path (exit nonzero, sidecar preserved, drain-log event written). All 3 tests pass, along with the 6 existing restart tests. Implementation: added AppRestartCommand field to RestartHandoff, fixed MainWindowViewModel.Restart.cs to build proper argv arrays for both relauncher-spawn and app-restart, extracted Relauncher.RunAsync with TimeProvider-based polling, wired Program.cs to it, and added InternalsVisibleTo + project reference.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Fixed three bugs causing the RestartBetweenTasks relauncher to silently strand. (1) Added `AppRestartCommand` field to `RestartHandoff` to carry the true app-restart argv, separate from the relauncher's own spawn command, with `RunAsync` preferring the new field. (2) Fixed argv shape everywhere \u2014 `MainWindowViewModel.Restart.cs` now builds proper `string[]` arrays for both the relauncher spawn and app restart, using `ProcessStartInfo.ArgumentList` (never pre-joined shell strings). The relauncher's `RunAsync` passes each element individually via `ArgumentList` when spawning the app. (3) Added arrival verification with bounded polling and drain-log reporting \u2014 on any failure (spawn throws, child exits without consuming handoff, timeout) the relauncher writes a drain-log event and returns non-zero, leaving the sidecar for diagnosis. Extracted `Relauncher.RunAsync(rootPath, timeProvider?)` into `Relauncher.cs` (internal, InternalsVisibleTo tests) so tests drive polling with `ManualTimeProvider` \u2014 no real sleeps. All 3231 tests pass (0 failures).\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"changes\", \"issues\": [\n  \"Process leak in RelauncherTests.Relauncher_SpawnsFakeApp_WithCorrectArgv_AndExitsZero (line 63): the fake app `/bin/sh -c \\\"while true; do :; done\\\"` is a CPU-bound busy loop (100% of one core) that is spawned inside RunAsync and never killed. RunAsync returns 0 when the handoff is consumed but does not dispose or terminate the child Process \u2014 correct for production (the app should keep running) but the test leaves an orphaned, CPU-spinning /bin/sh process after every run. The codebase demonstrates strong resource-hygiene standards (FdLeakTests, BannedSymbols banning wall-clock polling), so this is inconsistent. Fix: either use a non-CPU-intensive blocker like `tail -f /dev/null` or `sleep infinity`, or capture and kill the child process after assertions (e.g., find by the pid logged in the drain event, or expose the child for test cleanup).\",\n  \"Edge case: when BuildAppRestartArgs() returns null (both VISUAL_RELAY_SCRIPT_DIR unset and Environment.ProcessPath null), MainWindowViewModel.Restart.cs:31-38 writes the handoff with appRestartCommand: null. The relauncher (Relauncher.cs:30-32) then falls back to RelaunchCommand, which contains the relauncher's OWN spawn command \u2014 causing the original Bug 1 (self-respawn) to resurface. Unlike relaunchArgs (which has a null-check and loud failure at line 19-24), appRestartCmd has no null guard. In practice Environment.ProcessPath is virtually always available, so this is low-probability, but the fallback to a self-targeting command is a latent regression. Consider either failing loud when appRestartCmd is null (like relaunchArgs) or not recording RelaunchCommand as a fallback that can cause self-respawn.\",\n  \"Cross-platform: RelauncherTests.cs:63 uses /bin/sh with no Windows skip guard. CI runs on macOS-only (release.yml: runs-on: macos-latest) so the gate passes, but the codebase uses Assert.SkipUnless(!OperatingSystem.IsWindows(), ...) extensively for Unix-specific tests. The success test would throw Win32Exception on Windows. Consider adding a skip guard for consistency, or using a cross-platform fake app.\"\n] }\n\n## Stage 8 - Visual-review\n\n_Skipped: All changes are backend/infrastructure: process spawning (System.Diagnostics.Process), JSON handoff record serialization, drain-log I/O, and unit tests. There are zero UI elements, stylesheets, images, charts, documents, or any visually rendered outputs that a vision pass could inspect._\n\n## Stage 9 - Fix\n\n{\"summary\": \"Resolved all three review issues. (1) Process leak: changed CPU-busy `while true; do :; done` to zero-CPU `tail -f /dev/null` in RelauncherTests.cs:67. (2) Null AppRestartCommand self-respawn: removed the RelaunchCommand fallback in Relauncher.cs:30-32 so a null AppRestartCommand falls through to environment-variable path instead of respawning the relauncher itself. (3) Cross-platform: added `Assert.SkipUnless(!OperatingSystem.IsWindows(), \u2026)` skip guard on the fake-app spawn test. Also changed `sleep infinity` to `tail -f /dev/null` to pass the RealSleepGuard. Full suite: 0 failed, 3117 passed, 114 skipped, 3231 total.\"}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"commitMessages\": string[] }\n\n## Verify output\nThe harness already ran the test suite; its captured output (tail) is below.\n\u2026]     VisualRelay.Tests.RealGitIntegrationDriverTests.TwoTasks_RealGit_PlanThenExecute_EachCommitContainsOnlyItsOwnFiles [SKIP]\n  Skipped VisualRelay.Tests.RealGitIntegrationDriverTests.TwoTasks_RealGit_PlanThenExecute_EachCommitContainsOnlyItsOwnFiles [1 ms]\n[xUnit.net 00:00:04.75]     VisualRelay.Tests.FdLeakTests.ProcessCapture_ReturnsPromptlyWhenChildInheritsPipeAndSurvives [SKIP]\n  Skipped VisualRelay.Tests.FdLeakTests.ProcessCapture_ReturnsPromptlyWhenChildInheritsPipeAndSurvives [1 ms]\n[xUnit.net 00:00:04.81]     VisualRelay.Tests.RealGitIntegrationDriverTests.VerifyWorktree_RealGit_OverlaysTopLevelIgnoredDirAndFile_WithSourceContent [SKIP]\n[xUnit.net 00:00:04.81]     VisualRelay.Tests.RelayDriverGitCommitTests.RunTaskAsync_WhenAnAgentCommitsMidRun_AgentCommitIsRejectedByHook [SKIP]\n  Skipped VisualRelay.Tests.RealGitIntegrationDriverTests.VerifyWorktree_RealGit_OverlaysTopLevelIgnoredDirAndFile_WithSourceContent [1 ms]\n  Skipped VisualRelay.Tests.RelayDriverGitCommitTests.RunTaskAsync_WhenAnAgentCommitsMidRun_AgentCommitIsRejectedByHook [1 ms]\n[xUnit.net 00:00:08.25]     VisualRelay.Tests.VerifyWorktreeDeletionOverlayTests.CreateVerifyWorktree_DeletedDanglingSymlink_RemovedFromWorktree [SKIP]\n  Skipped VisualRelay.Tests.VerifyWorktreeDeletionOverlayTests.CreateVerifyWorktree_DeletedDanglingSymlink_RemovedFromWorktree [1 ms]\n[xUnit.net 00:00:36.64]     VisualRelay.Tests.BackendLifecycleStatusTests.Start_LoadsUserLevelKeys_ButNotRepoRootKeys [SKIP]\n  Skipped VisualRelay.Tests.BackendLifecycleStatusTests.Start_LoadsUserLevelKeys_ButNotRepoRootKeys [1 ms]\n[xUnit.net 00:01:06.29]     VisualRelay.Tests.MacDockIconTests.MacDockIcon_TrySet_IsSafeNoOpOffMac [SKIP]\n  Skipped VisualRelay.Tests.MacDockIconTests.MacDockIcon_TrySet_IsSafeNoOpOffMac [1 ms]\nData collector 'Blame' message: All tests finished running, Sequence file will not be generated.\n\nPassed!  - Failed:     0, Passed:  3117, Skipped:   114, Total:  3231, Duration: 1 m 8 s - VisualRelay.Tests.dll (net10.0)",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Test suite fully green: 0 failed, 3117 passed, 114 skipped, 3231 total.\n\n```json\n{\n  \"summary\": \"Fixed three bugs that stranded the RestartBetweenTasks drain boundary. (1) Added `AppRestartCommand` field to `RestartHandoff` (separate from `RelaunchCommand`) to carry the true app-restart argv; `MainWindowViewModel.Restart.cs` builds it via `BuildAppRestartArgs()` \u2014 source checkout gets `[\\\"dotnet\\\", \\\"run\\\", \\\"--project\\\", \\\"\u2026/VisualRelay.App\\\", \\\"--\\\"]`, published install gets the binary path. (2) Fixed argv shape everywhere: no pre-joined strings \u2014 each element is a single token, fed individually via `ProcessStartInfo.ArgumentList`. (3) Extracted `Relauncher.RunAsync(rootPath, timeProvider?)` into `Relauncher.cs` (internal, `InternalsVisibleTo` tests) which spawns the app using `AppRestartCommand`, polls for sidecar consumption within a 30-second bounded window using `TimeProvider`, writes drain-log events (`restart-resume` on success with pid, `spawn-failed` with detail on failure), and returns 0 only on confirmed arrival \u2014 otherwise 1, leaving the sidecar in place. `Program.cs` delegates to `RunAsync`. Three new tests verify argv round-trip, fake-app spawn success (zero-CPU `tail -f /dev/null` with `ManualTimeProvider`), and nonexistent-binary failure path. Existing guards intact: bind-conflict wait, 5-minute staleness window, no-progress guard, user-pause priority. Cross-platform skip guard added on Unix-only test.\",\n  \"commitMessages\": [\n    \"fix: record true app-restart command in handoff \u2014 separate from relauncher spawn\\n\\n- Add AppRestartCommand (string[]?) to RestartHandoff\\n- BuildAppRestartArgs() produces proper argv: dotnet run --project \u2026/VisualRelay.App\\n- Relauncher reads AppRestartCommand, never falls back to RelaunchCommand\\n- Spawn via ArgumentList (no pre-joined strings)\\n- Verify arrival with bounded polling, write drain-log events, exit non-zero on failure\",\n    \"repair RestartBetweenTasks: relauncher now spawns the app instead of itself\\n\\nBug 1: handoff recorded the relauncher's own spawn command (self-respawn).\\nBug 2: argv was a 2-element array with pre-joined string (single token).\\nBug 3: silent exit 0 regardless of outcome, no drain-log event.\\n\\nAll three fixed: AppRestartCommand field, proper argv arrays,\\narrival verification with drain-log reporting.\",\n    \"fix: three bugs in RestartBetweenTasks relauncher\\n\\n- Separate app-restart command from relauncher-spawn command\\n- Proper argv arrays end-to-end via ArgumentList\\n- Bounded arrival verification + drain-log events + non-zero on failure\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 3,
+    "tool_calls_total": 8,
+    "tool_calls_succeeded": 8,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 8,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 3,
+    "total_llm_time_s": 17.469,
+    "prompt_cache": {
+      "cached_tokens": 27136,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.003,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.673,
+      "prompt_tokens_est": 9898,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Queue/RestartHandoff.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4056
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Restart.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4998
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Relauncher/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1118
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Relauncher/Relauncher.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5326
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelauncherTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5824
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.981,
+      "prompt_tokens_est": 15535,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Relauncher/VisualRelay.Relauncher.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 523
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2661
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11374
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 9.815,
+      "prompt_tokens_est": 19607,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
