@@ -24,10 +24,10 @@ public partial class MainWindowViewModel
         }
 
         UpdateRunningTask(relayEvent);
-        // Accrue the task's overall active time from its stage events. Runs for
-        // EVERY task (before the selected-task gate) because a drain plans/executes
-        // tasks the user may not be viewing.
+        // Accrue active time from stage events for every task (before the
+        // selected-task gate) — a drain executes tasks the user may not be viewing.
         AccumulateTaskActiveTime(relayEvent);
+        if (relayEvent.EventName == "flagged") ApplyStageEventToBoard(relayEvent);
         if (relayEvent.TaskId != SelectedTask?.Id)
         {
             return;
@@ -56,6 +56,11 @@ public partial class MainWindowViewModel
         }
 
         ApplyStageEventToBoard(relayEvent);
+        if (relayEvent.EventName == "flagged" && relayEvent.StageNumber is 7 or 8)
+        {
+            var sib = Stages.FirstOrDefault(s => s.Number == (relayEvent.StageNumber == 7 ? 8 : 7));
+            if (sib is { Status: "Running" }) sib.Status = "Done";
+        }
 
         // When a stage_input or stage_done event fires for the currently-selected
         // stage, refresh the per-stage detail VM so the tabs show fresh data.
@@ -252,21 +257,14 @@ public partial class MainWindowViewModel
     private List<RelayEvent> EventsFor(string taskId)
     {
         if (!_liveEventsByTask.TryGetValue(taskId, out var events))
-        {
-            events = [];
-            _liveEventsByTask[taskId] = events;
-        }
+            _liveEventsByTask[taskId] = events = [];
         return events;
     }
 
     private List<TraceEntry> TraceEntriesFor(string taskId)
     {
         if (!_liveTraceEntriesByTask.TryGetValue(taskId, out var entries))
-        {
-            entries = [];
-            _liveTraceEntriesByTask[taskId] = entries;
-        }
-
+            _liveTraceEntriesByTask[taskId] = entries = [];
         return entries;
     }
 

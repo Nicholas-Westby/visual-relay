@@ -183,6 +183,7 @@ public partial class MainWindowViewModel
             task.MarkRunning(numbers.Max(), RelayStages.All[numbers.Max() - 1].Name, numbers);
         else
             task.MarkRunning(null, null, new HashSet<int>());
+
     }
 
     private void ClearRunningTask(string taskId)

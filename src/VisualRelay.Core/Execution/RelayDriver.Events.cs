@@ -105,7 +105,7 @@ public sealed partial class RelayDriver
             var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
             if (flaggedStage > 0)
             {
-                foreach (var e in statusEntries.Where(e => e.Stage < flaggedStage && e.Status == "Running").ToList())
+                foreach (var e in statusEntries.Where(e => e.Status == "Running").ToList())
                     MarkStatus(statusEntries, e.Stage, "Done");
                 MarkStatusFlagged(statusEntries, flaggedStage, reason);
                 await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
