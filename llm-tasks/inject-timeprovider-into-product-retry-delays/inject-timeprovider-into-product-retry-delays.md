@@ -4,7 +4,7 @@ Replace every `Task.Delay(delay, cancellationToken)` in the production source co
 
 ### Baseline measurements
 
-From the parent task's `timings-baseline.txt`, the full suite runs at ~119 s wall time. The product-side delays below are real-time `Task.Delay` calls that tests exercise but cannot currently accelerate:
+From `llm-tasks/completed/speed-up-automated-tests/timings-baseline.txt`, the full suite runs at ~119 s wall time. The product-side delays below are real-time `Task.Delay` calls that tests exercise but cannot currently accelerate:
 
 | Location | Delay | Purpose | Real cost per hit |
 |---|---|---|---|
@@ -46,17 +46,17 @@ None of these accept a `TimeProvider` — they burn real seconds under any test 
 
 5. Keep a small set of integration tests (tagged with `SlowIntegration.SkipIfNotOptedIn()`) that exercise the real-time path with `TimeProvider.System` to retain confidence that wall-clock delays work in production.
 
-### Expected saving
+### Expected saving (estimate — verify by measurement)
 
 - **BackendLifecycle tests**: ~1 s saved per startup‑retry scenario, ~200 ms per stop.
 - **GitCommitter/PlanningWorktree tests**: ~250 ms – 1 s per retry scenario.
-- Total: ~2–3 s of full‑suite wall time eliminated. More importantly, this removes an entire class of hidden wall-clock waste from tests that trigger error-recovery paths.
+- Estimated total: ~2–3 s of full‑suite wall time. This is an estimate, not a measurement — the real numbers come from timing the suite before and after, per the commit-message evidence section below. More importantly, this removes an entire class of hidden wall-clock waste from tests that trigger error-recovery paths.
 
 ### Pitfalls
 
 - Do NOT delete the delay itself — the backoff is intentional (prevents busy‑retry hammering).
 - Every `Task.Delay` that gets a TimeProvider must keep its `CancellationToken`.
-- The existing `RealSleepGuardTests` AST scan flags `Task.Delay` calls lacking a TimeProvider argument; re-run the guard after this change to confirm no bare delays remain in the source tree.
+- `RealSleepGuardTests` scans the **test project only** — it will not flag these product-side delays, before or after. Verify the product change directly instead: grep the five sites listed above and confirm every `Task.Delay` there passes a TimeProvider. The test-side guard must simply stay green.
 
 ### Coverage rules
 
@@ -65,6 +65,7 @@ None of these accept a `TimeProvider` — they burn real seconds under any test 
 
 ### Commit‑message evidence
 
-```
-- test time dropped from 119s to 117s, saving 2s (full-suite wall time)
-```
+Measure the full-suite wall time right before starting and right after finishing.
+Then put exactly one filled-in evidence bullet in the commit message body, following
+the attached `commit-message-evidence.md`. Do not write the numbers into this task
+file — real measured numbers belong in the commit message only.
