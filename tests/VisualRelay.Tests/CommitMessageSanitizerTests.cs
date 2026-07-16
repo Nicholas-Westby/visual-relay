@@ -118,4 +118,55 @@ public sealed class CommitMessageSanitizerTests
         Assert.NotEqual("chore(relay):", result.TrimEnd());
         Assert.Contains("aaaa", result, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void TrySanitizeMessage_KeepsSanitizedBodyBullets()
+    {
+        var raw = "perf: Speed up retry tests.\n"
+                  + "- test time dropped from 4s to 1.4s — file total\n"
+                  + "prose lines are not bullets and are dropped\n"
+                  + "- second bullet";
+
+        var result = CommitMessageSanitizer.TrySanitizeMessage(raw);
+
+        Assert.Equal(
+            "perf: speed up retry tests"
+            + Environment.NewLine + Environment.NewLine
+            + "- test time dropped from 4s to 1.4s - file total"
+            + Environment.NewLine
+            + "- second bullet",
+            result);
+    }
+
+    [Fact]
+    public void TrySanitizeMessage_SubjectOnly_ReturnsBareSubject()
+    {
+        var result = CommitMessageSanitizer.TrySanitizeMessage("fix: patch bug");
+        Assert.Equal("fix: patch bug", result);
+    }
+
+    [Fact]
+    public void TrySanitizeMessage_NonConventionalSubject_ReturnsNull()
+    {
+        var result = CommitMessageSanitizer.TrySanitizeMessage("update stuff\n\n- with a bullet");
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TrySanitizeMessage_CapsBulletsAtThree_AndWordsAtTwenty()
+    {
+        var manyWords = string.Join(' ', Enumerable.Range(1, 25).Select(i => $"w{i}"));
+        var raw = $"feat: add thing\n- {manyWords}\n- two\n- three\n- four";
+
+        var result = CommitMessageSanitizer.TrySanitizeMessage(raw);
+
+        Assert.NotNull(result);
+        var lines = result!.Split(Environment.NewLine);
+        // subject + blank + 3 bullets, the fourth dropped
+        Assert.Equal(5, lines.Length);
+        // "- " prefix plus exactly 20 words survives the cap.
+        Assert.Equal("- " + string.Join(' ', Enumerable.Range(1, 20).Select(i => $"w{i}")), lines[2]);
+        Assert.Equal("- two", lines[3]);
+        Assert.Equal("- three", lines[4]);
+    }
 }

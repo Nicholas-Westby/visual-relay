@@ -14,19 +14,29 @@ internal static class CommitMessageSanitizer
 {
     private const string FallbackPrefix = "chore(relay): ";
 
-    public static string FromRawOrFallback(string? raw, string taskId)
+    public static string FromRawOrFallback(string? raw, string taskId) =>
+        TrySanitizeMessage(raw) ?? BuildFallbackSubject(taskId);
+
+    /// <summary>
+    /// Returns the full sanitized message — subject plus up to
+    /// <see cref="CommitRules.MaxBullets"/> body bullets — when the first line has
+    /// a valid Conventional Commit prefix; otherwise <c>null</c>. Keeping the body
+    /// is what lets a task's required commit-message evidence (e.g. a measured
+    /// test-time bullet) survive from a stage-authored candidate onto the sealed
+    /// commit.
+    /// </summary>
+    internal static string? TrySanitizeMessage(string? raw)
     {
-        var fallback = BuildFallbackSubject(taskId);
         if (string.IsNullOrWhiteSpace(raw))
         {
-            return fallback;
+            return null;
         }
 
         var lines = raw.Trim().Split('\n');
         var subject = SanitizeSubject(lines[0]);
         if (!HasConventionalPrefix(subject))
         {
-            return fallback;
+            return null;
         }
 
         var bullets = lines

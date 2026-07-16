@@ -104,7 +104,7 @@ public static class RelayStages
             "line of your input — pending specs for other tasks legitimately sit there untracked " +
             "mid-drain. If review flagged such a path, record it in your summary as " +
             "skipped-by-policy instead of acting on it.",
-        "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). The driver decides pass/fail mechanically. Do not edit files. Do NOT execute the test suite yourself — the harness has already run it mechanically; use the captured output in ## Verify output below for your summary.",
+        "Verify" => "Summarize the final state; also produce 3-5 DISTINCT Conventional-Commit subject candidates, best-first, deliberately varied (some terse, at least one avoiding file names/paths). If the task states an explicit commit-message requirement (e.g. a required measured-evidence bullet), EVERY candidate must carry it: append a blank line and the required '- ' body bullets after the subject (at most 3 bullets, each at most 20 words, real measured values only — omit a bullet you cannot back with a real measurement rather than inventing numbers). The driver decides pass/fail mechanically. Do not edit files. Do NOT execute the test suite yourself — the harness has already run it mechanically; use the captured output in ## Verify output below for your summary.",
         "Fix-verify" =>
             "Fix all failures from the full test suite gate shown in ## Verify command. " +
             "The command in ## Verify command IS the full gate — run exactly that command " +

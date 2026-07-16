@@ -89,19 +89,20 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Sanitizes each raw candidate via <see cref="CommitMessageSanitizer.TrySanitizeSubject"/>,
+    /// Sanitizes each raw candidate via <see cref="CommitMessageSanitizer.TrySanitizeMessage"/>
+    /// (body bullets survive, so task-required commit-message evidence is preserved),
     /// drops non-Conventional entries, and appends the guaranteed <c>chore(relay): {taskId}</c>
     /// fallback so the list is never empty.
     /// </summary>
-    private static IReadOnlyList<string> BuildCommitChain(IReadOnlyList<string> rawCandidates, string taskId)
+    internal static IReadOnlyList<string> BuildCommitChain(IReadOnlyList<string> rawCandidates, string taskId)
     {
         var chain = new List<string>(rawCandidates.Count + 1);
         foreach (var raw in rawCandidates)
         {
-            var subject = CommitMessageSanitizer.TrySanitizeSubject(raw);
-            if (subject is not null)
+            var message = CommitMessageSanitizer.TrySanitizeMessage(raw);
+            if (message is not null)
             {
-                chain.Add(subject);
+                chain.Add(message);
             }
         }
 
