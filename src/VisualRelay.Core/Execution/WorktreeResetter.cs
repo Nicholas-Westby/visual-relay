@@ -83,16 +83,12 @@ internal static class WorktreeResetter
     private static async Task<IReadOnlySet<string>> CaptureUntrackedAsync(
         IGitInvoker gitInvoker, string rootPath, CancellationToken ct)
     {
-        var result = await GitAsync(gitInvoker, rootPath, ["ls-files", "--others", "--exclude-standard"], ct);
+        var result = await GitAsync(gitInvoker, rootPath, ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], ct);
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
             return new HashSet<string>(StringComparer.Ordinal);
         var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var l in result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
-        {
-            var t = l.Trim();
-            if (t.Length > 0)
-                set.Add(t);
-        }
+        foreach (var l in GitPathOutput.ParseLines(result.Output))
+            set.Add(l);
         return set;
     }
 

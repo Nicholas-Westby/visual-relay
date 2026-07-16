@@ -70,7 +70,7 @@ internal static partial class GitCommitter
         // the path names in a multi-line hint.
         if (manifest.Count > 0)
         {
-            var checkArgs = new List<string> { "check-ignore", "--" };
+            var checkArgs = new List<string> { "-c", "core.quotePath=false", "check-ignore", "--" };
             checkArgs.AddRange(manifest);
             // check-ignore returns exit 1 as its NORMAL "no paths are ignored"
             // result (like grep), so treat 0 and 1 as final answers. Without this
@@ -81,10 +81,10 @@ internal static partial class GitCommitter
                 isSuccessExit: static code => code is 0 or 1, timeProvider: tp);
             if (ci.ExitCode == 0 && !string.IsNullOrWhiteSpace(ci.Output))
             {
-                var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+                var ignored = GitPathOutput.ParseLines(ci.Output);
                 var q = string.Join(", ", ignored.Select(p => $"`{p}`"));
                 return await FailAsync(
-                    ignored.Length == 1
+                    ignored.Count == 1
                         ? $"manifest contains gitignored path: {q}"
                         : $"manifest contains gitignored paths: {q}");
             }

@@ -21,7 +21,7 @@ internal static partial class GitCommitter
     {
         var gi = gitInvoker ?? new GitInvoker();
         var tp = timeProvider ?? TimeProvider.System;
-        var result = await GitAsync(gi, rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken, timeProvider: tp);
+        var result = await GitAsync(gi, rootPath, ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cancellationToken, timeProvider: tp);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"git ls-files failed: {result.Output.Trim()}");
@@ -31,12 +31,8 @@ internal static partial class GitCommitter
             return new HashSet<string>(StringComparer.Ordinal);
 
         var set = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var line in result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
-        {
-            var trimmed = line.Trim();
-            if (trimmed.Length > 0)
-                set.Add(trimmed);
-        }
+        foreach (var line in GitPathOutput.ParseLines(result.Output))
+            set.Add(line);
 
         return set;
     }

@@ -45,11 +45,11 @@ internal static class EarlyImplementationDetector
 
         // An impl file the agent CREATED early is untracked, not "modified vs HEAD".
         // Detect new impl files that already exist on disk and are untracked.
-        var untrackedArgs = new List<string> { "ls-files", "--others", "--exclude-standard", "--" };
+        var untrackedArgs = new List<string> { "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "--" };
         untrackedArgs.AddRange(implFiles);
         var untracked = await gi.RunAsync(rootPath, untrackedArgs, cancellationToken);
         if (untracked.ExitCode == 0 &&
-            untracked.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Any())
+            GitPathOutput.ParseLines(untracked.Output).Count > 0)
             return true;
 
         return false;

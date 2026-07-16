@@ -168,6 +168,67 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         Assert.Contains(unicodeName, snapshot);
     }
 
+    // ── C-quoted output decoding ───────────────────────────────────────
+
+    [Fact]
+    public async Task CaptureUntrackedSnapshotAsync_DecodesCQuotedPath()
+    {
+        // When real git (core.quotePath=true, the default) emits a C-quoted
+        // path for non-ASCII filenames, CaptureUntrackedSnapshotAsync must
+        // decode it to the real path before storing it in the snapshot set.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "old");
+        sim.Commit(repo.Root, "chore: seed");
+
+        // The real filename on disk contains U+202F
+        var realName = $"Screenshot 2026-07-15 at 9.37.05{NarrowNoBreakSpace}PM.png";
+        Write(repo, realName, "fake screenshot");
+
+        // Simulate git outputting the C-quoted form (what real git does by default)
+        var quotedName = "\"Screenshot 2026-07-15 at 9.37.05\\342\\200\\257PM.png\"";
+        var quotedInvoker = new QuotedPathGitInvoker(sim, quotedName);
+
+        var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
+            repo.Root, CancellationToken.None, quotedInvoker);
+
+        // The snapshot must contain the DECODED (real) path, not the C-quoted form.
+        Assert.Contains(realName, snapshot);
+        Assert.DoesNotContain(quotedName, snapshot);
+    }
+
+    // ── stub IGitInvoker that replaces ls-files output with C-quoted paths ─
+
+    private sealed class QuotedPathGitInvoker(
+        IGitInvoker inner,
+        string quotedOutput) : IGitInvoker
+    {
+        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
+            string rootPath,
+            IEnumerable<string> arguments,
+            CancellationToken cancellationToken,
+            TimeSpan? timeout = null,
+            IReadOnlyDictionary<string, string>? environment = null,
+            CancellationToken killToken = default,
+            Action<string>? onActivity = null)
+        {
+            var args = arguments as IReadOnlyList<string> ?? arguments.ToList();
+
+            // Intercept the target git command (e.g. ls-files --others --exclude-standard
+            // with -c core.quotePath=false prefix) and return C-quoted output instead,
+            // simulating real git with core.quotePath=true.
+            if (args is ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"])
+            {
+                // Run the real command to get authentic exit code / error output,
+                // but replace the path output with the quoted version.
+                var realResult = await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
+                return (realResult.ExitCode, quotedOutput, realResult.TimedOut);
+            }
+
+            return await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
+        }
+    }
+
     // ── stub IGitInvoker that injects a stale path into ls-files output ─
 
     private sealed class StaleSnapshotGitInvoker(string stalePath, IGitInvoker inner) : IGitInvoker
@@ -186,7 +247,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             // Intercept git ls-files --others to inject a stale path that
             // does not exist on disk, simulating a TOCTOU race where a file
             // vanished between the snapshot and git add.
-            if (args is ["ls-files", "--others", "--exclude-standard"])
+            if (args is ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"])
             {
                 var result = await inner.RunAsync(rootPath, args, cancellationToken, timeout, environment, killToken, onActivity);
                 var injected = string.IsNullOrWhiteSpace(result.Output)

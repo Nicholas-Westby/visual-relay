@@ -91,7 +91,7 @@ public sealed partial class RelayDriver
             rootPath, ["-c", "core.quotePath=false", .. args], cancellationToken);
         return result.ExitCode != 0
             ? null
-            : result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
+            : GitPathOutput.ParseLines(result.Output);
     }
 
     // VR-internal artifact dirs whose churn is pure bookkeeping and is never

@@ -165,4 +165,56 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         // The internal artifact is NOT reported as missed.
         Assert.DoesNotContain(".relay/task/report.json", missed);
     }
+
+    // ── Round-trip stability ────────────────────────────────────────
+
+    [Fact]
+    public async Task CaptureUntrackedSnapshotAsync_RoundTripIsStable()
+    {
+        // Snapshot → write to file → read back → capture fresh → set
+        // difference must be empty when nothing changed on disk.
+        var (sim, repo) = NewRepo();
+        using var _ = repo;
+        sim.Seed(repo.Root, "src/app.cs", "content");
+        // Add .gitignore so our snapshot temp file doesn't pollute the second capture.
+        sim.Seed(repo.Root, ".gitignore", ".relay/\n");
+        sim.Commit(repo.Root, "chore: seed");
+
+        // Create a mix of untracked files.
+        Write(repo, "scratch/notes.txt", "notes");
+        Write(repo, "logs/debug.log", "debug");
+
+        var first = await GitCommitter.CaptureUntrackedSnapshotAsync(
+            repo.Root, CancellationToken.None, sim);
+        Assert.NotEmpty(first);
+
+        // Write snapshot to file (mimics pre-run-untracked.txt persistence).
+        var snapshotPath = Path.Combine(repo.Root, "pre-run-untracked.txt");
+        await File.WriteAllTextAsync(snapshotPath,
+            string.Join(Environment.NewLine, first.OrderBy(p => p, StringComparer.Ordinal)));
+
+        // Read back.
+        var readBack = new HashSet<string>(
+            (await File.ReadAllLinesAsync(snapshotPath))
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0),
+            StringComparer.Ordinal);
+
+        // Clean up the snapshot file so it doesn't pollute the second capture.
+        File.Delete(snapshotPath);
+
+        // Capture again — nothing changed on disk.
+        var second = await GitCommitter.CaptureUntrackedSnapshotAsync(
+            repo.Root, CancellationToken.None, sim);
+
+        // The two snapshots must be identical.
+        Assert.Equal(first.Count, second.Count);
+        Assert.Empty(first.Except(second));
+        Assert.Empty(second.Except(first));
+
+        // The persisted snapshot must match.
+        Assert.Equal(first.Count, readBack.Count);
+        Assert.Empty(first.Except(readBack));
+        Assert.Empty(readBack.Except(first));
+    }
 }

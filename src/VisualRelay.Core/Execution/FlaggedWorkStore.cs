@@ -209,10 +209,9 @@ internal static partial class FlaggedWorkStore
             if (cherryResult.ExitCode != 0)
             {
                 var unmergedResult = await gitInvoker.RunAsync(
-                    rootPath, ["ls-files", "-u"], ct);
+                    rootPath, ["-c", "core.quotePath=false", "ls-files", "-u"], ct);
                 var conflictedFiles = unmergedResult.ExitCode == 0 && !string.IsNullOrWhiteSpace(unmergedResult.Output)
-                    ? unmergedResult.Output
-                        .Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
+                    ? GitPathOutput.ParseLines(unmergedResult.Output)
                         .Select(line =>
                         {
                             // git ls-files -u output format: <mode> <sha> <stage>\t<path>

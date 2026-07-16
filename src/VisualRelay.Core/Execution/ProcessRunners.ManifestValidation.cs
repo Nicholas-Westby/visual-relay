@@ -66,19 +66,19 @@ public sealed partial class SwivalSubagentRunner
         if (existingEntries.Count == 0)
             return null;
 
-        var args = new List<string> { "check-ignore", "--" };
+        var args = new List<string> { "-c", "core.quotePath=false", "check-ignore", "--" };
         args.AddRange(existingEntries);
 
         var result = await gi.RunAsync(targetRoot, args, cancellationToken);
         if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
             return null;
 
-        var ignored = result.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
-        if (ignored.Length == 0)
+        var ignored = GitPathOutput.ParseLines(result.Output);
+        if (ignored.Count == 0)
             return null;
 
         var quotedIgnored = string.Join(", ", ignored.Select(p => $"`{p}`"));
-        return ignored.Length == 1
+        return ignored.Count == 1
             ? $"manifest rejected: {quotedIgnored} is a gitignored runtime artifact. Remove it from the manifest; only commit-tracked source files belong."
             : $"manifest rejected: {quotedIgnored} are gitignored runtime artifacts. Remove them from the manifest; only commit-tracked source files belong.";
     }

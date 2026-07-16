@@ -182,7 +182,7 @@ internal static class NonoRollbackSkipDirs
         {
             var result = await gitInvoker.RunAsync(
                 rootPath,
-                ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
+                ["-c", "core.quotePath=false", "ls-files", "--others", "--ignored", "--exclude-standard", "--directory"],
                 ct);
 
             if (result.ExitCode != 0 || string.IsNullOrWhiteSpace(result.Output))
@@ -190,11 +190,11 @@ internal static class NonoRollbackSkipDirs
 
             var names = new List<string>();
             var seen = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var line in result.Output.Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries))
+            foreach (var line in GitPathOutput.ParseLines(result.Output))
             {
                 // Entries are dir paths (trailing '/') or, when a dir isn't fully
                 // ignored, file paths. Take the first path component either way.
-                var trimmed = line.Trim();
+                var trimmed = line;
                 if (trimmed.Length == 0)
                     continue;
 

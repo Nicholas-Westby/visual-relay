@@ -1,0 +1,442 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T19:27:56.453966+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 01-unquote-git-paths-for-non-ascii-filenames\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Decode git's C-quoted paths everywhere git output is parsed\n\nVisual Relay parses file paths out of git output (`git ls-files --others`, etc.)\nas raw text lines. With git's default `core.quotePath=true`, any path containing\na byte outside printable ASCII is emitted **C-quoted**: wrapped in double quotes\nwith octal escapes. Example from a real run \u2014 a macOS screenshot attached to a\ntask (macOS screenshot names contain U+202F, a narrow no-break space, before\n\"PM\"):\n\n```\n\"llm-tasks/fix-visual-relay-timing-bug/Screenshot 2026-07-15 at 9.37.05\\342\\200\\257PM.png\"\n```\n\nThat quoted string \u2014 including the surrounding literal quotes and backslash\nescapes \u2014 is stored and compared as if it were the path. Every downstream\nconsumer then misbehaves, because the string starts with `\"` and does not\ncorrespond to any real file. Visual Relay is a general-purpose tool that runs\non arbitrary repositories; non-ASCII filenames (macOS screenshots, accented\ncharacters, CJK, emoji) are common, so this must be fixed at the decoding\nlayer, not worked around per call site.\n\n### Evidence (from the 2026-07-15 drain, all verified)\n\n1. `GitCommitter.CaptureUntrackedSnapshotAsync` (`src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs:16-42`)\n   splits `git ls-files --others --exclude-standard` output on newlines and\n   stores raw lines. No unquoting anywhere in the repo.\n2. `IsUnderTasksDir` (`GitCommitter.Untracked.cs:53-69`, duplicated in\n   `WorktreeResetter.cs:108-124`) does an ordinal prefix check against\n   `tasksDir + \"/\"`. The quoted string starts with `\"` so the llm-tasks\n   exemption **fails exactly for these files**. Result: two tasks\n   (`merge-nocommit-contamination-tests-data-driven`, `split-key-setup-panel-ui-tests`)\n   were flagged `sealed commit is missing authored files: `\"llm-tasks/fix-visual-relay-timing-bug/Screenshot \u2026\\342\\200\\257PM.png\"``\n   over another queued task's attachment that ASCII-named siblings in the same\n   folder were correctly exempted from.\n3. Auto-include TOCTOU gate (`GitCommitter.cs:141-151`): `File.Exists` on the\n   quoted path returns false, so the path is silently skipped from staging\n   (misread as \"vanished\"), guaranteeing the post-commit\n   `FindUncommittedAuthoredFilesAsync` check then flags it.\n4. `WorktreeResetter.ResetAsync` (`WorktreeResetter.cs:47-52`): `File.Exists`\n   on the quoted path is false, so the delete silently no-ops \u2014 yet the file is\n   still reported in the drain log as removed\n   (`reset-removed \u2026 1 untracked file(s): \"llm-tasks/\u2026\\342\\200\\257PM.png\"`).\n   The log lied twice on 2026-07-16 (05:03 and 05:29 UTC).\n5. `FlaggedWorkStore.CaptureAsync` (`FlaggedWorkStore.cs:83-88`): `git rm\n   --cached -q -- <quoted-string>` cannot match, so pre-existing untracked\n   files with non-ASCII names are wrongly bundled into flagged-work snapshots\n   (both bundles from that drain are ~365 KB because they contain the 387 KB\n   screenshot).\n\n### What to build\n\n1. Decide the decoding strategy at ONE choke point. Two sound options:\n   - Run path-producing git commands with `-c core.quotePath=false` (git then\n     emits raw UTF-8 bytes), or\n   - use `-z` (NUL-delimited) variants where available and split on `\\0`.\n   Either way, add a shared helper (e.g. `GitPathOutput.ParseLines`) that all\n   call sites use, including a C-unquote fallback for any remaining quoted\n   output, so a future call site cannot silently regress.\n2. Audit EVERY site that parses paths from git output and route it through the\n   helper: `GitCommitter.Untracked.cs`, `GitCommitter.cs` (manifest gitignore\n   check output at line ~84 also renders quoted paths into messages),\n   `WorktreeResetter.cs`, `FlaggedWorkStore.cs` (`ls-files -u` parse at\n   RestoreAsync), and any `status`/`diff --name-only`/`ls-tree` parses found by\n   grep.\n3. Paths that reach user-facing messages (flag reasons, drain log) must be the\n   real path, not the octal-escaped form.\n4. Mind macOS NFC/NFD: the existing comment in `IsUnderTasksDir` explains why\n   prefix checks stay ordinal on relative paths \u2014 keep that property; decoding\n   must produce the same byte form `git ls-files` reports for round-tripping\n   back into `git add`/`git rm --cached` pathspecs.\n\n### Constraints\n\n- Repo-agnostic: no assumptions about llm-tasks layout; the fix is in git\n  output decoding, not in special-casing this filename.\n- Do not change what is exempted/committed beyond making the existing rules\n  apply correctly to non-ASCII paths.\n- Keep files under the 300-line guard; a new small helper file is fine.\n\n### Tests (red first)\n\n- A `TestRepository`-based test creating an untracked file whose name contains\n  U+202F (and one with emoji/CJK) inside the tasks dir: `CaptureUntrackedSnapshotAsync`\n  must return the decoded path, `IsUnderTasksDir` must exempt it, and\n  `FindUncommittedAuthoredFilesAsync` must NOT report it as missed.\n- `WorktreeResetter` test: a non-ASCII-named untracked file authored mid-run is\n  actually deleted from disk, and the returned removed-list names the real file.\n- Round-trip test: snapshot \u2192 write pre-run-untracked.txt \u2192 read \u2192 compare\n  against a fresh capture is stable (set difference empty when nothing changed).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the investigation (existing test files in `.swival/trash/`, the task description's cited evidence lines, and captured build/test logs), here is the framing.\n\n**Summary of the problem:** Every site that parses file paths from git command output treats the raw lines verbatim. With git's default `core.quotePath=true`, non-ASCII paths arrive C-quoted (wrapped in `\"...\"` with `\\NNN` octal escapes). This breaks `File.Exists` checks, `IsUnderTasksDir` prefix matching, `git add`/`git rm --cached` pathspecs, and user-facing log messages. Existing tests work around it by setting `core.quotePath=false` per-repo, but the actual product code never does.\n\n**Identified call sites that need routing through a shared decoder:**\n1. `GitCommitter.Untracked.cs:16-42` \u2014 `CaptureUntrackedSnapshotAsync`: splits `git ls-files --others --exclude-standard` output on newlines\n2. `GitCommitter.Untracked.cs:53-69` \u2014 `IsUnderTasksDir`: ordinal prefix check\n3. `GitCommitter.cs:~84` \u2014 manifest gitignore check output messages\n4. `GitCommitter.cs:141-151` \u2014 auto-include TOCTOU `File.Exists` gate\n5. `WorktreeResetter.cs:47-52` \u2014 `ResetAsync` `File.Exists` + delete\n6. `WorktreeResetter.cs:108-124` \u2014 duplicate `IsUnderTasksDir`\n7. `FlaggedWorkStore.cs:83-88` \u2014 `git rm --cached -q -- <path>`\n8. `FlaggedWorkStore.cs` \u2014 `ls-files -u` parsing in `RestoreAsync`\n9. Any `status --porcelain` / `diff --name-only` / `ls-tree` parses elsewhere in the repo\n\n```json\n{\n  \"summary\": \"Visual Relay parses git output (ls-files, status, diff-index, ls-tree, ls-files -u) at ~7\u20139 distinct sites without unquoting. With core.quotePath=true (default), non-ASCII paths arrive C-quoted (\\\", \\\\NNN), breaking File.Exists checks, IsUnderTasksDir prefix matching, git add/rm pathspecs, and user-facing messages. Existing tests work around this via per-repo git config core.quotePath=false, but product code never applies it. A shared GitPathOutput.ParseLines helper is needed at one choke point, plus routing every git-output-parsing call site through it.\",\n  \"options\": [\n    \"Option A [recommended]: Pass -c core.quotePath=false to every path-producing git command (ls-files, status, diff-index, ls-tree) at invocation time so git emits raw UTF-8 bytes directly. Add a shared GitPathOutput.ParseLines(string, splitOnNewlines: true) helper that also contains a C-unquote fallback (strip surrounding quotes, decode \\\\NNN octal escapes) for safety. This avoids changing git config globally and works even if a future caller omits the flag. The helper lives in a new file src/VisualRelay.Core/Execution/GitPathOutput.cs. All ~7 call sites are rewritten to call the helper, and the existing per-repo core.quotePath=false in tests is removed (no longer needed).\",\n    \"Option B: Use -z (NUL-delimited) variants where available (git ls-files -z, git diff --name-only -z, git status --porcelain -z, git ls-tree -z) and split on \\\\0. This avoids the quoting problem entirely for those commands. However, not all git plumbing commands support -z (e.g., git diff-index has no -z), and status --porcelain has no dedicated -z mode, so a fallback is still required. The implementation still needs a shared GitPathOutput helper. More complex and inconsistent than Option A.\",\n    \"Option C (hybrid): Add a single GitPathOutput.ParseLines helper that first tries to detect C-quoted lines (starts with \\\"), decodes them via a regex-based unquote method, and passes through ASCII lines unchanged. Keep git config as-is (core.quotePath=true everywhere). This requires zero changes to git invocation but is fragile: the unquote regex must handle all C-escape sequences git emits (\\\\b, \\\\t, \\\\n, \\\\f, \\\\r, \\\\\\\", \\\\\\\\, plus \\\\NNN octal), and git's encoding (UTF-8 bytes as octal) must round-trip through the platform's encoding correctly. More error-prone and harder to test than Option A.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 12,
+    "tool_calls_total": 21,
+    "tool_calls_succeeded": 18,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "outline": {
+        "succeeded": 0,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 2
+      },
+      "read_file": {
+        "succeeded": 12,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 12,
+    "total_llm_time_s": 60.037,
+    "prompt_cache": {
+      "cached_tokens": 176000,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.074,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 3,
+      "completed": 3,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.009,
+      "prompt_tokens_est": 5199,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution",
+        "depth": 2
+      },
+      "succeeded": false,
+      "duration_s": 0.009,
+      "result_length": 208,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "quotePath|Unquote|C-quote|c_quote|octal",
+        "path": "/Volumes/Tera/dev/visual-relay/src",
+        "case_insensitive": true
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 154,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src' resolves to /Volumes/Tera/dev/visual-relay/src, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ls-files|ls-tree|diff --name-only|status --porcelain|diff-index",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 154,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src' resolves to /Volumes/Tera/dev/visual-relay/src, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "guardrail",
+      "tool": "grep",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.949,
+      "prompt_tokens_est": 5620,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 231
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.849,
+      "prompt_tokens_est": 5798,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4672
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14466
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.287,
+      "prompt_tokens_est": 10711,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 20528
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/runasync-edit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 104
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 139
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 11.511,
+      "prompt_tokens_est": 15012,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read existing source files to understand current git-parsing patterns",
+          "Identify all git command invocation sites that need fixing",
+          "Frame solution options"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 292
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.274,
+      "prompt_tokens_est": 16138,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 4175
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.482,
+      "prompt_tokens_est": 18140,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ls-files|ls-tree|diff --name-only|status --porcelain|diff-index|quotePath",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.017,
+      "result_length": 1768
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CaptureUntracked|IsUnderTasksDir|FindUncommitted",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 3103
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.748,
+      "prompt_tokens_est": 19611,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/f1549fabcd684501849869976d340395/GitCommitterAutoIncludeTests.Resilience.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10739
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/9d83bb5a82d14f16bfb39f3d2d18c01f/GitCommitterAutoIncludeTests.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8699
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/d5b95ecd8b0946baa7ace8128fa21d6c/GitCommitterAutoIncludeTests.TasksDir.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3654
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 5.251,
+      "prompt_tokens_est": 25416,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GitCommitter|WorktreeResetter|FlaggedWorkStore",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 9598
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.041,
+      "prompt_tokens_est": 28839,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/cmd_output_9d7439627568.txt",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5750
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/cmd_output_35eba7063e25.txt",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5579
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 5.901,
+      "prompt_tokens_est": 32512,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Read existing source files to understand current git-parsing patterns",
+          "Identify all git command invocation sites that need fixing",
+          "Frame solution options"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 290
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 13.736,
+      "prompt_tokens_est": 33073,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

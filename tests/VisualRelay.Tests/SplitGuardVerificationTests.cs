@@ -183,7 +183,12 @@ public sealed partial class SplitGuardVerificationTests
         // Installer5LauncherTests.
         // Dropped 175→172 on 2026-07-15: merge-nocommit-contamination-tests-data-driven
         // merged 3 [Fact]s in NoCommitContaminationTests into a single [Theory].
-        const int baseline = 172;
+        // Bumped 172→174 on 2026-07-16: unquote-git-paths added
+        // CaptureUntrackedSnapshotAsync_DecodesCQuotedPath (+1) to
+        // GitCommitterAutoIncludeResilienceTests and
+        // CaptureUntrackedSnapshotAsync_RoundTripIsStable (+1) to
+        // GitCommitterAutoIncludeSnapshotTests.
+        const int baseline = 174;
 
         string[] prefixes =
         [
