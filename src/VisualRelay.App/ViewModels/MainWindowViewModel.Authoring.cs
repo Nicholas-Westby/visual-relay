@@ -270,7 +270,8 @@ public partial class MainWindowViewModel
                 ? $"# {NewTaskTitle.Trim()}\n"
                 : $"# {NewTaskTitle.Trim()}\n\n{NewTaskBody}";
 
-            await RelayTaskWriter.CreateAsync(RootPath, slug, markdown);
+            var createdPath = await RelayTaskWriter.CreateAsync(RootPath, slug, markdown);
+            await WriteSelectedTemplateAttachmentsAsync(createdPath);
         }
         catch (Exception ex)
         {

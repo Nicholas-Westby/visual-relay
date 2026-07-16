@@ -56,6 +56,19 @@ public partial class MainWindowViewModel
         return 0;
     }
 
+    /// <summary>Copies the selected template's attachment files into the freshly
+    /// created task folder, so a template ships its companion files with every
+    /// task created from it.</summary>
+    private async Task WriteSelectedTemplateAttachmentsAsync(string taskMarkdownPath)
+    {
+        var index = SelectedNewTaskTemplateIndex;
+        if (index < 0 || index >= _newTaskTemplates.Count)
+            return;
+
+        await TaskTemplates.WriteAttachmentsAsync(
+            Path.GetDirectoryName(taskMarkdownPath)!, _newTaskTemplates[index]);
+    }
+
     partial void OnSelectedNewTaskTemplateIndexChanged(int value)
     {
         if (value < 0 || value >= _newTaskTemplates.Count)

@@ -78,6 +78,14 @@ app; user templates live in `~/.config/visual-relay/templates/` (respects
 Drop a new `.md` file in either folder — the dropdown re-reads them each time the
 form opens.
 
+A template can also ship companion files: put them in a sibling directory named
+after the template (`templates/my-template/` next to `templates/my-template.md`).
+Creating a task from the template copies every file in that directory into the new
+task's folder, beside the task markdown (dotfiles are skipped). The winning layer's
+directory is taken whole — attachments never merge across layers. The built-in
+speed-up-tests template uses this to ship `commit-message-evidence.md`, the
+fill-in-the-blanks instructions for measured timing evidence in commit messages.
+
 # Tests
 
 To run the main test suite:

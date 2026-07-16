@@ -136,12 +136,115 @@ public sealed class TaskTemplatesTests
     }
 
     [Fact]
+    public void Load_RepoTemplate_AttachmentsComeFromSiblingIdDirectory()
+    {
+        using var repoDir = new TempDir();
+        File.WriteAllText(Path.Combine(repoDir.Dir, "kit.md"), "---\nname: Kit\n---\nBody\n");
+        var attachmentsDir = Path.Combine(repoDir.Dir, "kit");
+        Directory.CreateDirectory(attachmentsDir);
+        File.WriteAllText(Path.Combine(attachmentsDir, "b-notes.md"), "notes body");
+        File.WriteAllText(Path.Combine(attachmentsDir, "a-data.txt"), "raw data");
+        File.WriteAllText(Path.Combine(attachmentsDir, ".DS_Store"), "junk");
+        // Nested directories are not attachments — only top-level files are.
+        Directory.CreateDirectory(Path.Combine(attachmentsDir, "nested"));
+        File.WriteAllText(Path.Combine(attachmentsDir, "nested", "deep.md"), "deep");
+
+        var kit = TaskTemplates.Load("/nonexistent/user", repoDir.Dir).Single(t => t.Id == "kit");
+
+        Assert.Equal(2, kit.Attachments.Count);
+        Assert.Equal("a-data.txt", kit.Attachments[0].FileName);
+        Assert.Equal("raw data", System.Text.Encoding.UTF8.GetString(kit.Attachments[0].Content));
+        Assert.Equal("b-notes.md", kit.Attachments[1].FileName);
+        Assert.Equal("notes body", System.Text.Encoding.UTF8.GetString(kit.Attachments[1].Content));
+    }
+
+    [Fact]
+    public void Load_TemplateWithoutAttachmentDirectory_HasNoAttachments()
+    {
+        using var repoDir = new TempDir();
+        File.WriteAllText(Path.Combine(repoDir.Dir, "kit.md"), "Body\n");
+
+        var kit = TaskTemplates.Load("/nonexistent/user", repoDir.Dir).Single(t => t.Id == "kit");
+
+        Assert.Empty(kit.Attachments);
+    }
+
+    [Fact]
+    public void Load_OverridingLayerReplacesAttachments_NoCrossLayerMerge()
+    {
+        using var userDir = new TempDir();
+        using var repoDir = new TempDir();
+        File.WriteAllText(Path.Combine(userDir.Dir, "kit.md"), "USER body");
+        Directory.CreateDirectory(Path.Combine(userDir.Dir, "kit"));
+        File.WriteAllText(Path.Combine(userDir.Dir, "kit", "user-only.md"), "from user");
+        // Repo overrides the template but ships no attachment directory.
+        File.WriteAllText(Path.Combine(repoDir.Dir, "kit.md"), "REPO body");
+
+        var kit = TaskTemplates.Load(userDir.Dir, repoDir.Dir).Single(t => t.Id == "kit");
+        Assert.Equal(TaskTemplateSource.Repo, kit.Source);
+        Assert.Empty(kit.Attachments);
+
+        // User layer alone keeps its attachment.
+        File.Delete(Path.Combine(repoDir.Dir, "kit.md"));
+        kit = TaskTemplates.Load(userDir.Dir, repoDir.Dir).Single(t => t.Id == "kit");
+        Assert.Equal(TaskTemplateSource.User, kit.Source);
+        Assert.Equal(["user-only.md"], kit.Attachments.Select(a => a.FileName).ToArray());
+    }
+
+    [Fact]
+    public void Load_BuiltInSpeedUp_ExposesCommitMessageEvidenceAttachment()
+    {
+        var templates = TaskTemplates.Load("/nonexistent/user", "/nonexistent/repo");
+        var speedUp = templates.Single(t => t.Id == "speed-up-automated-tests");
+
+        var evidence = Assert.Single(speedUp.Attachments);
+        Assert.Equal("commit-message-evidence.md", evidence.FileName);
+
+        var content = System.Text.Encoding.UTF8.GetString(evidence.Content);
+        Assert.Contains("- test time dropped from <before> to <after>, saving <delta> (<scope>)",
+            content, StringComparison.Ordinal);
+        Assert.Contains("commit message", content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("never", content, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task WriteAttachmentsAsync_MaterializesFilesIntoTaskDirectory()
+    {
+        using var taskDir = new TempDir();
+        var template = new TaskTemplate("kit", "Kit", "Kit", "Body", TaskTemplateSource.Repo)
+        {
+            Attachments =
+            [
+                new TaskTemplateAttachment("checklist.md", "check"u8.ToArray()),
+                // A hostile name must not escape the task directory.
+                new TaskTemplateAttachment("../escape.md", "evil"u8.ToArray()),
+            ],
+        };
+
+        await TaskTemplates.WriteAttachmentsAsync(taskDir.Dir, template);
+
+        Assert.Equal("check", File.ReadAllText(Path.Combine(taskDir.Dir, "checklist.md")));
+        Assert.Equal("evil", File.ReadAllText(Path.Combine(taskDir.Dir, "escape.md")));
+        Assert.False(File.Exists(Path.Combine(Path.GetDirectoryName(taskDir.Dir)!, "escape.md")));
+    }
+
+    [Fact]
     public void SpeedUpTemplate_PinsLoadBearingContent()
     {
         var templates = TaskTemplates.Load("/nonexistent/user", "/nonexistent/repo");
         var body = templates[1].Body;
 
-        Assert.Contains("- test time dropped from 80s to 60s, saving 20s", body, StringComparison.Ordinal);
+        // The evidence bullet's exact shape lives in the attachment; the body
+        // points at it for the run's own commit AND for every follow-up task.
+        Assert.Contains("commit-message-evidence.md", body, StringComparison.Ordinal);
+        Assert.Contains("Copy `commit-message-evidence.md`", body, StringComparison.Ordinal);
+        // Numbers are measured at implementation time and belong in the commit
+        // message — authored follow-ups must never carry a pre-filled bullet.
+        Assert.Contains("never pre-fill", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dropped from 80s to 60s", body, StringComparison.Ordinal);
+        // The parent folder is archived on completion — follow-ups must cite the
+        // baseline where it will actually live.
+        Assert.Contains("llm-tasks/completed/", body, StringComparison.Ordinal);
         Assert.Contains("Never delete, disable, skip, or weaken a test", body, StringComparison.Ordinal);
         Assert.DoesNotContain("dotnet", body, StringComparison.Ordinal);
     }

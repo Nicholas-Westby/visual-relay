@@ -53,7 +53,7 @@ public sealed partial class NewTaskAuthoringTests
         viewModel.SelectedNewTaskTemplateIndex = speedUpIdx;
 
         Assert.Equal("Speed up automated tests", viewModel.NewTaskTitle);
-        Assert.Contains("- test time dropped from 80s to 60s, saving 20s",
+        Assert.Contains("commit-message-evidence.md",
             viewModel.NewTaskBody, StringComparison.Ordinal);
 
         // Re-select Blank — both fields should clear.
@@ -127,6 +127,51 @@ public sealed partial class NewTaskAuthoringTests
 
         // Body must come from repo, not built-in (which is empty).
         Assert.Equal("repo skeleton\n", viewModel.NewTaskBody);
+    }
+
+    [AvaloniaFact]
+    public async Task CreateNewTask_CopiesSelectedTemplateAttachmentsIntoTaskFolder()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+
+        var templatesDir = Path.Combine(repo.Root, "llm-tasks", "templates");
+        Directory.CreateDirectory(Path.Combine(templatesDir, "kit"));
+        File.WriteAllText(Path.Combine(templatesDir, "kit.md"),
+            "---\nname: Kit\ntitle: Use the kit\n---\nBody\n");
+        File.WriteAllText(Path.Combine(templatesDir, "kit", "checklist.md"), "step one\n");
+
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var kitIdx = viewModel.NewTaskTemplateNames.IndexOf("Kit");
+        Assert.True(kitIdx >= 0, "Kit template must be in the list");
+        viewModel.SelectedNewTaskTemplateIndex = kitIdx;
+
+        await viewModel.CreateNewTaskCommand.ExecuteAsync(null);
+
+        var taskDir = Path.Combine(repo.Root, "llm-tasks", "use-the-kit");
+        Assert.True(File.Exists(Path.Combine(taskDir, "use-the-kit.md")), "task markdown must exist");
+        Assert.Equal("step one\n", File.ReadAllText(Path.Combine(taskDir, "checklist.md")));
+    }
+
+    [AvaloniaFact]
+    public async Task CreateNewTask_BlankTemplate_WritesOnlyTheMarkdown()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+
+        var viewModel = new MainWindowViewModel(repo.Env) { RootPath = repo.Root };
+        viewModel.OpenNewTaskDialogCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        viewModel.NewTaskTitle = "Plain task";
+        await viewModel.CreateNewTaskCommand.ExecuteAsync(null);
+
+        var taskDir = Path.Combine(repo.Root, "llm-tasks", "plain-task");
+        Assert.Equal(["plain-task.md"],
+            Directory.GetFiles(taskDir).Select(f => Path.GetFileName(f)!).ToArray());
     }
 
     [AvaloniaFact]

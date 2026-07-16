@@ -6,7 +6,8 @@ Make this repository's automated test suite faster without losing any coverage. 
 task has two deliverables:
 
 1. Speed up exactly one automated test — the highest-value target found by the
-   measurement step below — and commit that change with before/after timing evidence.
+   measurement step below — and commit that change with before/after timing evidence
+   in the commit message, per "Commit-message evidence" below.
 2. Author one follow-up LLM task per remaining opportunity (sibling task folders next to
    this one, following the existing folder-naming convention), so the rest of the suite
    gets faster incrementally. Each follow-up task must be opinionated: exactly one
@@ -101,27 +102,37 @@ From the timings file, pick the single change with the best ratio of measured ti
 saved to risk, scoped to one test (or the one shared wait/fixture that dominates that
 test's time). Implement it, run the full suite to green, and re-measure: record the
 before and after numbers for the affected test and for the whole suite next to the
-baseline file.
+baseline file, and carry the measured result into the commit message per
+"Commit-message evidence" below.
 
 ## Follow-up tasks to author
 
 Create one task folder beside this one per remaining opportunity. Each follow-up task
 must:
 
-- be self-contained — executable without reading this task;
+- be self-contained — executable without reading this task. Quote the relevant
+  baseline numbers inline, and cite the timings file at the path it will have after
+  this task completes and its folder is archived:
+  `llm-tasks/completed/<this-task-folder-name>/timings-baseline.txt`;
 - prescribe exactly one approach, with the pitfalls above baked in as guardrails;
-- cite its target tests' measured baseline numbers from the timings file and state the
-  expected saving;
+- cite its target tests' measured baseline numbers from the timings file and state
+  the expected saving, clearly labeled as an estimate;
 - restate the coverage rules: no deleted/skipped/weakened tests, and a name-by-name
   mapping for any moved or merged test;
-- require its commit message to carry the time-saved bullet described below.
+- carry the commit-message instructions with it. Copy `commit-message-evidence.md`
+  from this task's folder into each follow-up task's folder, unchanged;
+- end with a short "Commit-message evidence" section that says only this: measure
+  before and after while implementing, then put one filled-in evidence bullet in the
+  commit message body, following the attached `commit-message-evidence.md`.
+  Never pre-fill that bullet — a task file must not contain an evidence bullet with
+  concrete numbers, measured or predicted. Numbers are measured at implementation
+  time and go into the eventual commit message, nowhere else.
 
 ## Commit-message evidence (this task and every follow-up)
 
-Every commit that changes test timing must include a bullet quantifying the measured
-effect, in this exact shape:
-
-- test time dropped from 80s to 60s, saving 20s
-
-Use real measured numbers and say whether they are full-suite wall time or a single
-test's time. This makes the payoff of every change legible straight from the log.
+This task's folder contains `commit-message-evidence.md`: the required bullet shape
+and the rules for filling it in. Every commit that changes test timing — this task's
+one fix and every follow-up implemented later — must carry exactly one such bullet in
+its commit message body, filled with real numbers measured before and after the
+change, never estimates or predictions. This makes the payoff of every change legible
+straight from the log.
