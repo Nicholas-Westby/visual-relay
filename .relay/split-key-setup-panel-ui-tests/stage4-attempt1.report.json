@@ -1,0 +1,324 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T05:11:30.163778+00:00",
+  "task": "# Relay stage 4: Plan\nTask: split-key-setup-panel-ui-tests\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Split KeySetupPanelUiTests into smaller facts\n\nThe single slowest always-on test is `KeySetupPanelUiTests.PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` at 18.68 s. It boots a full `MainWindow`, opens settings through the cog, and asserts all five provider states in one Avalonia headless test. Split it into three focused facts \u2014 two of them scoped to the settings window alone \u2014 so most of the assertions stop paying the whole-app boot and cog-open cost.\n\n### Baseline measurements\n\nFrom `llm-tasks/completed/speed-up-automated-tests/timings-baseline.txt`:\n\n| Test | Duration |\n|---|---|\n| `PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` | 18.68 s |\n| Other KeySetupPanelUiTests (7 tests) | ~1-3 s each |\n| **File total** | **~19 s** |\n\nThe 18.68 s test constructs a `MainWindow`, opens `SettingsPanel`, and asserts on all five provider keys (HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY) plus the HF gate and pricing note \u2014 all in one test. The Avalonia headless dispatcher processes all UI interactions in this single test sequentially, making it the longest single serial span in the always-on `[Collection(\"Headless\")]` chain.\n\n### Prescribed approach\n\nThe 18.68 s is dominated by whole-app work the provider assertions do not need: booting a full `MainWindow` (1440\u00d7900) with `LoadInitialAsync`, then clicking the cog and pumping the dispatcher in a polling helper until the owned `SettingsWindow` appears. The repo convention (see `AGENTS.md` and the `SplitGuardVerificationTests` whole-app-boot guard) is to scope panel assertions down; `SettingsTestHelpers.ShowScopedSettings` is the established pattern.\n\nSplit `PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` into **three** `[AvaloniaFact]` tests:\n\n1. **`PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv`** (scoped) \u2014 creates its own `TestRepository`, seeds the same `.env`, builds the `MainWindowViewModel`, and opens the settings window via `SettingsTestHelpers.ShowScopedSettings(vm)` \u2014 no `MainWindow`, no cog click. Asserts HF_TOKEN is set (display value contains \"hf-a\" and not \"(not set)\"), DEEPSEEK_API_KEY is set, `IsHuggingFaceConfigured` is true, `HfGateMessage` is empty, and the pricing note contains \"pay-as-you-go\".\n\n2. **`PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv`** (scoped, same pattern) \u2014 Asserts MOONSHOT_API_KEY, ANTHROPIC_API_KEY, and OPENAI_API_KEY are all not set with \"(not set)\" display values. No HF-specific assertions here \u2014 those are covered by test #1.\n\n3. **`PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv`** (windowed \u2014 keeps the original path) \u2014 boots `MainWindow` and opens settings through the cog exactly like the original, preserving the original's wiring and structural assertions: `IsSettingsOpen` is true, a `SettingsPanel` is present in the dialog's visual tree, `AllProviderKeys.Count == 5`, `KeyStates.Count == 5`, and every provider row's `GetKeyUrl` starts with \"https://\". Keeping one windowed fact preserves the cog\u2192settings coverage this class is allowlisted for, while the two state facts stop paying for it.\n\nEach test creates its own `TestRepository`, seeds the same `.env` content (`HF_TOKEN=hf-abc123xyz\\nDEEPSEEK_API_KEY=sk-deepseek-456\\n`), and closes its own dialog.\n\n### Name-by-name coverage mapping\n\n| Original test | \u2192 Destination |\n|---|---|\n| `PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` | Split into three: `PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv` + `PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv` + `PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv` |\n\nEvery assertion from the original test must appear in exactly one of the three new tests. No assertion may be weakened or omitted. Audit assertions by enumerating them from the original test body:\n\n- `Assert.True(vm.IsSettingsOpen)` \u2192 test #3 (needs the cog path)\n- `Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault())` \u2192 test #3\n- `Assert.Equal(5, MainWindowViewModel.AllProviderKeys.Count)` \u2192 test #3\n- `Assert.Equal(5, vm.KeyStates.Count)` \u2192 test #3\n- `Assert.True(hf.IsSet)` \u2192 test #1\n- `Assert.Contains(\"hf-a\", hf.DisplayValue)` \u2192 test #1\n- `Assert.DoesNotContain(\"(not set)\", hf.DisplayValue)` \u2192 test #1\n- `Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == \"DEEPSEEK_API_KEY\").IsSet)` \u2192 test #1\n- `foreach (var k in new[] { \"MOONSHOT_API_KEY\", \"ANTHROPIC_API_KEY\", \"OPENAI_API_KEY\" })` \u2192 test #2\n- `Assert.True(vm.IsHuggingFaceConfigured)` \u2192 test #1\n- `Assert.Equal(string.Empty, vm.HfGateMessage)` \u2192 test #1\n- `foreach (var row in MainWindowViewModel.AllProviderKeys) Assert.StartsWith(\"https://\", row.GetKeyUrl!)` \u2192 test #3\n- `Assert.Contains(\"pay-as-you-go\", vm.HfPricingNote)` \u2192 test #1\n- `dialog.Close()` \u2014 each test closes its own dialog\n\n### Expected saving (estimate \u2014 verify by measurement)\n\nThe two scoped facts avoid the whole-app boot and cog polling entirely (comparable scoped settings facts run in ~1\u20133 s), and the windowed fact does strictly less per-test work than the original. All of these run in the `[Collection(\"Headless\")]` serial chain, so the saving is 18.68 s minus the sum of the three replacements \u2014 estimated **3\u201312 s** off the headless chain. The range is deliberately wide: part of the 18.68 s may be one-time dispatcher warm-up that simply moves to whichever headless test runs first. Only the before/after measurement decides, per the commit-message evidence section below.\n\n### Pitfalls and guardrails\n\n- **All three new tests must carry `[Collection(\"Headless\")]` and `[AvaloniaFact]`.** The `SplitGuardVerificationTests` convention guard enforces this; the scoped facts still run on the shared headless dispatcher.\n- **The class stays on the whole-app-boot allowlist** (`SplitGuardVerificationTests.WholeAppBoot`): test #3 still constructs `MainWindow`, so do not remove the allowlist entry.\n- **Each test seeds its own `.env` with the same content.** Do not share a seeded repo across tests (Avalonia headless tests cannot share a dispatcher-scoped fixture easily, and the existing pattern in `KeySetupPanelUiTests` is one `TestRepository` per test).\n- **Do NOT combine this with any other refactoring.** The sole change is splitting one test into three. Do not touch other test methods, do not add shared fixtures, do not change `DictionaryEnvironmentAccessor` management.\n- **Test count increases from 8 to 10** (7 other tests + 3 new ones). The coverage mapping above accounts for the removed test.\n- **All 10 tests must pass in a full suite run.**\n- **Bail out if the numbers don't improve.** If the three replacement tests together are not measurably faster than the original test (same machine, same command), do not land the split \u2014 report the measurements instead.\n\n### Coverage rules\n\n- Never delete, disable, skip, or weaken a test.\n- Every assertion from the original test must appear in exactly one of the three new tests. Use the assertion audit list above as a checklist.\n- Any assertion present in the original but missing from the three new tests constitutes lost coverage \u2014 do not proceed.\n\n### Commit-message evidence\n\nMeasure the `KeySetupPanelUiTests` file total (and the full-suite wall time) right\nbefore starting and right after finishing. Then put exactly one filled-in evidence\nbullet in the commit message body, following the attached\n`commit-message-evidence.md`. Do not write the numbers into this task file \u2014 real\nmeasured numbers belong in the commit message only.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Split the 18.68 s all-in-one test into three focused facts \u2014 two scoped to the settings window (avoiding MainWindow boot and cog-click polling) and one windowed fact preserving cog\u2192settings coverage \u2014 to cut serial runtime in the headless collection.\",\n  \"options\": [\n    \"Option A \u2014 Prescribed 3-test split: PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv (scoped), PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv (scoped), PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv (windowed).\",\n    \"Option B \u2014 2-test split: merge all five provider state assertions into one scoped test; keep structural/cog assertions in a windowed test.\",\n    \"Option C \u2014 Optimize in-place: rewrite existing test to use ShowScopedSettings without splitting, removing cog coverage entirely.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The original test `PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` (lines 26\u201366 of `KeySetupPanelUiTests.cs`) contains 14+ assertions spanning provider key states (HF_TOKEN set, DEEPSEEK_API_KEY set, three unset), UI structural checks (IsSettingsOpen, SettingsPanel in visual tree), count checks (AllProviderKeys.Count==5, KeyStates.Count==5), URL format checks, and HF gate/pricing assertions. The scoped pattern `SettingsTestHelpers.ShowScopedSettings(vm)` already exists (used in `SettingsPanelUiTests.OpenScopedSettingsAsync`) and lets tests open a settings window without booting a full MainWindow or clicking the cog. The `MainWindowViewModel.OpenSettingsAsync()` method populates KeyStates identically to the cog path. From `MainWindowViewModel.Keys.cs`: `MaskValue` on `hf-abc123xyz` returns `hf-a\u2026bc12` (first 4 chars + ellipsis + last 4 chars), so `Assert.Contains(\\\"hf-a\\\", ...)` matches the original. The class `KeySetupPanelUiTests` is on the WholeAppBoot allowlist (line 36 of `SplitGuardVerificationTests.WholeAppBoot.cs`) with justification \\\"key setup reached through the top bar\\\" \u2014 test #3 preserves that by keeping the full MainWindow path. All 7 other tests in the file are untouched. The file currently has 8 tests; splitting the target test into 3 will make 10.\",\n  \"constraints\": [\n    \"All three new tests must carry `[Collection(\\\"Headless\\\")]` and `[AvaloniaFact]`.\",\n    \"The class stays on the WholeAppBoot allowlist (test #3 still constructs `MainWindow`).\",\n    \"Each test seeds its own `.env` with the same content \u2014 no shared seeded repos across tests.\",\n    \"Every assertion from the original must appear in exactly one of the three new tests \u2014 no lost coverage, no weakening.\",\n    \"Do NOT combine this with any other refactoring \u2014 sole change is splitting one test into three.\",\n    \"Do not touch other test methods, do not add shared fixtures, do not change `DictionaryEnvironmentAccessor` management.\",\n    \"Each test must call `dialog.Close()` and `Dispatcher.UIThread.RunJobs()` after asserting.\",\n    \"The two scoped tests must call `await vm.OpenSettingsAsync()` before `ShowScopedSettings(vm)` to populate KeyStates.\",\n    \"The windowed test #3 must follow the exact original pattern with `new MainWindow`, `window.Show()`, `OpenSettings(window)` (the polling cog path).\",\n    \"Test count increases from 8 to 10.\",\n    \"If the three replacement tests together are not measurably faster than the original, do not land the split \u2014 report measurements instead.\",\n    \"Never delete, disable, skip, or weaken a test.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Read the original test KeySetupPanelUiTests.cs (lines 25-66), SettingsTestHelpers.cs (ShowScopedSettings at lines 97-105), MainWindowViewModel.Keys.cs (MaskValue at lines 292-297, RefreshKeyStatesAsync at lines 154-177), SettingsPanelUiTests.cs (OpenScopedSettingsAsync scoped pattern at lines 32-37), SplitGuardVerificationTests.WholeAppBoot.cs (allowlist entry at line 36), and timings-baseline.txt (18.68s for the target test at line 17). All 14+ assertions from the original test are confirmed auditable and mappable to exactly one of the three replacement tests. The MaskValue(\\\"hf-abc123xyz\\\") produces \\\"hf-a\u20263xyz\\\" \u2014 meaning Assert.Contains(\\\"hf-a\\\", ...) correctly matches the masked display. OpenSettingsAsync() (MainWindowViewModel.Settings.cs line 74) sets IsSettingsOpen=true and calls RefreshKeyStatesAsync(), which populates KeyStates, IsHuggingFaceConfigured, and HfGateMessage \u2014 exactly the state the scoped tests need. The WholeAppBoot allowlist must retain the KeySetupPanelUiTests entry because test #3 constructs new MainWindow. The dotnet CLI is not available in this tool environment so fresh before timings cannot be taken here; the 18.68s baseline from the TRX file (2026-06-17) provides the reference point. The implementer must measure before and after with dotnet test as prescribed by commit-message-evidence.md.\",\n  \"excerpts\": [\n    \"// KeySetupPanelUiTests.cs:25-66 \u2014 original test with all 14+ assertions\\n[AvaloniaFact]\\npublic async Task PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    using var r = SeedUserEnv(repo, \\\"HF_TOKEN=hf-abc123xyz\\\\nDEEPSEEK_API_KEY=sk-deepseek-456\\\\n\\\");\\n    var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };\\n    await vm.LoadInitialAsync();\\n    var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };\\n    window.Show();\\n    Dispatcher.UIThread.RunJobs();\\n    var dialog = OpenSettings(window);\\n    // ... 14+ assertions spanning HF/DEEPSEEK set, MOONSHOT/ANTHROPIC/OPENAI unset,\\n    //     IsSettingsOpen, SettingsPanel visual, AllProviderKeys.Count, KeyStates.Count,\\n    //     IsHuggingFaceConfigured, HfGateMessage, GetKeyUrl, HfPricingNote\\n    dialog.Close();\\n    Dispatcher.UIThread.RunJobs();\\n}\",\n    \"// SettingsTestHelpers.cs:97-105 \u2014 scoped settings pattern (no MainWindow, no cog)\\npublic static SettingsWindow ShowScopedSettings(MainWindowViewModel vm)\\n{\\n    var dialog = new SettingsWindow { DataContext = vm };\\n    dialog.Show();\\n    dialog.Measure(new Size(dialog.Width, dialog.Height));\\n    dialog.Arrange(new Rect(0, 0, dialog.Width, dialog.Height));\\n    Dispatcher.UIThread.RunJobs();\\n    return dialog;\\n}\",\n    \"// SettingsPanelUiTests.cs:32-37 \u2014 existing scoped pattern usage\\nprivate async Task<SettingsWindow> OpenScopedSettingsAsync(TestRepository repo)\\n{\\n    var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };\\n    await vm.OpenSettingsAsync();\\n    return SettingsTestHelpers.ShowScopedSettings(vm);\\n}\",\n    \"// MainWindowViewModel.Keys.cs:292-297 \u2014 MaskValue behavior\\nprivate static string MaskValue(string value)\\n{\\n    if (string.IsNullOrEmpty(value)) return \\\"(not set)\\\";\\n    if (value.Length <= 8) return new string('\u2022', value.Length);\\n    return value[..4] + \\\"\u2026\\\" + value[^4..];\\n}\",\n    \"// MainWindowViewModel.Settings.cs:74-78 \u2014 OpenSettingsAsync populates KeyStates\\npublic async Task OpenSettingsAsync()\\n{\\n    IsSettingsOpen = true;\\n    await RefreshKeyStatesAsync();\\n}\",\n    \"// SplitGuardVerificationTests.WholeAppBoot.cs:36 \u2014 allowlist entry must stay\\n[\\\"KeySetupPanelUiTests\\\"] = \\\"key setup reached through the top bar\\\",\",\n    \"// timings-baseline.txt:17 \u2014 baseline measurement\\n18.68 s  KeySetupPanelUiTests.PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv\"\n  ],\n  \"repro\": \"1. Measure before: `dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter FullyQualifiedName~KeySetupPanelUiTests` and record the file total and the 18.68s test duration. Optionally record full-suite wall time.\\n2. Delete `PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv` (lines 25-66 of KeySetupPanelUiTests.cs).\\n3. Add three new [AvaloniaFact] tests:\\n   a. `PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv` \u2014 scoped: TestRepository, SeedUserEnv, new MainWindowViewModel, await vm.OpenSettingsAsync(), ShowScopedSettings(vm). Assert: HF_TOKEN IsSet, DisplayValue contains \\\"hf-a\\\" and not \\\"(not set)\\\", DEEPSEEK_API_KEY IsSet, vm.IsHuggingFaceConfigured, vm.HfGateMessage==\\\"\\\", vm.HfPricingNote contains \\\"pay-as-you-go\\\". dialog.Close().\\n   b. `PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv` \u2014 same scoped setup. Assert: MOONSHOT/ANTHROPIC/OPENAI all IsSet==false and DisplayValue==\\\"(not set)\\\". dialog.Close().\\n   c. `PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv` \u2014 full MainWindow path like original: TestRepository, SeedUserEnv, LoadInitialAsync, new MainWindow, Show, OpenSettings(window). Assert: IsSettingsOpen, SettingsPanel in visual tree, AllProviderKeys.Count==5, KeyStates.Count==5, all GetKeyUrl start with \\\"https://\\\". dialog.Close().\\n4. Run the same dotnet test command and verify 10 tests pass (7 original + 3 new). Verify the file total is less than the before measurement.\\n5. Run full suite to verify no regressions.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have everything needed. The plan is clean \u2014 one file, one delete + three inserts, zero other changes. Let me write the final answer.\n\n```json\n{\n  \"plan\": \"## Plan: Split KeySetupPanelUiTests.PanelRendersAllFiveProviders_WithCorrectSetUnsetState_FromSeededEnv\\n\\n### Measurements (before editing)\\n\\n1. Run `dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter FullyQualifiedName~KeySetupPanelUiTests` and record the file total and the target test's duration.\\n2. Optionally record full-suite wall time.\\n\\n### Edit: `tests/VisualRelay.Tests/KeySetupPanelUiTests.cs`\\n\\nDelete the original test method at lines 25-66 and replace it with three new `[AvaloniaFact]` methods (preserving order: scoped #1, scoped #2, windowed #3).\\n\\n**New test #1** \u2014 `PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv` (scoped, after line 24):\\n\\n```csharp\\n[AvaloniaFact]\\npublic async Task PanelRendersHfAndDeepSeek_WithCorrectSetState_FromSeededEnv()\\n{\\n    using var repo = TestRepository.Create();\\n    using var r = SeedUserEnv(repo, \\\"HF_TOKEN=hf-abc123xyz\\\\nDEEPSEEK_API_KEY=sk-deepseek-456\\\\n\\\");\\n\\n    var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };\\n    await vm.OpenSettingsAsync();\\n    var dialog = SettingsTestHelpers.ShowScopedSettings(vm);\\n\\n    var hf = vm.KeyStates.First(s => s.Row.EnvVarName == \\\"HF_TOKEN\\\");\\n    Assert.True(hf.IsSet);\\n    Assert.Contains(\\\"hf-a\\\", hf.DisplayValue, StringComparison.Ordinal);\\n    Assert.DoesNotContain(\\\"(not set)\\\", hf.DisplayValue, StringComparison.Ordinal);\\n\\n    Assert.True(vm.KeyStates.First(s => s.Row.EnvVarName == \\\"DEEPSEEK_API_KEY\\\").IsSet);\\n\\n    Assert.True(vm.IsHuggingFaceConfigured);\\n    Assert.Equal(string.Empty, vm.HfGateMessage);\\n    Assert.Contains(\\\"pay-as-you-go\\\", vm.HfPricingNote, StringComparison.Ordinal);\\n\\n    dialog.Close();\\n    Dispatcher.UIThread.RunJobs();\\n}\\n```\\n\\n**New test #2** \u2014 `PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv` (scoped):\\n\\n```csharp\\n[AvaloniaFact]\\npublic async Task PanelRendersMoonshot_Anthropic_OpenAI_WithCorrectUnsetState_FromSeededEnv()\\n{\\n    using var repo = TestRepository.Create();\\n    using var r = SeedUserEnv(repo, \\\"HF_TOKEN=hf-abc123xyz\\\\nDEEPSEEK_API_KEY=sk-deepseek-456\\\\n\\\");\\n\\n    var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };\\n    await vm.OpenSettingsAsync();\\n    var dialog = SettingsTestHelpers.ShowScopedSettings(vm);\\n\\n    foreach (var k in new[] { \\\"MOONSHOT_API_KEY\\\", \\\"ANTHROPIC_API_KEY\\\", \\\"OPENAI_API_KEY\\\" })\\n    {\\n        Assert.False(vm.KeyStates.First(s => s.Row.EnvVarName == k).IsSet);\\n        Assert.Equal(\\\"(not set)\\\", vm.KeyStates.First(s => s.Row.EnvVarName == k).DisplayValue);\\n    }\\n\\n    dialog.Close();\\n    Dispatcher.UIThread.RunJobs();\\n}\\n```\\n\\n**New test #3** \u2014 `PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv` (windowed, preserves original path):\\n\\n```csharp\\n[AvaloniaFact]\\npublic async Task PanelRendersAllProviderCount_KeyUrls_AndOpensFromCog_FromSeededEnv()\\n{\\n    using var repo = TestRepository.Create();\\n    repo.WriteConfig(\\\"dotnet test\\\", []);\\n    repo.WriteTask(\\\"alpha\\\", \\\"# Alpha\\\\n\\\");\\n    using var r = SeedUserEnv(repo, \\\"HF_TOKEN=hf-abc123xyz\\\\nDEEPSEEK_API_KEY=sk-deepseek-456\\\\n\\\");\\n\\n    var vm = new MainWindowViewModel(_env) { RootPath = repo.Root };\\n    await vm.LoadInitialAsync();\\n    var window = new MainWindow { DataContext = vm, Width = 1440, Height = 900 };\\n    window.Show();\\n    Dispatcher.UIThread.RunJobs();\\n\\n    var dialog = OpenSettings(window);\\n    Assert.True(vm.IsSettingsOpen);\\n    Assert.NotNull(dialog.GetVisualDescendants().OfType<SettingsPanel>().FirstOrDefault());\\n\\n    Assert.Equal(5, MainWindowViewModel.AllProviderKeys.Count);\\n    Assert.Equal(5, vm.KeyStates.Count);\\n\\n    foreach (var row in MainWindowViewModel.AllProviderKeys)\\n        Assert.StartsWith(\\\"https://\\\", row.GetKeyUrl!, StringComparison.Ordinal);\\n\\n    dialog.Close();\\n    Dispatcher.UIThread.RunJobs();\\n}\\n```\\n\\n### No other file changes\\n\\n- `SplitGuardVerificationTests.WholeAppBoot.cs` \u2014 allowlist entry for `KeySetupPanelUiTests` stays (test #3 still constructs `new MainWindow`).\\n- `SplitGuardVerificationTests.Conventions.cs` \u2014 `KeySetupPanelUiTests.cs` already in the `HeadlessCollectionFiles_HaveCollectionAttribute` list; no change.\\n- All 7 other test methods in `KeySetupPanelUiTests.cs` are untouched.\\n\\n### Assertion coverage audit (14 groups \u2192 each in exactly one test)\\n\\n| # | Assertion | Dest |\\n|---|-----------|------|\\n| 1 | `vm.IsSettingsOpen` is true | #3 |\\n| 2 | `SettingsPanel` in visual tree | #3 |\\n| 3 | `AllProviderKeys.Count == 5` | #3 |\\n| 4 | `KeyStates.Count == 5` | #3 |\\n| 5 | `hf.IsSet` is true | #1 |\\n| 6 | `hf.DisplayValue` contains \\\"hf-a\\\" | #1 |\\n| 7 | `hf.DisplayValue` does not contain \\\"(not set)\\\" | #1 |\\n| 8 | `DEEPSEEK_API_KEY` IsSet is true | #1 |\\n| 9 | MOONSHOT/ANTHROPIC/OPENAI IsSet is false | #2 |\\n| 10 | MOONSHOT/ANTHROPIC/OPENAI DisplayValue == \\\"(not set)\\\" | #2 |\\n| 11 | `vm.IsHuggingFaceConfigured` is true | #1 |\\n| 12 | `vm.HfGateMessage` is empty | #1 |\\n| 13 | All `GetKeyUrl` start with \\\"https://\\\" | #3 |\\n| 14 | `HfPricingNote` contains \\\"pay-as-you-go\\\" | #1 |\\n\\n### Measurements (after editing)\\n\\n1. Run the same `dotnet test` command and verify all 10 tests pass (7 original + 3 new).\\n2. Compare file total and full-suite wall time against the before numbers.\\n3. If improvement: fill the commit-message evidence bullet. If not measurably faster: report the measurements, do not land the split.\\n\\n### Test count\\n\\n8 tests before \u2192 10 tests after (7 untouched + 3 replacements for the 1 deleted).\",\n  \"manifest\": [\n    \"tests/VisualRelay.Tests/KeySetupPanelUiTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 8,
+    "tool_calls_total": 15,
+    "tool_calls_succeeded": 12,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 6,
+        "failed": 3
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 8,
+    "total_llm_time_s": 111.997,
+    "prompt_cache": {
+      "cached_tokens": 110208,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.43,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.855,
+      "prompt_tokens_est": 8363,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/KeySetupPanelUiTests.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 111,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/KeySetupPanelUiTests.cs\""
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/SettingsTestHelpers.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 110,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/SettingsTestHelpers.cs\""
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/SplitGuardVerificationTests.WholeAppBoot.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 131,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/UI/SplitGuardVerificationTests.WholeAppBoot.cs\""
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.743,
+      "prompt_tokens_est": 8623,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*KeySetupPanelUiTests*"
+      },
+      "succeeded": true,
+      "duration_s": 0.161,
+      "result_length": 47
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*SettingsTestHelpers*"
+      },
+      "succeeded": true,
+      "duration_s": 0.115,
+      "result_length": 46
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*SplitGuardVerificationTests*"
+      },
+      "succeeded": true,
+      "duration_s": 0.115,
+      "result_length": 323
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.17,
+      "prompt_tokens_est": 8786,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/KeySetupPanelUiTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 14689
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SettingsTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8226
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SplitGuardVerificationTests.WholeAppBoot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9141
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.461,
+      "prompt_tokens_est": 16680,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SettingsPanelUiTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10549
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SplitGuardVerificationTests.Conventions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14794
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 29.469,
+      "prompt_tokens_est": 22543,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "OpenSettingsAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 131
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "HfPricingNote",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 121
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 41.533,
+      "prompt_tokens_est": 24939,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "I need to construct the plan. The sole file to edit is `tests/VisualRelay.Tests/KeySetupPanelUiTests.cs`.\n\nChanges:\n1. Delete lines 25-66 (the original test method)\n2. Insert three new test methods in its place\n\nThe WholeAppBoot allowlist stays \u2014 no change to SplitGuardVerificationTests.WholeAppBoot.cs.\n\nThe Headless collection list in SplitGuardVerificationTests.Conventions.cs line 62 already lists KeySetupPanelUiTests.cs \u2014 no change needed.\n\nLet me verify my plan covers every assertion from the audit list.\n\nOriginal assertions (14 groups):\n1. Assert.True(vm.IsSettingsOpen) \u2192 test #3 \u2713\n2. Assert.NotNull(dialog...SettingsPanel...) \u2192 test #3 \u2713\n3. Assert.Equal(5, AllProviderKeys.Count) \u2192 test #3 \u2713\n4. Assert.Equal(5, KeyStates.Count) \u2192 test #3 \u2713\n5. Assert.True(hf.IsSet) \u2192 test #1 \u2713\n6. Assert.Contains(\"hf-a\", hf.DisplayValue) \u2192 test #1 \u2713\n7. Assert.DoesNotContain(\"(not set)\", hf.DisplayValue) \u2192 test #1 \u2713\n8. Assert.True(DEEPSEEK_API_KEY.IsSet) \u2192 test #1 \u2713\n9. foreach MOONSHOT/ANTHROPIC/OPENAI Assert.False(IsSet) \u2192 test #2 \u2713\n10. foreach MOONSHOT/ANTHROPIC/OPENAI Assert.Equal(\"(not set)\", DisplayValue) \u2192 test #2 \u2713\n11. Assert.True(vm.IsHuggingFaceConfigured) \u2192 test #1 \u2713\n12. Assert.Equal(string.Empty, vm.HfGateMessage) \u2192 test #1 \u2713\n13. foreach AllProviderKeys Assert.StartsWith(\"https://\", GetKeyUrl) \u2192 test #3 \u2713\n14. Assert.Contains(\"pay-as-you-go\", HfPricingNote) \u2192 test #1 \u2713\n\nEach test closes its dialog. All covered exactly once.\n\nThe plan: edit one file. Delete one method, add three."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.987,
+      "prompt_tokens_est": 28098,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/KeySetupPanelUiTests.cs",
+        "offset": 1,
+        "limit": 70
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3402
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 21.779,
+      "prompt_tokens_est": 29155,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
