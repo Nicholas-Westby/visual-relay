@@ -87,10 +87,10 @@ public sealed partial class SplitGuardVerificationTests
     ///   SwivalSubagentRunnerCommandFilterTests.cs                 15
     ///   SwivalSubagentRunnerTests.cs                              10
     ///   RelayDriverTests.cs                                       13
-    ///   NoCommitContaminationTests.cs                              3
+    ///   NoCommitContaminationTests.cs                              0  (→ [Theory])
     ///   PlanPhaseRunnerTests.cs                                    6
     ///                                                           ----
-    ///   Total (oversized families)                               147
+    ///   Total (oversized families)                               144
     /// </summary>
     [Fact]
     public void FactCount_AcrossOversizedFiles_MatchesBaseline()
@@ -181,7 +181,9 @@ public sealed partial class SplitGuardVerificationTests
         // Bumped 174→175 on 2026-07-10: stop-leaking-host-dev-env-into-target-
         // commands added Launcher_CapturesUserEnvSnapshot [Fact] to
         // Installer5LauncherTests.
-        const int baseline = 175;
+        // Dropped 175→172 on 2026-07-15: merge-nocommit-contamination-tests-data-driven
+        // merged 3 [Fact]s in NoCommitContaminationTests into a single [Theory].
+        const int baseline = 172;
 
         string[] prefixes =
         [
