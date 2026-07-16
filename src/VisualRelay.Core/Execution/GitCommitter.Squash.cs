@@ -43,7 +43,8 @@ internal static partial class GitCommitter
         IGitInvoker gi,
         string rootPath,
         string? runBaseSha,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider timeProvider)
     {
         if (string.IsNullOrWhiteSpace(runBaseSha))
             return SquashOutcome.NoOp;
@@ -51,12 +52,12 @@ internal static partial class GitCommitter
         // Resolve the run-base to a full sha. If it can't be resolved (the
         // recorded sha is gone, e.g. an unrelated history rewrite), do nothing
         // rather than risk a destructive reset to a bad ref.
-        var baseRev = await GitAsync(gi, rootPath, ["rev-parse", "--verify", "--quiet", $"{runBaseSha}^{{commit}}"], cancellationToken);
+        var baseRev = await GitAsync(gi, rootPath, ["rev-parse", "--verify", "--quiet", $"{runBaseSha}^{{commit}}"], cancellationToken, timeProvider: timeProvider);
         if (baseRev.ExitCode != 0 || string.IsNullOrWhiteSpace(baseRev.Output))
             return SquashOutcome.NoOp;
         var resolvedBase = baseRev.Output.Trim();
 
-        var headRev = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken);
+        var headRev = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken, timeProvider: timeProvider);
         if (headRev.ExitCode != 0)
             return SquashOutcome.NoOp;
         var head = headRev.Output.Trim();
@@ -70,7 +71,7 @@ internal static partial class GitCommitter
         // not (detached/diverged HEAD, or a bad recorded sha), resetting would
         // discard or rewrite unrelated history — skip and let the working-tree
         // commit proceed against the current HEAD.
-        var ancestor = await GitAsync(gi, rootPath, ["merge-base", "--is-ancestor", resolvedBase, head], cancellationToken);
+        var ancestor = await GitAsync(gi, rootPath, ["merge-base", "--is-ancestor", resolvedBase, head], cancellationToken, timeProvider: timeProvider);
         if (ancestor.ExitCode != 0)
             return SquashOutcome.NoOp;
 
@@ -81,14 +82,14 @@ internal static partial class GitCommitter
         // seal and destroy it. So require EVERY commit in the range to be a bare
         // agent self-commit (no Relay-Seal: trailer). If any is sealed, abort the
         // squash — a cosmetic double-commit is strictly better than a lost seal.
-        if (await RangeContainsSealedCommitAsync(gi, rootPath, resolvedBase, head, cancellationToken))
+        if (await RangeContainsSealedCommitAsync(gi, rootPath, resolvedBase, head, cancellationToken, timeProvider))
             return SquashOutcome.NoOp;
 
         // Soft reset: keeps every change since the run-base staged (the index
         // still holds HEAD's full tree), drops the agent's bare commits, repoints
         // HEAD at the run-base. Capture HEAD first so the caller can restore it if
         // the commit is ultimately rejected (FIX 2).
-        var reset = await GitAsync(gi, rootPath, ["reset", "--soft", resolvedBase], cancellationToken);
+        var reset = await GitAsync(gi, rootPath, ["reset", "--soft", resolvedBase], cancellationToken, timeProvider: timeProvider);
         if (reset.ExitCode != 0)
             return new SquashOutcome(GitCommitResult.Failed($"git reset --soft to run-base failed (git exit {reset.ExitCode}): {reset.Output.Trim()}"), null);
 
@@ -105,12 +106,13 @@ internal static partial class GitCommitter
         IGitInvoker gi,
         string rootPath,
         string origHead,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider timeProvider)
     {
         // Soft reset back to the pre-squash HEAD: re-creates the dropped commits
         // and leaves the index as the seal attempt left it (harmless — the next
         // worktree reset rebuilds it). Without this the rewound commits are lost.
-        await GitAsync(gi, rootPath, ["reset", "--soft", origHead], cancellationToken);
+        await GitAsync(gi, rootPath, ["reset", "--soft", origHead], cancellationToken, timeProvider: timeProvider);
     }
 
     /// <summary>
@@ -132,13 +134,14 @@ internal static partial class GitCommitter
         string rootPath,
         string runBaseSha,
         string origHead,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider timeProvider)
     {
         // Paths added (A) or modified (M) in the rewound commits, relative to the
         // run-base. Deletions (D) are excluded: a path the agent committed as
         // deleted must STAY deleted, and restoring it would resurrect dead content.
         var diff = await GitAsync(gi, rootPath,
-            ["diff", "--name-only", "--diff-filter=AM", "-z", runBaseSha, origHead], cancellationToken);
+            ["diff", "--name-only", "--diff-filter=AM", "-z", runBaseSha, origHead], cancellationToken, timeProvider: timeProvider);
         if (diff.ExitCode != 0)
             return GitCommitResult.Failed($"git diff for squash content-preservation failed (git exit {diff.ExitCode}): {diff.Output.Trim()}");
         if (string.IsNullOrEmpty(diff.Output))
@@ -152,14 +155,14 @@ internal static partial class GitCommitter
 
             // Already represented in the index (staged from the working tree, the
             // authoritative current content) → leave it; do not clobber a live edit.
-            var staged = await GitAsync(gi, rootPath, ["ls-files", "--", rel], cancellationToken);
+            var staged = await GitAsync(gi, rootPath, ["ls-files", "--", rel], cancellationToken, timeProvider: timeProvider);
             if (staged.ExitCode == 0 && !string.IsNullOrWhiteSpace(staged.Output))
                 continue;
 
             // Committed-only path missed by working-tree staging: restore its
             // pre-squash version into the index only (no working-tree change).
             var restore = await GitAsync(gi, rootPath,
-                ["restore", "--staged", $"--source={origHead}", "--", rel], cancellationToken);
+                ["restore", "--staged", $"--source={origHead}", "--", rel], cancellationToken, timeProvider: timeProvider);
             if (restore.ExitCode != 0)
                 return GitCommitResult.Failed($"git restore for squash content-preservation failed (git exit {restore.ExitCode}): {restore.Output.Trim()}");
         }
@@ -179,9 +182,10 @@ internal static partial class GitCommitter
         string rootPath,
         string baseSha,
         string head,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider timeProvider)
     {
-        var revs = await GitAsync(gi, rootPath, ["rev-list", $"{baseSha}..{head}"], cancellationToken);
+        var revs = await GitAsync(gi, rootPath, ["rev-list", $"{baseSha}..{head}"], cancellationToken, timeProvider: timeProvider);
         if (revs.ExitCode != 0)
             return true; // cannot enumerate — assume unsafe, skip the squash.
         if (string.IsNullOrWhiteSpace(revs.Output))
@@ -195,7 +199,7 @@ internal static partial class GitCommitter
 
             // Inspect this single commit's full message body for the seal trailer.
             // %B yields subject + body, which is where the trailer lives.
-            var body = await GitAsync(gi, rootPath, ["log", "-1", "--format=%B", sha], cancellationToken);
+            var body = await GitAsync(gi, rootPath, ["log", "-1", "--format=%B", sha], cancellationToken, timeProvider: timeProvider);
             if (body.ExitCode != 0)
                 return true; // cannot read this commit — assume unsafe.
             if (CommitBodyHasSealTrailer(body.Output))

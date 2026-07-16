@@ -100,7 +100,14 @@ public sealed class BackendSpawnTests : IDisposable
             healthCheck: _ => Task.FromResult(false),
             log: _ => { });
 
-        var result = await lifecycle.StopAsync();
+        var time = new ManualTimeProvider();
+        var task = lifecycle.StopAsync(timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(200));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.Equal(0, result.ExitCode);
         Assert.False(File.Exists(paths.PidFile), "stop must remove the pidfile");

@@ -124,7 +124,14 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         // venv probe which fails) => start returns down quickly, but legacy
         // cleanup runs first.
         var lifecycle = Lifecycle(healthy: false, options: options, log: log);
-        await lifecycle.StartAsync();
+        var time = new ManualTimeProvider();
+        var task = lifecycle.StartAsync(timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Yield();
+        }
+        await task;
 
         Assert.False(Directory.Exists(legacyVenv));
         Assert.False(Directory.Exists(legacyScratch));
@@ -147,7 +154,14 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
             healthCheck: _ => Task.FromResult(false),
             ensureVenv: (_, _) => new BackendVenv.Result(null)); // no toolchain
 
-        var result = await lifecycle.StartAsync();
+        var time = new ManualTimeProvider();
+        var task = lifecycle.StartAsync(timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.Equal(1, result.ExitCode);
         Assert.Contains(log, l => l.Contains("could not start the model backend"));
@@ -183,6 +197,7 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
     [Fact]
     public async Task Start_LoadsUserLevelKeys_ButNotRepoRootKeys()
     {
+        SlowIntegration.SkipIfNotOptedIn(); // spawns real litellm stub, requires real-time behavior
         if (OperatingSystem.IsWindows())
             return; // POSIX shell stubs; the proxy only runs on macOS/Linux.
 

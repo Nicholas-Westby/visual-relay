@@ -5,10 +5,8 @@ using static VisualRelay.Tests.GitCommitterGitSimSetup;
 namespace VisualRelay.Tests;
 
 // The hook-rejection facts of the commit family, migrated onto GitSim's PreCommitHook.
-// Each lives in its OWN class so the collections run in PARALLEL: a rejected candidate
-// makes GitCommitter retry the commit through its real backoff (250ms + 1s per
-// attempt), an unavoidable production delay GitSim cannot remove, so serializing these
-// with the fast facts would slow the measured class.
+// Each lives in its OWN class so the collections run in PARALLEL. Virtual time via
+// ManualTimeProvider removes the wall-clock cost of retry backoff.
 
 /// <summary>First candidate rejected by the hook, second accepted.</summary>
 public sealed class GitCommitterHookRejectsFirstTests
@@ -30,10 +28,17 @@ public sealed class GitCommitterHookRejectsFirstTests
                 : GitSimHookVerdict.Accept;
 
         var candidates = new[] { "fix(src): update app.cs logic", "fix: correct update logic" };
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, sim);
+            CancellationToken.None, sim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Equal("fix: correct update logic", Subject(sim, repo, result.CommitSha!));
@@ -55,10 +60,17 @@ public sealed class GitCommitterHookRejectsAllTests
         sim.PreCommitHook = _ => GitSimHookVerdict.Reject("hook: all commits rejected");
 
         var candidates = new[] { "feat: first", "fix: second" };
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, sim);
+            CancellationToken.None, sim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);

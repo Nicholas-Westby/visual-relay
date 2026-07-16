@@ -12,6 +12,7 @@ namespace VisualRelay.Tests;
 internal sealed class TransientGitShim(IGitInvoker inner) : IGitInvoker
 {
     private readonly Dictionary<string, int> _failureCounts = new();
+    private readonly Dictionary<string, int> _consumed = new();
     private int _exitCode = 128;
     private string _stderr = "fatal: transient error";
 
@@ -27,6 +28,9 @@ internal sealed class TransientGitShim(IGitInvoker inner) : IGitInvoker
         _stderr = stderr;
     }
 
+    public int Consumed(string argumentSubstring) =>
+        _consumed.GetValueOrDefault(argumentSubstring);
+
     public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(
         string rootPath, IEnumerable<string> arguments, CancellationToken ct,
         TimeSpan? timeout, IReadOnlyDictionary<string, string>? environment,
@@ -39,6 +43,7 @@ internal sealed class TransientGitShim(IGitInvoker inner) : IGitInvoker
             if (argsStr.Contains(kvp.Key, StringComparison.Ordinal) && kvp.Value > 0)
             {
                 _failureCounts[kvp.Key] = kvp.Value - 1;
+                _consumed[kvp.Key] = _consumed.GetValueOrDefault(kvp.Key) + 1;
                 return (_exitCode, _stderr, false);
             }
         }

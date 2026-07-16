@@ -16,10 +16,12 @@ internal static partial class GitCommitter
     public static async Task<IReadOnlySet<string>> CaptureUntrackedSnapshotAsync(
         string rootPath,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker? gitInvoker = null,
+        TimeProvider? timeProvider = null)
     {
         var gi = gitInvoker ?? new GitInvoker();
-        var result = await GitAsync(gi, rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken);
+        var tp = timeProvider ?? TimeProvider.System;
+        var result = await GitAsync(gi, rootPath, ["ls-files", "--others", "--exclude-standard"], cancellationToken, timeProvider: tp);
         if (result.ExitCode != 0)
         {
             throw new InvalidOperationException($"git ls-files failed: {result.Output.Trim()}");
@@ -75,10 +77,11 @@ internal static partial class GitCommitter
         IReadOnlySet<string> preRunUntracked,
         string? tasksDir,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker? gitInvoker = null,
+        TimeProvider? timeProvider = null)
     {
         var gi = gitInvoker ?? new GitInvoker();
-        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi);
+        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi, timeProvider);
         var missed = new List<string>();
         foreach (var path in currentUntracked)
         {

@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using VisualRelay.Core.Execution;
 using static VisualRelay.Tests.GitCommitterGitSimSetup;
 
@@ -6,10 +5,8 @@ namespace VisualRelay.Tests;
 
 // The retry-after-transient facts of the commit family, migrated onto GitSim via a
 // TransientGitShim that injects synthetic failures then delegates to GitSim. Each
-// lives in its OWN class so the collections run in PARALLEL: the assertions exercise
-// GitCommitter's real retry backoff (250ms + 1s between attempts), an unavoidable
-// production delay GitSim cannot remove, so serializing them in one class would make
-// the family slow. Separate collections keep the wall time near a single attempt's.
+// lives in its OWN class so the collections run in PARALLEL. Virtual time via
+// ManualTimeProvider removes the wall-clock cost of retry backoff.
 
 /// <summary>Two transient rev-parse failures, then a GitSim-backed success.</summary>
 public sealed class GitCommitterProbeRetryTests
@@ -25,10 +22,17 @@ public sealed class GitCommitterProbeRetryTests
 
         var shim = new TransientGitShim(sim);
         shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: not a git repository");
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim);
+            CancellationToken.None, shim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
@@ -49,10 +53,17 @@ public sealed class GitCommitterProbePersistentTests
 
         var shim = new TransientGitShim(sim);
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim);
+            CancellationToken.None, shim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
@@ -75,20 +86,27 @@ public sealed class GitCommitterAddRetryTests
 
         var shim = new TransientGitShim(sim);
         shim.FailNext("add", failureCount: 1, exitCode: 128, stderr: "fatal: index file open failed");
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim);
+            CancellationToken.None, shim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.True(result.Success, $"Expected success after transient add failure, got: {result.Error}");
     }
 }
 
-/// <summary>A persistent failure still completes within the bounded retry window.</summary>
+/// <summary>A persistent failure verifies the retry loop runs all 3 attempts.</summary>
 public sealed class GitCommitterPersistentTimingTests
 {
     [Fact]
-    public async Task CommitAsync_PersistentFailure_CompletesWithinReasonableTime()
+    public async Task CommitAsync_PersistentFailure_ExhaustsAllRetryAttempts()
     {
         var (sim, repo) = NewRepo();
         using var _ = repo;
@@ -97,15 +115,22 @@ public sealed class GitCommitterPersistentTimingTests
 
         var shim = new TransientGitShim(sim);
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
-        var sw = Stopwatch.StartNew();
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: test"], [], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim);
-        sw.Stop();
+            CancellationToken.None, shim, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         Assert.False(result.Success);
-        Assert.True(sw.Elapsed.TotalSeconds < 10,
-            $"Persistent failure took {sw.Elapsed.TotalSeconds:F1}s, expected < 10s");
+        // The retry loop exhausted all 3 attempts: 2 backoff delays (250ms + 1s)
+        // consumed via virtual time. The shim should have served 3 failures.
+        Assert.Equal(3, shim.Consumed("rev-parse"));
+        // The Advance loop confirms it completes without wall-clock delay.
     }
 }

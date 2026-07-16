@@ -1,0 +1,778 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-16T03:10:35.490719+00:00",
+  "task": "# Relay stage 2: Research\nTask: inject-timeprovider-into-product-retry-delays\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Inject TimeProvider into product-side retry delays\n\nReplace every `Task.Delay(delay, cancellationToken)` in the production source code that lacks a `TimeProvider` argument with `Task.Delay(delay, timeProvider ?? TimeProvider.System, cancellationToken)` and thread the `TimeProvider?` parameter through to the call site. This lets test suites drive those delays with `ManualTimeProvider` instead of real wall-clock seconds.\n\n### Baseline measurements\n\nFrom `llm-tasks/completed/speed-up-automated-tests/timings-baseline.txt`, the full suite runs at ~119\u202fs wall time. The product-side delays below are real-time `Task.Delay` calls that tests exercise but cannot currently accelerate:\n\n| Location | Delay | Purpose | Real cost per hit |\n|---|---|---|---|\n| `src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs:172` | 1\u202f000\u202fms | startup readiness polling | 1\u202fs per startup iteration |\n| `src/VisualRelay.Core/Execution/BackendLifecycle.cs:147` | 200\u202fms | stop\u2011sequence yield | 200\u202fms per stop |\n| `src/VisualRelay.Core/Execution/PlanningWorktree.cs:224` | 250\u202fms\u20111\u202fs | git\u2011op retry backoff | 250\u202fms\u202f\u2013\u202f1\u202fs per retry |\n| `src/VisualRelay.Core/Execution/PlanningWorktree.cs:232` | 250\u202fms\u20111\u202fs | git\u2011op retry backoff | 250\u202fms\u202f\u2013\u202f1\u202fs per retry |\n| `src/VisualRelay.Core/Execution/GitCommitter.cs:250` | 250\u202fms\u20111\u202fs | git\u2011op retry backoff | 250\u202fms\u202f\u2013\u202f1\u202fs per retry |\n\nNone of these accept a `TimeProvider` \u2014 they burn real seconds under any test that enters a retry or polling path.\n\n### Prescribed approach\n\n1. Follow the established pattern in the codebase (see `ProcessRunners.cs:64`, `SandboxedTestRunner.Watched.cs:88`, `ProcessCapture.cs:73`, `ProcessRunners.Watchdog.cs:78`): add a `TimeProvider? timeProvider = null` parameter to each method, sinking to `TimeProvider.System` at the call site.\n\n2. Replace:\n   ```csharp\n   await Task.Delay(delay, cancellationToken);\n   ```\n   with:\n   ```csharp\n   await Task.Delay(delay, tp, cancellationToken);\n   ```\n   where `tp = timeProvider ?? TimeProvider.System`.\n\n3. Thread the parameter through intermediate methods so the test call site can inject a `ManualTimeProvider`.\n\n4. In tests that exercise a retry or poll path, inject a `ManualTimeProvider` and use the Advance-loop pattern established in `BackendReadinessProbeTests.cs`:\n   ```csharp\n   var time = new ManualTimeProvider();\n   var task = MethodUnderTest(..., timeProvider: time);\n   while (!task.IsCompleted)\n   {\n       time.Advance(TimeSpan.FromMilliseconds(delayMs));\n       await Task.Yield();\n   }\n   var result = await task;\n   ```\n\n5. Keep a small set of integration tests (tagged with `SlowIntegration.SkipIfNotOptedIn()`) that exercise the real-time path with `TimeProvider.System` to retain confidence that wall-clock delays work in production.\n\n### Expected saving (estimate \u2014 verify by measurement)\n\n- **BackendLifecycle tests**: ~1\u202fs saved per startup\u2011retry scenario, ~200\u202fms per stop.\n- **GitCommitter/PlanningWorktree tests**: ~250\u202fms\u202f\u2013\u202f1\u202fs per retry scenario.\n- Estimated total: ~2\u20133\u202fs of full\u2011suite wall time. This is an estimate, not a measurement \u2014 the real numbers come from timing the suite before and after, per the commit-message evidence section below. More importantly, this removes an entire class of hidden wall-clock waste from tests that trigger error-recovery paths.\n\n### Pitfalls\n\n- Do NOT delete the delay itself \u2014 the backoff is intentional (prevents busy\u2011retry hammering).\n- Every `Task.Delay` that gets a TimeProvider must keep its `CancellationToken`.\n- `RealSleepGuardTests` scans the **test project only** \u2014 it will not flag these product-side delays, before or after. Verify the product change directly instead: grep the five sites listed above and confirm every `Task.Delay` there passes a TimeProvider. The test-side guard must simply stay green.\n\n### Coverage rules\n\n- Never delete, disable, skip, or weaken a test. Speed comes from doing the same verification cheaper, not from verifying less.\n- Any test that genuinely requires a real-time boundary should use `SlowIntegration.SkipIfNotOptedIn()` and run only with `VR_RUN_SLOW_INTEGRATION=1`. The default suite covers the same logic with virtual time.\n\n### Commit\u2011message evidence\n\nMeasure the full-suite wall time right before starting and right after finishing.\nThen put exactly one filled-in evidence bullet in the commit message body, following\nthe attached `commit-message-evidence.md`. Do not write the numbers into this task\nfile \u2014 real measured numbers belong in the commit message only.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Inject TimeProvider into five product-side Task.Delay calls across BackendLifecycle, PlanningWorktree, and GitCommitter so tests can use ManualTimeProvider instead of real wall-clock seconds. Three approaches: (A) per-method parameter injection matching the existing codebase pattern, (B) constructor-level TimeProvider field per class, (C) extract a shared RetryBackoff helper for the git-op delays. Option A is the lowest-risk, most consistent with established conventions.\",\n  \"options\": [\n    \"Option A \u2014 Per\u2011method TimeProvider? parameter injection (prescribed approach): add `TimeProvider? timeProvider = null` to each enclosing method, resolve once at top, replace each `Task.Delay(delay, ct)` with `Task.Delay(delay, tp, ct)`. Thread through intermediate methods. Match existing pattern from ProcessRunners.cs, ProcessCapture.cs, SandboxedTestRunner.Watched.cs, ProcessRunners.Watchdog.cs. Update tests with ManualTimeProvider + Advance loop, keep SlowIntegration.SkipIfNotOptedIn() tests for real-time verification.\",\n    \"Option B \u2014 Constructor\u2011level TimeProvider field: Add a `TimeProvider` property to each class, set via constructor (default `TimeProvider.System`). Delay sites read `this._timeProvider`. Cleaner method signatures but requires constructor changes across three classes and introduces a second convention divergent from the existing per\u2011method pattern.\",\n    \"Option C \u2014 Extract RetryBackoff helper: Pull the 250\u202fms\u20131\u202fs exponential backoff shared by PlanningWorktree and GitCommitter into a dedicated helper class that owns a TimeProvider. Keeps the helper single\u2011responsibility and testable in isolation. Larger refactor; BackendLifecycle's readiness-poll and stop-yield delays would still need individual treatment.\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"findings\": string, \"constraints\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Here are my findings and constraints from the investigation.\n\n```json\n{\n  \"findings\": \"The five Task.Delay sites match exactly the locations listed in the task. Three distinct product classes are affected:\\n\\n1. BackendLifecycle \u2014 two delays: PollReadinessAsync (1 s startup readiness poll, line 172) and WaitForExitAsync (200 ms stop yield, line 147). Both are private methods; StartAsync and StopAsync are the public entry points needing a TimeProvider? parameter threaded through.\\n\\n2. PlanningWorktree \u2014 two delays in the private static RunGitAsync (lines 224 and 232, 250 ms / 1 s exponential backoff). Four public static methods (CreateAsync, RemoveAsync, PruneLeftoversAsync, PruneTaskLeftoversAsync) call RunGitAsync and need TimeProvider? threaded.\\n\\n3. GitCommitter \u2014 one delay in private static GitAsync (line 250, 250 ms / 1 s exponential backoff). The public CommitAsync method calls GitAsync directly (10 call sites) and indirectly via SquashInRunCommitsAsync (6 GitAsync calls across Squash.cs) and ResolveManifestFilesToStageAsync (1 call). Additionally, CaptureUntrackedSnapshotAsync and FindUncommittedAuthoredFilesAsync in GitCommitter.Untracked.cs call GitAsync. Both partial files (GitCommitter.Squash.cs and GitCommitter.Untracked.cs) need TimeProvider threaded through their private helper methods.\\n\\nEstablished pattern (6 examples in codebase): per-method `TimeProvider? timeProvider = null` as last optional parameter, resolve with `var tp = timeProvider ?? TimeProvider.System`, use `Task.Delay(delay, tp, cancellationToken)`. Examples: BackendReadinessProbe.CheckWithRetryAsync, ProcessCapture.RunAsync, SandboxedTestRunner.RunWatchedAsync, ActivityWatchdog.ctor, RelayTraceTailer, SwivalSubagentRunner.\\n\\nManualTimeProvider exists at tests/VisualRelay.Tests/ManualTimeProvider.cs (internal sealed class). The canonical test pattern is in BackendReadinessProbeTests.cs: `var time = new ManualTimeProvider(); var task = MethodUnderTest(..., timeProvider: time); while (!task.IsCompleted) { time.Advance(delayMs); await Task.Yield(); } var result = await task;`\\n\\nRealSleepGuard scans test project only (Roslyn-parses files discovered by the test runner). SelfExemptFileNames = [\\\"RealSleepGuard.cs\\\", \\\"RealSleepGuardTests.cs\\\"]. Product-source Task.Delay calls are never scanned \u2014 before or after. No changes needed to the guard.\\n\\nBaseline timings (119.4 s full suite) show the current real-time costs explicitly for BackendReadinessProbe retry tests (already TimeProvider-injected). GitCommitter resilience tests currently burn 250ms + 1s per retry attempt. The GitCommitterHookRejectionTests and GitCommitterResilienceTests files have 6 retry-exercising test classes that run in parallel collections to limit serial impact. BackendLifecycle tests mostly inject short timeouts already, but the actual stop/start paths still use real delays.\\n\\nSlowIntegration.SkipIfNotOptedIn() (reads VR_RUN_SLOW_INTEGRATION=1) gates real-process tests. TestWaits.ForFileAsync provides event-driven causal waits.\",\n  \"constraints\": [\n    \"Do NOT delete the delay itself \u2014 backoff is intentional (prevents busy-retry hammering)\",\n    \"Every Task.Delay that gets a TimeProvider must keep its CancellationToken argument\",\n    \"RealSleepGuardTests scans the test project only \u2014 verify product changes via grep on the five sites, not through the guard\",\n    \"Never delete, disable, skip, or weaken a test \u2014 speed comes from doing the same verification cheaper, not from verifying less\",\n    \"Any test that genuinely requires a real-time boundary must use SlowIntegration.SkipIfNotOptedIn() and run only with VR_RUN_SLOW_INTEGRATION=1\",\n    \"The default suite must cover the same logic with virtual time\",\n    \"Measure full-suite wall time before starting and right after finishing for the commit-message evidence bullet\",\n    \"Thread TimeProvider? through GitCommitter private helpers in both Squash.cs and Untracked.cs partial files, not just the main GitCommitter.cs\",\n    \"Keep integration tests tagged with SlowIntegration.SkipIfNotOptedIn() that exercise the real-time path with TimeProvider.System to retain confidence that wall-clock delays work in production\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 19,
+    "tool_calls_total": 44,
+    "tool_calls_succeeded": 44,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 24,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 17,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 19,
+    "total_llm_time_s": 105.912,
+    "prompt_cache": {
+      "cached_tokens": 816896,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.887,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.861,
+      "prompt_tokens_est": 5663,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 12631
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7421
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/PlanningWorktree.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11802
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15188
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.447,
+      "prompt_tokens_est": 17218,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.cs",
+        "offset": 55,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 1767
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessCapture.cs",
+        "offset": 65,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1553
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "timeProvider",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.105,
+      "result_length": 10740
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.852,
+      "prompt_tokens_est": 21014,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ManualTimeProvider",
+        "include": "*.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.317,
+      "result_length": 10193
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "BackendReadinessProbeTests",
+        "include": "*.cs",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.185,
+      "result_length": 931
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RealSleepGuard",
+        "include": "*.cs",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.186,
+      "result_length": 7830
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.336,
+      "prompt_tokens_est": 26442,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/BackendReadinessProbeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12481
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/ManualTimeProvider.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4077
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "BackendLifecycle|BackendLifecycleTests",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.089,
+      "result_length": 1885
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.418,
+      "prompt_tokens_est": 30943,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/BackendLifecycleTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6804
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11330
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "SlowIntegration",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.205,
+      "result_length": 18506
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.828,
+      "prompt_tokens_est": 40949,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SlowIntegration.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2062
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/BackendReadinessProbe.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6541
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "PlanningWorktree|GitCommitter",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.114,
+      "result_length": 8756
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.998,
+      "prompt_tokens_est": 45416,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/GitCommitterResilienceTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 5274
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "PlanningWorktree",
+        "path": "/Volumes/Tera/dev/visual-relay/tests",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.113,
+      "result_length": 8002
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.279,
+      "prompt_tokens_est": 48947,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessCapture.cs",
+        "offset": 93,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 947
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs",
+        "offset": 275,
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 998
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs",
+        "offset": 80,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2167
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.529,
+      "prompt_tokens_est": 50103,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestWaits"
+      },
+      "succeeded": true,
+      "duration_s": 0.232,
+      "result_length": 95
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/BackendSpawnTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5691
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TransientGitShim"
+      },
+      "succeeded": true,
+      "duration_s": 0.182,
+      "result_length": 452
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.517,
+      "prompt_tokens_est": 51924,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestWaits.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2874
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TransientGitShim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2292
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Task\\.Delay\\(",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 2855
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 9.361,
+      "prompt_tokens_est": 54018,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "await GitAsync\"",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 17
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "GitAsync\\(\"",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "context_lines": 0
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "GitAsync\\(\"",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 17
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.603,
+      "prompt_tokens_est": 54908,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "await GitAsync\\(",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2239
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.484,
+      "prompt_tokens_est": 55598,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "GitCommitter*",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.03,
+      "result_length": 29
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "GitCommitter*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 157
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.93,
+      "prompt_tokens_est": 55755,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "await GitAsync\\(",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Squash.cs",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2602
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "await GitAsync\\(",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 311
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 4.38,
+      "prompt_tokens_est": 56692,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Squash.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12668
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4453
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 7.817,
+      "prompt_tokens_est": 61161,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/GitCommitterHookRejectionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 3207
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/GitCommitterCommitMsgHooksTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3928
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 9.086,
+      "prompt_tokens_est": 63579,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/llm-tasks/completed/speed-up-automated-tests/timings-baseline.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4631
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 18.468,
+      "prompt_tokens_est": 65817,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.relay/research-findings.md",
+        "content": "# Research Findings: Inject TimeProvider into product-side retry delays\n\n## Five Task.Delay sites lacking TimeProvider\n\nAll five match the task description exactly:\n\n| File | Line | Delay | Method | Visibility |\n|---|---|---|---|---|\n| `BackendLifecycle.Start.cs` | 172 | `1 s` | `PollReadinessAsync` | `private` on `BackendLifecycle` (partial) |\n| `BackendLifecycle.cs` | 147 | `200 ms` | `WaitForExitAsync` | `private static` on `BackendLifecycle` |\n| `PlanningWorktree.cs` | 224 | `250 ms / 1 s` | `RunGitAsync` (catch block 1 \u2014 exception retry) | `private static` |\n| `PlanningWorktree.cs` | 232 | `250 ms / 1 s` | `RunGitAsync` (catch block 2 \u2014 non-zero exit retry) | `private static` |\n| `GitCommitter.cs` | 250 | `250 ms / 1 s` | `GitAsync` | `private static` on `GitCommitter` (partial) |\n\n## Established TimeProvider pattern (6 existing examples)\n\nThe codebase consistently uses a per-method `TimeProvider?` parameter pattern:\n\n1. **Parameter**: `TimeProvider? timeProvider = null` added as last optional parameter\n2. **Resolve**: `var tp = timeProvider ?? TimeProvider.System;` as first line of method body\n3. **Usage**: `await Task.Delay(delay, tp, cancellationToken);` (third arg: TimeProvider)\n4. **Threading**: passed through intermediate callers, stored as `readonly TimeProvider _timeProvider` field in classes that own it long-term\n\nKey examples:\n- `BackendReadinessProbe.CheckWithRetryAsync` \u2014 exact same pattern; tests use `ManualTimeProvider` + Advance loop\n- `ProcessCapture.RunAsync` (both overloads + private one) \u2014 all accept `TimeProvider? timeProvider = null`\n- `SandboxedTestRunner.RunWatchedAsync` \u2014 accepts TimeProvider, stores as field\n- `ProcessRunners.Watchdog.cs:ActivityWatchdog` \u2014 stores as field `_timeProvider`\n- `RelayTraceTailer` \u2014 stores as field, uses in polling loop\n\n## Call chain threading needed\n\n### BackendLifecycle\n\n```\nStartAsync (public) \u2192 PollReadinessAsync (private, has Task.Delay at :172)\nStopAsync (public) \u2192 WaitForExitAsync (private static, has Task.Delay at :147)\n```\n\nBoth `StartAsync` and `StopAsync` are instance methods on `BackendLifecycle`. They need a `TimeProvider? timeProvider = null` parameter added. `PollReadinessAsync` and `WaitForExitAsync` need the parameter threaded through.\n\n`BackendLifecycle` constructor already has many injectable dependencies \u2014 adding TimeProvider to the method signatures follows the existing pattern rather than constructor injection.\n\n### PlanningWorktree\n\n```\nCreateAsync (public static) \u2192 RunGitAsync (private static, Task.Delay at :224, :232)\nRemoveAsync (public static) \u2192 RunGitAsync\nPruneLeftoversAsync (public static) \u2192 RunGitAsync\nPruneTaskLeftoversAsync (public static) \u2192 RunGitAsync\n```\n\nAll four public methods need `TimeProvider? timeProvider = null` added. `RunGitAsync` is the common sink.\n\n### GitCommitter\n\n```\nCommitAsync (public static) \u2192 calls GitAsync directly (10 call sites) and via:\n  \u251c\u2500 ResolveManifestFilesToStageAsync (private static) \u2192 1 GitAsync call\n  \u2514\u2500 SquashInRunCommitsAsync (private static, in Squash.cs) \u2192 5 GitAsync calls via:\n       \u251c\u2500 RangeContainsSealedCommitAsync \u2192 2 GitAsync calls (rev-list + log per commit)\n       \u251c\u2500 RestoreHeadAfterFailedSquashAsync \u2192 1 GitAsync call\n       \u2514\u2500 StageCommittedOnlyContentAsync \u2192 2 GitAsync calls (diff + ls-files per path)\n\nCaptureUntrackedSnapshotAsync (public static, in Untracked.cs) \u2192 1 GitAsync call\nFindUncommittedAuthoredFilesAsync (public static, in Untracked.cs) \u2192 calls CaptureUntrackedSnapshotAsync\n```\n\n`GitAsync` is the single sink with the Task.Delay. The simplest approach: add `TimeProvider?` to `GitAsync`, thread it through `CommitAsync` \u2192 all intermediate private methods, and optionally through `CaptureUntrackedSnapshotAsync` / `FindUncommittedAuthoredFilesAsync`.\n\n## Test patterns to follow\n\n### ManualTimeProvider + Advance loop (canonical from BackendReadinessProbeTests.cs)\n\n```csharp\nvar time = new ManualTimeProvider();\nvar task = MethodUnderTest(..., timeProvider: time);\nwhile (!task.IsCompleted)\n{\n    time.Advance(TimeSpan.FromMilliseconds(delayMs));\n    await Task.Yield();\n}\nvar result = await task;\n```\n\n`ManualTimeProvider` is in `tests/VisualRelay.Tests/ManualTimeProvider.cs` (internal sealed class). It fires timers synchronously on Advance calls.\n\n### SlowIntegration gate\n\n```csharp\nSlowIntegration.SkipIfNotOptedIn(); // skips unless VR_RUN_SLOW_INTEGRATION=1\n```\n\nUsed for tests that genuinely need real processes/wall-clock time. Exempt from `RealSleepGuard` scanning via `RealIntegrationExemptFileNames`.\n\n### TestWaits.ForFileAsync\n\nFor causal waits (file creation by spawned process) \u2014 event-driven via FileSystemWatcher, not polling.\n\n## Existing tests that will benefit\n\nThese currently burn real wall-clock time during retry backoff:\n\n- **GitCommitterResilienceTests.cs** (4 test classes): `CommitAsync_ProbeFailsTwiceThenSucceeds`, `CommitAsync_ProbeFailsPersistently`, `CommitAsync_AddFailsTransientlyThenSucceeds`, `CommitAsync_PersistentFailure_CompletesWithinReasonableTime` \u2014 each burns 250ms + 1s per retry\n- **GitCommitterHookRejectionTests.cs** (2 test classes): `CommitAsync_FirstCandidateRejectedByCommitMsgHook_UsesSecond`, `CommitAsync_AllCandidatesRejected_ReturnsFailure` \u2014 burn 250ms + 1s per commit retry\n- **BackendLifecycleStatusTests.cs**: `Stop_*` tests exercise `StopAsync` \u2192 `WaitForExitAsync` which burns 200ms per iteration; currently fast because they inject `StopGrace=default(TimeSpan)` or use short grace values\n- **BackendLifecycleTests.cs / BackendSpawnTests.cs**: `StopAsync_TerminatesLiveProcess_AndRemovesPidfile` exercises real stop with 200ms delay\n\n## RealSleepGuard behavior\n\n- `RealSleepGuard.FindViolations` scans **test project only** (passed file paths from test discovery)\n- `SelfExemptFileNames` = `[\"RealSleepGuard.cs\", \"RealSleepGuardTests.cs\"]`\n- `RealIntegrationExemptFileNames` exempts slow-integration files\n- The production `Task.Delay` calls in `src/VisualRelay.Core/` are **never scanned** \u2014 before or after this change\n- The guard simply stays green; no modifications needed to it\n\n## Constraints\n\n1. Do NOT delete the delay itself \u2014 backoff is intentional (prevents busy-retry hammering)\n2. Every `Task.Delay` that gets a TimeProvider must keep its `CancellationToken`\n3. `RealSleepGuardTests` scans the test project only \u2014 verify product changes via grep, not the guard\n4. Never delete, disable, skip, or weaken a test\n5. Any test that genuinely requires a real-time boundary should use `SlowIntegration.SkipIfNotOptedIn()` and run only with `VR_RUN_SLOW_INTEGRATION=1`\n6. The default suite covers the same logic with virtual time\n7. Measure full-suite wall time before starting and after finishing for commit message evidence\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 98
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 15.717,
+      "prompt_tokens_est": 67697,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

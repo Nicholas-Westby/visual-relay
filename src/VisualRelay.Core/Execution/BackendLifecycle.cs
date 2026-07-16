@@ -93,8 +93,9 @@ public sealed partial class BackendLifecycle
     /// was already dead or the pidfile was stale. A no-op (exit 0) when nothing
     /// is running. Mirrors the bash <c>cmd_stop</c>.
     /// </summary>
-    public async Task<BackendResult> StopAsync(CancellationToken cancellationToken = default)
+    public async Task<BackendResult> StopAsync(CancellationToken cancellationToken = default, TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         var pid = BackendProcess.ReadLivePid(_paths.PidFile);
         if (pid is not { } target)
         {
@@ -114,7 +115,7 @@ public sealed partial class BackendLifecycle
         _log($"stopping pid {target} (SIGTERM)");
         BackendProcess.SendTerm(target);
 
-        await WaitForExitAsync(target, _options.StopGrace, cancellationToken);
+        await WaitForExitAsync(target, _options.StopGrace, cancellationToken, tp);
 
         if (BackendProcess.IsAlive(target))
         {
@@ -135,16 +136,16 @@ public sealed partial class BackendLifecycle
     private Task<bool> IsHealthyAsync(CancellationToken cancellationToken) =>
         _healthCheck(cancellationToken);
 
-    private static async Task WaitForExitAsync(int pid, TimeSpan grace, CancellationToken cancellationToken)
+    private static async Task WaitForExitAsync(int pid, TimeSpan grace, CancellationToken cancellationToken, TimeProvider timeProvider)
     {
-        var deadline = DateTime.UtcNow + grace;
-        while (DateTime.UtcNow < deadline)
+        var deadline = timeProvider.GetUtcNow() + grace;
+        while (timeProvider.GetUtcNow() < deadline)
         {
             if (!BackendProcess.IsAlive(pid))
                 return;
             try
             {
-                await Task.Delay(TimeSpan.FromMilliseconds(200), cancellationToken);
+                await Task.Delay(TimeSpan.FromMilliseconds(200), timeProvider, cancellationToken);
             }
             catch (OperationCanceledException)
             {

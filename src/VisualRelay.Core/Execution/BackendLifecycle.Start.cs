@@ -15,8 +15,9 @@ public sealed partial class BackendLifecycle
     /// the process dies while booting. Degrades with a clear message + exit 1 when
     /// the litellm toolchain is missing. The port of the bash <c>cmd_start</c>.
     /// </summary>
-    public async Task<BackendResult> StartAsync(CancellationToken cancellationToken = default)
+    public async Task<BackendResult> StartAsync(CancellationToken cancellationToken = default, TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         CleanLegacyRepoState();
         Directory.CreateDirectory(_paths.Scratch);
 
@@ -38,7 +39,7 @@ public sealed partial class BackendLifecycle
                 return early;
         }
 
-        return await PollReadinessAsync(cancellationToken);
+        return await PollReadinessAsync(cancellationToken, tp);
     }
 
     // Provisions, configures, and spawns litellm. Returns a non-null result only
@@ -143,11 +144,11 @@ public sealed partial class BackendLifecycle
     // Double-quote a path for cmd.exe so a space-containing path stays one token.
     private static string WinQuote(string value) => "\"" + value + "\"";
 
-    private async Task<BackendResult> PollReadinessAsync(CancellationToken cancellationToken)
+    private async Task<BackendResult> PollReadinessAsync(CancellationToken cancellationToken, TimeProvider timeProvider)
     {
-        var deadline = DateTime.UtcNow + _options.ReadyTimeout;
+        var deadline = timeProvider.GetUtcNow() + _options.ReadyTimeout;
         var waited = 0;
-        while (DateTime.UtcNow < deadline)
+        while (timeProvider.GetUtcNow() < deadline)
         {
             if (await IsHealthyAsync(cancellationToken))
             {
@@ -169,7 +170,7 @@ public sealed partial class BackendLifecycle
 
             try
             {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+                await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, cancellationToken);
             }
             catch (OperationCanceledException)
             {

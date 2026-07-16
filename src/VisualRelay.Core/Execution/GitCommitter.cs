@@ -14,10 +14,12 @@ internal static partial class GitCommitter
         string? tasksDir,
         CancellationToken cancellationToken = default,
         IGitInvoker? gitInvoker = null,
-        string? runBaseSha = null)
+        string? runBaseSha = null,
+        TimeProvider? timeProvider = null)
     {
         var gi = gitInvoker ?? new GitInvoker();
-        var inside = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
+        var tp = timeProvider ?? TimeProvider.System;
+        var inside = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken, timeProvider: tp);
         if (inside.ExitCode != 0)
         {
             return GitCommitResult.Failed($"target root is not a git repository (git exit {inside.ExitCode}): {inside.Output.Trim()}");
@@ -29,7 +31,7 @@ internal static partial class GitCommitter
         // change since run-start stays staged with the run-base as parent. No-op
         // when HEAD is already the run-base (the normal path) or when the range
         // holds a sealed commit (never rewind another task's seal). See .Squash.cs.
-        var squash = await SquashInRunCommitsAsync(gi, rootPath, runBaseSha, cancellationToken);
+        var squash = await SquashInRunCommitsAsync(gi, rootPath, runBaseSha, cancellationToken, tp);
         if (squash.Failure is not null)
             return squash.Failure;
         // Non-null only when a soft-reset rewound HEAD: the pre-squash sha to
@@ -45,11 +47,11 @@ internal static partial class GitCommitter
         async Task<GitCommitResult> FailAsync(string error)
         {
             if (preSquashHead is not null)
-                await RestoreHeadAfterFailedSquashAsync(gi, rootPath, preSquashHead, cancellationToken);
+                await RestoreHeadAfterFailedSquashAsync(gi, rootPath, preSquashHead, cancellationToken, tp);
             return GitCommitResult.Failed(error);
         }
 
-        var reset = await GitAsync(gi, rootPath, ["reset", "-q"], cancellationToken);
+        var reset = await GitAsync(gi, rootPath, ["reset", "-q"], cancellationToken, timeProvider: tp);
         if (reset.ExitCode != 0)
         {
             return await FailAsync($"git reset failed (git exit {reset.ExitCode}): {reset.Output.Trim()}");
@@ -57,7 +59,7 @@ internal static partial class GitCommitter
         IReadOnlyList<string> manifestFilesToStage;
         try
         {
-            manifestFilesToStage = await ResolveManifestFilesToStageAsync(gi, rootPath, manifest, cancellationToken);
+            manifestFilesToStage = await ResolveManifestFilesToStageAsync(gi, rootPath, manifest, cancellationToken, tp);
         }
         catch (InvalidOperationException ex)
         {
@@ -76,7 +78,7 @@ internal static partial class GitCommitter
             // backoff on every commit. A genuine failure (e.g. exit 128) still
             // retries via the default predicate.
             var ci = await GitAsync(gi, rootPath, checkArgs, cancellationToken,
-                isSuccessExit: static code => code is 0 or 1);
+                isSuccessExit: static code => code is 0 or 1, timeProvider: tp);
             if (ci.ExitCode == 0 && !string.IsNullOrWhiteSpace(ci.Output))
             {
                 var ignored = ci.Output.Trim().Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries);
@@ -90,7 +92,7 @@ internal static partial class GitCommitter
 
         if (manifestFilesToStage.Count > 0)
         {
-            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken);
+            var add = await GitAsync(gi, rootPath, ["add", "-A", "--", .. manifestFilesToStage], cancellationToken, timeProvider: tp);
             if (add.ExitCode != 0)
             {
                 return await FailAsync($"git add failed (git exit {add.ExitCode}): {add.Output.Trim()}");
@@ -102,7 +104,7 @@ internal static partial class GitCommitter
         // double, a csproj — without declaring them). Stage 9 verifies the working
         // tree, so the commit must match it or committed code could reference an
         // uncommitted change and fail to build from a clean checkout.
-        var addTracked = await GitAsync(gi, rootPath, ["add", "-u"], cancellationToken);
+        var addTracked = await GitAsync(gi, rootPath, ["add", "-u"], cancellationToken, timeProvider: tp);
         if (addTracked.ExitCode != 0)
         {
             return await FailAsync($"git add -u failed (git exit {addTracked.ExitCode}): {addTracked.Output.Trim()}");
@@ -114,7 +116,7 @@ internal static partial class GitCommitter
         // a genuinely ignored source path still surfaces as an error.
         if (proofFiles.Count > 0)
         {
-            var addProof = await GitAsync(gi, rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken);
+            var addProof = await GitAsync(gi, rootPath, ["add", "-f", "--", .. proofFiles], cancellationToken, timeProvider: tp);
             if (addProof.ExitCode != 0)
             {
                 return await FailAsync($"git add proof failed (git exit {addProof.ExitCode}): {addProof.Output.Trim()}");
@@ -132,7 +134,7 @@ internal static partial class GitCommitter
         // outside src/tests/tools must not be silently dropped either.
         if (preRunUntracked is not null)
         {
-            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi);
+            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi, timeProvider: tp);
             var newAuthored = new List<string>();
             foreach (var path in currentUntracked)
             {
@@ -162,7 +164,7 @@ internal static partial class GitCommitter
 
                 if (extant.Count > 0)
                 {
-                    var addNew = await GitAsync(gi, rootPath, ["add", "--", .. extant], cancellationToken);
+                    var addNew = await GitAsync(gi, rootPath, ["add", "--", .. extant], cancellationToken, timeProvider: tp);
                     if (addNew.ExitCode != 0)
                     {
                         return await FailAsync($"git add auto-include failed (git exit {addNew.ExitCode}): {addNew.Output.Trim()}");
@@ -179,7 +181,7 @@ internal static partial class GitCommitter
         // pre-squash tree so no tracked change is silently dropped from the seal.
         if (preSquashHead is not null)
         {
-            var stageFail = await StageCommittedOnlyContentAsync(gi, rootPath, runBaseSha!, preSquashHead, cancellationToken);
+            var stageFail = await StageCommittedOnlyContentAsync(gi, rootPath, runBaseSha!, preSquashHead, cancellationToken, tp);
             if (stageFail is not null)
                 return await FailAsync(stageFail.Error ?? "squash content-preservation failed");
         }
@@ -201,10 +203,10 @@ internal static partial class GitCommitter
                     ["RELAY_NONCE"] = commitToken,
                 }
                 : null;
-            var attempt = await GitAsync(gi, rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv);
+            var attempt = await GitAsync(gi, rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv, timeProvider: tp);
             if (attempt.ExitCode == 0)
             {
-                var sha = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken);
+                var sha = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken, timeProvider: tp);
                 return sha.ExitCode == 0
                     ? GitCommitResult.Committed(sha.Output.Trim())
                     : GitCommitResult.Failed($"git rev-parse failed after commit (git exit {sha.ExitCode}): {sha.Output.Trim()}");
@@ -226,8 +228,10 @@ internal static partial class GitCommitter
         CancellationToken cancellationToken,
         TimeSpan? timeout = null,
         IReadOnlyDictionary<string, string>? environment = null,
-        Func<int, bool>? isSuccessExit = null)
+        Func<int, bool>? isSuccessExit = null,
+        TimeProvider? timeProvider = null)
     {
+        var tp = timeProvider ?? TimeProvider.System;
         const int maxAttempts = 3;
         // Materialize once: this retry loop enumerates 'arguments' on every attempt,
         // so a deferred source would re-run side effects / risk inconsistent args.
@@ -247,7 +251,7 @@ internal static partial class GitCommitter
 
             lastResult = result;
             var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
-            await Task.Delay(delay, cancellationToken);
+            await Task.Delay(delay, tp, cancellationToken);
         }
 
         return lastResult;
@@ -257,7 +261,8 @@ internal static partial class GitCommitter
         IGitInvoker gitInvoker,
         string rootPath,
         IReadOnlyList<string> manifest,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeProvider timeProvider)
     {
         var files = new List<string>();
         foreach (var relative in manifest.Distinct(StringComparer.Ordinal))
@@ -269,7 +274,7 @@ internal static partial class GitCommitter
                 continue;
             }
 
-            var tracked = await GitAsync(gitInvoker, rootPath, ["ls-files", "--", relative], cancellationToken);
+            var tracked = await GitAsync(gitInvoker, rootPath, ["ls-files", "--", relative], cancellationToken, timeProvider: timeProvider);
             if (!string.IsNullOrWhiteSpace(tracked.Output))
             {
                 files.Add(relative);
