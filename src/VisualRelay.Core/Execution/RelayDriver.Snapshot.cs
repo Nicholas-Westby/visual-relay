@@ -38,8 +38,11 @@ public sealed partial class RelayDriver
     }
 
     /// <summary>
-    /// Captures a pre-run untracked snapshot. On resume reuses the persisted
-    /// first-instance snapshot; on fresh runs captures current state.
+    /// Captures a pre-run untracked snapshot. On resume reuses a previously
+    /// persisted snapshot. When no snapshot exists (including first-ever
+    /// resume-mode runs) captures current state and persists it — mirroring
+    /// <see cref="CaptureRunBaseShaAsync"/> so that every pre-existing
+    /// untracked file is correctly excluded from authored-file detection.
     /// When <paramref name="forceFresh"/> is true, always captures a new
     /// snapshot even on resume (used when a re-added task starts fresh).
     /// </summary>
@@ -56,10 +59,6 @@ public sealed partial class RelayDriver
             if (_options.Resume && !forceFresh && File.Exists(snapshotPath))
             {
                 preRunUntracked = await ReadPreRunUntrackedAsync(snapshotPath, cancellationToken);
-            }
-            else if (_options.Resume && !forceFresh)
-            {
-                preRunUntracked = new HashSet<string>(StringComparer.Ordinal);
             }
             else
             {

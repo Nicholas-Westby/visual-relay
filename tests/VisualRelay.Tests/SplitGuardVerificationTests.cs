@@ -188,7 +188,11 @@ public sealed partial class SplitGuardVerificationTests
         // GitCommitterAutoIncludeResilienceTests and
         // CaptureUntrackedSnapshotAsync_RoundTripIsStable (+1) to
         // GitCommitterAutoIncludeSnapshotTests.
-        const int baseline = 174;
+        // Bumped 174→176 on 2026-07-16: capture-untracked-baseline-on-resume-runs
+        // added RunTaskAsync_ResumeFirstRun_CapturesUntrackedBaseline (+1) and
+        // RunTaskAsync_ResumeWithExistingSnapshot_ReusesItUnchanged (+1) to the
+        // RelayDriverResumeTests family.
+        const int baseline = 176;
 
         string[] prefixes =
         [

@@ -159,4 +159,105 @@ public sealed class RelayDriverResumeTests
         var seals = await File.ReadAllLinesAsync(sealsPath);
         Assert.Equal(12, seals.Length);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resume-mode first run captures untracked baseline
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RunTaskAsync_ResumeFirstRun_CapturesUntrackedBaseline()
+    {
+        // When a never-run task executes with Resume:true (the default for
+        // GUI-driven runs), CapturePreRunUntrackedAsync must capture + persist
+        // the current untracked state rather than fabricating an empty baseline.
+        // An empty baseline misattributes every pre-existing untracked file as
+        // "authored by this run", causing false commit-gate flags and
+        // data-loss-hazard resets.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("exit 0", [], enableFixVerify: false);
+        repo.WriteTask("capture-baseline", "# Capture baseline task\n");
+        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+
+        // Create a pre-existing untracked file — this must appear in the snapshot.
+        await File.WriteAllTextAsync(Path.Combine(repo.Root, "scratch.log"), "pre-existing");
+
+        var runner = new FileWritingSubagentRunner(
+            new ScriptedSubagentRunner(), stage: 6, "src/app.cs", "implemented");
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                runner,
+                new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink(),
+                sim),
+            new RelayDriverOptions(CreateGitCommit: true, Resume: true));
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "capture-baseline");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // pre-run-untracked.txt must be written.
+        var snapshotPath = Path.Combine(repo.Root, ".relay", "capture-baseline", "pre-run-untracked.txt");
+        Assert.True(File.Exists(snapshotPath), "pre-run-untracked.txt must be created on first resume-mode run");
+
+        var snapshotContents = await File.ReadAllTextAsync(snapshotPath);
+        Assert.Contains("scratch.log", snapshotContents, StringComparison.Ordinal);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Resume-mode run with existing snapshot reuses it unchanged
+    // ═══════════════════════════════════════════════════════════════
+
+    [Fact]
+    public async Task RunTaskAsync_ResumeWithExistingSnapshot_ReusesItUnchanged()
+    {
+        // When a task already has a pre-run-untracked.txt from a prior run
+        // instance, a resume must reuse that snapshot as-is — it is the
+        // first-instance baseline that spans across the interruption.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("exit 0", [], enableFixVerify: false);
+        repo.WriteTask("reuse-baseline", "# Reuse baseline task\n");
+        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+
+        // Run 1: flag at stage 9 to create pre-run-untracked.txt in the task dir.
+        var flagRunner = new FlagAtStageSubagentRunner(
+            flagAtStage: 9,
+            inner: new NewTestFileNotInManifestRunner());
+        var driver1 = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                flagRunner,
+                new ScriptedTestRunner(new TestRunResult(1, "red")),
+                new InMemoryRelayEventSink(),
+                sim),
+            new RelayDriverOptions(CreateGitCommit: true));
+        await driver1.RunTaskAsync(repo.Root, "reuse-baseline");
+
+        var taskDir = Path.Combine(repo.Root, ".relay", "reuse-baseline");
+        var snapshotPath = Path.Combine(taskDir, "pre-run-untracked.txt");
+        Assert.True(File.Exists(snapshotPath), "snapshot must exist after first run");
+
+        // Modify the snapshot with a known entry that isn't a real file,
+        // so we can detect whether the snapshot was reused or re-captured.
+        var forgedContent = "forged-baseline.log" + Environment.NewLine;
+        await File.WriteAllTextAsync(snapshotPath, forgedContent);
+
+        // Run 2: resume must reuse the existing snapshot, not capture a fresh one.
+        var runner2 = new FileWritingSubagentRunner(
+            new ScriptedSubagentRunner(), stage: 6, "src/app.cs", "implemented");
+        var driver2 = new RelayDriver(
+            RelayDriverDependencies.ForTests(
+                runner2,
+                new ScriptedTestRunner(new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink(),
+                sim),
+            new RelayDriverOptions(CreateGitCommit: true, Resume: true));
+
+        var outcome = await driver2.RunTaskAsync(repo.Root, "reuse-baseline");
+
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // The snapshot must still exist and its content must be unchanged.
+        Assert.True(File.Exists(snapshotPath));
+        var snapshotContents = await File.ReadAllTextAsync(snapshotPath);
+        Assert.Equal(forgedContent, snapshotContents);
+    }
 }

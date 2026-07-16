@@ -25,12 +25,27 @@ public sealed partial class RelayQueueController
         var gi = _gitInvoker ?? new GitInvoker();
         try
         {
-            var removed = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);
-            if (removed.Count > 0)
+            var result = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);
+
+            if (result.SnapshotMissing)
             {
-                var sample = string.Join(", ", removed.Take(5));
                 DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
-                    "reset-removed", $"{removed.Count} untracked file(s): {sample}{(removed.Count > 5 ? ", …" : "")}");
+                    "reset-refused", "pre-run-untracked.txt is missing; refusing to delete anything on an unknown baseline");
+            }
+            else
+            {
+                if (result.Removed.Count > 0)
+                {
+                    var sample = string.Join(", ", result.Removed.Take(5));
+                    DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                        "reset-removed", $"{result.Removed.Count} untracked file(s): {sample}{(result.Removed.Count > 5 ? ", …" : "")}");
+                }
+                if (result.Failed.Count > 0)
+                {
+                    var sample = string.Join(", ", result.Failed.Take(5));
+                    DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                        "reset-remove-failed", $"{result.Failed.Count} untracked file(s) could not be deleted (not on disk): {sample}{(result.Failed.Count > 5 ? ", …" : "")}");
+                }
             }
         }
         catch (Exception ex) { DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase, "reset-failed", ex.Message); }

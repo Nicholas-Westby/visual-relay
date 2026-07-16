@@ -37,15 +37,16 @@ public sealed class WorktreeResetterNonAsciiTests
         var quotedName = "\"report\\342\\200\\2572026-07-01.log\"";
         var quotedInvoker = new QuotedLsFilesGitInvoker(sim, quotedName);
 
-        var removed = await WorktreeResetter.ResetAsync(
+        var result = await WorktreeResetter.ResetAsync(
             repo.Root, "test-task", tasksDir: null, CancellationToken.None, quotedInvoker);
 
         // The file must be actually deleted from disk.
         Assert.False(File.Exists(fullPath), "non-ASCII untracked file should be deleted");
 
-        // The returned list must contain the REAL (decoded) path, not the C-quoted form.
-        Assert.Contains(realName, removed);
-        Assert.DoesNotContain(quotedName, removed);
+        // The returned removed list must contain the REAL (decoded) path, not the C-quoted form.
+        Assert.False(result.SnapshotMissing);
+        Assert.Contains(realName, result.Removed);
+        Assert.DoesNotContain(quotedName, result.Removed);
     }
 
     private sealed class QuotedLsFilesGitInvoker(GitSimEngine inner, string quotedLsFilesOutput) : IGitInvoker

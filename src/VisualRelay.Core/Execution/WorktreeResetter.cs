@@ -1,6 +1,20 @@
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
+/// Result of a worktree reset operation.
+/// </summary>
+/// <param name="Removed">Files that were actually deleted.</param>
+/// <param name="Failed">Files the resetter intended to delete but could not
+/// (e.g. the file did not exist on disk when the delete was attempted).</param>
+/// <param name="SnapshotMissing">True when the pre-run untracked snapshot was
+/// absent and the resetter refused to delete anything rather than act on an
+/// unknown baseline.</param>
+public sealed record WorktreeResetResult(
+    IReadOnlyList<string> Removed,
+    IReadOnlyList<string> Failed,
+    bool SnapshotMissing);
+
+/// <summary>
 /// Resets the worktree to HEAD after a flagged task so the next task in a drain
 /// starts with a clean slate.  Safe to call with any repo — no-ops on non-git roots.
 /// </summary>
@@ -13,7 +27,7 @@ internal static class WorktreeResetter
     /// Resets the worktree to HEAD after a flagged task, leaving the next task
     /// with a clean slate.  Safe to call with any repo: no-ops on non-git roots.
     /// </summary>
-    internal static async Task<IReadOnlyList<string>> ResetAsync(
+    internal static async Task<WorktreeResetResult> ResetAsync(
         string rootPath,
         string taskId,
         string? tasksDir,
@@ -30,29 +44,45 @@ internal static class WorktreeResetter
         var snapshotPath = Path.Combine(rootPath, ".relay", taskId, "pre-run-untracked.txt");
         var preRunUntracked = File.Exists(snapshotPath)
             ? await ReadSnapshotAsync(snapshotPath, cancellationToken)
-            : new HashSet<string>(StringComparer.Ordinal);
+            : null;
+
+        // Refuse to delete anything when the baseline snapshot is missing.
+        // Acting on an unknown baseline is the dangerous default that can delete
+        // every untracked file in the repo (see CapturePreRunUntrackedAsync in
+        // RelayDriver.Snapshot.cs, which now always writes the snapshot when
+        // CreateGitCommit is enabled).
+        if (preRunUntracked is null)
+        {
+            return new WorktreeResetResult(
+                Removed: Array.Empty<string>(),
+                Failed: Array.Empty<string>(),
+                SnapshotMissing: true);
+        }
 
         var currentUntracked = await CaptureUntrackedAsync(gi, rootPath, cancellationToken);
-        var toDelete = new List<string>();
+        var removed = new List<string>();
+        var failed = new List<string>();
         foreach (var path in currentUntracked)
         {
             if (!preRunUntracked.Contains(path)
                 && !IsInternalArtifact(path)
                 && !IsUnderTasksDir(rootPath, path, tasksDir))
             {
-                toDelete.Add(path);
+                var full = Path.Combine(rootPath, path);
+                if (File.Exists(full))
+                {
+                    File.Delete(full);
+                    removed.Add(path);
+                }
+                else
+                {
+                    failed.Add(path);
+                }
             }
         }
 
-        foreach (var rel in toDelete)
-        {
-            var full = Path.Combine(rootPath, rel);
-            if (File.Exists(full))
-                File.Delete(full);
-        }
-
         // Remove any directories that are now empty as a result.
-        foreach (var dir in toDelete
+        foreach (var dir in removed
             .Select(r => Path.GetDirectoryName(Path.Combine(rootPath, r)))
             .Where(d => d is not null)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -63,7 +93,10 @@ internal static class WorktreeResetter
                 Directory.Delete(dir);
         }
 
-        return toDelete;
+        return new WorktreeResetResult(
+            Removed: removed,
+            Failed: failed,
+            SnapshotMissing: false);
     }
 
     private static async Task<IReadOnlySet<string>> ReadSnapshotAsync(

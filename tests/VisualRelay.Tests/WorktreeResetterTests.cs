@@ -46,7 +46,7 @@ public sealed class WorktreeResetterTests
         // Modify the tracked file.
         await File.WriteAllTextAsync(filePath, "modified");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
 
         var actual = await File.ReadAllTextAsync(filePath);
         Assert.Equal("original", actual);
@@ -68,8 +68,9 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(untrackedPath)!);
         await File.WriteAllTextAsync(untrackedPath, "new file");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
 
+        Assert.False(result.SnapshotMissing);
         Assert.False(File.Exists(untrackedPath), "authored untracked file should be deleted");
     }
 
@@ -102,14 +103,18 @@ public sealed class WorktreeResetterTests
     {
         using var repo = TestRepository.Create();
         await InitRepoWithTrackedFile(repo.Root, "src/foo.cs", "content");
+        // Write an empty pre-run snapshot so the resetter has a baseline.
+        await WritePreRunSnapshot(repo.Root, "test-task");
+
         // Create a .relay artifact file after run start.
         var artifactDir = Path.Combine(repo.Root, ".relay", "test-task");
         Directory.CreateDirectory(artifactDir);
         var needsReviewPath = Path.Combine(artifactDir, "NEEDS-REVIEW");
         await File.WriteAllTextAsync(needsReviewPath, "needs review reason");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
 
+        Assert.False(result.SnapshotMissing);
         Assert.True(File.Exists(needsReviewPath), ".relay/ artifact should be preserved");
     }
 
@@ -128,30 +133,35 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(tasksFilePath)!);
         await File.WriteAllTextAsync(tasksFilePath, "# task");
 
+        await WritePreRunSnapshot(repo.Root, "test-task");
         _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
 
         Assert.True(File.Exists(tasksFilePath), "tasks-dir file should be preserved");
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // Missing pre-run snapshot — fallback to empty set (conservative)
+    // Missing pre-run snapshot — refuse to delete (safe default)
     // ═══════════════════════════════════════════════════════════════
 
     [Fact]
-    public async Task ResetAsync_MissingPreRunSnapshot_FallsBackToEmptySet()
+    public async Task ResetAsync_MissingPreRunSnapshot_RefusesToDelete()
     {
         using var repo = TestRepository.Create();
         await InitRepoWithTrackedFile(repo.Root, "src/foo.cs", "content");
         // Do NOT write a pre-run-untracked.txt.
-        // Create a new untracked file.
+        // Create an untracked file that existed before the run.
         var untrackedPath = Path.Combine(repo.Root, "src", "untracked.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(untrackedPath)!);
-        await File.WriteAllTextAsync(untrackedPath, "new untracked");
+        await File.WriteAllTextAsync(untrackedPath, "untracked");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
 
-        // Conservative fallback: deletes every new untracked non-artifact file.
-        Assert.False(File.Exists(untrackedPath), "untracked file should be deleted when snapshot is missing");
+        // SnapshotMissing = true: resetter refused to act on unknown baseline.
+        Assert.True(result.SnapshotMissing, "should report snapshot missing");
+        Assert.Empty(result.Removed);
+        Assert.Empty(result.Failed);
+        // The file must survive — we must NOT delete everything on an unknown baseline.
+        Assert.True(File.Exists(untrackedPath), "untracked file must survive when snapshot is missing");
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -269,14 +279,16 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(tasksDirPath)!);
         await File.WriteAllTextAsync(tasksDirPath, "# pending");
 
-        var removed = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
+
+        Assert.False(result.SnapshotMissing);
 
         // The stray file should be deleted and appear in the returned list.
         Assert.False(File.Exists(strayPath), "stray untracked file should be deleted");
-        Assert.Contains("stray.log", removed);
+        Assert.Contains("stray.log", result.Removed);
 
         // The tasks-dir file should survive and NOT appear in the returned list.
         Assert.True(File.Exists(tasksDirPath), "tasks-dir file should be preserved");
-        Assert.DoesNotContain(removed, p => p.StartsWith(tasksDir + "/", StringComparison.Ordinal) || p == tasksDir);
+        Assert.DoesNotContain(result.Removed, p => p.StartsWith(tasksDir + "/", StringComparison.Ordinal) || p == tasksDir);
     }
 }
