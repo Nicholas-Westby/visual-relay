@@ -1,0 +1,757 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T21:52:14.044359+00:00",
+  "task": "# Relay stage 4: Plan\nTask: gate-obsidian-backfill-behind-export-ledger\nWorking directory: /tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Gate Obsidian summary back-fill behind a per-repo export ledger\n\nThe bridge's reconcile pass (`ReconcileExportsAsync`,\n`MainWindowViewModel.ObsidianBridge.cs:143-162`) writes a vault note for\nevery completed task whose note is missing, keyed only on\n`File.Exists(SummaryPath(id, date))`. That single dedupe rule produces\nthree confirmed defects:\n\n1. **Fabricated notes for tasks Visual Relay never ran.** A completed task\n   with no `.relay/<id>/stage*.report.json` yields an empty\n   `TaskRunMetric`, so the note claims `$0.00` cost, `0s` duration, status\n   `committed` (the `ResolveStatus` default with a null outcome and no\n   status record) and `vr-completed-at` = the scan moment (tier-3 `nowUtc`\n   fallback, `ObsidianSummaryWriter.cs:250`).\n2. **Daily duplicates of those notes.** With no stage metrics, the\n   date-folder for both the existence check\n   (`MainWindowViewModel.ObsidianBridge.cs:153-155`) and the write resolves\n   to \"today\" \u2014 so each new UTC day the check misses and a fresh copy lands\n   in the new date folder, for as long as the task stays in the top-50 of\n   `ListCompletedAsync`.\n3. **Deleted notes resurrect.** The operator deliberately deletes notes\n   from the vault; for any top-50 completed task the next idle scan\n   (~poll interval) re-creates the note \u2014 and the re-created copy is\n   degraded (null outcome \u2192 empty `vr-commit`, no flag reason).\n\n### Evidence (verified)\n\n- 2026-07-17, two independent instances fabricated the same five notes for\n  the manually-archived test-speedup set (completed outside the pipeline by\n  hand, commit 9bb02d9, 2026-07-09; zero `.relay/<id>` artifacts exist in\n  git history): one instance at 07:42:44Z, another at 21:04:04Z into a\n  second vault. Signature in every one: `committed \u00b7 $0.00 \u00b7 0s`,\n  `vr-completed-at` = scan time, empty `vr-commit`/`vr-source-guid`.\n- The back-fill is LOAD-BEARING and must not be removed: drains run on a\n  different machine than the vault-owning app, so the vault owner's\n  completion-time export (`ExportSummaryOnCompletion`) never fires for\n  drained tasks. Its vault is populated exclusively by this reconcile pass\n  reading the committed stage reports after a git sync. A single first\n  scan against an empty vault correctly produced the full\n  `Completed/<date>/` tree for all metric-having tasks (observed\n  2026-07-17 21:04Z) \u2014 that behavior must survive.\n- Operator requirement: manually deleted notes must STAY deleted. The\n  current file-existence dedupe cannot distinguish \"never exported\" from\n  \"deleted on purpose\".\n\n### What to build\n\n1. **Export ledger.** A hidden per-repo ledger file inside the vault repo\n   folder (dot-prefixed so Obsidian ignores it, e.g.\n   `<vault>/<repo>/.vr-export-ledger.json`) recording the task ids that\n   have ever had a summary exported. Both export paths append on every\n   successful write: `ExportSummaryOnCompletion` and the reconcile\n   back-fill. Atomic replace on save (temp file + rename).\n2. **Back-fill gate.** Reconcile writes a note only when the task id is\n   NOT in the ledger AND the task has at least one stage report\n   (`metric.Stages.Count > 0`). Tasks with no run record are never\n   back-filled \u2014 nothing is fabricated (fixes defect 1) and no date\n   arithmetic ever falls back to \"now\" (fixes defect 2). A note whose id\n   is in the ledger is never re-created, so deletions stick (fixes\n   defect 3).\n3. **First-scan seeding.** When the ledger file is absent:\n   - vault repo folder has NO existing `Completed/**/*.md` notes \u2192 fresh\n     vault: back-fill every metric-having completed task once (today's\n     load-bearing population), recording each in the new ledger;\n   - existing notes found \u2192 pre-ledger vault: seed the ledger with EVERY\n     currently-completed task id without writing a single note. History is\n     settled; only tasks that complete after seeding get exported.\n   An unreadable/corrupt ledger is treated as absent.\n\n### Constraints\n\n- Do not change note content or the completion-time export behavior for\n  tasks that ran. Do not touch the importer or scaffold.\n- Egress guards stay: task-id validation before any vault path is\n  composed; the ledger lives at a fixed name, never composed from task\n  ids.\n- Repo-agnostic; keep files under the 300-line guard; TimeProvider (no\n  real-time waits) in tests.\n\n### Tests (red first)\n\n- Completed task with no `.relay/<id>`: scan writes no note, ledger gains\n  nothing \u2014 fails today (fabricated `$0.00 \u00b7 0s \u00b7 committed` note).\n- Metric-less completed task, scans on two consecutive UTC days\n  (TimeProvider): zero notes both days \u2014 fails today (one copy per day).\n- Metric-having task whose note was deleted after export (id in ledger):\n  scan does not re-create it \u2014 fails today (resurrection).\n- Fresh vault, no ledger, no notes: one scan back-fills all metric-having\n  completed tasks at their metric-derived dates and writes the ledger \u2014\n  pins the load-bearing population path.\n- Vault with notes but no ledger: scan writes no new notes and seeds the\n  ledger with all completed ids \u2014 fails today (missing notes get\n  back-filled).\n- Completion-time export records its task id in the ledger.\n- Corrupt ledger file: treated as absent, seeding rules apply, no crash.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: scratch repo + scratch vault. (1) Fresh vault scan populates\n  notes and the ledger. (2) Delete one note, rescan: stays deleted.\n  (3) Archive a task by hand with no `.relay/<id>`, rescan across a\n  simulated day change: no note ever appears. (4) Delete the ledger,\n  rescan: no new notes, ledger reseeded.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Gate the Obsidian back-fill (ReconcileExportsAsync) behind a per-repo export ledger (<vault>/<repo>/.vr-export-ledger.json) to fix three defects: fabricated $0.00/0s notes for tasks without stage reports, daily duplicates of those notes due to date-fallback to 'today', and resurrected notes after manual deletion. The ledger records every exported task id; reconcile writes only when id \u2209 ledger AND metric.Stages.Count > 0. Completion-time export (ExportSummaryOnCompletion) also records in the ledger. First-scan seeding: if no ledger and no Completed/**/*.md notes \u2192 full back-fill; if no ledger but notes exist \u2192 seed ledger without writing. A corrupt/missing ledger is treated as absent. Writer unchanged. Egress guards preserved.\",\n  \"options\": [\n    \"Option A: New ExportLedger helper class in ObsidianBridge/ with ContainsAsync/RecordAsync/RecordBatchAsync/TrySeedAsync. Gate logic in ReconcileExportsAsync (check ledger + metric.Stages.Count > 0) and ExportSummaryOnCompletion (record after write). First-scan detection in ExportLedger.TrySeedAsync which scans Completed/**/*.md to decide fresh-vs-pre-ledger. Minimal surface-area change; writer stays pure.\",\n    \"Option B: Make ObsidianSummaryWriter ledger-aware by adding ShouldExport/RecordExport methods or a WriteWithLedger overload that internally checks the ledger and stage count. First-scan seeding as a static method. Single chokepoint for export decisions but risks breaking the 300-line guard and blurs the writer's single responsibility.\",\n    \"Option C: New ObsidianExportCoordinator service composing ExportLedger + ObsidianSummaryWriter. Both call sites delegate to the coordinator. Cleanest abstraction with the thinnest view model, easiest to test in isolation, but introduces more new files and re-routes both export paths through a new indirection layer.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Codebase investigation complete. The bridge reconcile pass (MainWindowViewModel.ObsidianBridge.cs:143-162) iterates top-50 completed tasks, reads a TaskRunMetric via RelayRunHistory.ReadTaskMetric, computes a date (stages max or UtcNow.Date fallback), and writes a note if File.Exists(SummaryPath) is false. The single File.Exists dedupe causes three defects: (1) tasks with no .relay/<id> artifacts produce an empty metric (CostUsd=0, DurationSeconds=0) with ResolveStatus defaulting to 'committed' and completion date falling back to scan-time UtcNow; (2) that date fallback means each new UTC day the check misses and a fresh degraded copy lands; (3) manually deleted notes are re-created because File.Exists returns false after deletion. ExportSummaryOnCompletion (line 167) fires after single-run and drain completion, writing to vault unconditionally (no ledger exists yet). The solution requires: (A) new ExportLedger class in src/VisualRelay.Core/ObsidianBridge/ with ledger file path = ObsidianVaultLayout.RepoDir/.vr-export-ledger.json, methods ContainsAsync/RecordAsync/RecordBatchAsync/TrySeedAsync, atomic write via temp+rename; (B) modify ReconcileExportsAsync to gate on id not-in-ledger AND metric.Stages.Count > 0; (C) modify ExportSummaryOnCompletion to record in ledger after write; (D) first-scan seeding in TrySeedAsync \u2014 no ledger + no Completed/**/*.md notes = full back-fill with ledger write, no ledger + existing notes = seed ledger silently without writing. The writer (ObsidianSummaryWriter) stays pure/unchanged. Egress guard (IsValidTaskId) must apply before any ledger path composition. The 300-line guard applies: ObsidianBridge.cs is 222 lines (new logic may push it near the limit or require extracting helper methods). Tests use ManualTimeProvider for virtual time, TestRepository for temp repos, [Collection('Headless')] and AvaloniaFact for Avalonia headless tests, and event-driven TestWaits.ForFileAsync for file detection.\",\n  \"constraints\": [\n    \"300-line guard per file \u2014 none of the modified files may exceed 300 lines.\",\n    \"Do not change note content or the completion-time export behavior for tasks that ran.\",\n    \"Do not touch the importer (ObsidianTaskImporter) or scaffold (EnsureScaffold).\",\n    \"Egress guards stay: IsValidTaskId must be checked before composing any vault path (including ledger path).\",\n    \"The ledger file name is fixed (.vr-export-ledger.json), never composed from task ids.\",\n    \"Repo-agnostic: the ledger lives under <vault>/<repo>/ (per repo), composed via ObsidianVaultLayout.RepoDir.\",\n    \"TimeProvider (ManualTimeProvider) in tests \u2014 no real-time waits or DateTime.UtcNow in test assertions.\",\n    \"Atomic file replace on ledger save (temp file + rename) \u2014 never partial/corrupt writes.\",\n    \"An unreadable/corrupt ledger file is treated as absent (seeding rules apply, no crash).\",\n    \"The back-fill is load-bearing for drain-completed tasks \u2014 must not be removed, only gated.\",\n    \"All existing tests must remain green.\",\n    \"New test scenarios (red first): no-stage metric task writes no note, metric-less across two UTC days writes zero notes, metric-having deleted-after-export does not resurrect, fresh vault back-fills all at metric dates, pre-ledger vault seeds without writing, completion-time export records in ledger, corrupt ledger treated as absent.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The bridge reconcile pass (MainWindowViewModel.ObsidianBridge.cs:143-162) deduplicates solely on File.Exists(layout.SummaryPath(task.Id, date)) at line 157. Each invocation copies 11 lines of date-resolution logic already present inside ObsidianSummaryWriter (lines 218-261), diverging at line 155 where a zero-stage metric falls to DateOnly.FromDateTime(DateTime.UtcNow.Date) \u2014 the writer's own ResolveCompletionDate already does a three-tier resolution but the reconcile loop pre-dates and shadows it. The call at line 160 passes null outcome and DateTimeOffset.UtcNow, so (a) ResolveStatus returns 'committed' (default when outcome is null and status record is empty, line 207), and (b) nowUtc alone cannot override the already-computed date because Write computes its own date via ResolveCompletionDateOnly \u2014 but the existence-check date at line 157 is computed independently and mismatches Write's internal date when stages are empty (both land on 'today' but Write's tier-3 fallback can differ from UtcNow.Date by a sub-day offset).\\n\\nExportSummaryOnCompletion (line 167) writes unconditionally via new ObsidianSummaryWriter().Write(...), never recording to any ledger. The drain lifecycle hook calls it fire-and-forget at LiveState.cs:62; the single-run path calls it awaited at RunOne.cs:32.\\n\\nThree defect chains:\\n\\n1. Fabricated notes: No .relay/<id> artifacts \u2192 ReadTaskMetric returns TaskRunMetric(taskId, []) with CostUsd=0, DurationSeconds=0, Stages.Count=0. The reconcile date-fallback (line 155) puts it in today's folder. Write is called with null outcome, so ResolveStatus returns 'committed' (null \u2192 no Status check \u2192 line 207 default). The note shows $0.00, 0s, committed, vr-completed-at = scan moment, empty vr-commit, empty vr-source-guid.\\n\\n2. Daily duplicates: With Stages.Count=0, the date for both the existence check (line 153-155) and Write resolves to 'today'. Each new UTC day: File.Exists(SummaryPath(id, \\\"2026-07-17\\\")) is true, File.Exists(SummaryPath(id, \\\"2026-07-18\\\")) is false \u2192 fresh degraded copy lands in the new date folder. Repeats for as long as the task stays in top-50 of ListCompletedAsync.\\n\\n3. Deleted notes resurrect: Operator deletes Completed/<date>/<id>.md. Next scan: File.Exists returns false \u2192 note is re-created. The re-created copy is degraded (null outcome \u2192 empty vr-commit, no flag reason, incomplete frontmatter). Never stops as long as task is in top-50.\\n\\nNo ExportLedger class exists anywhere in the codebase. No .vr-export-ledger.json file or concept of a per-repo export journal is present.\\n\\nLine-count headroom: ObsidianBridge.cs is 222 lines (78 under the 300-line guard). A new ExportLedger.cs in ObsidianBridge/ would be a net-new file. ObsidianSummaryWriter.cs is 272 lines (28 under) and must stay unchanged per constraints. ObsidianVaultLayout.cs is 217 lines (83 under).\",\n\n  \"excerpts\": [\n    \"MainWindowViewModel.ObsidianBridge.cs:143-162 \u2014 ReconcileExportsAsync loop:\\n\\nvar metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);\\nvar date = metric.Stages.Count > 0\\n    ? DateOnly.FromDateTime(metric.Stages.Max(s => s.Timestamp).Date)\\n    : DateOnly.FromDateTime(DateTime.UtcNow.Date);  // \u2190 defect 2: 'today' fallback\\n\\nif (File.Exists(layout.SummaryPath(task.Id, date))) continue;  // \u2190 defect 3: no ledger, only filesystem dedupe\\n\\nvar spec = await File.ReadAllTextAsync(task.MarkdownPath);\\nwriter.Write(layout, RootPath, task.Id, null, spec, null, DateTimeOffset.UtcNow);  // \u2190 defect 1: null outcome\",\n\n    \"MainWindowViewModel.LiveState.cs:62 \u2014 Drain fire-and-forget: _ = ExportSummaryOnCompletion(taskId, outcome);  \u2190 no ledger record after\",\n\n    \"MainWindowViewModel.RunOne.cs:32 \u2014 Single-run path: await ExportSummaryOnCompletion(task.Id, outcome);  \u2190 no ledger record after\",\n\n    \"ObsidianSummaryWriter.cs:178-208 \u2014 ResolveStatus: when outcome is null AND statusEntries is empty (no .relay/<id>/status.json), returns 'committed' at line 207. This is the correct default for a null-outcome inference chain but produces misleading 'committed' for never-run tasks.\",\n\n    \"ObsidianSummaryWriter.cs:218-251 \u2014 ResolveCompletionDate three-tier fallback: (1) max stage Timestamp, (2) newest file mtime in .relay/<id>/, (3) nowUtc. Tier 3 fires for no-stage tasks with no .relay dir \u2192 scan moment.\",\n\n    \"RelayRunHistory.cs:13-30 \u2014 ReadTaskMetric: when .relay/<id> directory doesn't exist (line 16-18), returns new TaskRunMetric(taskId, []) with zero stages, zero cost, zero duration.\",\n\n    \"ObsidianVaultLayout.cs:71-72 \u2014 SummaryPath: Path.Combine(CompletedDir(date), $\\\"{taskId}.md\\\"). The dated folder is the only namespace \u2014 no ledger oracle.\",\n\n    \"ExportSummaryOnCompletion (ObsidianBridge.cs:167-179) \u2014 Writes unconditionally. Constructs a fresh ObsidianSummaryWriter each time (stateless). No post-write record-keeping.\"\n  ],\n\n  \"repro\": \"To reproduce defect 1: (a) Archive a task by hand by writing DONE-<id>.md to llm-tasks/completed/batch-001/ with no .relay/<id>/ directory. (b) Enable the bridge and run RunObsidianBridgeScanAsync. (c) Observe Completed/<today>/<id>.md appears with vr-status: committed, vr-cost-usd: $0.00, vr-duration: 0s, empty vr-commit, empty vr-source-guid, and vr-completed-at = scan time. \\n\\nTo reproduce defect 2: (d) Using a ManualTimeProvider, advance time by 24h and run another scan. (e) Observe Completed/<tomorrow>/<id>.md appears \u2014 two degraded notes now exist for the same never-run task.\\n\\nTo reproduce defect 3: (f) Create a task with stage reports, run a scan to produce a note, confirm the note exists. (g) Delete the note from the vault. (h) Run another scan \u2014 the note reappears (degraded, since no outcome is available from the reconcile path).\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have everything I need. Here is the concrete plan:\n\n---\n\n## Plan\n\n### Overview\n\nAdd a per-repo `ExportLedger` that records every task id ever exported, then gate the bridge reconcile pass behind it. Two files created, one modified. No changes to `ObsidianSummaryWriter`, `ObsidianVaultLayout`, `RelayRunHistory`, or the importer/scaffold.\n\n---\n\n### 1. New file: `+src/VisualRelay.Core/ObsidianBridge/ExportLedger.cs` (~130 lines)\n\nAn `ExportLedger` class and `ExportLedgerSeedResult` enum.\n\n**`ExportLedgerSeedResult` enum** (3 values):\n- `Skip` \u2014 ledger exists and is valid; normal operation.\n- `FullBackfill` \u2014 no ledger, no `Completed/**/*.md` notes; the caller should back-fill every metric-having completed task, recording each in the new ledger.\n- `SealOnly` \u2014 no ledger but existing notes found; the ledger is already seeded with all completed ids; the caller writes nothing.\n\n**`ExportLedger` class**:\n- Constructor takes `string repoDir`; the ledger path is `Path.Combine(repoDir, \".vr-export-ledger.json\")` \u2014 a fixed name, never composed from task ids.\n- **`ContainsAsync(taskId, ct)`**: loads the ledger JSON (a sorted `string[]` of task ids), returns `true` if `taskId` is present. Returns `false` when the file is absent or corrupt.\n- **`RecordAsync(taskId, ct)`**: loads existing ids (or empty set if absent/corrupt), adds `taskId`, atomically saves via temp-file + rename. Idempotent.\n- **`RecordBatchAsync(taskIds, ct)`**: same as Record but for a batch \u2014 loads once, adds all, saves once.\n- **`TrySeedAsync(layout, allCompletedTaskIds, ct)`**:\n  1. If the ledger file exists AND can be parsed successfully \u2192 return `Skip`.\n  2. If the file exists but is corrupt JSON \u2192 treat as absent (fall through to step 3).\n  3. Check whether `Completed/**/*.md` notes exist (any `.md` not `INFO.md`):\n     - **Notes exist** \u2192 `RecordBatchAsync(allCompletedTaskIds)`, return `SealOnly`.\n     - **No notes** \u2192 save an empty array (fresh ledger), return `FullBackfill`.\n- **Internal helpers**: `LoadAsync` \u2192 `HashSet<string>` (handles missing file, corrupt JSON \u2192 empty set), `SaveAsync` \u2192 atomic temp+rename, `HasCompletedNotes(layout)` \u2192 checks `Completed/` tree.\n\nThe writer (`ObsidianSummaryWriter`) is **untouched** \u2014 all gating lives in the bridge VM and the ledger.\n\n---\n\n### 2. Modify: `src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs` (+~20 lines, ~242 total)\n\n**`ReconcileExportsAsync`** (lines 143\u2013162) rewritten:\n\n```csharp\nprivate async Task ReconcileExportsAsync(ObsidianVaultLayout layout)\n{\n    var repository = new RelayTaskRepository(RootPath);\n    var writer = new ObsidianSummaryWriter();\n    var ledger = new ExportLedger(layout.RepoDir);\n\n    var completedTasks = await repository.ListCompletedAsync();\n    var seedResult = await ledger.TrySeedAsync(\n        layout, completedTasks.Select(t => t.Id).ToList());\n\n    if (seedResult == ExportLedgerSeedResult.SealOnly)\n        return; // pre-ledger vault \u2014 history settled, write nothing\n\n    // FullBackfill: all tasks; Skip: top-50 only\n    var candidates = seedResult == ExportLedgerSeedResult.FullBackfill\n        ? completedTasks\n        : completedTasks.Take(50);\n\n    foreach (var task in candidates)\n    {\n        if (string.IsNullOrWhiteSpace(task.MarkdownPath) || !File.Exists(task.MarkdownPath))\n            continue;\n\n        if (await ledger.ContainsAsync(task.Id))\n            continue;\n\n        var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);\n        if (metric.Stages.Count == 0)\n            continue; // \u2190 defect 1 & 2 fix: never back-fill tasks with no run record\n\n        var spec = await File.ReadAllTextAsync(task.MarkdownPath);\n        writer.Write(layout, RootPath, task.Id, null, spec, null, DateTimeOffset.UtcNow);\n        await ledger.RecordAsync(task.Id);\n    }\n}\n```\n\nKey changes from the old code:\n- The old `File.Exists(layout.SummaryPath(task.Id, date))` dedupe is replaced by `ledger.ContainsAsync(task.Id)` (fixes defect 3: deleted notes stay deleted).\n- The old date-resolution fallback to `UtcNow.Date` is removed \u2014 the gate `metric.Stages.Count == 0` skips the task entirely before any date is computed (fixes defect 1: no fabricated `$0.00 \u00b7 0s \u00b7 committed` notes, fixes defect 2: no date-fallback means no daily duplicates).\n- The old `null` outcome and `DateTimeOffset.UtcNow` call at line 160 are preserved exactly \u2014 the writer still receives them for tasks that pass the gate (these tasks have real run data, so the outcome inference from status record produces a correct status).\n\n**`ExportSummaryOnCompletion`** (lines 167\u2013179): add 3 lines after the `writer.Write(...)` call:\n\n```csharp\n// Record in export ledger so reconcile never re-creates this note.\nawait new ExportLedger(layout.RepoDir).RecordAsync(taskId);\n```\n\nThis sits inside the existing `try` block \u2014 if Write throws, the ledger is not updated. Both paths now contribute to the ledger.\n\n---\n\n### 3. New file: `+tests/VisualRelay.Tests/ObsidianExportLedgerTests.cs` (~260 lines)\n\nPlain `[Fact]` tests (no Avalonia dependency). Tests the `ExportLedger` class in isolation.\n\nTest scenarios:\n1. **`ContainsAsync_ReturnsFalse_WhenLedgerAbsent`** \u2014 no file \u2192 false.\n2. **`ContainsAsync_ReturnsTrue_AfterRecord`** \u2014 record, then contains \u2192 true.\n3. **`RecordAsync_IsIdempotent`** \u2014 record same id twice, ledger has one entry.\n4. **`RecordBatchAsync_AddsAllIds`** \u2014 batch of 3, all present.\n5. **`TrySeedAsync_ReturnsSkip_WhenLedgerExists`** \u2014 pre-create valid ledger \u2192 Skip.\n6. **`TrySeedAsync_ReturnsFullBackfill_WhenNoLedgerAndNoNotes`** \u2014 no ledger, empty Completed/ \u2192 FullBackfill, empty ledger file created.\n7. **`TrySeedAsync_ReturnsSealOnly_WhenNoLedgerButNotesExist`** \u2014 create a Completed/ subfolder with a `.md` note file, no ledger \u2192 SealOnly, ledger seeded with all provided ids.\n8. **`TrySeedAsync_CorruptLedgerTreatedAsAbsent_FullBackfill`** \u2014 corrupt JSON in ledger file, no notes \u2192 FullBackfill (not crash).\n9. **`RecordAsync_OverwritesCorruptLedger`** \u2014 corrupt file, record a task \u2192 file becomes valid JSON with that task.\n10. **`AtomicSave_NoPartialWrite`** \u2014 verify no `.tmp` file remains after save; verify content is complete.\n\nUses `TempDirectory` from `TestFileSystem` for setup/teardown. Creates a minimal `ObsidianVaultLayout` for tests that need it.\n\n---\n\n### 4. New file: `+tests/VisualRelay.Tests/ObsidianBridgeExportGateTests.cs` (~260 lines)\n\n`[AvaloniaFact]` + `[Collection(\"Headless\")]` tests. Full VM integration through `RunObsidianBridgeScanAsync`.\n\nTest scenarios (mapped to requirements):\n1. **`Scan_NoRelayDir_WritesNoNote`** \u2014 completed task with `DONE-<id>.md` but no `.relay/<id>/` directory anywhere \u2192 run scan \u2192 no note in Completed/, ledger does not contain id. (Fixes defect 1 \u2014 fails today.)\n2. **`Scan_MetriclessTask_TwoUtcDays_ZeroNotes`** \u2014 completed task with `.relay/<id>/` directory but zero stage reports \u2192 run scan at day 1 with a `ManualTimeProvider` controlling `DateTimeOffset.UtcNow`, advance 24h, scan again \u2192 zero notes both days. (Fixes defect 2 \u2014 fails today.)\n3. **`Scan_DeletedNote_NotRecreated`** \u2014 completed task with stage reports \u2192 run scan (note created, ledger seeded) \u2192 delete the note file \u2192 run scan again \u2192 note NOT recreated. (Fixes defect 3 \u2014 fails today.)\n4. **`Scan_FreshVault_BackfillsAllMetricHavingTasks`** \u2014 multiple completed tasks with stage reports at varying dates, no ledger, no Completed/ notes \u2192 run scan \u2192 every metric-having task gets a note at its metric-derived date, ledger contains all ids. (Pins load-bearing population.)\n5. **`Scan_PreLedgerVault_SeedsWithoutWriting`** \u2014 completed tasks with stage reports, pre-create Completed/ notes (simulating pre-ledger vault), no ledger \u2192 run scan \u2192 no new notes written, ledger contains all completed ids. (Fails today \u2014 missing notes get back-filled.)\n6. **`ExportSummaryOnCompletion_RecordsInLedger`** \u2014 directly call `ExportSummaryOnCompletion` (via reflection or internal accessor) \u2192 ledger contains the task id. (Completion-time path recorded.)\n7. **`Scan_CorruptLedger_FullBackfillApplies`** \u2014 write corrupt JSON to `.vr-export-ledger.json`, no Completed/ notes \u2192 run scan \u2192 back-fill proceeds (not crash, corrupt treated as absent).\n\nUses the same `SetupDirs`/`CreateViewModel` patterns from `ObsidianBridgeVmScaffoldExportTests.cs`. Uses `ManualTimeProvider` for time-dependent tests (scenario 2).\n\n---\n\n### Verification checklist\n\n- `./visual-relay check` fully green including all new tests.\n- Red-first: new tests fail before the implementation changes, pass after.\n- Manual: scratch repo + vault:\n  1. Fresh vault scan populates notes + ledger.\n  2. Delete a note, rescan \u2192 stays deleted.\n  3. Archive a task by hand with no `.relay/<id>`, rescan across simulated day change \u2192 no note.\n  4. Delete ledger, rescan \u2192 no new notes, ledger reseeded.\n\n```json\n{\n  \"plan\": \"Add ExportLedger class (src/VisualRelay.Core/ObsidianBridge/ExportLedger.cs) recording exported task ids in <vault>/<repo>/.vr-export-ledger.json with atomic temp+rename saves. Gate ReconcileExportsAsync (MainWindowViewModel.ObsidianBridge.cs:143-162) behind ledger.ContainsAsync AND metric.Stages.Count > 0, replacing the old File.Exists dedupe. Record after every successful export in both reconcile and ExportSummaryOnCompletion paths. First-scan seeding via TrySeedAsync: no ledger + no Completed/**/*.md notes \u2192 FullBackfill (back-fill all metric-having tasks); no ledger + existing notes \u2192 SealOnly (seed ledger silently, write nothing); valid ledger \u2192 Skip (normal top-50 gated loop). Corrupt ledger treated as absent. Writer unchanged. Two new test files: ObsidianExportLedgerTests.cs (plain Facts for ExportLedger unit tests) and ObsidianBridgeExportGateTests.cs (AvaloniaFact VM integration tests covering all 7 scenarios). All files under 300 lines.\",\n  \"manifest\": [\n    \"+src/VisualRelay.Core/ObsidianBridge/ExportLedger.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs\",\n    \"+tests/VisualRelay.Tests/ObsidianExportLedgerTests.cs\",\n    \"+tests/VisualRelay.Tests/ObsidianBridgeExportGateTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 21,
+    "tool_calls_total": 42,
+    "tool_calls_succeeded": 41,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 23,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 12,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 1,
+        "failed": 1
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 21,
+    "total_llm_time_s": 242.536,
+    "prompt_cache": {
+      "cached_tokens": 626944,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 1.106,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.711,
+      "prompt_tokens_est": 7984,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 389
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.925,
+      "prompt_tokens_est": 8211,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 54
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 38
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 5.645,
+      "prompt_tokens_est": 8368,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*ObsidianBridge*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.07,
+      "result_length": 477
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*ObsidianSummary*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.07,
+      "result_length": 236
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*VaultLayout*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.066,
+      "result_length": 231
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*RelayRunHistory*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.067,
+      "result_length": 93
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*ExportLedger*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 29
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 5.029,
+      "prompt_tokens_est": 8984,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9770
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/ObsidianBridge/ObsidianSummaryWriter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11244
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/ObsidianBridge/ObsidianVaultLayout.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9815
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/Tasks/RelayRunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7115
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.295,
+      "prompt_tokens_est": 18296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianBridgeVmTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9650
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5769
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.117,
+      "prompt_tokens_est": 22204,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*ManualTimeProvider*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.067,
+      "result_length": 45
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*TestRepository*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.066,
+      "result_length": 29
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*TestFileSystem*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 41
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*TestWaits*",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger"
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 36
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.019,
+      "prompt_tokens_est": 22526,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ManualTimeProvider.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4077
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/TestWaits.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2874
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/TestFileSystem.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3192
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.517,
+      "prompt_tokens_est": 25171,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianSummaryWriterTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12308
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/ObsidianBridge"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 71
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.585,
+      "prompt_tokens_est": 28443,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianBridgeVmPropertiesTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2686
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianBridgeHermeticityTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6446
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.705,
+      "prompt_tokens_est": 30879,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13959
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2780
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.635,
+      "prompt_tokens_est": 34892,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.csproj",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 44
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.csproj",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 48
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 4.171,
+      "prompt_tokens_est": 35107,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/VisualRelay.Core.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2245
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2661
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.746,
+      "prompt_tokens_est": 36630,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayTaskOutcome",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.083,
+      "result_length": 17
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class TaskRunMetric",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.06,
+      "result_length": 17
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 4.479,
+      "prompt_tokens_est": 36784,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "record.*TaskRunMetric|record.*RelayTaskOutcome",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.058,
+      "result_length": 196
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 1110
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.697,
+      "prompt_tokens_est": 37326,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Domain/RunMetrics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2462
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Domain/RelayTaskOutcome.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 361
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.758,
+      "prompt_tokens_est": 38251,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayTaskRepository",
+        "path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.06,
+      "result_length": 409
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 2.752,
+      "prompt_tokens_est": 38437,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/Tasks/RelayTaskRepository.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13361
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 112.21,
+      "prompt_tokens_est": 41484,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "wc -l /tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.Core/ObsidianBridge/*.cs /tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs /tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs /tmp/nix-shell.0oeQ1o/visual-relay/wt/28b9d4518058/plan-20260717214128/gate-obsidian-backfill-behind-export-ledger/tests/VisualRelay.Tests/ObsidianSummaryWriterTests.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 306,
+      "error": "error: \"command\" must be a JSON array of strings, not a single string.\nWrong: \"command\": \"grep -n pattern file.py\"\nRight: \"command\": [\"grep\", \"-n\", \"pattern\", \"file.py\"]\nEach argument must be a separate element in the array.\nShell syntax (&&, |, >, 2>&1, etc.) is not supported \u2014 run one command at a time."
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 2.964,
+      "prompt_tokens_est": 48855,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "src/VisualRelay.Core/ObsidianBridge/ObsidianSummaryWriter.cs",
+          "src/VisualRelay.Core/ObsidianBridge/ObsidianVaultLayout.cs",
+          "src/VisualRelay.[ENCRYPTED:aws-secret-key]VCzb6k0F0BygzV1uA3dr5QDWIjA+yuPXKawGmDlJ.cs",
+          "src/VisualRelay.App/ViewModels/MainWindowViewModel.ObsidianBridge.cs",
+          "tests/VisualRelay.Tests/ObsidianBridgeVmScaffoldExportTests.cs",
+          "tests/VisualRelay.Tests/ObsidianSummaryWriterTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.215,
+      "result_length": 435
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.085,
+      "prompt_tokens_est": 49111,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "post-investigation"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 77
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 53.492,
+      "prompt_tokens_est": 49187,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

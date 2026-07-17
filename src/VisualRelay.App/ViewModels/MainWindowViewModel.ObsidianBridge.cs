@@ -144,20 +144,45 @@ public partial class MainWindowViewModel
     {
         var repository = new RelayTaskRepository(RootPath);
         var writer = new ObsidianSummaryWriter();
-        foreach (var task in (await repository.ListCompletedAsync()).Take(50))
+        var ledger = new ExportLedger(layout.RepoDir);
+        var completed = await repository.ListCompletedAsync();
+
+        // First-scan seeding.
+        var completedIds = completed
+            .Select(t => t.Id)
+            .Where(ObsidianVaultLayout.IsValidTaskId)
+            .ToArray();
+        var hasNotes = HasCompletedNotes(layout);
+        var (decision, _) = await ledger.TrySeedAsync(completedIds, hasNotes);
+
+        if (decision == SeedDecision.SealOnly) return;
+
+        if (decision == SeedDecision.FullBackfill)
+        {
+            foreach (var task in completed)
+            {
+                if (string.IsNullOrWhiteSpace(task.MarkdownPath) || !File.Exists(task.MarkdownPath))
+                    continue;
+                var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);
+                if (metric.Stages.Count == 0) continue;
+                var spec = await File.ReadAllTextAsync(task.MarkdownPath);
+                writer.Write(layout, RootPath, task.Id, null, spec, null, DateTimeOffset.UtcNow);
+                await ledger.RecordAsync(task.Id);
+            }
+            return;
+        }
+
+        // Normal gated top-50 loop.
+        foreach (var task in completed.Take(50))
         {
             if (string.IsNullOrWhiteSpace(task.MarkdownPath) || !File.Exists(task.MarkdownPath))
                 continue;
-
             var metric = RelayRunHistory.ReadTaskMetric(RootPath, task.Id);
-            var date = metric.Stages.Count > 0
-                ? DateOnly.FromDateTime(metric.Stages.Max(s => s.Timestamp).Date)
-                : DateOnly.FromDateTime(DateTime.UtcNow.Date);
-
-            if (File.Exists(layout.SummaryPath(task.Id, date))) continue;
-
+            if (metric.Stages.Count == 0) continue;
+            if (await ledger.ContainsAsync(task.Id)) continue;
             var spec = await File.ReadAllTextAsync(task.MarkdownPath);
             writer.Write(layout, RootPath, task.Id, null, spec, null, DateTimeOffset.UtcNow);
+            await ledger.RecordAsync(task.Id);
         }
     }
 
@@ -174,6 +199,7 @@ public partial class MainWindowViewModel
             layout.EnsureScaffold();
             var spec = await ResolveTaskSpecAsync(taskId);
             new ObsidianSummaryWriter().Write(layout, RootPath, taskId, outcome, spec, sourceGuid, DateTimeOffset.UtcNow);
+            await new ExportLedger(layout.RepoDir).RecordAsync(taskId);
         }
         catch { /* best-effort */ }
     }
@@ -208,6 +234,28 @@ public partial class MainWindowViewModel
         _obsidianBridgeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(ObsidianPollSeconds) };
         _obsidianBridgeTimer.Tick += (_, _) => _ = OnBridgeTickAsync();
         _obsidianBridgeTimer.Start();
+    }
+
+    /// <summary>
+    /// Returns true when the vault already shows signs of prior exports:
+    /// any <c>.md</c> notes (excluding INFO/README) or dated subdirectories
+    /// (<c>YYYY-MM-DD</c>) left behind after note deletion.
+    /// </summary>
+    private static bool HasCompletedNotes(ObsidianVaultLayout layout)
+    {
+        var completedRoot = Path.Combine(layout.RepoDir, "Completed");
+        if (!Directory.Exists(completedRoot)) return false;
+
+        // Actual task notes (not scaffold INFO/README).
+        if (Directory.EnumerateFiles(completedRoot, "*.md", SearchOption.AllDirectories)
+            .Any(f => !ObsidianVaultLayout.ReservedFileNames.Contains(
+                Path.GetFileName(f))))
+            return true;
+
+        // Dated subdirectories left behind after note deletion.
+        return Directory.EnumerateDirectories(completedRoot)
+            .Any(d => System.Text.RegularExpressions.Regex.IsMatch(
+                Path.GetFileName(d), @"^\d{4}-\d{2}-\d{2}$"));
     }
 
     private async Task OnBridgeTickAsync()
