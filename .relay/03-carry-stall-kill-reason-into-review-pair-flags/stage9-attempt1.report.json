@@ -1,0 +1,1002 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T00:38:15.578965+00:00",
+  "task": "# Relay stage 9: Fix\nTask: 03-carry-stall-kill-reason-into-review-pair-flags\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Carry the stall-kill signature into review-pair flag reasons and retry infra kills\n\nWhen a review-pair stage's agent process is killed by the watchdog, the run is\nflagged with the generic reason `Review returned an invalid result`. The kill\ncontext \u2014 reason, last-signal source, autopsy artifact path \u2014 exists in the run\nlog and in the killed-output file, but the flag reason, the NEEDS-REVIEW file,\nand the queue card show only the generic string. The operator cannot tell an\ninfrastructure kill from the model actually emitting garbage, and the stage is\nnever retried even though an infrastructure kill is exactly the retryable case.\n\nThis mirrors the already-completed task\n`llm-tasks/completed/carry-verify-signature-in-flag-reason/` which fixed the\nsame reporting gap for verify-exhaustion flags. The review pair needs the same\ntreatment.\n\n### Evidence (task `hoist-pipeline-test-shared-setup`, 2026-07-15)\n\n- Review (stage 7, frontier tier) ran ~55 minutes and was watchdog-killed:\n  run-log event `s7/frontier stall_kill reason: absolute_ceiling lastSignal: cpu\n  silenceMs: 52373 \u2026\n  outputSaved: .relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt`.\n  The autopsy file shows the swival agent was blocked in a synchronous\n  `sock.recv()` waiting for LLM response headers (a hung HTTP call to the\n  litellm proxy), then SIGINT'd (`KeyboardInterrupt`, exit 130).\n- `RunStageAsync` (`src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs:186-205`)\n  maps any invalid/empty result to `Check=\"red\"` with no distinction for\n  kills; `RunReviewPairAsync` then flags with the fixed string\n  `\"Review returned an invalid result\"` (lines 82, 115; visual sibling at 88,\n  136). The stall-kill reason is dropped.\n- Only `stage7-attempt1.*` exists \u2014 no second attempt. Other stages escalate\n  and retry (see completed task `make-stage-retries-always-escalate`); the\n  review pair path calls the subagent exactly once.\n- The task burned stages 1-6 (~21 minutes, ~$0.27) and produced a valid\n  implementation, all discarded to NEEDS-REVIEW because one LLM HTTP request\n  hung.\n\n### What to build\n\n1. Thread the kill information from the subagent runner into `StageRunResult`\n   (e.g. a nullable `KillSignature` with reason, lastSignal, silence, autopsy\n   path). The runner already knows it \u2014 it wrote the `stall_kill` event and the\n   killed-output artifact (`preserve-trace-when-stage-killed` machinery).\n2. When a review-pair stage result is red BECAUSE the process was killed, flag\n   with an enriched reason, e.g.\n   `Review stall-killed (absolute_ceiling, lastSignal=cpu) after 55m \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt`\n   instead of `Review returned an invalid result`. Keep the generic wording for\n   genuinely invalid model output.\n3. Retry policy: on a watchdog kill (not on invalid model output), give the\n   review-pair stage one escalated retry (attempt2) before flagging, consistent\n   with `make-stage-retries-always-escalate` semantics elsewhere. Preserve the\n   sibling-survives-failure semantics of the pair (`RelayDriver.ReviewPair.cs:104-116`).\n4. Propagate the enriched reason everywhere the reason already flows:\n   NEEDS-REVIEW first line, `/state` `reviewReason`, queue card label, drain\n   log \u2014 same checklist as the completed verify-signature task.\n\n### Constraints\n\n- Message/observability + one bounded retry only; no changes to review\n  contracts or triage routing.\n- Repo-agnostic wording (the signature comes from the watchdog, not from\n  parsing agent output).\n- Keep `RelayDriver.ReviewPair.cs` under the 300-line guard (helpers live in\n  sibling partials).\n\n### Tests (red first)\n\n- Driver test with a fake subagent runner that reports a watchdog kill:\n  flag reason contains the kill reason and autopsy path; a retry attempt was\n  made first; attempt2 success proceeds normally without a flag.\n- Invalid-output (no kill) case: single attempt, existing generic reason \u2014\n  behavior unchanged.\n- Control-API/state test: enriched reason visible in `reviewReason`.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\nsrc/VisualRelay.Domain/SubagentResult.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs\ntests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\ntests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The review-pair stage currently drops all watchdog kill context (reason, lastSignal, silenceMs, autopsy path) from flag reasons, and never retries on kill. The runner already assembles this data. Fix by threading a structured KillSignature through StageRunResult and adding one escalated retry before flagging. Three approaches differ in how the kill context is carried and where the autopsy path gets attached.\",\n  \"options\": [\n    \"A \u2014 Structured KillSignature on SubagentResult \u2192 StageRunResult\\n\\nAdd a dedicated `KillSignature` record (Reason, LastSignal, SilenceMs, AutopsyPath) to `SubagentResult`. Populate it in `RunAsync` when the watchdog fires (from `wdResult` + `killedOutputPath`). Thread it through `StageRunResult` unchanged. In `RelayDriver.ReviewPair.RunReviewPairAsync`, when `StageRunResult` carries a `KillSignature`, build an enriched reason string (e.g. `\\\"Review stall-killed (absolute_ceiling, lastSignal=cpu) after ~55m \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt\\\"`) instead of the generic `\\\"Review returned an invalid result\\\"`. On kill, attempt one escalated retry (same sibling-survives-failure semantics); on genuinely invalid output (no KillSignature), single attempt + generic reason, unchanged.\\n\\nPros: Cleanest \u2014 no string parsing, mirrors verify-signature pattern exactly, autopsy path carried explicitly, future-proof for other kill types. Cons: Adds a type to the SubagentResult contract (modest surface change).\\n\\nFiles touched: ProcessRunners.RunAsync.cs (populate), SubagentResult type (add property), StageRunResult type (thread through), RelayDriver.ReviewPair.cs (use it), test files.\",\n    \"B \u2014 Enriched ErrorHint string + path inclusion\\n\\nKeep the existing `SubagentResult.ErrorHint` string but make two changes: (1) append the `killedOutputPath` to the ErrorHint message (matching the exit-code pattern at line 273-275), and (2) change `RunReviewPairAsync` to use `ErrorHint` verbatim when it detects a kill pattern (prefix match on `\\\"swival timed out\\\"` or `\\\"persistent model-backend stall\\\"`) instead of the generic message. Add a single retry on kill, detectable via the same prefix match.\\n\\nPros: Zero new types, smallest surface change. Cons: Fragile string parsing, autopsy path format not standardized, retry detection is heuristic, doesn't mirror the verify-signature pattern which chose a structured approach.\",\n    \"C \u2014 StageRunResult-level KillSignature only (no SubagentResult change)\\n\\nParse the kill context at the `RunStageAsync` level in `RelayDriver.ReviewPair.cs`: when `SubagentResult.IsValid == false` and `SubagentResult.ErrorHint` contains kill-related text, extract the parts and build a `KillSignature` local struct at the point where `StageRunResult` is produced. Use it for enriched reason + retry decision. The `killedOutputPath` must be re-derived from the task/attempt naming convention (stable path formula: `.relay/<task>/stage{num}-attempt{attempt}.killed-output.txt`) or recovered from the event sink if the driver has access to the latest `stall_kill` event.\\n\\nPros: No changes to SubagentResult or runner. Cons: Re-derives or guesses the autopsy path path instead of receiving it explicitly; fragile if path conventions change; doesn't carry lastSignal/silenceMs cleanly for the enriched reason; verify-signature precedent went with Option A's approach.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Review pair (RelayDriver.ReviewPair.cs) currently drops all kill context when RunStageAsync maps SubagentResult to StageRunResult: only RawText becomes Body, Error (rich kill description) is discarded, and killedOutputPath is never available because SubagentResult has no field for it. StageRunResult.Check is always \\\"red\\\" on any invalid result with no distinction between watchdog kills and invalid model output. No retry logic exists \u2014 the pair calls RunStageAsync once and flags immediately. The completed verify-signature task (carry-verify-signature-in-flag-reason) shows the pattern: collect failure signatures per attempt, then enrich the flag reason on exhaustion. SubagentResult (in VisualRelay.Domain) is the right place to add a structured KillSignature (reason, lastSignal, silenceMs, autopsyPath) since the runner already has all this data from wdResult + killedOutputPath. The RunStageAsync method (lines 186-205) already has access to result.Error (which contains the kill description) but ignores it. Tristate logic: (a) valid result \u2192 green; (b) invalid + KillSignature present \u2192 watchdog kill (retryable); (c) invalid + no KillSignature \u2192 genuine model failure (single attempt, generic reason). Escalated retry for kill should mirror StageEscalation pattern (bump tier) and respect sibling-survives-failure semantics at lines 104-116. The 300-line guard for RelayDriver.ReviewPair.cs means retry orchestration helpers should live in a sibling partial (e.g., RelayDriver.ReviewPairRetry.cs). FlagAsync in RelayDriver.Events.cs already propagates reason everywhere (NEEDS-REVIEW, flagged event, RelayTaskOutcome.Reason \u2192 /state reviewReason \u2192 UI). No changes needed in the downstream consumption. Test doubles: ScriptedSubagentRunner and FlagStageSubagentRunner in SubagentRunnerTestDoubles.cs need a variant that returns KillSignature on SubagentResult for stage 7. Existing tests in RelayDriverReviewPairTests.Orchestration.cs assert on outcome.Reason containing \\\"invalid\\\" \u2014 they need updated assertions for the no-kill case (unchanged) plus new tests for the kill+retry case.\",\n  \"constraints\": [\n    \"Message/observability + one bounded retry only \u2014 no changes to review contracts or triage routing.\",\n    \"Repo-agnostic wording: the kill signature comes from the watchdog, not from parsing agent output.\",\n    \"Keep RelayDriver.ReviewPair.cs under the 300-line guard \u2014 retry helpers go in a sibling partial (e.g., RelayDriver.ReviewPairRetry.cs) or inline if small enough.\",\n    \"Mirror the verify-signature pattern from RelayDriver.VerifyFix.cs (structured collection, enriched reason, artifact path) but do not add identical-signature advisory for review kills.\",\n    \"Preserve sibling-survives-failure semantics of the pair (lines 104-116): on review kill, await visual sibling before flagging; on visual kill, same.\",\n    \"SubagentResult lives in VisualRelay.Domain \u2014 adding a KillSignature there is a modest contract change (Option A from the ideation stage).\",\n    \"Tests must be red first: driver test with fake subagent runner that reports a watchdog kill \u2014 flag reason contains kill reason and autopsy path; a retry attempt was made first; attempt2 success proceeds normally without a flag.\",\n    \"Invalid-output (no kill) case: single attempt, existing generic reason \u2014 behavior unchanged.\",\n    \"Control-API/state test: enriched reason visible in reviewReason.\",\n    \"No changes to how needsReview flagging works (RelayTaskOutcomeStatus.Flagged, FlaggedWorkStore, resume logic) \u2014 only the reason string changes.\",\n    \"The killedOutputPath must be relativized to the repo root for the enriched reason (matching the verify-signature pattern's Path.GetRelativePath(rootPath, ...)).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The `hoist-pipeline-test-shared-setup` task's stage 7 (Review, frontier tier) was watchdog-killed after ~55 minutes with `reason=absolute_ceiling lastSignal=cpu silenceMs=52373`. The autopsy file `.relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt` shows the swival agent was blocked in a synchronous `sock.recv()` waiting for LLM response headers from the litellm proxy (a hung HTTP call to the model backend), then was SIGINT'd (KeyboardInterrupt, exit 130). The NEEDS-REVIEW file contains only `Review returned an invalid result` \u2014 no kill reason, no autopsy path. No stage7-attempt2 exists; the review pair calls the subagent exactly once and flags immediately on any invalid result. Stages 1-6 (~21 minutes, ~$0.27 total) produced valid artifacts (ledger, seals, status entries) but are all discarded because one HTTP request hung. The operator sees only the generic string \u2014 no way to distinguish an infrastructure kill from the model actually emitting garbage.\\n\\nThe root cause is in `RelayDriver.ReviewPair.cs`. The `RunStageAsync` method (lines 186-205) maps every invalid `SubagentResult` to `Check=\\\"red\\\"` with no discrimination: the `Error` field (containing the rich kill description like `\\\"swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.\\\"`), the `HardAbort` boolean (distinguishing infra kills from model failures), and the killed-output path are all dropped. Only `RawText` survives as `Body`. Then `RunReviewPairAsync` flags with the fixed generic string `\\\"Review returned an invalid result\\\"` at lines 82 and 115 (and similarly for visual at 88 and 136). No retry logic exists \u2014 the pair calls `RunSingleStageAsync` \u2192 `RunStageAsync` \u2192 `SubagentRunner.RunAsync` exactly once and flags immediately, even though the runner correctly refuses to escalate hard-abort kills internally (lines 163-169 in `ProcessRunners.RunAsync.cs`: absolute ceiling and socket wedge return immediately with `HardAbort=true`), and the `make-stage-retries-always-escalate` policy (`llm-tasks/completed/make-stage-retries-always-escalate/DONE-make-stage-retries-always-escalate.md`) provides the exact retry semantics needed: one tier-escalated retry per failure.\\n\\nThe runner already has all needed data at the kill site (`ProcessRunners.RunAsync.cs` lines 145-194): `wdResult` (Outcome, LastPulseSource, SilenceMs), `killedOutputPath` from `TryPersistKilledOutput`, and `absoluteCeilingMs`. But `SubagentResult` (in `VisualRelay.Domain/SubagentResult.cs`) has no field for the killed-output path or a structured kill signature \u2014 only `Error` (a free-form string) and `HardAbort` (a boolean). The `killedOutputPath` is published only via the `stall_kill` event (line 157) and the persist helper (`ProcessRunners.Helpers.cs` lines 153-180).\\n\\nThe `StageRunResult` record (line 166-168) carries only `Body`, `Check`, `CostUsd`, `CostUnknown`, `Elapsed`, `TestDurationSeconds` \u2014 no kill context. The `FlagAsync` method (`RelayDriver.Events.cs` lines 93-136) already propagates the reason string everywhere it needs to go: NEEDS-REVIEW file first line, `flagged` event, `RelayTaskOutcome.Reason` \u2192 `RelayTaskItem.ReviewReason` \u2192 `/state` `reviewReason` \u2192 UI tooltip/label and queue card. So enriching the reason string is sufficient \u2014 no downstream plumbing changes needed.\",\n  \"excerpts\": [\n    \"RelayDriver.ReviewPair.cs:186-205 \u2014 RunStageAsync maps every invalid SubagentResult to Check=\\\"red\\\" with no discrimination; Error, HardAbort, and killedOutputPath are all dropped\",\n    \"RelayDriver.ReviewPair.cs:79-83,106-116 \u2014 RunReviewPairAsync flags with fixed generic string \\\"Review returned an invalid result\\\" (or \\\"Visual-review returned an invalid result\\\"), no retry\",\n    \"RelayDriver.ReviewPair.cs:166-168 \u2014 StageRunResult record carries only Body, Check, CostUsd, CostUnknown, Elapsed, TestDurationSeconds \u2014 no KillSignature field\",\n    \"ProcessRunners.RunAsync.cs:145-194 \u2014 Watchdog kill paths (absolute ceiling, socket wedge, persistent stall) have wdResult + killedOutputPath in scope but only thread a free-form Error string into SubagentResult; killedOutputPath is published via stall_kill event but never reaches SubagentResult\",\n    \"VisualRelay.Domain/SubagentResult.cs:3-12 \u2014 SubagentResult has Error (string) and HardAbort (bool) but no killedOutputPath or structured KillSignature\",\n    \"ProcessRunners.Helpers.cs:153-180 \u2014 TryPersistKilledOutput produces path `.relay/<task>/stage{n}-attempt{k}.killed-output.txt` with header: reason, lastSignal, silenceMs, firstOutputTimeoutMs, inactivityTimeoutMs\",\n    \"RelayDriver.Events.cs:93-136 \u2014 FlagAsync writes reason to NEEDS-REVIEW first line, publishes flagged event, returns RelayTaskOutcome with reason \u2014 plumbing already propagates to /state reviewReason, UI, queue card\",\n    \".relay/hoist-pipeline-test-shared-setup/run.log \u2014 stall_kill event: reason=absolute_ceiling lastSignal=cpu silenceMs=52373 outputSaved=.../stage7-attempt1.killed-output.txt; flagged event 1s later: reason=Review returned an invalid result\",\n    \".relay/hoist-pipeline-test-shared-setup/NEEDS-REVIEW \u2014 contains only \\\"Review returned an invalid result\\\"\",\n    \".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt:1-4 \u2014 autopsy header: reason=absolute_ceiling lastSignal=cpu silenceMs=52373; traceback shows sock.recv() \u2192 KeyboardInterrupt \u2192 exit 130\",\n    \".relay/hoist-pipeline-test-shared-setup/status.json:80-92 \u2014 stage 7 status: \\\"Flagged\\\", error: \\\"Review returned an invalid result\\\"; no attempt2 artifacts exist\",\n    \"llm-tasks/completed/make-stage-retries-always-escalate/DONE-make-stage-retries-always-escalate.md \u2014 retry policy: always escalate, attempt index == run index, HardAbort never escalates internally (correct) but caller should retry once at next tier\",\n    \"llm-tasks/completed/carry-verify-signature-in-flag-reason/DONE-carry-verify-signature-in-flag-reason.md \u2014 completed verify-signature task shows the pattern: collect failure signatures, enrich flag reason with last failure + artifact path, propagate everywhere\",\n    \"ProcessRunners.Escalation.cs:30-56 \u2014 PublishStallKillAsync emits stall_kill event with reason, lastSignal, silenceMs, firstOutputTimeoutMs, inactivityTimeoutMs, outputBytes, outputSaved\"\n  ],\n  \"repro\": \"1. Run a task where the review stage's LLM backend hangs (e.g. litellm proxy becomes unresponsive mid-request).\\n2. After ~55 minutes (default absolute ceiling), the watchdog fires absolute_ceiling.\\n3. Check NEEDS-REVIEW: it says only \\\"Review returned an invalid result\\\".\\n4. Check `.relay/<task>/`: no stage7-attempt2 exists.\\n5. Observe that stages 1-6 (~21 min, ~$0.27) produced valid artifacts but are all lost to NEEDS-REVIEW.\\n6. The operator cannot tell from `/state` whether this was an infrastructure kill or the model emitting garbage.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete implementation plan\\n\\n### 1. Add `KillSignature` record + `Kill` property to `SubagentResult`\\n**File:** `src/VisualRelay.Domain/SubagentResult.cs`\\n\\nAdd a new record type above `SubagentResult`:\\n```csharp\\npublic sealed record KillSignature(\\n    string Reason,        // \\\"absolute_ceiling\\\" | \\\"socket_wedge\\\" | \\\"stall\\\"\\n    string LastSignal,    // \\\"cpu\\\" | \\\"trace\\\" | \\\"process\\\"\\n    long SilenceMs,       // silence at kill time\\n    string? AutopsyPath); // absolute path to .killed-output.txt, or null\\n```\\n\\nAdd `KillSignature? Kill = null` to `SubagentResult`'s parameter list (before `HardAbort`).\\n\\n---\\n\\n### 2. Populate `KillSignature` at the three watchdog-kill sites in the runner\\n**File:** `src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`\\n\\nAt each of the three `stallResult = new SubagentResult(...)` sites (lines 163-169 absolute-ceiling, 171-178 socket-wedge, 189-194 persistent-stall), add `Kill: new KillSignature(reason, wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath)`. The `reason` string mirrors `PublishStallKillAsync`'s mapping:\\n- `FiredAbsoluteCeiling` \u2192 `\\\"absolute_ceiling\\\"`\\n- `FiredSocketWedge` \u2192 `\\\"socket_wedge\\\"`\\n- default \u2192 `\\\"stall\\\"`\\n\\n`killedOutputPath` is already in scope at all three sites (set at line 153).\\n\\n---\\n\\n### 3. Thread `KillSignature` through `StageRunResult`\\n**File:** `src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs`\\n\\nAdd `KillSignature? Kill = null` to the `StageRunResult` record (line 166-168).\\n\\nIn `RunStageAsync` (lines 197-201): when constructing the red `StageRunResult`, pass `Kill: result.Kill`.\\n\\n---\\n\\n### 4. Build enriched kill flag reason + retry decision in `RunReviewPairAsync`\\n**File:** `src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs`\\n\\nAdd a private static helper (before the `RunStageAsync` method, ~line 185):\\n```csharp\\nprivate static string BuildKillFlagReason(\\n    string stageName, KillSignature kill, TimeSpan elapsed, string rootPath)\\n{\\n    var mins = (int)elapsed.TotalMinutes;\\n    var secs = elapsed.Seconds;\\n    var reason = $\\\"{stageName} stall-killed ({kill.Reason}, lastSignal={kill.LastSignal}) after {mins}m {secs:D2}s\\\";\\n    if (kill.AutopsyPath is not null)\\n    {\\n        var relative = Path.GetRelativePath(rootPath, kill.AutopsyPath);\\n        reason += $\\\" \u2014 see {relative}\\\";\\n    }\\n    return reason;\\n}\\n```\\n\\nIn `RunReviewPairAsync`, modify all four red-check flag sites to use enriched reason when `Kill` is present:\\n\\n- **Lines 79-83** (fast-visual, review red): If `reviewResult.Kill` is not null, build enriched reason via `BuildKillFlagReason(\\\"Review\\\", ...)`; else keep `\\\"Review returned an invalid result\\\"`.\\n- **Lines 85-89** (fast-visual, visual red): Same pattern for `fastVisual.Kill` \u2192 `\\\"Visual-review\\\"`.\\n- **Lines 106-116** (review-first, review red): Same pattern.\\n- **Lines 133-138** (review-first, visual red): Same pattern.\\n\\nAdd kill-aware retry logic in the two review-red branches (lines 79 and 106):\\n- When `reviewResult.Check == \\\"red\\\"` AND `reviewResult.Kill is not null`: call the retry helper from the new partial. If the retry succeeds (`Check != \\\"red\\\"`), record normally (use existing `RecordPairStageAsync` path). If the retry also fails, fall through to flag with enriched reason.\\n- Same for visual-red branches when `Kill` is present.\\n\\n---\\n\\n### 5. Retry escalation helpers in new partial\\n**File:** `+src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs`\\n\\nNew partial `RelayDriver` class with:\\n\\n```csharp\\n// Runs a review-pair stage (7 or 8) with one escalated retry on watchdog kill.\\n// Returns the final StageRunResult \u2014 possibly the successful retry attempt.\\nprivate async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\\n    string rootPath, string runId, string taskId, string taskDirectory,\\n    RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\\n    StringBuilder ledger, IReadOnlyList<string> manifest,\\n    string pinnedSwivalProfileContent, CancellationToken cancellationToken)\\n```\\n\\nInternally:\\n1. Call `RunSingleStageAsync` for attempt 1.\\n2. If green or red-without-kill: return immediately.\\n3. If red-with-kill AND tier escalation is possible (NextTier \u2260 current tier, or turns change):\\n   - Compute escalated tier via `StageEscalation.NextTier(stage.Tier)`\\n   - Compute escalated turns via `StageEscalation.TurnsForRun(config.MaxTurns, 2, boosted)`\\n   - Compute escalated ceiling via `StageEscalation.Scale(config.SubagentTimeoutMilliseconds, 2)`\\n   - Publish `stage_escalated` event via `PublishStageEscalatedAsync`\\n   - Build escalated invocation (copy from `BuildInvocation`, override tier/turns/ceiling, set `MaxSelfEscalations=0`)\\n   - Call `RunStageAsync` with escalated invocation for attempt 2\\n   - Return attempt 2 result (green \u2192 proceed; red \u2192 flag with enriched reason from attempt 1's kill signature)\\n\\nNote: only attempt 1's kill signature is used for the enriched reason (it has the autopsy path).\\n\\n---\\n\\n### 6. New test doubles\\n**File:** `tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs`\\n\\nAdd two new doubles after the existing `FlagStageSubagentRunner` (line ~248):\\n\\n**`KillSubagentRunner(int killAtStage, string reason = \\\"absolute_ceiling\\\")`**:\\n- Wraps `ScriptedSubagentRunner`\\n- For `killAtStage`: returns `SubagentResult` with `IsValid=false`, `HardAbort=true`, `Kill=new KillSignature(reason, \\\"cpu\\\", 52373, autopsyPath)` where autopsyPath is constructed as `Path.Combine(Path.GetDirectoryName(invocation.TraceDirectory)!, $\\\"stage{killAtStage}-attempt1.killed-output.txt\\\")`\\n- All other stages: delegates to inner\\n\\n**`TwoPhaseKillSubagentRunner(int killAtStage)`**:\\n- Wraps `ScriptedSubagentRunner`\\n- Tracks call count per stage via `Interlocked.Increment`\\n- First call to `killAtStage`: returns kill result (same shape as `KillSubagentRunner`)\\n- Second call: delegates to inner (returns happy-path pass verdict for review/visual-review stages)\\n\\n---\\n\\n### 7. New tests\\n**File:** `tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs`\\n\\nAdd four new test methods:\\n\\n1. **`RunTaskAsync_ReviewKilled_RetriesThenFlagsWithEnrichedReason`**\\n   - Uses `KillSubagentRunner(7)` as the subagent runner\\n   - Asserts: `outcome.Status == Flagged`\\n   - Asserts: `outcome.Reason` contains `\\\"stall-killed\\\"`, `\\\"absolute_ceiling\\\"`, `\\\"lastSignal=cpu\\\"`, `\\\"stage7-attempt1.killed-output.txt\\\"`\\n   - Asserts: `outcome.Reason` does NOT contain `\\\"Review returned an invalid result\\\"`\\n   - Asserts: `stage_escalated` event was published (retry happened)\\n   - Asserts: NEEDS-REVIEW file contains enriched reason\\n\\n2. **`RunTaskAsync_ReviewKilled_RetrySucceeds_ProceedsWithoutFlag`**\\n   - Uses `TwoPhaseKillSubagentRunner(7)`\\n   - Asserts: `outcome.Status == Committed`\\n   - Asserts: ledger contains both Review and Visual-review sections\\n   - Asserts: no `flagged` event published\\n\\n3. **`RunTaskAsync_ReviewInvalidNoKill_SingleAttemptGenericReason`**\\n   - Uses `FlagStageSubagentRunner(7)` (unchanged from existing test, but with stronger assertions)\\n   - Asserts: `outcome.Reason` contains `\\\"Review returned an invalid result\\\"`\\n   - Asserts: `outcome.Reason` does NOT contain `\\\"stall-killed\\\"` or `\\\"killed-output\\\"`\\n   - Asserts: no `stage_escalated` event (no retry for non-kill invalid)\\n\\n4. **`RunTaskAsync_VisualReviewKilled_RetriesThenFlagsWithEnrichedReason`**\\n   - Uses `KillSubagentRunner(8)`\\n   - Asserts: `outcome.Reason` contains `\\\"Visual-review stall-killed\\\"`\\n   - Asserts: retry escalation event published\\n\\nAlso update the existing `RunTaskAsync_ReviewInvalid_SiblingFinishesThenFlags` (line 130) to assert the generic reason string explicitly (not just `Contains(\\\"invalid\\\")`) so it doesn't accidentally match the new enriched format.\"\n  ,\n  \"manifest\": [\n    \"src/VisualRelay.Domain/SubagentResult.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs\",\n    \"tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\",\n    \"src/VisualRelay.Domain/SubagentResult.cs\"\n  ],\n  \"rationale\": \"Added KillSignature record to SubagentResult.cs (new domain type for structured kill context). Added two test doubles: KillSubagentRunner (returns watchdog-kill SubagentResult with KillSignature) and TwoPhaseKillSubagentRunner (kill on first call, scripted pass on second, for retry-succeeds scenario). Added four new tests to RelayDriverReviewPairTests.Orchestration.cs: (1) ReviewKilled_RetriesThenFlagsWithEnrichedReason \u2014 flag reason contains kill reason, lastSignal, autopsy path, and stage_escalated event published; (2) ReviewKilled_RetrySucceeds_ProceedsWithoutFlag \u2014 kill on attempt1, pass on attempt2, outcome Committed, no flagged event; (3) existing ReviewInvalid_SiblingFinishesThenFlags updated to assert exact generic reason 'Review returned an invalid result' and absence of kill text \u2014 confirms non-kill behavior unchanged; (4) VisualReviewKilled_RetriesThenFlagsWithEnrichedReason \u2014 same enriched pattern for stage 8. All 45 existing tests pass; 3 new tests fail red as expected \u2014 they will go green when the kill-aware retry logic and enriched reason are implemented in RelayDriver.ReviewPair.cs + RelayDriver.ReviewPairRetry.cs + ProcessRunners.RunAsync.cs.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented carrying the stall/kill reason into review-pair flag reasons with one escalated retry. Added `KillSignature` record to `SubagentResult` and populated it at all three watchdog-kill sites in `ProcessRunners.RunAsync.cs` (absolute ceiling, socket wedge, persistent stall). Threaded `KillSignature` through `StageRunResult` in `RelayDriver.ReviewPair.cs`. Added `BuildReviewFlagReason` helper for enriched flag reasons (e.g. `\\\"Review stall-killed (absolute_ceiling, lastSignal=cpu) after 55m 00s \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt\\\"`). Created `RelayDriver.ReviewPairRetry.cs` with `RunReviewPairStageWithRetryAsync` for one escalated retry per kill. Modified all four flag sites in `RunReviewPairAsync` to retry on kill before flagging with enriched reason, while preserving sibling-survives-failure semantics and leaving the generic reason for non-kill invalid output. Added `KillSubagentRunner` and `TwoPhaseKillSubagentRunner` test doubles. Added four new tests and updated the existing invalid test assertion. All guard constraints satisfied: ReviewPair.cs (298 lines), ReviewPairRetry.cs (82 lines), SubagentRunnerTestDoubles.cs (291 lines) \u2014 all under their respective 300-line limits. Full test suite: 3120 passed, 0 failed, 114 skipped.\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"changes\", \"issues\": [\"Correctness \u2014 fast-visual retry-success records a red visual sibling and commits (RelayDriver.ReviewPair.cs:87-96). When Review is red (killed) and the already-completed Visual-review (fastVisual) is ALSO red, and the Review retry succeeds (retryResult.Check != \\\"red\\\"), the code unconditionally records `fastVisual` via RecordPairStageAsync (line 90-91) and returns PairState with FlaggedOutcome=null \u2192 the task commits. RecordStageAsync does NOT flag on a red check (RelayDriver.Invocation.cs:100-115) \u2014 it just records, marks Done, and publishes stage_done. So a red Visual-review is silently committed, violating the pair's flag-on-red-visual semantics. The fast-visual Review-red branch (line 79) never inspects fastVisual.Check before the retry-success record-both path. Fix: on retry success, re-check the sibling \u2014 if green, record both and proceed; if red, flag it (sibling-survives-failure).\", \"Correctness \u2014 review-first retry-success discards the visual sibling and leaves stage 8 unsettled (RelayDriver.ReviewPair.cs:155-170). When Review is red (killed) and Visual-review was still running when Review finished, the sibling is awaited (line 150) for cost only; then if the Review retry succeeds (line 161), only Review is recorded (lines 164-166) and the function returns clean (FlaggedOutcome=null), discarding the now-completed visual result entirely. Consequences: (1) if Visual was green, a valid visual review is lost (no ledger section, no seal); (2) if Visual was red, the task commits despite a red visual; (3) stage 8's status entry stays \\\"Running\\\" forever (it was marked Running at line 35, never settled to Done/Skipped/Flagged, and stage 8 is skipped downstream via the reviewPairHandled guard at RelayDriver.cs:80) with no stage_done event. The original review-first path always flagged (settling stage 8 via FlagAsync's Running\u2192Done sweep at RelayDriver.Events.cs:108-109); the new retry-success path bypasses that. Untested because synchronous test doubles always complete visualTask before the await at line 67, routing to the fast-visual branch. Fix: on retry success, handle the awaited sibling like the normal review-green-first flow (record if green, flag if red, settle stage 8 status).\", \"Observability \u2014 boosted-frontier no-op retry loses the kill context (RelayDriver.ReviewPairRetry.cs:73-78). When no meaningful escalation is possible (boosted frontier tier: toTier==fromTier && toTurns==baseTurns), RunReviewPairStageWithRetryAsync returns a synthetic `new StageRunResult(string.Empty, \\\"red\\\", 0d, true, TimeSpan.Zero, null)` with Kill=null. The caller then does `reviewResult = retryResult` (ReviewPair.cs:98/169/208), so BuildReviewFlagReason sees Kill=null and emits the generic 'Review returned an invalid result' \u2014 dropping the kill reason/autopsy path that this task exists to surface. The early return is consistent with the no-repeat-escalation policy, but it should preserve the original KillSignature (the caller has it) rather than overwrite it with a Kill-less result. Note this matches neither the in-process runner (which returns the stallResult WITH Kill on ladder exhaustion, ProcessRunners.RunAsync.cs:191-197) nor the task's stated 'flag with enriched reason on retry failure.'\", \"Test coverage \u2014 the task's 'Tests (red first)' explicitly required a 'Control-API/state test: enriched reason visible in reviewReason,' but no such test exists. The tests assert outcome.Reason and NEEDS-REVIEW content, but not that the enriched reason reaches RelayTaskItem.ReviewReason (the /state field). The flow is shared FlagAsync plumbing already covered transitively for other reasons (RelayDriverBaselineVerifyTests.cs:155, RelayQueueControllerTests.cs:116), so behavior is likely correct, but the explicitly-requested test was omitted. Additionally, none of the four new tests exercise the retry-SUCCESS sibling re-evaluation (Issues above) \u2014 the only retry-succeeds test (TwoPhaseKillSubagentRunner) routes through the fast-visual branch where visual is green, so the both-red / review-first edge cases are untested.\"] }\n\n## Stage 8 - Visual-review\n\n_Skipped: All changes are in C# domain types, process-runner internals, and test files \u2014 no UI markup, web frontend, images, charts, or rendered documents to visually review. The enriched flag reason propagates through existing text-only observability plumbing (NEEDS-REVIEW, state, queue card). A screenshot or rendered view would not validate any aspect of this change._\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\n\n## Before you declare done\nOnce the targeted command above passes, run the project's FULL test suite ONCE to catch cross-cutting checks the targeted run cannot surface:\n- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\n- Lint / style / format gates\n- Tests that enforce special standards or invariants\n- Test-ordering hazards that only appear in a full run\n\nRun this exact command for the full suite:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none\n\nIf the full suite fails, fix the failures and re-run the full command until it exits 0. Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks to make it pass.",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"summary\": \"Fixed all four review issues from stage 7. (1) Fast-visual retry-success now checks the visual sibling: if red, flags it instead of silently committing. (2) Review-first retry-success now handles the awaited visual sibling: records if green, flags if red, settling stage 8 properly. (3) No-op retry exhaustion preserves the original KillSignature so enriched reasons survive even without escalation. (4) Replaced standalone reviewReason test with inline assertions in the existing killed-review test (added RelayTaskItem.NeedsReview/ReviewReason checks) to stay under the 300-line file-size guard. Also moved RunSingleStageAsync, RunStageAsync, RecordPairStageAsync, and RenderOutput from ReviewPair.cs to ReviewPairRetry.cs to keep ReviewPair.cs at 275 lines. Full suite: 3120 passed, 0 failed, 114 skipped.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 38,
+    "tool_calls_total": 46,
+    "tool_calls_succeeded": 46,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 19,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 38,
+    "total_llm_time_s": 357.947,
+    "prompt_cache": {
+      "cached_tokens": 1712512,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 312.894,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 6,
+      "completed": 6,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 6.834,
+      "prompt_tokens_est": 13057,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/SubagentResult.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1305
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18371
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18099
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.572,
+      "prompt_tokens_est": 21576,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4616
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 16854
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14450
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 7.797,
+      "prompt_tokens_est": 30447,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 42
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ReviewReason",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.136,
+      "result_length": 1760
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.649,
+      "prompt_tokens_est": 31301,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6989
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "reviewReason",
+        "path": "/Volumes/Tera/dev/visual-relay/tests",
+        "case_insensitive": true
+      },
+      "succeeded": true,
+      "duration_s": 0.321,
+      "result_length": 1258
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.512,
+      "prompt_tokens_est": 33339,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs",
+        "offset": 150,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3037
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "offset": 95,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1611
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 9.497,
+      "prompt_tokens_est": 34611,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+          "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 33.725,
+      "result_length": 1935
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "offset": 66,
+        "limit": 55
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3057
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 134.34,
+      "prompt_tokens_est": 36379,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Fix Issue 3: Preserve KillSignature in no-op retry (ReviewPairRetry.cs)",
+          "Fix Issue 1: Fast-visual sibling re-check on retry success (ReviewPair.cs)",
+          "Fix Issue 2: Review-first sibling handling on retry success (ReviewPair.cs)",
+          "Fix Issue 4: Add reviewReason propagation test",
+          "Move RunSingleStageAsync + RecordPairStageAsync to retry partial to stay under 300-line guard",
+          "Run targeted tests, then full suite"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 624
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 9.388,
+      "prompt_tokens_est": 47301,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs",
+        "old_string": "    private async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, CancellationToken cancellationToken)\n    {\n        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;\n        var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;\n        var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;\n\n        // attempt 2: one escalation rung\n        const int run = 2;\n        var fromTier = stage.Tier;\n        var toTier = StageEscalation.NextTier(fromTier);\n        var toTurns = StageEscalation.TurnsForRun(baseTurns, run, boosted);\n        var toCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));\n\n        // No-repeat exhaustion: never re-run identical config.\n        if (toTier == fromTier && toTurns == baseTurns)\n        {\n            // No meaningful escalation possible \u2014 return the original killed result.\n            return new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null);\n        }",
+        "new_string": "    private async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, KillSignature? originalKill,\n        CancellationToken cancellationToken)\n    {\n        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;\n        var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;\n        var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;\n\n        // attempt 2: one escalation rung\n        const int run = 2;\n        var fromTier = stage.Tier;\n        var toTier = StageEscalation.NextTier(fromTier);\n        var toTurns = StageEscalation.TurnsForRun(baseTurns, run, boosted);\n        var toCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));\n\n        // No-repeat exhaustion: never re-run identical config. Preserve the\n        // original kill signature so the caller can still build an enriched\n        // flag reason (otherwise it drops to the generic string).\n        if (toTier == fromTier && toTurns == baseTurns)\n            return new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null, Kill: originalKill);"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 119
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 10.337,
+      "prompt_tokens_est": 48153,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "old_string": "            if (reviewResult.Kill is not null)\n                {\n                    var retryResult = await RunReviewPairStageWithRetryAsync(\n                        rootPath, runId, taskId, taskDirectory,\n                        config, reviewStage, input, ledger, manifest,\n                        pinnedSwivalProfileContent, cancellationToken);\n                    if (retryResult.Check != \"red\")\n                    {\n                        // Retry succeeded \u2014 record both stages normally.\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            visualStage, fastVisual, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            reviewStage, retryResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, fastVisual.Body));\n                    }\n                    reviewResult = retryResult;\n                }",
+        "new_string": "            if (reviewResult.Kill is not null)\n                {\n                    var retryResult = await RunReviewPairStageWithRetryAsync(\n                        rootPath, runId, taskId, taskDirectory,\n                        config, reviewStage, input, ledger, manifest,\n                        pinnedSwivalProfileContent, reviewResult.Kill,\n                        cancellationToken);\n                    if (retryResult.Check != \"red\")\n                    {\n                        // Retry succeeded \u2014 record the retried Review. Handle the\n                        // sibling: if visual was also red, flag it; otherwise record it.\n                        if (fastVisual.Check == \"red\")\n                        {\n                            var vReason = BuildReviewFlagReason(\"Visual-review\", fastVisual, rootPath);\n                            var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,\n                                vReason, fastVisual.Body, statusEntries, cancellationToken);\n                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, false);\n                        }\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            visualStage, fastVisual, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            reviewStage, retryResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, fastVisual.Body));\n                    }\n                    reviewResult = retryResult;\n                }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 7.947,
+      "prompt_tokens_est": 49064,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "old_string": "            if (fastVisual.Kill is not null)\n                {\n                    var retryResult = await RunReviewPairStageWithRetryAsync(\n                        rootPath, runId, taskId, taskDirectory,\n                        config, visualStage, input, ledger, manifest,\n                        pinnedSwivalProfileContent, cancellationToken);\n                    if (retryResult.Check != \"red\")\n                    {\n                        // Retry succeeded \u2014 record both stages normally.\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            visualStage, retryResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            reviewStage, reviewResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, retryResult.Body));\n                    }\n                    fastVisual = retryResult;\n                }",
+        "new_string": "            if (fastVisual.Kill is not null)\n                {\n                    var retryResult = await RunReviewPairStageWithRetryAsync(\n                        rootPath, runId, taskId, taskDirectory,\n                        config, visualStage, input, ledger, manifest,\n                        pinnedSwivalProfileContent, fastVisual.Kill,\n                        cancellationToken);\n                    if (retryResult.Check != \"red\")\n                    {\n                        // Retry succeeded \u2014 record the retried Visual-review. The\n                        // Review sibling (reviewResult) is green here (we are in the\n                        // review-green, visual-red branch).\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            visualStage, retryResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            reviewStage, reviewResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, retryResult.Body));\n                    }\n                    fastVisual = retryResult;\n                }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.586,
+      "prompt_tokens_est": 49834,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 143,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4977
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 15.536,
+      "prompt_tokens_est": 51039,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "old_string": "        // Review finished first (common case).\n        // If review produced an invalid result, await the sibling (sibling-survives-failure)\n        // then flag \u2014 the sibling's result is NOT recorded, matching previous semantics.\n        if (reviewResult.Check == \"red\")\n        {\n            if (visualTask is not null)\n            {\n                var siblingResult = await visualTask;\n                sessionCostUsd += siblingResult.CostUsd;\n                if (siblingResult.CostUnknown) unknownCostStageCount++;\n            }\n\n            if (reviewResult.Kill is not null)\n            {\n                var retryResult = await RunReviewPairStageWithRetryAsync(\n                    rootPath, runId, taskId, taskDirectory,\n                    config, reviewStage, input, ledger, manifest,\n                    pinnedSwivalProfileContent, cancellationToken);\n                if (retryResult.Check != \"red\")\n                {\n                    // Retry succeeded \u2014 record review only; visual was already awaited.\n                    (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                        reviewStage, retryResult, ledger, seals, statusEntries, manifest,\n                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, null));\n                }\n                reviewResult = retryResult;\n            }\n\n            var reason = BuildReviewFlagReason(\"Review\", reviewResult, rootPath);\n            var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,\n                reason, reviewResult.Body, statusEntries, cancellationToken);\n            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);\n        }",
+        "new_string": "        // Review finished first (common case).\n        // If review produced an invalid result, await the sibling (sibling-survives-failure)\n        // then flag \u2014 the sibling's result is NOT recorded, matching previous semantics.\n        if (reviewResult.Check == \"red\")\n        {\n            StageRunResult? siblingResult = null;\n            if (visualTask is not null)\n            {\n                siblingResult = await visualTask;\n                sessionCostUsd += siblingResult.CostUsd;\n                if (siblingResult.CostUnknown) unknownCostStageCount++;\n            }\n\n            if (reviewResult.Kill is not null)\n            {\n                var retryResult = await RunReviewPairStageWithRetryAsync(\n                    rootPath, runId, taskId, taskDirectory,\n                    config, reviewStage, input, ledger, manifest,\n                    pinnedSwivalProfileContent, reviewResult.Kill,\n                    cancellationToken);\n                if (retryResult.Check != \"red\")\n                {\n                    // Retry succeeded \u2014 record review. Handle the sibling\n                    // (already awaited): if green, record it; if red, flag it.\n                    (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                        reviewStage, retryResult, ledger, seals, statusEntries, manifest,\n                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                    if (siblingResult is not null)\n                    {\n                        if (siblingResult.Check == \"red\")\n                        {\n                            var vReason = BuildReviewFlagReason(\"Visual-review\", siblingResult, rootPath);\n                            var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,\n                                vReason, siblingResult.Body, statusEntries, cancellationToken);\n                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, false);\n                        }\n                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,\n                            visualStage, siblingResult, ledger, seals, statusEntries, manifest,\n                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);\n                    }\n                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, siblingResult?.Body));\n                }\n                reviewResult = retryResult;\n            }\n\n            var reason = BuildReviewFlagReason(\"Review\", reviewResult, rootPath);\n            var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,\n                reason, reviewResult.Body, statusEntries, cancellationToken);\n            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);\n        }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 114
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.957,
+      "prompt_tokens_est": 52465,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 212,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1825
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 4.0,
+      "prompt_tokens_est": 53033,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "old_string": "            if (visualResult.Kill is not null)\n            {\n                var retryResult = await RunReviewPairStageWithRetryAsync(\n                    rootPath, runId, taskId, taskDirectory,\n                    config, visualStage, input, ledger, manifest,\n                    pinnedSwivalProfileContent, cancellationToken);\n                if (retryResult.Check != \"red\")\n                {",
+        "new_string": "            if (visualResult.Kill is not null)\n            {\n                var retryResult = await RunReviewPairStageWithRetryAsync(\n                    rootPath, runId, taskId, taskDirectory,\n                    config, visualStage, input, ledger, manifest,\n                    pinnedSwivalProfileContent, visualResult.Kill,\n                    cancellationToken);\n                if (retryResult.Check != \"red\")\n                {"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.655,
+      "prompt_tokens_est": 53301,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.144,
+      "result_length": 97
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 240
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5097
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 11.506,
+      "prompt_tokens_est": 54640,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "old_string": "    private sealed record RenderOutput(IReadOnlyList<string> PngPaths, string? ErrorOutput);\n\n    // Triage, render, and visual-input helpers live in\n    // RelayDriver.ReviewPairTriage.cs to keep this file under the 300-line guard.\n\n    private async Task<StageRunResult> RunSingleStageAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, CancellationToken cancellationToken)\n    {\n        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,\n            config, stage, input, ledger, manifest,\n            pinnedSwivalProfileContent: pinnedSwivalProfileContent);\n        return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);\n    }\n\n    private async Task<StageRunResult> RunStageAsync(\n        StageInvocation invocation, RelayStageDefinition stage, string taskDirectory,\n        CancellationToken cancellationToken)\n    {\n        var stopwatch = Stopwatch.StartNew();\n        var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);\n        stopwatch.Stop();\n        var cost = EstimateStageCostCumulative(taskDirectory, stage.Number);\n        var costUsd = cost?.CostUsd ?? 0d;\n        var costUnknown = cost is null;\n\n        if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))\n        {\n            return new StageRunResult(\n                result.RawText,\n                \"red\", costUsd, costUnknown, stopwatch.Elapsed, null,\n                Kill: result.Kill);\n        }\n\n        return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch.Elapsed, null);\n    }\n\n    private async Task<(string PreviousSeal, string TaskHash)> RecordPairStageAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayStageDefinition stage, StageRunResult runResult,\n        StringBuilder ledger, List<string> seals,\n        List<StageStatusEntry> statusEntries, IReadOnlyList<string> manifest,\n        string previousSeal, string taskHash, double sessionCostUsd,\n        int unknownCostStageCount, CancellationToken cancellationToken)\n    {\n        var cost = runResult.CostUnknown ? null\n            : new RelayCostEstimate(\"\", runResult.CostUsd, true, 0, 0, 0,\n                runResult.Elapsed.TotalSeconds);\n        return await RecordStageAsync(rootPath, runId, taskId, taskDirectory,\n            stage, runResult.Body, runResult.Check, cost,\n            runResult.Elapsed, ledger, seals, statusEntries, manifest,\n            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,\n            cancellationToken, runResult.TestDurationSeconds);\n    }\n}",
+        "new_string": "    // Triage, render, and visual-input helpers live in\n    // RelayDriver.ReviewPairTriage.cs to keep this file under the 300-line guard.\n    // RunSingleStageAsync, RunStageAsync, and RecordPairStageAsync live in\n    // RelayDriver.ReviewPairRetry.cs together with the retry escalator.\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.201,
+      "prompt_tokens_est": 55778,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4724
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 25.298,
+      "prompt_tokens_est": 57051,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs",
+        "new_string": "using System.Diagnostics;\nusing System.Text;\nusing VisualRelay.Core.Costs;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Core.Execution;\n\n/// <summary>\n/// Review-pair retry escalation helper and shared types, split from\n/// <c>RelayDriver.ReviewPair.cs</c> to keep that file under the 300-line guard.\n/// </summary>\npublic sealed partial class RelayDriver\n{\n    /// <summary>\n    /// Builds an enriched flag reason for a review-pair stage that was watchdog-killed.\n    /// When <paramref name=\"result\"/> carries a <see cref=\"KillSignature\"/>, returns a\n    /// descriptive string with the kill reason, last signal, elapsed wall time, and a\n    /// relative path to the autopsy artifact. Otherwise returns the generic fallback.\n    /// </summary>\n    private static string BuildReviewFlagReason(string stageName, StageRunResult result, string rootPath)\n    {\n        if (result.Kill is null)\n            return $\"{stageName} returned an invalid result\";\n\n        var kill = result.Kill;\n        var mins = (int)result.Elapsed.TotalMinutes;\n        var secs = result.Elapsed.Seconds;\n        var reason = $\"{stageName} stall-killed ({kill.Reason}, lastSignal={kill.LastSignal}) after {mins}m {secs:D2}s\";\n        if (kill.AutopsyPath is not null)\n        {\n            try\n            {\n                var relative = Path.GetRelativePath(rootPath, kill.AutopsyPath);\n                reason += $\" \u2014 see {relative}\";\n            }\n            catch\n            {\n                // Best-effort relativization; skip path on failure.\n            }\n        }\n        return reason;\n    }\n\n    private sealed record TriageResult(string VisualReview, string Reason);\n\n    private sealed record StageRunResult(\n        string Body, string? Check, double CostUsd, bool CostUnknown,\n        TimeSpan Elapsed, double? TestDurationSeconds,\n        KillSignature? Kill = null);\n\n    private sealed record RenderOutput(IReadOnlyList<string> PngPaths, string? ErrorOutput);\n\n    /// <summary>\n    /// Called when a review-pair stage (7 Review or 8 Visual-review) produced a\n    /// red result due to a watchdog kill. Runs ONE escalated retry attempt\n    /// (tier bump + scaled budget) and returns the outcome. The original\n    /// kill signature is preserved so the caller can build an enriched\n    /// flag reason.\n    /// </summary>\n    private async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, KillSignature? originalKill,\n        CancellationToken cancellationToken)\n    {\n        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;\n        var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;\n        var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;\n\n        // attempt 2: one escalation rung\n        const int run = 2;\n        var fromTier = stage.Tier;\n        var toTier = StageEscalation.NextTier(fromTier);\n        var toTurns = StageEscalation.TurnsForRun(baseTurns, run, boosted);\n        var toCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));\n\n        // No-repeat exhaustion: never re-run identical config. Preserve the\n        // original kill signature so the caller can still build an enriched\n        // flag reason (otherwise it drops to the generic string).\n        if (toTier == fromTier && toTurns == baseTurns)\n            return new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null, Kill: originalKill);\n\n        await PublishStageEscalatedAsync(rootPath, runId, taskId, stage, run, /*maxRuns*/ 2,\n            fromTier, toTier, baseTurns, toTurns, cancellationToken);\n\n        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,\n            config, stage, input, ledger, manifest,\n            pinnedSwivalProfileContent: pinnedSwivalProfileContent);\n        invocation = invocation with\n        {\n            Tier = toTier,\n            MaxTurns = toTurns,\n            AbsoluteCeilingMs = toCeilingMs,\n            MaxSelfEscalations = 0\n        };\n\n        return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);\n    }\n\n    private async Task<StageRunResult> RunSingleStageAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, CancellationToken cancellationToken)\n    {\n        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,\n            config, stage, input, ledger, manifest,\n            pinnedSwivalProfileContent: pinnedSwivalProfileContent);\n        return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);\n    }\n\n    private async Task<StageRunResult> RunStageAsync(\n        StageInvocation invocation, RelayStageDefinition stage, string taskDirectory,\n        CancellationToken cancellationToken)\n    {\n        var stopwatch = Stopwatch.StartNew();\n        var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);\n        stopwatch.Stop();\n        var cost = EstimateStageCostCumulative(taskDirectory, stage.Number);\n        var costUsd = cost?.CostUsd ?? 0d;\n        var costUnknown = cost is null;\n\n        if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))\n        {\n            return new StageRunResult(\n                result.RawText,\n                \"red\", costUsd, costUnknown, stopwatch.Elapsed, null,\n                Kill: result.Kill);\n        }\n\n        return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch.Elapsed, null);\n    }\n\n    private async Task<(string PreviousSeal, string TaskHash)> RecordPairStageAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayStageDefinition stage, StageRunResult runResult,\n        StringBuilder ledger, List<string> seals,\n        List<StageStatusEntry> statusEntries, IReadOnlyList<string> manifest,\n        string previousSeal, string taskHash, double sessionCostUsd,\n        int unknownCostStageCount, CancellationToken cancellationToken)\n    {\n        var cost = runResult.CostUnknown ? null\n            : new RelayCostEstimate(\"\", runResult.CostUsd, true, 0, 0, 0,\n                runResult.Elapsed.TotalSeconds);\n        return await RecordStageAsync(rootPath, runId, taskId, taskDirectory,\n            stage, runResult.Body, runResult.Check, cost,\n            runResult.Elapsed, ledger, seals, statusEntries, manifest,\n            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,\n            cancellationToken, runResult.TestDurationSeconds);\n    }\n}",
+        "old_string": "using System.Text;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Core.Execution;\n\n/// <summary>\n/// Review-pair retry escalation helper and shared types, split from\n/// <c>RelayDriver.ReviewPair.cs</c> to keep that file under the 300-line guard.\n/// </summary>\npublic sealed partial class RelayDriver\n{\n    /// <summary>\n    /// Builds an enriched flag reason for a review-pair stage that was watchdog-killed.\n    /// When <paramref name=\"result\"/> carries a <see cref=\"KillSignature\"/>, returns a\n    /// descriptive string with the kill reason, last signal, elapsed wall time, and a\n    /// relative path to the autopsy artifact. Otherwise returns the generic fallback.\n    /// </summary>\n    private static string BuildReviewFlagReason(string stageName, StageRunResult result, string rootPath)\n    {\n        if (result.Kill is null)\n            return $\"{stageName} returned an invalid result\";\n\n        var kill = result.Kill;\n        var mins = (int)result.Elapsed.TotalMinutes;\n        var secs = result.Elapsed.Seconds;\n        var reason = $\"{stageName} stall-killed ({kill.Reason}, lastSignal={kill.LastSignal}) after {mins}m {secs:D2}s\";\n        if (kill.AutopsyPath is not null)\n        {\n            try\n            {\n                var relative = Path.GetRelativePath(rootPath, kill.AutopsyPath);\n                reason += $\" \u2014 see {relative}\";\n            }\n            catch\n            {\n                // Best-effort relativization; skip path on failure.\n            }\n        }\n        return reason;\n    }\n\n    private sealed record TriageResult(string VisualReview, string Reason);\n\n    private sealed record StageRunResult(\n        string Body, string? Check, double CostUsd, bool CostUnknown,\n        TimeSpan Elapsed, double? TestDurationSeconds,\n        KillSignature? Kill = null);\n\n    /// <summary>\n    /// Called when a review-pair stage (7 Review or 8 Visual-review) produced a\n    /// red result due to a watchdog kill. Runs ONE escalated retry attempt\n    /// (tier bump + scaled budget) and returns the outcome. The original\n    /// (killed) result is passed through on failure so the caller can enrich\n    /// the flag reason with the kill signature.\n    /// </summary>\n    private async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\n        string rootPath, string runId, string taskId, string taskDirectory,\n        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\n        StringBuilder ledger, IReadOnlyList<string> manifest,\n        string pinnedSwivalProfileContent, KillSignature? originalKill,\n        CancellationToken cancellationToken)\n    {\n        var boosted = config.BoostTurnsTaskIds?.Contains(taskId, StringComparer.Ordinal) == true;\n        var baseTurns = boosted ? SaturatingBoost(config.MaxTurns) : config.MaxTurns;\n        var baseCeilingMs = boosted ? SaturatingBoost(config.SubagentTimeoutMilliseconds) : config.SubagentTimeoutMilliseconds;\n\n        // attempt 2: one escalation rung\n        const int run = 2;\n        var fromTier = stage.Tier;\n        var toTier = StageEscalation.NextTier(fromTier);\n        var toTurns = StageEscalation.TurnsForRun(baseTurns, run, boosted);\n        var toCeilingMs = StageEscalation.Scale(baseCeilingMs, StageEscalation.RunMultiplier(run, boosted));\n\n        // No-repeat exhaustion: never re-run identical config. Preserve the\n        // original kill signature so the caller can still build an enriched\n        // flag reason (otherwise it drops to the generic string).\n        if (toTier == fromTier && toTurns == baseTurns)\n            return new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null, Kill: originalKill);\n\n        await PublishStageEscalatedAsync(rootPath, runId, taskId, stage, run, /*maxRuns*/ 2,\n            fromTier, toTier, baseTurns, toTurns, cancellationToken);\n\n        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,\n            config, stage, input, ledger, manifest,\n            pinnedSwivalProfileContent: pinnedSwivalProfileContent);\n        invocation = invocation with\n        {\n            Tier = toTier,\n            MaxTurns = toTurns,\n            AbsoluteCeilingMs = toCeilingMs,\n            MaxSelfEscalations = 0\n        };\n\n        return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.401,
+      "prompt_tokens_est": 59916,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 1,
+        "limit": 12
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 366
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.396,
+      "prompt_tokens_est": 60214,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Stopwatch|CostEstimate|Costs",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 4.495,
+      "prompt_tokens_est": 60361,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+          "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.135,
+      "result_length": 214
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 3.919,
+      "prompt_tokens_est": 60623,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix Issue 3: Preserve KillSignature in no-op retry (ReviewPairRetry.cs)",
+          "Fix Issue 1: Fast-visual sibling re-check on retry success (ReviewPair.cs)",
+          "Fix Issue 2: Review-first sibling handling on retry success (ReviewPair.cs)",
+          "Move RunSingleStageAsync + RecordPairStageAsync to retry partial to stay under 300-line guard"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 621
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 6.443,
+      "prompt_tokens_est": 60934,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+          "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 48.464,
+      "result_length": 1935
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 3.438,
+      "prompt_tokens_est": 61854,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "offset": 228
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3357
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 7.594,
+      "prompt_tokens_est": 62789,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "new_string": "        // Retry escalation event must have been published.\n        Assert.Contains(sink.Events, e => e.EventName == \"stage_escalated\");\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_ReviewKilled_EnrichedReasonFlowsToReviewReason()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"killed-flow\", \"# Killed flow\\n\");\n        var sink = new InMemoryRelayEventSink();\n        var runner = new KillSubagentRunner(7);\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"killed-flow\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // RelayTaskItem built from the reason flows it to /state reviewReason + UI.\n        var item = new RelayTaskItem(\n            \"killed-flow\", \"/tmp/t.md\", \"/tmp\", false, [],\n            ReviewReason: outcome.Reason);\n        Assert.True(item.NeedsReview);\n        Assert.Contains(\"stall-killed\", item.ReviewReason!, StringComparison.Ordinal);\n        Assert.Contains(\"absolute_ceiling\", item.ReviewReason!, StringComparison.Ordinal);\n        Assert.Contains(\"stage7-attempt1.killed-output.txt\", item.ReviewReason!, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_VisualReviewInvalid_FlagsAfterBothComplete()",
+        "old_string": "        // Retry escalation event must have been published.\n        Assert.Contains(sink.Events, e => e.EventName == \"stage_escalated\");\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_VisualReviewInvalid_FlagsAfterBothComplete()"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 125
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 2.904,
+      "prompt_tokens_est": 63438,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "limit": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 338
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 3.028,
+      "prompt_tokens_est": 63631,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+          "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 38.592,
+      "result_length": 1935
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 2.571,
+      "prompt_tokens_est": 64307,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix Issue 4: Add reviewReason propagation test"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 620
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 3.047,
+      "prompt_tokens_est": 64537,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -30",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 80.536,
+      "result_length": 2981
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 11.347,
+      "prompt_tokens_est": 65442,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 153,
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5053
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 7.327,
+      "prompt_tokens_est": 67408,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "new_string": "        // NEEDS-REVIEW file must contain the enriched reason.\n        var needsReviewPath = Path.Combine(repo.Root, \".relay\", \"killed-review\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(needsReviewPath), \"NEEDS-REVIEW file should exist\");\n        var needsReviewContent = await File.ReadAllTextAsync(needsReviewPath);\n        Assert.Contains(\"stall-killed\", needsReviewContent, StringComparison.Ordinal);\n        // RelayTaskItem built from the reason flows it to /state reviewReason + UI.\n        var item = new RelayTaskItem(\"killed-review\", \"/tmp/t.md\", \"/tmp\", false, [], ReviewReason: outcome.Reason);\n        Assert.True(item.NeedsReview);\n        Assert.Contains(\"stall-killed\", item.ReviewReason!, StringComparison.Ordinal);\n        Assert.Contains(\"stage7-attempt1.killed-output.txt\", item.ReviewReason!, StringComparison.Ordinal);\n    }",
+        "old_string": "        // NEEDS-REVIEW file must contain the enriched reason.\n        var needsReviewPath = Path.Combine(repo.Root, \".relay\", \"killed-review\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(needsReviewPath), \"NEEDS-REVIEW file should exist\");\n        var needsReviewContent = await File.ReadAllTextAsync(needsReviewPath);\n        Assert.Contains(\"stall-killed\", needsReviewContent, StringComparison.Ordinal);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 125
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 3.076,
+      "prompt_tokens_est": 68020,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 226,
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2994
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 6.467,
+      "prompt_tokens_est": 68818,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "new_string": "    }\n\n    [Fact]\n    public async Task RunTaskAsync_VisualReviewInvalid_FlagsAfterBothComplete()",
+        "old_string": "    }\n\n    [Fact]\n    public async Task RunTaskAsync_ReviewKilled_EnrichedReasonFlowsToReviewReason()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"killed-flow\", \"# Killed flow\\n\");\n        var sink = new InMemoryRelayEventSink();\n        var runner = new KillSubagentRunner(7);\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, \"green\")), sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"killed-flow\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // RelayTaskItem built from the reason flows it to /state reviewReason + UI.\n        var item = new RelayTaskItem(\n            \"killed-flow\", \"/tmp/t.md\", \"/tmp\", false, [],\n            ReviewReason: outcome.Reason);\n        Assert.True(item.NeedsReview);\n        Assert.Contains(\"stall-killed\", item.ReviewReason!, StringComparison.Ordinal);\n        Assert.Contains(\"absolute_ceiling\", item.ReviewReason!, StringComparison.Ordinal);\n        Assert.Contains(\"stage7-attempt1.killed-output.txt\", item.ReviewReason!, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_VisualReviewInvalid_FlagsAfterBothComplete()"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 125
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 2.584,
+      "prompt_tokens_est": 69361,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.145,
+      "result_length": 108
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 3.156,
+      "prompt_tokens_est": 69480,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+          "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 38.2,
+      "result_length": 1935
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 3.609,
+      "prompt_tokens_est": 70154,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -15",
+        "timeout": 300
+      },
+      "succeeded": true,
+      "duration_s": 72.458,
+      "result_length": 1721
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 3.133,
+      "prompt_tokens_est": 70791,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Run targeted tests, then full suite"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 619
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 5.401,
+      "prompt_tokens_est": 71028,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

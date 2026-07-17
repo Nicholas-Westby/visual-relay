@@ -78,14 +78,66 @@ public sealed partial class RelayDriver
 
             if (reviewResult.Check == "red")
             {
+                if (reviewResult.Kill is not null)
+                {
+                    var retryResult = await RunReviewPairStageWithRetryAsync(
+                        rootPath, runId, taskId, taskDirectory,
+                        config, reviewStage, input, ledger, manifest,
+                        pinnedSwivalProfileContent, reviewResult.Kill,
+                        cancellationToken);
+                    if (retryResult.Check != "red")
+                    {
+                        // Retry succeeded — record the retried Review. Handle the
+                        // sibling: if visual was also red, flag it; otherwise record it.
+                        if (fastVisual.Check == "red")
+                        {
+                            var vReason = BuildReviewFlagReason("Visual-review", fastVisual, rootPath);
+                            var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
+                                vReason, fastVisual.Body, statusEntries, cancellationToken);
+                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, false);
+                        }
+                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                            visualStage, fastVisual, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                            reviewStage, retryResult, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, fastVisual.Body));
+                    }
+                    reviewResult = retryResult;
+                }
+                var reason = BuildReviewFlagReason("Review", reviewResult, rootPath);
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
-                    "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
+                    reason, reviewResult.Body, statusEntries, cancellationToken);
                 return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
             }
             if (fastVisual.Check == "red")
             {
+                if (fastVisual.Kill is not null)
+                {
+                    var retryResult = await RunReviewPairStageWithRetryAsync(
+                        rootPath, runId, taskId, taskDirectory,
+                        config, visualStage, input, ledger, manifest,
+                        pinnedSwivalProfileContent, fastVisual.Kill,
+                        cancellationToken);
+                    if (retryResult.Check != "red")
+                    {
+                        // Retry succeeded — record the retried Visual-review. The
+                        // Review sibling (reviewResult) is green here (we are in the
+                        // review-green, visual-red branch).
+                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                            visualStage, retryResult, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                            reviewStage, reviewResult, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                        return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, retryResult.Body));
+                    }
+                    fastVisual = retryResult;
+                }
+                var reason = BuildReviewFlagReason("Visual-review", fastVisual, rootPath);
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
-                    "Visual-review returned an invalid result", fastVisual.Body, statusEntries, cancellationToken);
+                    reason, fastVisual.Body, statusEntries, cancellationToken);
                 return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
             }
 
@@ -105,14 +157,49 @@ public sealed partial class RelayDriver
         // then flag — the sibling's result is NOT recorded, matching previous semantics.
         if (reviewResult.Check == "red")
         {
+            StageRunResult? siblingResult = null;
             if (visualTask is not null)
             {
-                var siblingResult = await visualTask;
+                siblingResult = await visualTask;
                 sessionCostUsd += siblingResult.CostUsd;
                 if (siblingResult.CostUnknown) unknownCostStageCount++;
             }
+
+            if (reviewResult.Kill is not null)
+            {
+                var retryResult = await RunReviewPairStageWithRetryAsync(
+                    rootPath, runId, taskId, taskDirectory,
+                    config, reviewStage, input, ledger, manifest,
+                    pinnedSwivalProfileContent, reviewResult.Kill,
+                    cancellationToken);
+                if (retryResult.Check != "red")
+                {
+                    // Retry succeeded — record review. Handle the sibling
+                    // (already awaited): if green, record it; if red, flag it.
+                    (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                        reviewStage, retryResult, ledger, seals, statusEntries, manifest,
+                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                    if (siblingResult is not null)
+                    {
+                        if (siblingResult.Check == "red")
+                        {
+                            var vReason = BuildReviewFlagReason("Visual-review", siblingResult, rootPath);
+                            var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
+                                vReason, siblingResult.Body, statusEntries, cancellationToken);
+                            return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, false);
+                        }
+                        (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                            visualStage, siblingResult, ledger, seals, statusEntries, manifest,
+                            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                    }
+                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(retryResult.Body, siblingResult?.Body));
+                }
+                reviewResult = retryResult;
+            }
+
+            var reason = BuildReviewFlagReason("Review", reviewResult, rootPath);
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
-                "Review returned an invalid result", reviewResult.Body, statusEntries, cancellationToken);
+                reason, reviewResult.Body, statusEntries, cancellationToken);
             return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
 
@@ -132,8 +219,27 @@ public sealed partial class RelayDriver
 
         if (visualResult is { Check: "red" })
         {
+            if (visualResult.Kill is not null)
+            {
+                var retryResult = await RunReviewPairStageWithRetryAsync(
+                    rootPath, runId, taskId, taskDirectory,
+                    config, visualStage, input, ledger, manifest,
+                    pinnedSwivalProfileContent, visualResult.Kill,
+                    cancellationToken);
+                if (retryResult.Check != "red")
+                {
+                    // Retry succeeded — record visual only; review already recorded.
+                    (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
+                        visualStage, retryResult, ledger, seals, statusEntries, manifest,
+                        previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken);
+                    return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, retryResult.Body));
+                }
+                visualResult = retryResult;
+            }
+
+            var reason = BuildReviewFlagReason("Visual-review", visualResult, rootPath);
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
-                "Visual-review returned an invalid result", visualResult.Body, statusEntries, cancellationToken);
+                reason, visualResult.Body, statusEntries, cancellationToken);
             return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
 
@@ -162,63 +268,8 @@ public sealed partial class RelayDriver
         return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, null, ReviewFamilyIsClean(reviewResult.Body, visualResult?.Body));
     }
 
-    private sealed record TriageResult(string VisualReview, string Reason);
-    private sealed record StageRunResult(
-        string Body, string? Check, double CostUsd, bool CostUnknown,
-        TimeSpan Elapsed, double? TestDurationSeconds);
-    private sealed record RenderOutput(IReadOnlyList<string> PngPaths, string? ErrorOutput);
-
     // Triage, render, and visual-input helpers live in
     // RelayDriver.ReviewPairTriage.cs to keep this file under the 300-line guard.
-
-    private async Task<StageRunResult> RunSingleStageAsync(
-        string rootPath, string runId, string taskId, string taskDirectory,
-        RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,
-        StringBuilder ledger, IReadOnlyList<string> manifest,
-        string pinnedSwivalProfileContent, CancellationToken cancellationToken)
-    {
-        var invocation = BuildInvocation(rootPath, runId, taskId, taskDirectory,
-            config, stage, input, ledger, manifest,
-            pinnedSwivalProfileContent: pinnedSwivalProfileContent);
-        return await RunStageAsync(invocation, stage, taskDirectory, cancellationToken);
-    }
-
-    private async Task<StageRunResult> RunStageAsync(
-        StageInvocation invocation, RelayStageDefinition stage, string taskDirectory,
-        CancellationToken cancellationToken)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var result = await _dependencies.SubagentRunner.RunAsync(invocation, cancellationToken);
-        stopwatch.Stop();
-        var cost = EstimateStageCostCumulative(taskDirectory, stage.Number);
-        var costUsd = cost?.CostUsd ?? 0d;
-        var costUnknown = cost is null;
-
-        if (!result.IsValid || string.IsNullOrWhiteSpace(result.Json))
-        {
-            return new StageRunResult(
-                result.RawText,
-                "red", costUsd, costUnknown, stopwatch.Elapsed, null);
-        }
-
-        return new StageRunResult(result.Json, null, costUsd, costUnknown, stopwatch.Elapsed, null);
-    }
-
-    private async Task<(string PreviousSeal, string TaskHash)> RecordPairStageAsync(
-        string rootPath, string runId, string taskId, string taskDirectory,
-        RelayStageDefinition stage, StageRunResult runResult,
-        StringBuilder ledger, List<string> seals,
-        List<StageStatusEntry> statusEntries, IReadOnlyList<string> manifest,
-        string previousSeal, string taskHash, double sessionCostUsd,
-        int unknownCostStageCount, CancellationToken cancellationToken)
-    {
-        var cost = runResult.CostUnknown ? null
-            : new RelayCostEstimate("", runResult.CostUsd, true, 0, 0, 0,
-                runResult.Elapsed.TotalSeconds);
-        return await RecordStageAsync(rootPath, runId, taskId, taskDirectory,
-            stage, runResult.Body, runResult.Check, cost,
-            runResult.Elapsed, ledger, seals, statusEntries, manifest,
-            previousSeal, taskHash, sessionCostUsd, unknownCostStageCount,
-            cancellationToken, runResult.TestDurationSeconds);
-    }
+    // RunSingleStageAsync, RunStageAsync, and RecordPairStageAsync live in
+    // RelayDriver.ReviewPairRetry.cs together with the retry escalator.
 }

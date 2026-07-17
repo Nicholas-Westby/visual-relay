@@ -26,29 +26,9 @@ internal sealed class ScriptedSubagentRunner : ISubagentRunner
     // that exercise Fix's mechanics (invocation, targeted command, flag/resume).
     public void SeedReviewChanges() => _reviewChanges = true;
 
-    // A non-code change: the manifest contains only documentation/config files
-    // (e.g. .md, .txt, .json). Stage 5 returns no testFiles.
-    public void SeedNonCodeOnly(string nonCodeFile)
-    {
-        _nonCodeOnly = true;
-        _nonCodeFile = nonCodeFile;
-    }
-
-    // A code-only change: the manifest contains only implementation code files
-    // (e.g. .axaml, .ts, .py) with no authored tests. Stage 5 returns no testFiles.
-    public void SeedCodeOnly(string codeFile)
-    {
-        _codeOnly = true;
-        _codeOnlyFile = codeFile;
-    }
-
-    // A test-only change: the manifest contains only test files (already covered
-    // by existing tests). Stage 5 returns the test file as a testFile.
-    public void SeedTestOnly(string testFile)
-    {
-        _testOnly = true;
-        _testOnlyFile = testFile;
-    }
+    public void SeedNonCodeOnly(string nonCodeFile) { _nonCodeOnly = true; _nonCodeFile = nonCodeFile; }
+    public void SeedCodeOnly(string codeFile) { _codeOnly = true; _codeOnlyFile = codeFile; }
+    public void SeedTestOnly(string testFile) { _testOnly = true; _testOnlyFile = testFile; }
 
     public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
     {
@@ -242,6 +222,69 @@ internal sealed class FlagStageSubagentRunner(int flagAtStage) : ISubagentRunner
         {
             Directory.CreateDirectory(invocation.TraceDirectory);
             return new SubagentResult(RawText: string.Empty, Json: null, IsValid: false, Error: "invalid result");
+        }
+        return await _inner.RunAsync(invocation, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Returns a watchdog-kill <see cref="SubagentResult"/> for the specified stage,
+/// simulating an agent process killed by the activity watchdog. All other stages
+/// delegate to the inner <see cref="ScriptedSubagentRunner"/>.
+/// </summary>
+internal sealed class KillSubagentRunner(int killAtStage) : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _inner = new();
+
+    public void SeedHappyPath(string codeFile, string testFile) =>
+        _inner.SeedHappyPath(codeFile, testFile);
+
+    public Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == killAtStage)
+        {
+            Directory.CreateDirectory(invocation.TraceDirectory);
+            var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
+            var autopsyPath = Path.Combine(traceDirParent, $"stage{killAtStage}-attempt1.killed-output.txt");
+            return Task.FromResult(new SubagentResult(
+                RawText: string.Empty, Json: null, IsValid: false,
+                Error: "swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.",
+                HardAbort: true,
+                Kill: new KillSignature("absolute_ceiling", "cpu", 52373, autopsyPath)));
+        }
+        return _inner.RunAsync(invocation, cancellationToken);
+    }
+}
+
+/// <summary>
+/// Returns a watchdog-kill result on the FIRST call to the specified stage, then
+/// delegates to the inner scripted runner on subsequent calls — simulating a
+/// retry that succeeds after an infrastructure kill.
+/// </summary>
+internal sealed class TwoPhaseKillSubagentRunner(int killAtStage) : ISubagentRunner
+{
+    private readonly ScriptedSubagentRunner _inner = new();
+    private int _callCount;
+
+    public void SeedHappyPath(string codeFile, string testFile) =>
+        _inner.SeedHappyPath(codeFile, testFile);
+
+    public async Task<SubagentResult> RunAsync(StageInvocation invocation, CancellationToken cancellationToken = default)
+    {
+        if (invocation.Stage.Number == killAtStage)
+        {
+            Directory.CreateDirectory(invocation.TraceDirectory);
+            var count = Interlocked.Increment(ref _callCount);
+            if (count == 1)
+            {
+                var traceDirParent = Path.GetDirectoryName(invocation.TraceDirectory)!;
+                var autopsyPath = Path.Combine(traceDirParent, $"stage{killAtStage}-attempt1.killed-output.txt");
+                return new SubagentResult(
+                    RawText: string.Empty, Json: null, IsValid: false,
+                    Error: "swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.",
+                    HardAbort: true,
+                    Kill: new KillSignature("absolute_ceiling", "cpu", 52373, autopsyPath));
+            }
         }
         return await _inner.RunAsync(invocation, cancellationToken);
     }

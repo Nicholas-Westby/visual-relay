@@ -166,7 +166,8 @@ public sealed partial class SwivalSubagentRunner
                             ErrorHintClassifier.WithHint(
                                 $"swival timed out after {FormatCeilingMs(absoluteCeilingMs)} absolute ceiling. " +
                                 $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."),
-                            HardAbort: true);
+                            HardAbort: true,
+                            Kill: new KillSignature("absolute_ceiling", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath));
                     }
                     else if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredSocketWedge)
                     {
@@ -174,7 +175,8 @@ public sealed partial class SwivalSubagentRunner
                             ErrorHintClassifier.WithHint(
                                 $"swival socket-wedged: the backend connection stayed ESTABLISHED but the agent " +
                                 $"subtree was idle for {wdResult.SilenceMs}ms. Last signal: {wdResult.LastPulseSource}."),
-                            HardAbort: true);
+                            HardAbort: true,
+                            Kill: new KillSignature("socket_wedge", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath));
                     }
                     // Plain stall: escalate straight to the next tier (no same-config
                     // retry), carrying no corrective context. At the ladder's edge,
@@ -190,7 +192,8 @@ public sealed partial class SwivalSubagentRunner
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
                             ErrorHintClassifier.WithHint(BuildPersistentStallReason(
-                                wdResult, currentFirstOutputMs, currentInactivityMs, escalationCount + 1)));
+                                wdResult, currentFirstOutputMs, currentInactivityMs, escalationCount + 1)),
+                            Kill: new KillSignature("stall", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath));
                     }
                 }
             }

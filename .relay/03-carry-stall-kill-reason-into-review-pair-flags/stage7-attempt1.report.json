@@ -1,0 +1,632 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T00:26:58.667660+00:00",
+  "task": "# Relay stage 7: Review\nTask: 03-carry-stall-kill-reason-into-review-pair-flags\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Carry the stall-kill signature into review-pair flag reasons and retry infra kills\n\nWhen a review-pair stage's agent process is killed by the watchdog, the run is\nflagged with the generic reason `Review returned an invalid result`. The kill\ncontext \u2014 reason, last-signal source, autopsy artifact path \u2014 exists in the run\nlog and in the killed-output file, but the flag reason, the NEEDS-REVIEW file,\nand the queue card show only the generic string. The operator cannot tell an\ninfrastructure kill from the model actually emitting garbage, and the stage is\nnever retried even though an infrastructure kill is exactly the retryable case.\n\nThis mirrors the already-completed task\n`llm-tasks/completed/carry-verify-signature-in-flag-reason/` which fixed the\nsame reporting gap for verify-exhaustion flags. The review pair needs the same\ntreatment.\n\n### Evidence (task `hoist-pipeline-test-shared-setup`, 2026-07-15)\n\n- Review (stage 7, frontier tier) ran ~55 minutes and was watchdog-killed:\n  run-log event `s7/frontier stall_kill reason: absolute_ceiling lastSignal: cpu\n  silenceMs: 52373 \u2026\n  outputSaved: .relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt`.\n  The autopsy file shows the swival agent was blocked in a synchronous\n  `sock.recv()` waiting for LLM response headers (a hung HTTP call to the\n  litellm proxy), then SIGINT'd (`KeyboardInterrupt`, exit 130).\n- `RunStageAsync` (`src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs:186-205`)\n  maps any invalid/empty result to `Check=\"red\"` with no distinction for\n  kills; `RunReviewPairAsync` then flags with the fixed string\n  `\"Review returned an invalid result\"` (lines 82, 115; visual sibling at 88,\n  136). The stall-kill reason is dropped.\n- Only `stage7-attempt1.*` exists \u2014 no second attempt. Other stages escalate\n  and retry (see completed task `make-stage-retries-always-escalate`); the\n  review pair path calls the subagent exactly once.\n- The task burned stages 1-6 (~21 minutes, ~$0.27) and produced a valid\n  implementation, all discarded to NEEDS-REVIEW because one LLM HTTP request\n  hung.\n\n### What to build\n\n1. Thread the kill information from the subagent runner into `StageRunResult`\n   (e.g. a nullable `KillSignature` with reason, lastSignal, silence, autopsy\n   path). The runner already knows it \u2014 it wrote the `stall_kill` event and the\n   killed-output artifact (`preserve-trace-when-stage-killed` machinery).\n2. When a review-pair stage result is red BECAUSE the process was killed, flag\n   with an enriched reason, e.g.\n   `Review stall-killed (absolute_ceiling, lastSignal=cpu) after 55m \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt`\n   instead of `Review returned an invalid result`. Keep the generic wording for\n   genuinely invalid model output.\n3. Retry policy: on a watchdog kill (not on invalid model output), give the\n   review-pair stage one escalated retry (attempt2) before flagging, consistent\n   with `make-stage-retries-always-escalate` semantics elsewhere. Preserve the\n   sibling-survives-failure semantics of the pair (`RelayDriver.ReviewPair.cs:104-116`).\n4. Propagate the enriched reason everywhere the reason already flows:\n   NEEDS-REVIEW first line, `/state` `reviewReason`, queue card label, drain\n   log \u2014 same checklist as the completed verify-signature task.\n\n### Constraints\n\n- Message/observability + one bounded retry only; no changes to review\n  contracts or triage routing.\n- Repo-agnostic wording (the signature comes from the watchdog, not from\n  parsing agent output).\n- Keep `RelayDriver.ReviewPair.cs` under the 300-line guard (helpers live in\n  sibling partials).\n\n### Tests (red first)\n\n- Driver test with a fake subagent runner that reports a watchdog kill:\n  flag reason contains the kill reason and autopsy path; a retry attempt was\n  made first; attempt2 success proceeds normally without a flag.\n- Invalid-output (no kill) case: single attempt, existing generic reason \u2014\n  behavior unchanged.\n- Control-API/state test: enriched reason visible in `reviewReason`.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\nsrc/VisualRelay.Domain/SubagentResult.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs\ntests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\ntests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"The review-pair stage currently drops all watchdog kill context (reason, lastSignal, silenceMs, autopsy path) from flag reasons, and never retries on kill. The runner already assembles this data. Fix by threading a structured KillSignature through StageRunResult and adding one escalated retry before flagging. Three approaches differ in how the kill context is carried and where the autopsy path gets attached.\",\n  \"options\": [\n    \"A \u2014 Structured KillSignature on SubagentResult \u2192 StageRunResult\\n\\nAdd a dedicated `KillSignature` record (Reason, LastSignal, SilenceMs, AutopsyPath) to `SubagentResult`. Populate it in `RunAsync` when the watchdog fires (from `wdResult` + `killedOutputPath`). Thread it through `StageRunResult` unchanged. In `RelayDriver.ReviewPair.RunReviewPairAsync`, when `StageRunResult` carries a `KillSignature`, build an enriched reason string (e.g. `\\\"Review stall-killed (absolute_ceiling, lastSignal=cpu) after ~55m \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt\\\"`) instead of the generic `\\\"Review returned an invalid result\\\"`. On kill, attempt one escalated retry (same sibling-survives-failure semantics); on genuinely invalid output (no KillSignature), single attempt + generic reason, unchanged.\\n\\nPros: Cleanest \u2014 no string parsing, mirrors verify-signature pattern exactly, autopsy path carried explicitly, future-proof for other kill types. Cons: Adds a type to the SubagentResult contract (modest surface change).\\n\\nFiles touched: ProcessRunners.RunAsync.cs (populate), SubagentResult type (add property), StageRunResult type (thread through), RelayDriver.ReviewPair.cs (use it), test files.\",\n    \"B \u2014 Enriched ErrorHint string + path inclusion\\n\\nKeep the existing `SubagentResult.ErrorHint` string but make two changes: (1) append the `killedOutputPath` to the ErrorHint message (matching the exit-code pattern at line 273-275), and (2) change `RunReviewPairAsync` to use `ErrorHint` verbatim when it detects a kill pattern (prefix match on `\\\"swival timed out\\\"` or `\\\"persistent model-backend stall\\\"`) instead of the generic message. Add a single retry on kill, detectable via the same prefix match.\\n\\nPros: Zero new types, smallest surface change. Cons: Fragile string parsing, autopsy path format not standardized, retry detection is heuristic, doesn't mirror the verify-signature pattern which chose a structured approach.\",\n    \"C \u2014 StageRunResult-level KillSignature only (no SubagentResult change)\\n\\nParse the kill context at the `RunStageAsync` level in `RelayDriver.ReviewPair.cs`: when `SubagentResult.IsValid == false` and `SubagentResult.ErrorHint` contains kill-related text, extract the parts and build a `KillSignature` local struct at the point where `StageRunResult` is produced. Use it for enriched reason + retry decision. The `killedOutputPath` must be re-derived from the task/attempt naming convention (stable path formula: `.relay/<task>/stage{num}-attempt{attempt}.killed-output.txt`) or recovered from the event sink if the driver has access to the latest `stall_kill` event.\\n\\nPros: No changes to SubagentResult or runner. Cons: Re-derives or guesses the autopsy path path instead of receiving it explicitly; fragile if path conventions change; doesn't carry lastSignal/silenceMs cleanly for the enriched reason; verify-signature precedent went with Option A's approach.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Review pair (RelayDriver.ReviewPair.cs) currently drops all kill context when RunStageAsync maps SubagentResult to StageRunResult: only RawText becomes Body, Error (rich kill description) is discarded, and killedOutputPath is never available because SubagentResult has no field for it. StageRunResult.Check is always \\\"red\\\" on any invalid result with no distinction between watchdog kills and invalid model output. No retry logic exists \u2014 the pair calls RunStageAsync once and flags immediately. The completed verify-signature task (carry-verify-signature-in-flag-reason) shows the pattern: collect failure signatures per attempt, then enrich the flag reason on exhaustion. SubagentResult (in VisualRelay.Domain) is the right place to add a structured KillSignature (reason, lastSignal, silenceMs, autopsyPath) since the runner already has all this data from wdResult + killedOutputPath. The RunStageAsync method (lines 186-205) already has access to result.Error (which contains the kill description) but ignores it. Tristate logic: (a) valid result \u2192 green; (b) invalid + KillSignature present \u2192 watchdog kill (retryable); (c) invalid + no KillSignature \u2192 genuine model failure (single attempt, generic reason). Escalated retry for kill should mirror StageEscalation pattern (bump tier) and respect sibling-survives-failure semantics at lines 104-116. The 300-line guard for RelayDriver.ReviewPair.cs means retry orchestration helpers should live in a sibling partial (e.g., RelayDriver.ReviewPairRetry.cs). FlagAsync in RelayDriver.Events.cs already propagates reason everywhere (NEEDS-REVIEW, flagged event, RelayTaskOutcome.Reason \u2192 /state reviewReason \u2192 UI). No changes needed in the downstream consumption. Test doubles: ScriptedSubagentRunner and FlagStageSubagentRunner in SubagentRunnerTestDoubles.cs need a variant that returns KillSignature on SubagentResult for stage 7. Existing tests in RelayDriverReviewPairTests.Orchestration.cs assert on outcome.Reason containing \\\"invalid\\\" \u2014 they need updated assertions for the no-kill case (unchanged) plus new tests for the kill+retry case.\",\n  \"constraints\": [\n    \"Message/observability + one bounded retry only \u2014 no changes to review contracts or triage routing.\",\n    \"Repo-agnostic wording: the kill signature comes from the watchdog, not from parsing agent output.\",\n    \"Keep RelayDriver.ReviewPair.cs under the 300-line guard \u2014 retry helpers go in a sibling partial (e.g., RelayDriver.ReviewPairRetry.cs) or inline if small enough.\",\n    \"Mirror the verify-signature pattern from RelayDriver.VerifyFix.cs (structured collection, enriched reason, artifact path) but do not add identical-signature advisory for review kills.\",\n    \"Preserve sibling-survives-failure semantics of the pair (lines 104-116): on review kill, await visual sibling before flagging; on visual kill, same.\",\n    \"SubagentResult lives in VisualRelay.Domain \u2014 adding a KillSignature there is a modest contract change (Option A from the ideation stage).\",\n    \"Tests must be red first: driver test with fake subagent runner that reports a watchdog kill \u2014 flag reason contains kill reason and autopsy path; a retry attempt was made first; attempt2 success proceeds normally without a flag.\",\n    \"Invalid-output (no kill) case: single attempt, existing generic reason \u2014 behavior unchanged.\",\n    \"Control-API/state test: enriched reason visible in reviewReason.\",\n    \"No changes to how needsReview flagging works (RelayTaskOutcomeStatus.Flagged, FlaggedWorkStore, resume logic) \u2014 only the reason string changes.\",\n    \"The killedOutputPath must be relativized to the repo root for the enriched reason (matching the verify-signature pattern's Path.GetRelativePath(rootPath, ...)).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The `hoist-pipeline-test-shared-setup` task's stage 7 (Review, frontier tier) was watchdog-killed after ~55 minutes with `reason=absolute_ceiling lastSignal=cpu silenceMs=52373`. The autopsy file `.relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt` shows the swival agent was blocked in a synchronous `sock.recv()` waiting for LLM response headers from the litellm proxy (a hung HTTP call to the model backend), then was SIGINT'd (KeyboardInterrupt, exit 130). The NEEDS-REVIEW file contains only `Review returned an invalid result` \u2014 no kill reason, no autopsy path. No stage7-attempt2 exists; the review pair calls the subagent exactly once and flags immediately on any invalid result. Stages 1-6 (~21 minutes, ~$0.27 total) produced valid artifacts (ledger, seals, status entries) but are all discarded because one HTTP request hung. The operator sees only the generic string \u2014 no way to distinguish an infrastructure kill from the model actually emitting garbage.\\n\\nThe root cause is in `RelayDriver.ReviewPair.cs`. The `RunStageAsync` method (lines 186-205) maps every invalid `SubagentResult` to `Check=\\\"red\\\"` with no discrimination: the `Error` field (containing the rich kill description like `\\\"swival timed out after 55m 00s absolute ceiling. Last signal: cpu, silence: 52373ms.\\\"`), the `HardAbort` boolean (distinguishing infra kills from model failures), and the killed-output path are all dropped. Only `RawText` survives as `Body`. Then `RunReviewPairAsync` flags with the fixed generic string `\\\"Review returned an invalid result\\\"` at lines 82 and 115 (and similarly for visual at 88 and 136). No retry logic exists \u2014 the pair calls `RunSingleStageAsync` \u2192 `RunStageAsync` \u2192 `SubagentRunner.RunAsync` exactly once and flags immediately, even though the runner correctly refuses to escalate hard-abort kills internally (lines 163-169 in `ProcessRunners.RunAsync.cs`: absolute ceiling and socket wedge return immediately with `HardAbort=true`), and the `make-stage-retries-always-escalate` policy (`llm-tasks/completed/make-stage-retries-always-escalate/DONE-make-stage-retries-always-escalate.md`) provides the exact retry semantics needed: one tier-escalated retry per failure.\\n\\nThe runner already has all needed data at the kill site (`ProcessRunners.RunAsync.cs` lines 145-194): `wdResult` (Outcome, LastPulseSource, SilenceMs), `killedOutputPath` from `TryPersistKilledOutput`, and `absoluteCeilingMs`. But `SubagentResult` (in `VisualRelay.Domain/SubagentResult.cs`) has no field for the killed-output path or a structured kill signature \u2014 only `Error` (a free-form string) and `HardAbort` (a boolean). The `killedOutputPath` is published only via the `stall_kill` event (line 157) and the persist helper (`ProcessRunners.Helpers.cs` lines 153-180).\\n\\nThe `StageRunResult` record (line 166-168) carries only `Body`, `Check`, `CostUsd`, `CostUnknown`, `Elapsed`, `TestDurationSeconds` \u2014 no kill context. The `FlagAsync` method (`RelayDriver.Events.cs` lines 93-136) already propagates the reason string everywhere it needs to go: NEEDS-REVIEW file first line, `flagged` event, `RelayTaskOutcome.Reason` \u2192 `RelayTaskItem.ReviewReason` \u2192 `/state` `reviewReason` \u2192 UI tooltip/label and queue card. So enriching the reason string is sufficient \u2014 no downstream plumbing changes needed.\",\n  \"excerpts\": [\n    \"RelayDriver.ReviewPair.cs:186-205 \u2014 RunStageAsync maps every invalid SubagentResult to Check=\\\"red\\\" with no discrimination; Error, HardAbort, and killedOutputPath are all dropped\",\n    \"RelayDriver.ReviewPair.cs:79-83,106-116 \u2014 RunReviewPairAsync flags with fixed generic string \\\"Review returned an invalid result\\\" (or \\\"Visual-review returned an invalid result\\\"), no retry\",\n    \"RelayDriver.ReviewPair.cs:166-168 \u2014 StageRunResult record carries only Body, Check, CostUsd, CostUnknown, Elapsed, TestDurationSeconds \u2014 no KillSignature field\",\n    \"ProcessRunners.RunAsync.cs:145-194 \u2014 Watchdog kill paths (absolute ceiling, socket wedge, persistent stall) have wdResult + killedOutputPath in scope but only thread a free-form Error string into SubagentResult; killedOutputPath is published via stall_kill event but never reaches SubagentResult\",\n    \"VisualRelay.Domain/SubagentResult.cs:3-12 \u2014 SubagentResult has Error (string) and HardAbort (bool) but no killedOutputPath or structured KillSignature\",\n    \"ProcessRunners.Helpers.cs:153-180 \u2014 TryPersistKilledOutput produces path `.relay/<task>/stage{n}-attempt{k}.killed-output.txt` with header: reason, lastSignal, silenceMs, firstOutputTimeoutMs, inactivityTimeoutMs\",\n    \"RelayDriver.Events.cs:93-136 \u2014 FlagAsync writes reason to NEEDS-REVIEW first line, publishes flagged event, returns RelayTaskOutcome with reason \u2014 plumbing already propagates to /state reviewReason, UI, queue card\",\n    \".relay/hoist-pipeline-test-shared-setup/run.log \u2014 stall_kill event: reason=absolute_ceiling lastSignal=cpu silenceMs=52373 outputSaved=.../stage7-attempt1.killed-output.txt; flagged event 1s later: reason=Review returned an invalid result\",\n    \".relay/hoist-pipeline-test-shared-setup/NEEDS-REVIEW \u2014 contains only \\\"Review returned an invalid result\\\"\",\n    \".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt:1-4 \u2014 autopsy header: reason=absolute_ceiling lastSignal=cpu silenceMs=52373; traceback shows sock.recv() \u2192 KeyboardInterrupt \u2192 exit 130\",\n    \".relay/hoist-pipeline-test-shared-setup/status.json:80-92 \u2014 stage 7 status: \\\"Flagged\\\", error: \\\"Review returned an invalid result\\\"; no attempt2 artifacts exist\",\n    \"llm-tasks/completed/make-stage-retries-always-escalate/DONE-make-stage-retries-always-escalate.md \u2014 retry policy: always escalate, attempt index == run index, HardAbort never escalates internally (correct) but caller should retry once at next tier\",\n    \"llm-tasks/completed/carry-verify-signature-in-flag-reason/DONE-carry-verify-signature-in-flag-reason.md \u2014 completed verify-signature task shows the pattern: collect failure signatures, enrich flag reason with last failure + artifact path, propagate everywhere\",\n    \"ProcessRunners.Escalation.cs:30-56 \u2014 PublishStallKillAsync emits stall_kill event with reason, lastSignal, silenceMs, firstOutputTimeoutMs, inactivityTimeoutMs, outputBytes, outputSaved\"\n  ],\n  \"repro\": \"1. Run a task where the review stage's LLM backend hangs (e.g. litellm proxy becomes unresponsive mid-request).\\n2. After ~55 minutes (default absolute ceiling), the watchdog fires absolute_ceiling.\\n3. Check NEEDS-REVIEW: it says only \\\"Review returned an invalid result\\\".\\n4. Check `.relay/<task>/`: no stage7-attempt2 exists.\\n5. Observe that stages 1-6 (~21 min, ~$0.27) produced valid artifacts but are all lost to NEEDS-REVIEW.\\n6. The operator cannot tell from `/state` whether this was an infrastructure kill or the model emitting garbage.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete implementation plan\\n\\n### 1. Add `KillSignature` record + `Kill` property to `SubagentResult`\\n**File:** `src/VisualRelay.Domain/SubagentResult.cs`\\n\\nAdd a new record type above `SubagentResult`:\\n```csharp\\npublic sealed record KillSignature(\\n    string Reason,        // \\\"absolute_ceiling\\\" | \\\"socket_wedge\\\" | \\\"stall\\\"\\n    string LastSignal,    // \\\"cpu\\\" | \\\"trace\\\" | \\\"process\\\"\\n    long SilenceMs,       // silence at kill time\\n    string? AutopsyPath); // absolute path to .killed-output.txt, or null\\n```\\n\\nAdd `KillSignature? Kill = null` to `SubagentResult`'s parameter list (before `HardAbort`).\\n\\n---\\n\\n### 2. Populate `KillSignature` at the three watchdog-kill sites in the runner\\n**File:** `src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`\\n\\nAt each of the three `stallResult = new SubagentResult(...)` sites (lines 163-169 absolute-ceiling, 171-178 socket-wedge, 189-194 persistent-stall), add `Kill: new KillSignature(reason, wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath)`. The `reason` string mirrors `PublishStallKillAsync`'s mapping:\\n- `FiredAbsoluteCeiling` \u2192 `\\\"absolute_ceiling\\\"`\\n- `FiredSocketWedge` \u2192 `\\\"socket_wedge\\\"`\\n- default \u2192 `\\\"stall\\\"`\\n\\n`killedOutputPath` is already in scope at all three sites (set at line 153).\\n\\n---\\n\\n### 3. Thread `KillSignature` through `StageRunResult`\\n**File:** `src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs`\\n\\nAdd `KillSignature? Kill = null` to the `StageRunResult` record (line 166-168).\\n\\nIn `RunStageAsync` (lines 197-201): when constructing the red `StageRunResult`, pass `Kill: result.Kill`.\\n\\n---\\n\\n### 4. Build enriched kill flag reason + retry decision in `RunReviewPairAsync`\\n**File:** `src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs`\\n\\nAdd a private static helper (before the `RunStageAsync` method, ~line 185):\\n```csharp\\nprivate static string BuildKillFlagReason(\\n    string stageName, KillSignature kill, TimeSpan elapsed, string rootPath)\\n{\\n    var mins = (int)elapsed.TotalMinutes;\\n    var secs = elapsed.Seconds;\\n    var reason = $\\\"{stageName} stall-killed ({kill.Reason}, lastSignal={kill.LastSignal}) after {mins}m {secs:D2}s\\\";\\n    if (kill.AutopsyPath is not null)\\n    {\\n        var relative = Path.GetRelativePath(rootPath, kill.AutopsyPath);\\n        reason += $\\\" \u2014 see {relative}\\\";\\n    }\\n    return reason;\\n}\\n```\\n\\nIn `RunReviewPairAsync`, modify all four red-check flag sites to use enriched reason when `Kill` is present:\\n\\n- **Lines 79-83** (fast-visual, review red): If `reviewResult.Kill` is not null, build enriched reason via `BuildKillFlagReason(\\\"Review\\\", ...)`; else keep `\\\"Review returned an invalid result\\\"`.\\n- **Lines 85-89** (fast-visual, visual red): Same pattern for `fastVisual.Kill` \u2192 `\\\"Visual-review\\\"`.\\n- **Lines 106-116** (review-first, review red): Same pattern.\\n- **Lines 133-138** (review-first, visual red): Same pattern.\\n\\nAdd kill-aware retry logic in the two review-red branches (lines 79 and 106):\\n- When `reviewResult.Check == \\\"red\\\"` AND `reviewResult.Kill is not null`: call the retry helper from the new partial. If the retry succeeds (`Check != \\\"red\\\"`), record normally (use existing `RecordPairStageAsync` path). If the retry also fails, fall through to flag with enriched reason.\\n- Same for visual-red branches when `Kill` is present.\\n\\n---\\n\\n### 5. Retry escalation helpers in new partial\\n**File:** `+src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs`\\n\\nNew partial `RelayDriver` class with:\\n\\n```csharp\\n// Runs a review-pair stage (7 or 8) with one escalated retry on watchdog kill.\\n// Returns the final StageRunResult \u2014 possibly the successful retry attempt.\\nprivate async Task<StageRunResult> RunReviewPairStageWithRetryAsync(\\n    string rootPath, string runId, string taskId, string taskDirectory,\\n    RelayConfig config, RelayStageDefinition stage, RelayTaskInput input,\\n    StringBuilder ledger, IReadOnlyList<string> manifest,\\n    string pinnedSwivalProfileContent, CancellationToken cancellationToken)\\n```\\n\\nInternally:\\n1. Call `RunSingleStageAsync` for attempt 1.\\n2. If green or red-without-kill: return immediately.\\n3. If red-with-kill AND tier escalation is possible (NextTier \u2260 current tier, or turns change):\\n   - Compute escalated tier via `StageEscalation.NextTier(stage.Tier)`\\n   - Compute escalated turns via `StageEscalation.TurnsForRun(config.MaxTurns, 2, boosted)`\\n   - Compute escalated ceiling via `StageEscalation.Scale(config.SubagentTimeoutMilliseconds, 2)`\\n   - Publish `stage_escalated` event via `PublishStageEscalatedAsync`\\n   - Build escalated invocation (copy from `BuildInvocation`, override tier/turns/ceiling, set `MaxSelfEscalations=0`)\\n   - Call `RunStageAsync` with escalated invocation for attempt 2\\n   - Return attempt 2 result (green \u2192 proceed; red \u2192 flag with enriched reason from attempt 1's kill signature)\\n\\nNote: only attempt 1's kill signature is used for the enriched reason (it has the autopsy path).\\n\\n---\\n\\n### 6. New test doubles\\n**File:** `tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs`\\n\\nAdd two new doubles after the existing `FlagStageSubagentRunner` (line ~248):\\n\\n**`KillSubagentRunner(int killAtStage, string reason = \\\"absolute_ceiling\\\")`**:\\n- Wraps `ScriptedSubagentRunner`\\n- For `killAtStage`: returns `SubagentResult` with `IsValid=false`, `HardAbort=true`, `Kill=new KillSignature(reason, \\\"cpu\\\", 52373, autopsyPath)` where autopsyPath is constructed as `Path.Combine(Path.GetDirectoryName(invocation.TraceDirectory)!, $\\\"stage{killAtStage}-attempt1.killed-output.txt\\\")`\\n- All other stages: delegates to inner\\n\\n**`TwoPhaseKillSubagentRunner(int killAtStage)`**:\\n- Wraps `ScriptedSubagentRunner`\\n- Tracks call count per stage via `Interlocked.Increment`\\n- First call to `killAtStage`: returns kill result (same shape as `KillSubagentRunner`)\\n- Second call: delegates to inner (returns happy-path pass verdict for review/visual-review stages)\\n\\n---\\n\\n### 7. New tests\\n**File:** `tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs`\\n\\nAdd four new test methods:\\n\\n1. **`RunTaskAsync_ReviewKilled_RetriesThenFlagsWithEnrichedReason`**\\n   - Uses `KillSubagentRunner(7)` as the subagent runner\\n   - Asserts: `outcome.Status == Flagged`\\n   - Asserts: `outcome.Reason` contains `\\\"stall-killed\\\"`, `\\\"absolute_ceiling\\\"`, `\\\"lastSignal=cpu\\\"`, `\\\"stage7-attempt1.killed-output.txt\\\"`\\n   - Asserts: `outcome.Reason` does NOT contain `\\\"Review returned an invalid result\\\"`\\n   - Asserts: `stage_escalated` event was published (retry happened)\\n   - Asserts: NEEDS-REVIEW file contains enriched reason\\n\\n2. **`RunTaskAsync_ReviewKilled_RetrySucceeds_ProceedsWithoutFlag`**\\n   - Uses `TwoPhaseKillSubagentRunner(7)`\\n   - Asserts: `outcome.Status == Committed`\\n   - Asserts: ledger contains both Review and Visual-review sections\\n   - Asserts: no `flagged` event published\\n\\n3. **`RunTaskAsync_ReviewInvalidNoKill_SingleAttemptGenericReason`**\\n   - Uses `FlagStageSubagentRunner(7)` (unchanged from existing test, but with stronger assertions)\\n   - Asserts: `outcome.Reason` contains `\\\"Review returned an invalid result\\\"`\\n   - Asserts: `outcome.Reason` does NOT contain `\\\"stall-killed\\\"` or `\\\"killed-output\\\"`\\n   - Asserts: no `stage_escalated` event (no retry for non-kill invalid)\\n\\n4. **`RunTaskAsync_VisualReviewKilled_RetriesThenFlagsWithEnrichedReason`**\\n   - Uses `KillSubagentRunner(8)`\\n   - Asserts: `outcome.Reason` contains `\\\"Visual-review stall-killed\\\"`\\n   - Asserts: retry escalation event published\\n\\nAlso update the existing `RunTaskAsync_ReviewInvalid_SiblingFinishesThenFlags` (line 130) to assert the generic reason string explicitly (not just `Contains(\\\"invalid\\\")`) so it doesn't accidentally match the new enriched format.\"\n  ,\n  \"manifest\": [\n    \"src/VisualRelay.Domain/SubagentResult.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs\",\n    \"tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs\",\n    \"src/VisualRelay.Domain/SubagentResult.cs\"\n  ],\n  \"rationale\": \"Added KillSignature record to SubagentResult.cs (new domain type for structured kill context). Added two test doubles: KillSubagentRunner (returns watchdog-kill SubagentResult with KillSignature) and TwoPhaseKillSubagentRunner (kill on first call, scripted pass on second, for retry-succeeds scenario). Added four new tests to RelayDriverReviewPairTests.Orchestration.cs: (1) ReviewKilled_RetriesThenFlagsWithEnrichedReason \u2014 flag reason contains kill reason, lastSignal, autopsy path, and stage_escalated event published; (2) ReviewKilled_RetrySucceeds_ProceedsWithoutFlag \u2014 kill on attempt1, pass on attempt2, outcome Committed, no flagged event; (3) existing ReviewInvalid_SiblingFinishesThenFlags updated to assert exact generic reason 'Review returned an invalid result' and absence of kill text \u2014 confirms non-kill behavior unchanged; (4) VisualReviewKilled_RetriesThenFlagsWithEnrichedReason \u2014 same enriched pattern for stage 8. All 45 existing tests pass; 3 new tests fail red as expected \u2014 they will go green when the kill-aware retry logic and enriched reason are implemented in RelayDriver.ReviewPair.cs + RelayDriver.ReviewPairRetry.cs + ProcessRunners.RunAsync.cs.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented carrying the stall/kill reason into review-pair flag reasons with one escalated retry. Added `KillSignature` record to `SubagentResult` and populated it at all three watchdog-kill sites in `ProcessRunners.RunAsync.cs` (absolute ceiling, socket wedge, persistent stall). Threaded `KillSignature` through `StageRunResult` in `RelayDriver.ReviewPair.cs`. Added `BuildReviewFlagReason` helper for enriched flag reasons (e.g. `\\\"Review stall-killed (absolute_ceiling, lastSignal=cpu) after 55m 00s \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt\\\"`). Created `RelayDriver.ReviewPairRetry.cs` with `RunReviewPairStageWithRetryAsync` for one escalated retry per kill. Modified all four flag sites in `RunReviewPairAsync` to retry on kill before flagging with enriched reason, while preserving sibling-survives-failure semantics and leaving the generic reason for non-kill invalid output. Added `KillSubagentRunner` and `TwoPhaseKillSubagentRunner` test doubles. Added four new tests and updated the existing invalid test assertion. All guard constraints satisfied: ReviewPair.cs (298 lines), ReviewPairRetry.cs (82 lines), SubagentRunnerTestDoubles.cs (291 lines) \u2014 all under their respective 300-line limits. Full test suite: 3120 passed, 0 failed, 114 skipped.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "My analysis is complete. Here's my verdict.\n\n## Review Summary\n\nThe implementation correctly fulfills the core task: a `KillSignature` record is added to `SubagentResult`, populated at all three watchdog-kill sites (with reason strings matching `PublishStallKillAsync`), threaded through `StageRunResult`, and used by `BuildReviewFlagReason` to produce an enriched flag reason. The generic reason is preserved for non-kill invalid output. One escalated retry fires on kill with a `stage_escalated` event. All 48 review-pair tests pass, file-size guards hold, and the new `SubagentResult.Kill` default doesn't break existing callers.\n\nHowever, the **newly-introduced retry-success paths** have correctness regressions where the *other* sibling's red/green status is not re-evaluated after a successful retry. These paths are not covered by tests (synchronous test doubles always route to the fast-visual branch; no double-kill double exists). Since the task's target scenario is a shared-backend hang \u2014 which can affect both siblings \u2014 these aren't purely theoretical.\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"Correctness \u2014 fast-visual retry-success records a red visual sibling and commits (RelayDriver.ReviewPair.cs:87-96). When Review is red (killed) and the already-completed Visual-review (fastVisual) is ALSO red, and the Review retry succeeds (retryResult.Check != \\\"red\\\"), the code unconditionally records `fastVisual` via RecordPairStageAsync (line 90-91) and returns PairState with FlaggedOutcome=null \u2192 the task commits. RecordStageAsync does NOT flag on a red check (RelayDriver.Invocation.cs:100-115) \u2014 it just records, marks Done, and publishes stage_done. So a red Visual-review is silently committed, violating the pair's flag-on-red-visual semantics. The fast-visual Review-red branch (line 79) never inspects fastVisual.Check before the retry-success record-both path. Fix: on retry success, re-check the sibling \u2014 if green, record both and proceed; if red, flag it (sibling-survives-failure).\", \"Correctness \u2014 review-first retry-success discards the visual sibling and leaves stage 8 unsettled (RelayDriver.ReviewPair.cs:155-170). When Review is red (killed) and Visual-review was still running when Review finished, the sibling is awaited (line 150) for cost only; then if the Review retry succeeds (line 161), only Review is recorded (lines 164-166) and the function returns clean (FlaggedOutcome=null), discarding the now-completed visual result entirely. Consequences: (1) if Visual was green, a valid visual review is lost (no ledger section, no seal); (2) if Visual was red, the task commits despite a red visual; (3) stage 8's status entry stays \\\"Running\\\" forever (it was marked Running at line 35, never settled to Done/Skipped/Flagged, and stage 8 is skipped downstream via the reviewPairHandled guard at RelayDriver.cs:80) with no stage_done event. The original review-first path always flagged (settling stage 8 via FlagAsync's Running\u2192Done sweep at RelayDriver.Events.cs:108-109); the new retry-success path bypasses that. Untested because synchronous test doubles always complete visualTask before the await at line 67, routing to the fast-visual branch. Fix: on retry success, handle the awaited sibling like the normal review-green-first flow (record if green, flag if red, settle stage 8 status).\", \"Observability \u2014 boosted-frontier no-op retry loses the kill context (RelayDriver.ReviewPairRetry.cs:73-78). When no meaningful escalation is possible (boosted frontier tier: toTier==fromTier && toTurns==baseTurns), RunReviewPairStageWithRetryAsync returns a synthetic `new StageRunResult(string.Empty, \\\"red\\\", 0d, true, TimeSpan.Zero, null)` with Kill=null. The caller then does `reviewResult = retryResult` (ReviewPair.cs:98/169/208), so BuildReviewFlagReason sees Kill=null and emits the generic 'Review returned an invalid result' \u2014 dropping the kill reason/autopsy path that this task exists to surface. The early return is consistent with the no-repeat-escalation policy, but it should preserve the original KillSignature (the caller has it) rather than overwrite it with a Kill-less result. Note this matches neither the in-process runner (which returns the stallResult WITH Kill on ladder exhaustion, ProcessRunners.RunAsync.cs:191-197) nor the task's stated 'flag with enriched reason on retry failure.'\", \"Test coverage \u2014 the task's 'Tests (red first)' explicitly required a 'Control-API/state test: enriched reason visible in reviewReason,' but no such test exists. The tests assert outcome.Reason and NEEDS-REVIEW content, but not that the enriched reason reaches RelayTaskItem.ReviewReason (the /state field). The flow is shared FlagAsync plumbing already covered transitively for other reasons (RelayDriverBaselineVerifyTests.cs:155, RelayQueueControllerTests.cs:116), so behavior is likely correct, but the explicitly-requested test was omitted. Additionally, none of the four new tests exercise the retry-SUCCESS sibling re-evaluation (Issues above) \u2014 the only retry-succeeds test (TwoPhaseKillSubagentRunner) routes through the fast-visual branch where visual is green, so the both-red / review-first edge cases are untested.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 25,
+    "tool_calls_total": 24,
+    "tool_calls_succeeded": 24,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 25,
+    "total_llm_time_s": 494.078,
+    "prompt_cache": {
+      "cached_tokens": 1012608,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 30.754,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 11.085,
+      "prompt_tokens_est": 11723,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Domain/SubagentResult.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 43046
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.27,
+      "prompt_tokens_est": 21638,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 31647
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 9.673,
+      "prompt_tokens_est": 29399,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "PublishStageEscalatedAsync|PublishEscalationAsync|PublishStallKillAsync",
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 905
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 6.993,
+      "prompt_tokens_est": 29890,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Events.cs",
+            "offset": 60,
+            "limit": 120
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Escalation.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+            "offset": 40,
+            "limit": 90
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14313
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 41.657,
+      "prompt_tokens_est": 33323,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me analyze the implementation carefully.\n\n## KillSignature at the stall-kill sites\n\nIn `ProcessRunners.RunAsync.cs`:\n- Lines 163-170 (absolute ceiling): `Kill: new KillSignature(\"absolute_ceiling\", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath)` \u2713\n- Lines 172-179 (socket wedge): `Kill: new KillSignature(\"socket_wedge\", ...)` \u2713\n- Lines 191-197 (persistent stall, the else branch): `Kill: new KillSignature(\"stall\", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath)` \u2713\n\nThese match the reason strings in `PublishStallKillAsync` (lines 43-48): FiredAbsoluteCeiling \u2192 \"absolute_ceiling\", FiredSocketWedge \u2192 \"socket_wedge\", default \u2192 \"stall\". \u2713 Consistent.\n\nNow, one thing to verify: the persistent-stall branch (lines 191-197) is reached only when `TryEscalateAsync(attempt)` returns false (the ladder is exhausted). In that case, it sets a KillSignature with \"stall\" reason. But wait \u2014 is this a HardAbort? No. The `stallResult` at line 193 does NOT set `HardAbort: true`. Let me check... Looking at the original code, the persistent stall case (else branch at 191) creates a SubagentResult without HardAbort. So HardAbort defaults to false. That means in the review-pair, this \"stall\" kill (not hard abort) WOULD trigger a retry.\n\nIs that correct behavior? The task says: \"on a watchdog kill (not on invalid model output), give the review-pair stage one escalated retry (attempt2) before flagging\". So yes \u2014 all watchdog kills should be retried, including persistent stall. The distinction is KillSignature present vs absent, not HardAbort. This is consistent with the design: the runner's internal escalation is exhausted for persistent stall, but the review-pair driver does ONE more escalated retry. This seems reasonable and consistent with the stated intent.\n\nActually wait \u2014 let me reconsider. For persistent stall, the runner already escalated internally and exhausted its ladder. The review-pair then does ANOTHER escalation on top. Is that \"one bounded retry\"? Yes, exactly one. That's the intent.\n\nBut there's a subtle issue: for absolute_ceiling and socket_wedge (HardAbort=true), the runner returns immediately WITHOUT escalating (correctly, per the always-escalate policy). The review-pair then does one escalated retry. For \"stall\", the runner escalated internally until exhausted, THEN returns with Kill signature, and the review-pair does one more escalation. Both cases get one review-pair-level retry. This is consistent.\n\n## StageRunResult threading\n\n`RelayDriver.ReviewPair.cs:270-276`: When invalid, `StageRunResult` gets `Kill: result.Kill`. When valid (line 278), no Kill (defaults null). \u2713\n\n## BuildReviewFlagReason\n\nIn `RelayDriver.ReviewPairRetry.cs:18-40`:\n- If `result.Kill is null` \u2192 generic \"{stageName} returned an invalid result\" \u2713\n- Else builds \"Review stall-killed (absolute_ceiling, lastSignal=cpu) after 55m 00s \u2014 see .relay/<task>/stage7-attempt1.killed-output.txt\" \u2713\n- Uses Path.GetRelativePath with try/catch \u2713 (good defensive coding)\n\nOne concern: the elapsed time format. `mins = (int)result.Elapsed.TotalMinutes` and `secs = result.Elapsed.Seconds`. For 55 minutes, that gives \"55m 00s\". But `result.Elapsed` is the stopwatch elapsed for the KILLED attempt. After retry, `reviewResult = retryResult` (line 98/169/208), so the elapsed is the RETRY's elapsed, not the original kill's elapsed.\n\nWait \u2014 this is important. Let me trace this carefully.\n\nIn the fast-visual branch (lines 79-104):\n- Line 81: `if (reviewResult.Kill is not null)` \u2014 original killed result has Kill\n- Lines 83-86: call retry\n- Line 87: `if (retryResult.Check != \"red\")` \u2014 retry succeeded, record and return\n- Line 98: `reviewResult = retryResult;` \u2014 retry FAILED, so reviewResult is now the retry result\n\nThe retry result comes from `RunReviewPairStageWithRetryAsync` \u2192 `RunStageAsync` \u2192 returns a `StageRunResult` with the retry's Kill (if the retry was also killed) or null (if the retry failed for a different reason like invalid output).\n\nThen line 100: `var reason = BuildReviewFlagReason(\"Review\", reviewResult, rootPath);`\n\nSo if the retry was ALSO killed, `reviewResult.Kill` is the retry's kill signature (with autopsy path stage7-attempt2 maybe?). If the retry failed for a non-kill reason, `reviewResult.Kill` is null \u2192 generic reason.\n\nHmm. Is this the intended behavior? The task says: \"If the retry also fails, fall through to flag with enriched reason.\" and \"only attempt 1's kill signature is used for the enriched reason (it has the autopsy path).\"\n\nBut the implementation uses the RETRY's result (reviewResult = retryResult), not attempt 1's kill signature. So if the retry fails with a kill, it uses the retry's kill signature. If the retry fails without a kill (invalid output), it uses the generic reason \u2014 NOT the original kill's enriched reason.\n\nThis is a deviation from the plan which said \"only attempt 1's kill signature is used for the enriched reason\". But is it a BUG? Let me think about what makes sense:\n\nScenario: Attempt 1 killed (absolute_ceiling). Retry (attempt 2) runs and produces invalid JSON (no kill). Now `reviewResult = retryResult` which has Kill=null. So `BuildReviewFlagReason` returns \"Review returned an invalid result\" \u2014 the generic message. The operator loses the information that attempt 1 was killed.\n\nHmm, that's arguably a regression in observability for that specific edge case. But the test `RunTaskAsync_ReviewKilled_RetriesThenFlagsWithEnrichedReason` uses `KillSubagentRunner(7)` which returns a kill on EVERY call to stage 7 (not just the first). So the retry ALSO returns a kill, and `reviewResult.Kill` is non-null (the retry's kill), so the enriched reason is built from the retry's kill signature. The test passes because the retry is also killed.\n\nBut wait \u2014 `KillSubagentRunner` always returns a kill result for stage 7, including the retry. So in the test, the retry's autopsy path would be... Let me check. The `KillSubagentRunner` constructs `autopsyPath = Path.Combine(traceDirParent, $\"stage{killAtStage}-attempt1.killed-output.txt\")` \u2014 always \"attempt1\", regardless of which invocation. So the retry's kill signature also says \"attempt1\". The test asserts `Contains(\"stage7-attempt1.killed-output.txt\")` which passes.\n\nBut in REAL code, the retry would be attempt2, so `killedOutputPath` would be \"stage7-attempt2.killed-output.txt\". The enriched reason would reference attempt2's path, not attempt1's. That's actually fine/better \u2014 it references the most recent kill. The plan's note about \"only attempt 1's kill signature\" was a simplification.\n\nBut the real concern: if the retry fails with INVALID OUTPUT (not a kill), the reason reverts to generic. Is that tested? No. The test only covers retry-also-killed. This is a gap but not necessarily a bug \u2014 it's a design choice. The task says \"fall through to flag with enriched reason\" which implies attempt1's enriched reason should be used even if retry fails differently. \n\nActually, re-reading the task: \"If the retry also fails, fall through to flag with enriched reason.\" This strongly implies the enriched reason (from the kill) should be shown even when the retry fails. The current implementation drops the kill context if the retry fails with non-kill invalid output.\n\nLet me assess severity. This is an edge case: retry kills again (covered, works), retry produces invalid output (not covered, drops kill context). In practice, an escalated retry that was NOT killed but produced garbage is genuinely a model-output problem on the second attempt \u2014 arguably the generic \"invalid result\" is defensible there. But it loses the \"we tried after a kill\" context. I'll note this as a minor issue, not blocking.\n\nActually, let me reconsider whether this is even reachable in the test. The `RunReviewPairStageWithRetryAsync` no-repeat exhaustion check (line 74): `if (toTier == fromTier && toTurns == baseTurns)` returns a red result with no Kill. So if escalation is not possible (already at frontier with no turn boost), the retry returns a synthetic red StageRunResult with Kill=null. Then `reviewResult = retryResult` (Kill=null) \u2192 generic reason. \n\nHmm wait, but that means: if the stage is already at frontier tier and not boosted, the \"retry\" does NOTHING (returns immediately with synthetic red, no actual subagent call), and the reason becomes generic \"Review returned an invalid result\" \u2014 completely losing the kill context! \n\nLet me check: what tier is stage 7 (Review)? Let me look at RelayStages.\n\nThis is potentially significant. If Review is at frontier tier (which the evidence says it was: \"Review (stage 7, frontier tier)\"), and it's not boosted, then `NextTier(frontier) == frontier` and `TurnsForRun` with run=2 non-boosted = 2*baseTurns \u2260 baseTurns (unless... let me check TurnsForRun). Actually `TurnsForRun(baseTurns, 2, false)` likely doubles, so toTurns \u2260 baseTurns, so the no-repeat check does NOT trigger. Let me verify.\n\nLet me check StageEscalation to be sure.",
+        "next_thought_needed": true
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.989,
+      "prompt_tokens_est": 35642,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/StageEscalation.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs",
+            "limit": 60
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4870
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 7.523,
+      "prompt_tokens_est": 37067,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "NextTier|TurnsForRun|class StageEscalation|static.*Scale|RunMultiplier",
+        "path": "src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 1349
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 9.761,
+      "prompt_tokens_est": 37559,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/StageEscalation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.176,
+      "result_length": 41
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 6.457,
+      "prompt_tokens_est": 37609,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageEscalation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5009
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 83.605,
+      "prompt_tokens_est": 39082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "next_thought_needed": true,
+        "thought": "Now I can analyze the no-repeat exhaustion path in `RunReviewPairStageWithRetryAsync` (ReviewPairRetry.cs lines 73-78):\n\n```csharp\nvar fromTier = stage.Tier;  // \"frontier\" for stage 7\nvar toTier = StageEscalation.NextTier(fromTier);  // NextTier(\"frontier\") = \"frontier\"\nvar toTurns = StageEscalation.TurnsForRun(baseTurns, run, boosted);  // run=2\n\nif (toTier == fromTier && toTurns == baseTurns)  // <-- no-repeat check\n{\n    return new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null);  // Kill=null!\n}\n```\n\nFor stage 7 (Review, tier=\"frontier\"), NON-boosted case:\n- fromTier = \"frontier\"\n- toTier = NextTier(\"frontier\") = \"frontier\" (capped)\n- toTurns = TurnsForRun(baseTurns, 2, false) = Scale(baseTurns, RunMultiplier(2, false)) = Scale(baseTurns, 2) = 2*baseTurns\n- baseTurns (the run-1 base) = config.MaxTurns (non-boosted)\n- Check: toTier == fromTier (true) AND toTurns == baseTurns? \u2192 \"frontier\"==\"frontier\" (true) AND 2*baseTurns == baseTurns (false unless baseTurns==0)\n- So the check is FALSE (because turns differ). The retry PROCEEDS. Good \u2014 no false exhaustion.\n\nFor stage 7, BOOSTED case (flat 10\u00d7 mode):\n- boosted = true\n- toTurns = TurnsForRun(baseTurns, 2, true) = Scale(baseTurns, RunMultiplier(2, true)) = Scale(baseTurns, 1) = baseTurns\n- Check: toTier == fromTier (true) AND toTurns == baseTurns (true) \u2192 EXHAUSTION TRIGGERED\n- Returns synthetic red StageRunResult with Kill=null, Elapsed=Zero\n\nSo in the boosted frontier case, the retry does NOTHING and returns a red result with Kill=null. Then back in the caller (e.g. line 98 `reviewResult = retryResult`), BuildReviewFlagReason sees Kill=null \u2192 returns generic \"Review returned an invalid result\". The kill context is LOST.\n\nIs this a real concern? The boost path (`BoostTurnsTaskIds`) is an opt-in per-task-id config. The evidence task (hoist-pipeline-test-shared-setup) was frontier-tier. Was it boosted? Unknown. But the 10\u00d7 boost is a real, documented mode (\"flat 10\u00d7 mode\"). If a boosted frontier-tier review task gets killed, the retry is a no-op and the reason silently reverts to generic \u2014 exactly the bug this task is meant to fix (operator can't distinguish infra kill from garbage).\n\nBUT \u2014 this matches the existing `make-stage-retries-always-escalate` semantics: \"a boosted frontier-base stage therefore gets exactly one attempt\" (RunAsync.cs lines 56-61 comment). The no-repeat policy deliberately avoids re-running identical config. So returning early is CONSISTENT with the established policy. The issue is just that the flag reason loses the kill context in that specific case.\n\nHmm, but actually \u2014 even in the existing in-process runner (ProcessRunners.RunAsync.cs lines 72-74), when escalation is exhausted it returns the stallResult WITH the Kill signature (the else branch at 191-197 sets Kill). So the in-process path preserves the kill signature on exhaustion. The review-pair retry's synthetic return (line 77) does NOT preserve it. That's an inconsistency.\n\nLet me re-examine: in the boosted-frontier case, `RunReviewPairStageWithRetryAsync` returns `new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null)` \u2014 note `null` is the Kill (7th positional arg is TestDurationSeconds, Kill is the 8th named/default). Wait, let me check the record signature:\n\n`private sealed record StageRunResult(string Body, string? Check, double CostUsd, bool CostUnknown, TimeSpan Elapsed, double? TestDurationSeconds, KillSignature? Kill = null);`\n\nLine 77: `new StageRunResult(string.Empty, \"red\", 0d, true, TimeSpan.Zero, null)` \u2014 positional args: Body=\"\", Check=\"red\", CostUsd=0, CostUnknown=true, Elapsed=Zero, TestDurationSeconds=null, Kill=null (default). So Kill IS null here. Confirmed.\n\nSo in the no-escalation-possible case, the retry returns a Kill-less red result, and the flag reason becomes generic. The original kill context (which the caller HAD in `reviewResult.Kill` before calling retry) is overwritten at line 98 `reviewResult = retryResult`.\n\nThis is a real but narrow observability gap. Let me assess: is it a blocking issue? The task's core requirement is that kill context flows into the flag reason. The primary path (non-boosted frontier, or any tier below frontier) works correctly. The boosted-frontier edge case loses context. \n\nGiven the constraints say \"consistent with make-stage-retries-always-escalate semantics\", and the no-repeat policy is intentional, the early-return itself is correct. The only flaw is that the early-return discards the kill signature that the caller already had. A cleaner implementation would have the caller keep the original kill signature when the retry is exhausted/no-op. But the current code overwrites it.\n\nI'll classify this as a minor issue (changes-suggested, not blocking) because:\n1. It only affects the boosted-frontier edge case.\n2. The tests all pass (none exercise boosted mode).\n3. The primary intent is fulfilled for the common case.\n\nActually, let me reconsider. Let me check: does the test `RunTaskAsync_ReviewKilled_RetriesThenFlagsWithEnrichedReason` actually exercise a NON-boosted config? The default test config from `repo.WriteConfig(\"dotnet test\", [])` \u2014 let me check what BoostTurnsTaskIds defaults to. If it's null/empty, then boosted=false, the retry proceeds, KillSubagentRunner returns a kill on the retry too, so reviewResult.Kill is non-null (retry's kill), enriched reason is built. Test passes. \u2713\n\nSo the tests are valid and green for the non-boosted case. The boosted-frontier gap is untested but real. I'll note it.\n\nNow let me check other aspects:\n\n## Sibling-survives-failure semantics\n\nThe task says preserve sibling-survives-failure semantics (lines 104-116 originally). Let me verify the review-first branch (lines 146-176):\n\n- Line 146: review red\n- Lines 148-153: await visual sibling (sibling-survives-failure) \u2014 but ONLY if visualTask is not null. Adds sibling cost.\n- Lines 155-170: if reviewResult.Kill, do retry. If retry succeeds, record review only and return. If retry fails, reviewResult = retryResult, fall through to flag.\n\nWait \u2014 there's a subtle issue here. In the review-first branch, the sibling is awaited FIRST (lines 148-153), THEN the retry happens (lines 155-170). So the retry happens AFTER the visual sibling completes. That means the retry is serial, after visual. Is that correct?\n\nThe original semantics: review red \u2192 await sibling \u2192 flag. Now: review red \u2192 await sibling \u2192 retry review \u2192 (success: record review; fail: flag). The sibling result is discarded on flag (matching original semantics). On retry success, only review is recorded (visual was already awaited but NOT recorded \u2014 line 163-167 records only review). \n\nHmm, is that right? If the retry succeeds, should visual also be recorded? In the original happy path (review green first), visual is awaited and recorded (lines 183-222). Here, on retry success, visual is NOT recorded \u2014 only review. So a successful review retry in the review-first branch discards the visual result.\n\nWait, let me re-read lines 162-167:\n```\nif (retryResult.Check != \"red\")\n{\n    // Retry succeeded \u2014 record review only; visual was already awaited.\n    (previousSeal, taskHash) = await RecordPairStageAsync(... reviewStage, retryResult ...);\n    return new PairState(..., null, ReviewFamilyIsClean(retryResult.Body, null));\n}\n```\n\nSo visual is discarded even on retry success. Is this a regression? In the original code, when review is red, visual is awaited (sibling-survives-failure) but NOT recorded \u2014 it's discarded, and the task flags. So originally, a red review ALWAYS meant visual was discarded + flag. \n\nNow with retry: if review retry SUCCEEDS, we record review but STILL discard visual and return with ReviewFamilyIsClean(retryResult.Body, null). The task does NOT flag (FlaggedOutcome=null). So the task proceeds as if review passed but visual was skipped. \n\nIs discarding a valid visual result correct here? The visual sibling completed (maybe successfully). By discarding it, we lose the visual review. But the task continues to commit. Hmm. This could mean a task commits without recording a visual review that actually ran and passed.\n\nActually, let me reconsider. The \"sibling-survives-failure\" semantics: when one sibling fails, the OTHER sibling's result is allowed to complete (so its cost is captured, its stage_done fires) but it's NOT recorded into the ledger because the pair is flagged. The point is to not waste/cancel the sibling, not to record it.\n\nBut now with retry success: review passes (on retry), so the pair is NOT flagged. Should visual be recorded? In the normal flow where review passes first, visual IS recorded. Here, review passed (on retry) AFTER visual already completed. Logically, both passed, so both should be recorded. But the code discards visual.\n\nThis is a behavioral question. Let me think about whether it's a bug or acceptable. The visual sibling was awaited at line 150 (`siblingResult = await visualTask`), but `siblingResult` is a local that's never used except for cost accounting (line 151-152). On retry success, visual is not recorded.\n\nHmm, but actually \u2014 was visual even launched? In the review-first branch, `visualTask` is set only if triage needed visual AND visionConfigured (lines 55-64). If visual wasn't needed, visualTask is null, and lines 148-153 skip. Then retry succeeds, record review only, ReviewFamilyIsClean(retryResult.Body, null) \u2014 null visual is fine. That's the triage-skip case, correct.\n\nIf visual WAS launched and completed: on review retry success, visual is discarded. The task commits with only review recorded. This means the ledger is missing the visual-review stage entry, and stage 8 status stays \"Running\" (it was marked Running at line 35, never settled to Done/Skipped/Flagged).\n\nWait, that's a real issue. If visual completed but isn't recorded, stage 8's status entry is left as \"Running\" \u2014 it never gets a stage_done. Let me verify: `MarkStatus(statusEntries, 8, \"Running\")` at line 35. If visual isn't recorded (no RecordPairStageAsync for visualStage) and isn't flagged, the status for stage 8 stays \"Running\". \n\nActually, hold on. Let me reconsider the flow. In the review-first branch (line 146), we reach here because review finished first (visualTask is NOT completed yet, OR visualTask is null). Lines 148-153 await visual. So by the time we reach the retry (line 155), visual has completed. \n\nIf review retry succeeds (line 161), we record review only (line 164-166) and return PairState with FlaggedOutcome=null. The caller (RunReviewPairAsync's caller) sees no flagged outcome \u2192 proceeds to commit. But stage 8 was never recorded or marked done.\n\nHmm, but wait \u2014 does the visual sibling's RunStageAsync publish its own stage_done? Let me check. RunStageAsync (line 259) just runs the subagent and returns StageRunResult \u2014 it does NOT publish stage_done. The stage_done is published by RecordStageAsync/RecordPairStageAsync. So if visual isn't recorded, no stage_done for stage 8.\n\nSo in this edge case (review killed \u2192 retry succeeds, visual was launched and completed), stage 8 is left \"Running\" with no stage_done, and the ledger lacks stage 8. The task commits. This is a state inconsistency.\n\nBUT \u2014 is this edge case reachable in tests? The test `RunTaskAsync_ReviewKilled_RetrySucceeds_ProceedsWithoutFlag` uses `TwoPhaseKillSubagentRunner(7)`. Let me trace: review (stage 7) is launched at line 39. Visual is launched only if triage needs it. Default triage (stage 0) from ScriptedSubagentRunner returns `{\"visualReview\":\"needed\",...}` (line 37). And visionConfigured \u2014 the loader injects a default \"vision\" tier (per the TriageDecline test comment at line 105-107). So visual IS launched.\n\nNow, timing: reviewTask and visualTask run concurrently. TwoPhaseKillSubagentRunner kills stage 7 on first call. Visual (stage 8) returns pass immediately (scripted). So visualTask completes fast, reviewTask returns killed result.\n\nWhich finishes first? Both are synchronous scripted returns (Task.FromResult). The review is launched first (line 39), visual launched after triage (line 63). reviewTask is awaited at line 67. Since both are completed tasks, `await reviewTask` returns the killed result. visualTask is also already completed.\n\nSo at line 73 `if (visualTask is { IsCompleted: true })` \u2014 is visualTask completed? visualTask was created at line 63 via `RunStageAsync(visualInvocation, ...)`. RunStageAsync awaits the subagent runner which returns Task.FromResult (synchronous). So yes, visualTask is likely completed. So we'd enter the FAST-VISUAL branch (line 73), NOT the review-first branch (line 146)!\n\nLet me re-trace for TwoPhaseKillSubagentRunner(7):\n- reviewTask launched (line 39) \u2192 stage 7, first call \u2192 KILL result (count=1)\n- triage runs (line 43-49) \u2192 stage 0 \u2192 needed\n- visual launched (line 63) \u2192 stage 8 \u2192 pass (completed)\n- line 67: reviewResult = await reviewTask \u2192 KILL (Check=\"red\", Kill=non-null)\n- line 73: visualTask.IsCompleted? The visual RunStageAsync calls _dependencies.SubagentRunner.RunAsync which is scripted (returns Task.FromResult). But RunStageAsync also calls Stopwatch, EstimateStageCostCumulative... these are synchronous. So visualTask should be completed. \u2192 enters fast-visual branch.\n\nIn fast-visual branch (line 73-141):\n- fastVisual = await visualTask \u2192 pass (Check=null/green)\n- line 79: reviewResult.Check == \"red\" \u2192 yes\n- line 81: reviewResult.Kill is not null \u2192 yes\n- lines 83-86: RunReviewPairStageWithRetryAsync for reviewStage\n  - This calls RunStageAsync again for stage 7 \u2192 TwoPhaseKillSubagentRunner second call \u2192 count=2 \u2192 delegates to inner \u2192 pass result\n  - retryResult.Check != \"red\" \u2192 true (pass)\n  - lines 90-96: record visual (fastVisual) then review (retryResult), return PairState(null, clean)\n- So outcome = Committed, both recorded. \u2713 Test passes.\n\nGood \u2014 so the TwoPhaseKill test exercises the fast-visual branch, not review-first. The fast-visual branch records BOTH on retry success (lines 90-95). That's correct.\n\nNow the review-first branch (line 146) retry-success path discards visual. When is the review-first branch reached with a kill? Only when visual is NOT yet completed when review finishes. With scripted synchronous runners, visual always completes synchronously, so review-first is hard to reach in tests. But in REAL async execution, review could finish (and be killed) before visual completes.\n\nIn real execution: review killed (55 min). Visual might still be running. review-first branch: await visual (line 150) \u2014 waits for visual to complete. Then retry review (line 157). If retry succeeds, record review only, discard visual. Stage 8 left Running.\n\nSo in real execution this IS reachable and IS a bug: a successfully-completed visual review gets discarded when the review retry succeeds in the review-first path. The task commits without recording stage 8, leaving stage 8 status as \"Running\".\n\nHmm, but wait. Let me reconsider whether discarding visual is intentional/acceptable. The comment at line 163 says \"Retry succeeded \u2014 record review only; visual was already awaited.\" The author seems aware visual was awaited. But \"already awaited\" doesn't mean \"should be discarded\". \n\nActually, let me reconsider the ORIGINAL semantics more carefully. The sibling-survives-failure: when review is RED, visual is awaited (to complete + capture cost) but NOT recorded, and the task flags. The visual result is discarded because the pair failed. This makes sense for flagging.\n\nBut with retry success, the pair did NOT fail \u2014 review passed on retry. So the \"discard visual because pair failed\" rationale no longer applies. Visual should be recorded (if it passed) or handled (if it's red). The current code unconditionally discards visual and returns clean. This is arguably wrong.\n\nHowever \u2014 is this strictly within this task's scope? The task says \"Preserve the sibling-survives-failure semantics of the pair.\" The original semantics: on review failure, await sibling then flag (sibling not recorded). The retry changes this: on review failure, await sibling, retry, and if retry succeeds... the original code never had a \"retry succeeds\" path, so there's no established semantics to preserve. The implementation chose to discard visual and proceed clean.\n\nI think this is a legitimate concern worth flagging: in the review-first branch, a successful review retry discards a possibly-valid visual result and leaves stage 8 unrecorded/\"Running\". But let me gauge severity. It requires: review killed, visual launched but not yet complete when review dies, review retry succeeds. That's a plausible real scenario (the evidence task had review killed at 55min; visual could easily still be running). \n\nActually wait \u2014 would visual still be running after 55 minutes? Visual-review is also an LLM stage. If review hung for 55 min, visual might have completed long ago or also be running. If visual completed, visualTask.IsCompleted would be true \u2192 fast-visual branch, not review-first. The review-first branch is reached when visual is NOT completed. So visual is still running when review dies. Then line 150 awaits visual (could take a while). Then retry review. If retry succeeds, discard visual (which just completed). That discards a freshly-completed visual review. Bug.\n\nBut actually, if visual was still running when review died at 55min, and we await visual (line 150), visual might ALSO get killed or complete. If visual completes successfully, discarding it loses it. If visual is red, discarding is fine (pair would flag anyway). The code doesn't check visual's result in the retry-success path \u2014 it just discards.\n\nOK here's my assessment: this is a real behavioral issue in the review-first retry-success path, but it's an edge case within an edge case (review-first + kill + retry success + visual was running). The fast-visual path (the one tested) handles it correctly by recording both. Given the tests pass and the primary functionality works, I'll flag this as a moderate issue but likely non-blocking. Let me verify it's actually reachable and not somehow guarded.\n\nActually, let me reconsider once more. I want to check: in the review-first branch, after awaiting the sibling (line 150), is `visualTask` now completed? Yes. But the code doesn't re-check `visualTask.IsCompleted` to route to fast-visual. It stays in review-first. So the discarding happens.\n\nLet me also double check: does returning PairState with FlaggedOutcome=null and ReviewFamilyIsClean=true actually cause a commit without stage 8? The caller of RunReviewPairAsync... let me check what consumes PairState.\n\nLet me look at the caller to confirm stage 8 status handling.\n\nAlso, I realize I should check: the task explicitly lists \"attempt2 success proceeds normally without a flag\" as a test requirement, and that test (TwoPhaseKill) passes via the fast-visual branch. The review-first retry-success path is untested. So the gap is real but untested.\n\nLet me verify the overall test suite passes and check the caller of RunReviewPairAsync. Let me also verify there are no compile issues or other consumers of SubagentResult that break due to the new parameter.",
+        "thought_number": 2,
+        "total_thoughts": 4
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.354,
+      "prompt_tokens_est": 43828,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core",
+        "pattern": "RunReviewPairAsync|ReviewFamilyClean|PairState|new SubagentResult"
+      },
+      "succeeded": true,
+      "duration_s": 0.033,
+      "result_length": 3234
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 7.323,
+      "prompt_tokens_est": 44666,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.cs",
+            "offset": 75,
+            "limit": 50
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.CommandResolution.cs",
+            "offset": 15,
+            "limit": 30
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5315
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 17.698,
+      "prompt_tokens_est": 45899,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "ls tests/VisualRelay.Tests/*.csproj 2>/dev/null; head -5 tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 140
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 7.381,
+      "prompt_tokens_est": 46619,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/RelayDriverReviewPairTests*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.174,
+      "result_length": 190
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 6.157,
+      "prompt_tokens_est": 46728,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverReviewPairTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8543
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 7.282,
+      "prompt_tokens_est": 48959,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~RelayDriverReviewPairTests\" --no-build 2>&1 | tail -30 || dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~RelayDriverReviewPairTests\" 2>&1 | tail -40",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 29.831,
+      "result_length": 312
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 48.307,
+      "prompt_tokens_est": 49181,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "next_thought_needed": true,
+        "thought": "Stage 8 (Visual-review) is tier \"vision\". In RunReviewPairStageWithRetryAsync:\n- fromTier = \"vision\"\n- toTier = NextTier(\"vision\") \u2192 switch: \"cheap\" => \"balanced\", _ => \"frontier\". So \"vision\" \u2192 \"frontier\".\n- toTurns = TurnsForRun(baseTurns, 2, boosted). For non-boosted: 2*baseTurns.\n- No-repeat check: toTier(\"frontier\") == fromTier(\"vision\")? NO. So check is false \u2192 retry proceeds.\n\nSo visual-review (vision tier) always escalates to frontier. Good, retry proceeds. The VisualReviewKilled test uses KillSubagentRunner(8) which kills on every call, so retry also killed \u2192 enriched reason with stage8. Test passes (confirmed in the run above).\n\nNow let me reconsider the boosted-frontier no-op concern for stage 7. In the test, config is default (no boost). So boosted=false, retry proceeds. Fine for tests.\n\nNow, the key remaining question: is the review-first retry-success-discards-visual issue real and worth flagging? Let me re-examine the test that's supposed to cover \"attempt2 success proceeds normally without a flag\" \u2014 it's the TwoPhaseKill test, which goes through the FAST-VISUAL branch (records both). The review-first retry-success path (line 162-167, discards visual) is NOT covered by any test.\n\nLet me confirm: is the review-first branch even reachable in the test suite? With scripted synchronous runners, visualTask always completes synchronously, so `visualTask is { IsCompleted: true }` at line 73 is true \u2192 fast-visual branch. The review-first branch (line 146+) requires visualTask to NOT be completed when review finishes. That can't happen with synchronous test doubles. So the review-first retry path is entirely untested.\n\nThis is a coverage gap, but more importantly, the review-first retry-success path has a real behavior issue: it discards the visual sibling result and leaves stage 8 unrecorded. However, I need to be careful about severity. Let me think about whether this is actually wrong vs. acceptable.\n\nOriginal review-first behavior (no retry): review red \u2192 await visual (don't record) \u2192 flag. Visual discarded, task flagged. Stage 8 status: marked Flagged via FlagAsync? FlagAsync marks the FLAGGED stage (stage 7) as Flagged, and marks all \"Running\" stages as \"Done\" (line 108-109). So stage 8 (Running) \u2192 Done. Then stage 7 \u2192 Flagged. So stage 8 ends as \"Done\" (not recorded in ledger, but status settled). OK.\n\nNew review-first retry-success: review red \u2192 await visual \u2192 retry review \u2192 success \u2192 record review only \u2192 return clean (no flag). Stage 8 status: still \"Running\" (never marked Done/Flagged, never recorded). The task commits. So stage 8 is left \"Running\" in status.json with no stage_done event and no ledger entry. That's a real state inconsistency \u2014 an operator looking at /state would see stage 8 perpetually \"Running\" for a committed task.\n\nWait, but does the commit path or any later code settle stage 8? Let me check. After RunReviewPairAsync returns (no flag), the driver continues the stage loop. Stage 8 is skipped (line 80: `if (stage.Number == 8 && reviewPairHandled) continue;`). So stage 8 is never processed again. Its status stays \"Running\". The ledger never gets stage 8. \n\nHmm, but actually \u2014 was stage 8's visual result even valid? In the review-first path, visual was awaited (line 150). If visual passed (green), it should be recorded. If visual was red, the pair should flag. The current code ignores visual's check entirely in the retry-success path. So:\n- If visual was green: discarded, stage 8 left Running. BUG (lost valid review + state inconsistency).\n- If visual was red: discarded, task commits anyway. BUG (should have flagged on red visual).\n\nBoth are wrong. The retry-success path should check visual's result: if green, record both; if red, flag visual.\n\nActually, wait. Let me reconsider. Let me re-read the flow. After awaiting the sibling at line 150 (`siblingResult = await visualTask`), the code does NOT use siblingResult for anything except cost. It then does the review retry. So yes, visual's result is ignored.\n\nBut hold on \u2014 is this path NEW behavior introduced by this task, or pre-existing? The retry-success path (lines 162-167) is entirely new (this task added it). The original code at this point was just: await sibling \u2192 flag. So this task INTRODUCED the \"retry succeeds \u2192 discard visual \u2192 return clean\" behavior. The original never returned clean from a red review; it always flagged.\n\nSo this task introduced a new code path (review-first retry success) that discards visual and can leave stage 8 Running / commit despite red visual. This is a regression in the review-first branch.\n\nHowever \u2014 let me reconsider the practical reachability. In the review-first branch, visual was NOT completed when review finished (that's why we're in review-first, not fast-visual). After awaiting visual (line 150), visual completes. For the retry to then succeed, the review retry must pass. \n\nThe concern about \"red visual commits anyway\" \u2014 if visual is red, siblingResult.Check == \"red\". But the code doesn't check. So a red visual + successful review retry \u2192 commits. That violates the pair semantics (red visual should flag).\n\nThis is a legitimate issue. But let me gauge: is it blocking? The task constraints say \"Preserve the sibling-survives-failure semantics of the pair.\" The introduced path does NOT properly handle the visual sibling on retry success. \n\nBut also \u2014 I should consider: maybe the intent is that on retry success, we treat it like \"review passed first\" and then visual should be handled like the normal review-green-first flow (lines 178-222: record review, await visual, check visual red \u2192 flag, else record). The retry-success path short-circuits this and just returns clean without checking visual.\n\nI think this is a real issue worth flagging as \"changes\" \u2014 but let me weigh whether it's severe enough to block. Given:\n1. It's an edge case (review-first + kill + retry success).\n2. It requires real async timing (not reproducible in current tests).\n3. The fast-visual path (tested) is correct.\n4. But it CAN cause a committed task with a red visual review (correctness bug) or a stuck \"Running\" stage 8 (state bug).\n\nThe \"red visual commits anyway\" is a correctness issue that violates the pair's flag-on-red semantics. I'll flag it.\n\nActually, let me reconsider even more carefully. Let me re-examine: in the review-first branch, we await the sibling. But does the sibling's stage_done get published? The sibling ran via RunStageAsync (line 63) which does NOT publish stage_done. stage_done is only published via RecordStageAsync. So an unrecorded visual has no stage_done. In the original review-first-flag path, FlagAsync marks all Running \u2192 Done (line 108-109), so stage 8 gets \"Done\" status but no stage_done event and no ledger. In the new retry-success path, nothing marks stage 8. So stage 8 stuck at Running.\n\nOK. Let me also sanity-check the fast-visual branch's retry-success for the red-other-sibling case. Fast-visual branch line 79: review red, visual (fastVisual) green. Retry review succeeds \u2192 record both (lines 90-95). But what if fastVisual was RED? Line 79 is `if (reviewResult.Check == \"red\")` \u2014 if review is red, we handle review first (retry or flag). We only reach line 105 `if (fastVisual.Check == \"red\")` if review is NOT red. So in fast-visual, if review is red AND visual is red, we handle review (retry/flag) and never check visual. If review retry succeeds, we record both (line 90-95) \u2014 including a RED fastVisual! \n\nWait, let me re-read. Fast-visual branch:\n- Line 79: `if (reviewResult.Check == \"red\")` \u2192 review is red\n  - Line 81: if reviewResult.Kill \u2192 retry\n    - Line 87: if retry succeeded (Check != \"red\") \u2192 record visual (fastVisual) then review (retryResult), return clean (line 90-96)\n    \nBut fastVisual could be RED! If both review and visual are red (both killed), and review retry succeeds, line 90 records fastVisual (red) via RecordPairStageAsync. RecordPairStageAsync \u2192 RecordStageAsync with runResult.Check = \"red\". Does RecordStageAsync handle a red check? Let me check \u2014 it probably records it as-is. Then the task returns clean (FlaggedOutcome=null) and commits, despite visual being red!\n\nHmm wait, but in the fast-visual branch, can BOTH be red? fastVisual is checked at line 105 `if (fastVisual.Check == \"red\")` but that's only reached if review is NOT red (line 79 false). So if review is red, we never check fastVisual. If review retry succeeds, we record fastVisual regardless of its check. If fastVisual is red, we record a red visual and commit.\n\nBut wait \u2014 is this scenario reachable? Both review and visual killed, review retry succeeds. In the test, KillSubagentRunner(7) only kills stage 7; visual (stage 8) passes. So fastVisual is green. Not tested for both-red. But in reality, both could be killed (same hung backend). Then review retry succeeds (backend recovers), visual was killed (red). The code records a red visual and commits. That's a correctness bug \u2014 a red visual review should flag.\n\nHold on, let me check RecordStageAsync / RecordPairStageAsync behavior for red check. Does it flag? Let me look.\n\nActually, this is the crux. Let me check whether recording a red result flags or just records. Let me read RecordStageAsync.\n\nActually, the existing happy-path tests record green results. The fast-visual \"record both\" on retry-success assumes both are green. But the code doesn't verify fastVisual is green before recording. This was pre-existing in the sense that... no, the \"record both on retry success\" is NEW (this task). \n\nLet me check: in the ORIGINAL fast-visual code (before this task), when was \"record both\" reached? Lines 132-140 (the fall-through after both red-checks fail) records both \u2014 but only when NEITHER is red (both green). So originally, \"record both\" required both green. The new retry-success path (lines 90-95) records both WITHOUT checking fastVisual's check. So if fastVisual is red, it records a red visual.\n\nHmm, but actually \u2014 if review is red and fastVisual is red, the original code: line 79 (review red) \u2192 flag review (line 100-103), return. It never records visual. So originally, red review always flagged (discarding visual). The new retry path can bypass this.\n\nOK, I think there are correctness concerns in the retry-success paths where the OTHER sibling might be red but gets recorded/committed. Let me verify by checking RecordStageAsync's handling of a red check, to see if recording red somehow flags.\n\nLet me read RecordStageAsync.",
+        "thought_number": 3,
+        "total_thoughts": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 6.685,
+      "prompt_tokens_est": 51843,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core",
+        "pattern": "private.*Task.*RecordStageAsync|RecordStageAsync\\("
+      },
+      "succeeded": true,
+      "duration_s": 0.034,
+      "result_length": 1497
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 6.602,
+      "prompt_tokens_est": 52266,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Invocation.cs",
+        "offset": 76,
+        "limit": 90
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2511
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 55.823,
+      "prompt_tokens_est": 52886,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "next_thought_needed": true,
+        "thought": "`RecordStageAsync` records whatever check is passed \u2014 it does NOT flag on red. It just appends to ledger, writes seals, marks status Done, publishes stage_done. So recording a red visual would mark stage 8 as \"Done\" with a red check and publish stage_done, but NOT flag. The task would commit with a red visual review recorded.\n\nSo my concern is confirmed: in the fast-visual retry-success path (lines 90-95), if `fastVisual` is red (Check==\"red\"), it gets recorded via RecordPairStageAsync \u2192 RecordStageAsync with check=\"red\", and the task returns clean (FlaggedOutcome=null) \u2192 commits. A red visual review is silently committed.\n\nBUT \u2014 wait. Let me reconsider the flow guard. In the fast-visual branch:\n- Line 79: `if (reviewResult.Check == \"red\")` \u2014 review is red.\n- We enter the review-red handling. We do NOT check fastVisual here.\n- If review has Kill \u2192 retry. If retry succeeds \u2192 record BOTH (line 90-95) \u2192 return clean.\n\nSo if BOTH review and visual are red (review killed, visual killed or invalid), and review retry succeeds, visual (red) is recorded and the task commits. The visual red is never checked.\n\nIn the ORIGINAL code (no retry), line 79 review red \u2192 flag review \u2192 return. Visual never checked or recorded (discarded). So originally, a red review ALWAYS flagged regardless of visual. The retry changes this: a red review with a successful retry no longer flags, but also doesn't re-check visual.\n\nIs \"both red\" realistic? If the LLM backend hangs, both review and visual could be killed. If the backend recovers for the retry, review retry succeeds. Visual was killed (red). The task commits with a red visual. That's a real correctness regression \u2014 though it requires both to fail.\n\nHmm, but actually \u2014 in the fast-visual branch, fastVisual already completed (IsCompleted=true). If fastVisual was killed, its Kill is set. But we're in the review-red branch, so we handle review first. We never look at fastVisual.Kill or fastVisual.Check. \n\nActually, let me reconsider whether this is in-scope / a fair criticism. The task says: \"Preserve the sibling-survives-failure semantics of the pair.\" The sibling-survives-failure semantics is about: when one sibling fails, let the other finish (don't cancel), then flag. It does NOT say \"if the failed sibling retries successfully, ignore the other sibling's failure.\" \n\nThe correct behavior on review-retry-success would be: now review is green, so re-evaluate: if visual (already completed) is green \u2192 record both, proceed. If visual is red \u2192 flag visual (sibling-survives-failure). The current code skips this re-evaluation.\n\nSo this IS a real correctness gap. But how severe? It requires both siblings to be red, with review retry succeeding. Narrow but possible (shared backend failure is the exact scenario this task is about \u2014 hung HTTP calls to litellm proxy would affect both review and visual).\n\nGiven the task's evidence is literally about a shared backend hang, \"both killed\" is plausible. And the retry recovering one but not the other is plausible. So this isn't purely theoretical.\n\nLet me now also double check: is there a guard I'm missing? Let me re-read lines 87-96 carefully:\n\n```\nif (retryResult.Check != \"red\")\n{\n    // Retry succeeded \u2014 record both stages normally.\n    (previousSeal, taskHash) = await RecordPairStageAsync(... visualStage, fastVisual ...);\n    (previousSeal, taskHash) = await RecordPairStageAsync(... reviewStage, retryResult ...);\n    return new PairState(..., null, ReviewFamilyIsClean(retryResult.Body, fastVisual.Body));\n}\n```\n\nReviewFamilyIsClean(retryResult.Body, fastVisual.Body) \u2014 this checks if both bodies indicate \"pass\" verdicts. If fastVisual is red (killed, empty body), ReviewFamilyIsClean would return false. But the PairState returns FlaggedOutcome=null (clean, no flag). So ReviewFamilyClean=false but no flag. The caller (RelayDriver.cs line 95) sets reviewFamilyClean=false \u2192 Fix (stage 9) would run (not skipped). But the task still commits (no flag). So a red visual \u2192 Fix runs, but the red visual itself isn't flagged. That's inconsistent.\n\nActually, ReviewFamilyIsClean with a red/killed visual body (empty string) \u2192 would return false (not clean). So reviewFamilyClean=false. But the task commits. So the \"clean\" flag is wrong (says not clean) but no flag is raised. Confusing but the main issue is the missing flag for red visual.\n\nOK, I'm now fairly confident there are real correctness issues in the retry-success paths where the other sibling's red status is not re-evaluated. Let me consolidate:\n\n### Issue 1 (moderate): Fast-visual retry-success records a possibly-red visual sibling without re-checking.\nLines 90-95: when review retry succeeds, `fastVisual` is recorded unconditionally. If `fastVisual.Check == \"red\"` (visual was killed/invalid), a red visual review is recorded and the task commits without flagging \u2014 violating the pair's flag-on-red-visual semantics.\n\n### Issue 2 (moderate): Review-first retry-success discards the visual sibling entirely.\nLines 162-167: when review retry succeeds in the review-first path, visual is discarded (not recorded), stage 8 is left \"Running\" (no stage_done, no ledger entry), and the task commits \u2014 even if visual was red. Stage 8 state inconsistency + possible red-visual commit.\n\n### Issue 3 (minor): Boosted-frontier no-op retry loses kill context.\nLines 73-78: when escalation is impossible (boosted frontier tier), the retry returns a synthetic red result with Kill=null, and the caller overwrites the original kill signature \u2192 flag reason reverts to generic \"Review returned an invalid result\", losing the kill context the task is meant to preserve.\n\nNow, are issues 1 and 2 severe enough to be blocking? They're correctness issues (committing a red review), but in narrow edge cases (both siblings fail). The primary tested paths work. \n\nHmm, let me reconsider issue 1 once more. Actually \u2014 is \"both red\" even possible in the fast-visual path given the flow? Fast-visual means visual finished BEFORE review. If visual was killed (red), it \"finished\" (the kill is a terminal result). Review also killed (red). Both red, visual finished first \u2192 fast-visual branch, review-red sub-branch. Yes, reachable.\n\nBut actually, wait. Let me reconsider: would visual being killed count as \"completed\" for IsCompleted? visualTask = RunStageAsync(visualInvocation, ...). RunStageAsync awaits the subagent runner. For KillSubagentRunner(8), stage 8 returns a kill result (Task.FromResult). So RunStageAsync completes with a red StageRunResult. visualTask.IsCompleted = true. So yes, fast-visual branch reached. And review (stage 7) with KillSubagentRunner(7)... wait, KillSubagentRunner takes ONE stage number. KillSubagentRunner(8) kills stage 8 only; stage 7 passes. So in the VisualReviewKilled test, review passes, visual killed \u2192 review-first or fast-visual with visual red.\n\nLet me trace VisualReviewKilled test (KillSubagentRunner(8)):\n- review (stage 7) \u2192 pass (green)\n- visual (stage 8) \u2192 kill (red)\n- reviewTask awaited (line 67) \u2192 green\n- visualTask: was it launched? triage needed (default), vision configured \u2192 yes. visualTask = RunStageAsync(stage 8) \u2192 kill (red), completed.\n- line 73: visualTask.IsCompleted? yes \u2192 fast-visual branch\n- fastVisual = kill (red)\n- line 79: reviewResult.Check == \"red\"? NO (review green). Skip.\n- line 105: fastVisual.Check == \"red\"? YES.\n  - line 107: fastVisual.Kill is not null \u2192 retry visual\n    - RunReviewPairStageWithRetryAsync(visualStage) \u2192 RunStageAsync(stage 8) \u2192 KillSubagentRunner(8) kills again (red, Kill set)\n    - retryResult.Check == \"red\" \u2192 retry failed\n    - line 124: fastVisual = retryResult (red, kill)\n  - line 126: BuildReviewFlagReason(\"Visual-review\", fastVisual, rootPath) \u2192 enriched reason (Kill non-null)\n  - line 127: FlagAsync(stage 8) \u2192 Flagged. \u2713\n\nSo VisualReviewKilled test: review green, visual killed, retry visual fails \u2192 flag visual. Correct! The test passes (confirmed).\n\nNow the both-killed scenario is NOT tested. Issue 1 (review red + visual red, review retry succeeds \u2192 record red visual) is untested. Let me verify it's actually a problem by considering: review red (killed), visual red (killed), review retry succeeds (green). Fast-visual branch, line 79 review red \u2192 retry review \u2192 success \u2192 record both including red visual. \n\nActually, for review retry to succeed, KillSubagentRunner would need to return pass on the retry. But KillSubagentRunner ALWAYS kills stage 7. So with KillSubagentRunner(7), the retry also fails (killed). To test \"review retry succeeds\", you'd use TwoPhaseKillSubagentRunner(7) \u2014 but that kills stage 7 only; visual (stage 8) passes. So both-killed-with-review-retry-success is not constructible with the current test doubles without a combined double. It's an untested edge case.\n\nGiven the analysis, I believe issues 1 and 2 are real correctness concerns but in narrow, untested edge cases (both siblings fail). The core task functionality (carry kill reason into flag, retry once, propagate reason) works correctly for the tested and primary paths.\n\nLet me make a judgment call on verdict. The task's stated requirements:\n1. Thread kill info into StageRunResult \u2713\n2. Enriched flag reason on kill \u2713 (works for the common case)\n3. One escalated retry on kill \u2713 (works; fast-visual path correct)\n4. Propagate enriched reason everywhere \u2713 (FlagAsync handles it)\n\nThe issues are in edge cases of the retry-success paths (both siblings fail). These are correctness regressions introduced by the new retry logic. I think these warrant a \"changes\" verdict because they can cause a task to commit with a red review (violating core pair semantics) \u2014 but they're narrow.\n\nActually, let me reconsider the severity one more time. The MOST likely real-world scenario this task targets: review stage hangs (single sibling affected). Visual review is a different tier (vision) and often completes fast (pass on non-visual changes). So \"both killed\" is less common than \"review killed alone\". The \"review killed alone\" case:\n- Fast-visual: visual green, review killed \u2192 review red, retry \u2192 if success, record both (visual green, fine). If fail, flag review with enriched reason. \u2713 Correct.\n- Review-first: visual still running, review killed \u2192 await visual (green), retry review \u2192 if success, discard visual (Issue 2!). If fail, flag review. \n\nSo Issue 2 (review-first, review killed alone, visual green, retry succeeds \u2192 discard green visual) is reachable in the COMMON targeted scenario (review hangs, visual passes)! Because visual (vision tier, often fast pass) might still be running when review hangs at 55min... no wait. If visual passes FAST (common case), it completes before review's 55min hang. So visualTask.IsCompleted=true \u2192 fast-visual branch (correct). Review-first requires visual NOT completed when review finishes. If review hangs 55min, visual (even if slow) likely finished. So review-first + review-killed is less likely.\n\nHmm, but visual could also be slow/hung (same backend). If both hang and visual finishes slightly after review is killed... actually review is killed at the ceiling (55min), visual might hit its own ceiling around the same time. Race condition. So review-first is reachable but requires specific timing.\n\nI'll go with \"changes\" verdict, flagging the retry-success sibling-handling issues (1 & 2) as the primary concerns, and the boosted-frontier context loss (3) as secondary. These are correctness issues in newly-introduced code paths that aren't covered by tests.\n\nWait \u2014 but I should be careful. Let me reconsider whether issue 2 (discard visual on review-first retry success) is actually a BUG or an ACCEPTABLE simplification. The task says \"Preserve the sibling-survives-failure semantics.\" The sibling-survives-failure semantics: when review fails, await visual before flagging (so visual isn't cancelled). On retry success, the natural extension is: review now passed, so handle visual normally (record if green, flag if red). Discarding visual is NOT preserving semantics \u2014 it's losing data. And leaving stage 8 \"Running\" is a state bug. So yes, it's a bug.\n\nLet me also verify: are there any compile warnings or issues with the new SubagentResult parameter breaking other callers? The new `Kill` param has a default (null), so all existing `new SubagentResult(...)` calls compile fine (verified the call sites in CommandResolution.cs use 4-5 args, fine). The Domain record is fine.\n\nLet me also check: does the control-API/state test exist as required by the task? The task requires \"Control-API/state test: enriched reason visible in reviewReason.\" Let me check if there's such a test. The test file has NEEDS-REVIEW assertion (line 177-181) and outcome.Reason assertions, but I didn't see a /state reviewReason test. Let me check if it's elsewhere.\n\nLet me search for reviewReason tests.",
+        "thought_number": 4,
+        "total_thoughts": 6
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 8.343,
+      "prompt_tokens_est": 56035,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "tests",
+        "pattern": "reviewReason|ReviewReason|reviewReason|killed-output|stall-killed|KillSignature|KillSubagentRunner|TwoPhaseKill"
+      },
+      "succeeded": true,
+      "duration_s": 0.189,
+      "result_length": 7101
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 52.836,
+      "prompt_tokens_est": 57865,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 146,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1903
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 40.185,
+      "prompt_tokens_est": 61273,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "next_thought_needed": true,
+        "thought": "Let me consolidate my analysis and decide on a verdict.\n\nI've confirmed the key code paths. Let me also quickly sanity-check the elapsed-time concern in BuildReviewFlagReason: when retry fails with a kill, `reviewResult = retryResult` so the elapsed is the RETRY's elapsed, and the autopsy path is the retry's (attempt2). That's acceptable \u2014 it shows the most recent kill. When retry fails WITHOUT a kill (e.g. invalid output), Kill=null \u2192 generic reason, losing the original kill context. That's the Issue 3-adjacent concern but for the non-boosted case where retry produces invalid (non-kill) output. The task said \"fall through to flag with enriched reason\" \u2014 but the impl uses the retry's result. Minor.\n\nLet me now also reconsider: the task explicitly requires a \"Control-API/state test: enriched reason visible in reviewReason.\" I searched and found NO test asserting reviewReason (RelayTaskItem.ReviewReason) for the kill case. The existing `RelayDriverBaselineVerifyTests.cs:155` tests reviewReason flow for the VERIFY path (mocha error), and `RelayQueueControllerTests.cs:116` tests \"swival timed out\" in ReviewReason \u2014 but that's a different scenario (stalled task via a fake runner, not the review-pair kill path). \n\nIs there a review-pair-kill \u2192 reviewReason test? No. The tests assert `outcome.Reason` and NEEDS-REVIEW content, but NOT that the reason flows to `RelayTaskItem.ReviewReason` (the /state field). However, the reason flow to ReviewReason is via FlagAsync \u2192 RelayTaskOutcome.Reason \u2192 RelayTaskItem.ReviewReason, which is shared plumbing already covered by other tests (the verify-signature precedent). The diagnose stage explicitly noted \"No changes needed in the downstream consumption.\" So the /state reviewReason flow is already proven by existing tests, and the new enriched reason uses the same FlagAsync path. So the lack of a dedicated reviewReason test for the kill case is a minor test-coverage gap, not a bug \u2014 the plumbing is unchanged and shared.\n\nActually, the task's \"Tests (red first)\" section explicitly lists: \"Control-API/state test: enriched reason visible in reviewReason.\" This was a STATED test requirement. It's not present. But the plan (stage 4) did NOT include a /state reviewReason test \u2014 it included 4 driver tests. And stage 5 (author-tests) rationale lists the 4 tests. So the implementer deviated from the task's test list by omitting the /state reviewReason test. \n\nIs this a blocking issue? The /state reviewReason flow is shared plumbing (FlagAsync \u2192 outcome.Reason \u2192 ReviewReason), already tested for other reasons. Adding a dedicated test would be nice but the underlying behavior IS covered transitively. I'll note it as a minor test-coverage gap, not blocking.\n\nNow, let me weigh the overall verdict.\n\n## Summary of findings\n\n### Correctness issues (newly introduced retry-success paths):\n\n**Issue A (moderate): Fast-visual retry-success records a red visual sibling without re-checking (ReviewPair.cs:90-95).**\nWhen review is red (killed) and visual (fastVisual) is ALSO red, and the review retry succeeds, the code records `fastVisual` (red) via RecordPairStageAsync and returns clean (FlaggedOutcome=null) \u2192 the task commits with a red visual review recorded. The pair's flag-on-red-visual semantics is violated. RecordStageAsync does not flag on red (verified). This is untested (no test double kills both siblings with a successful review retry).\n\n**Issue B (moderate): Review-first retry-success discards the visual sibling and leaves stage 8 unsettled (ReviewPair.cs:162-167).**\nWhen review is red (killed), visual still running, review retry succeeds: the code records review ONLY, discards the (now-completed) visual result, and returns clean. Stage 8 is left \"Running\" (no stage_done, no ledger entry, status never settled). If visual was red, the task commits despite a red visual. If visual was green, a valid visual review is lost. Untested (synchronous test doubles always route to fast-visual).\n\n### Minor issues:\n\n**Issue C (minor): Boosted-frontier no-op retry loses kill context (ReviewPairRetry.cs:73-78).**\nWhen escalation is impossible (boosted frontier tier, toTier==fromTier && toTurns==baseTurns), the retry returns a synthetic red StageRunResult with Kill=null. The caller overwrites `reviewResult = retryResult`, so BuildReviewFlagReason sees Kill=null \u2192 generic \"Review returned an invalid result\", losing the kill context the task is meant to preserve. Consistent with the no-repeat-escalation policy, but defeats the observability goal in this edge case.\n\n**Issue D (minor): Missing /state reviewReason test.**\nThe task's \"Tests (red first)\" explicitly required a \"Control-API/state test: enriched reason visible in reviewReason.\" No such dedicated test exists. The flow is shared plumbing (already covered transitively), so behavior is correct, but the explicit test was omitted.\n\n### What works correctly:\n- KillSignature record + SubagentResult.Kill field \u2713\n- KillSignature populated at all 3 watchdog-kill sites with correct reason strings matching PublishStallKillAsync \u2713\n- StageRunResult threads Kill \u2713\n- BuildReviewFlagReason enriched reason format \u2713 (Path.GetRelativePath with try/catch)\n- Generic reason preserved for non-kill invalid output \u2713 (test RunTaskAsync_ReviewInvalid confirms)\n- One escalated retry on kill \u2713 (fast-visual + review-first + visual-red paths)\n- stage_escalated event published on retry \u2713\n- Sibling-survives-failure: sibling awaited before flag \u2713\n- All 48 review-pair tests pass \u2713\n- Reason strings consistent (absolute_ceiling/socket_wedge/stall) \u2713\n- File-size guards satisfied (ReviewPair.cs 298 lines, ReviewPairRetry.cs 96 lines) \u2713\n- New SubagentResult param has default \u2192 no break to existing callers \u2713\n\n## Verdict decision\n\nThe core task is well-implemented and the primary paths work. However, the newly-introduced retry-success paths (Issues A and B) have real correctness regressions: they can cause a task to COMMIT with a red review/visual (violating the pair's flag-on-red semantics) and leave stage 8 in an inconsistent \"Running\" state. These are in newly-added code that is NOT covered by tests (synchronous test doubles can't reach review-first, and no double-kill double exists).\n\nIssue B in particular (discarding visual, leaving stage 8 Running) is reachable in the task's TARGET scenario \u2014 a hung backend affecting the review stage while visual is still running \u2014 if the review retry then succeeds. The whole point of the task is the shared-backend-hang scenario, so \"both affected / visual still running\" is plausible.\n\nThese are correctness issues that I think warrant a \"changes\" verdict. They're not catastrophic (narrow edge cases, primary paths fine), but committing a task with an unrecorded/still-running stage or a red review silently committed is a real regression in pair semantics that the task explicitly asked to preserve.\n\nActually, let me reconsider once more whether to be \"pass\" or \"changes\". \n\nArguments for pass:\n- All stated tests pass (48/48).\n- Primary functionality (carry kill reason, retry once, propagate) works.\n- Issues A/B are narrow edge cases (both siblings fail, or specific async timing).\n- The constraint \"preserve sibling-survives-failure semantics\" is arguably preserved for the FLAG path (sibling awaited before flag).\n\nArguments for changes:\n- Issues A/B are correctness regressions (commit with red review) in NEW code.\n- Issue B leaves stage 8 permanently \"Running\" \u2014 a state bug.\n- The task explicitly says \"Preserve the sibling-survives-failure semantics of the pair\" \u2014 discarding/ignoring the sibling on retry success doesn't preserve them.\n- These paths are untested.\n\nI'll go with \"changes\" \u2014 the retry-success sibling handling has correctness gaps that should be addressed (re-evaluate the other sibling's check on retry success: record if green, flag if red; settle stage 8 status). These are the kind of issues that a careful review should catch.\n\nLet me write up the issues concisely. I should be specific with file:line references.\n\nActually, let me reconsider Issue A severity once more. For Issue A (fast-visual, both red, review retry succeeds): is this REALLY reachable, or does some guard prevent it? \n\nFast-visual branch line 79: review red. We do NOT check fastVisual. If review.Kill \u2192 retry. If retry succeeds (green) \u2192 record both. fastVisual could be red. No guard checks fastVisual.Check before recording at line 90-91. So yes, a red fastVisual is recorded and committed. Reachable if both siblings fail and review retry succeeds. Confirmed reachable (no guard).\n\nBut practically: for review retry to succeed while visual failed, the backend must recover between attempt 1 and attempt 2 of review, but visual (which ran concurrently with review attempt 1) failed. Since visual and review-attempt-1 ran concurrently against the same (hung) backend, both fail. Review attempt 2 (escalated, after backend recovery) succeeds. Visual already failed (red). So yes, realistic in the exact shared-backend scenario.\n\nOK, I'm confident. \"changes\" verdict with Issues A, B as the primary correctness concerns, C and D as minor.\n\nLet me make sure I frame these clearly and with correct line references. Let me re-verify line numbers for the fast-visual record-both: lines 90-95 in ReviewPair.cs. And review-first discard: lines 162-167. And the no-op: ReviewPairRetry.cs lines 73-78.\n\nI'm done analyzing.",
+        "thought_number": 5,
+        "total_thoughts": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 8.272,
+      "prompt_tokens_est": 63530,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && wc -l src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.153,
+      "result_length": 214
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 23.817,
+      "prompt_tokens_est": 63691,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
