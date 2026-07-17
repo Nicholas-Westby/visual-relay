@@ -40,11 +40,7 @@ public sealed partial class RelayDriver
 
         try
         {
-            Directory.CreateDirectory(taskDirectory);
-            await File.WriteAllTextAsync(
-                Path.Combine(taskDirectory, "NEEDS-REVIEW"),
-                reason + Environment.NewLine,
-                cancellationToken);
+            await WriteNeedsReviewMarkerAsync(taskDirectory, reason, 0, cancellationToken);
 
             await _dependencies.EventSink.PublishAsync(
                 new RelayEvent(

@@ -1,0 +1,1795 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T04:07:53.852209+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 07-fix-committed-but-pending-state-after-commit-gate-flags\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Make a commit-stage flag leave coherent state instead of \"committed but pending\"\n\nWhen the Commit stage (12) seals its commit and a POST-commit check then flags\nthe task, the system ends in a self-contradictory state. Observed on\n2026-07-15 for two tasks flagged by the commit gate\n(`merge-nocommit-contamination-tests-data-driven`,\n`split-key-setup-panel-ui-tests`):\n\n- The sealed commit is in history on main \u2014 the work \"landed\".\n- The task card says **Needs review** (NEEDS-REVIEW marker exists).\n- The stage board shows Commit **Complete** \u2014 persisted `status.json` records\n  stage 12 as `\"Done\"` with `error: null`, so after an app restart nothing\n  shows the flag at all.\n- The task definition exists in git **twice**: the sealed commit moved it to\n  `llm-tasks/completed/<id>/DONE-<id>.md`, then the flag path's retirement\n  rollback re-created `llm-tasks/<id>/<id>.md` on disk, and the next\n  \"chore: add tasks\" auto-commit committed that duplicate (byte-identical to\n  the completed copy).\n\nAn operator cannot tell what actually happened: the queue says review the\ntask, the stage board says everything succeeded, git says it shipped, and the\ntask list shows it as still to-do.\n\n### Evidence (verified)\n\n- Run-log ordering for the split task\n  (`.relay/split-key-setup-panel-ui-tests/run.log` lines 382-384):\n  `s12/cheap stage_done \u2026 status=Done` at 05:29:14.93 \u2014 **before** the sealed\n  commit (05:29:16) and the `s12/? flagged` event (05:29:18.71). Stage 12 is\n  reported Done before the gate has done any of its work; the \"Done\" is a\n  premature bookkeeping artifact of the generic stage loop, not the gate's\n  outcome.\n- `FlagAsync` (`src/VisualRelay.Core/Execution/RelayDriver.Events.cs:~95-121`)\n  unconditionally calls `MarkStatusFlagged(statusEntries, 12, reason)` and\n  `WriteStatusAsync` \u2014 yet the final on-disk `status.json` (mtime = flag\n  minute, untouched since) says stage 12 `Done`/no-error for BOTH tasks. So\n  some later writer persists the stale pre-flag entries after `FlagAsync`\n  returns. Contrast: `hoist-pipeline-test-shared-setup` flagged at stage 7\n  (which was `Running`, not pre-marked `Done`) and its `Flagged` status DID\n  survive on disk \u2014 the clobber is specific to the commit-stage path.\n  Find the last writer (driver epilogue after `ExecuteCommitStageAsync`\n  returns, or the queue controller's post-flag handling) and fix the ordering\n  or make flag state win.\n- The queue controller separately overwrites the NEEDS-REVIEW marker with a\n  reason-only body (`RelayQueueController.PrivateHelpers.cs:16-21` \u2014\n  hoist's marker is exactly the 34-byte reason line, without the `stage N`\n  line `FlagAsync` writes) \u2014 two writers with different formats for the same\n  marker file.\n- Retirement rollback (`retirement?.Rollback?.Invoke()` in\n  `RelayDriver.CommitGate.cs:222`, invoked AFTER the sealed commit already\n  recorded the folder move) restores the active task folder on disk but the\n  completed copy from the sealed commit remains tracked \u2014 the duplication\n  described above. `TaskCompletionArchive.RetireAsync` owns the move.\n\n### What to build\n\n1. **Truthful stage state**: after a stage-12 flag, persisted `status.json`\n   must say stage 12 `Flagged` with the reason \u2014 surviving app restarts and\n   any post-flag writes. Do not publish/persist `Done` for the commit stage\n   before the gate (commit + post-commit checks) has actually finished; the\n   stage_done event should carry the gate's real outcome.\n2. **Coherent lifecycle on flag-after-seal**: decide and implement ONE\n   documented outcome when the gate flags after the commit exists. The two\n   defensible designs \u2014 pick one and encode it in tests:\n   - roll back the seal too (reset the branch to run-base, preserving the\n     work in the flagged-work bundle, so \"flagged\" always means \"nothing\n     landed\"), or\n   - keep the seal and do NOT roll back retirement (the task stays completed;\n     the flag becomes a review advisory pointing at the sealed commit).\n   Either way the current halfway state (commit kept + retirement rolled\n   back) must be impossible.\n3. **No duplicate task definitions**: whatever the choice in (2), the task\n   must never end up tracked in both the active and completed locations.\n   Guard the \"chore: add tasks\" auto-commit against re-adding a task whose\n   identical completed copy is already tracked.\n4. **One writer for NEEDS-REVIEW**: unify the driver and queue-controller\n   marker writes so the marker format (and content) is owned in one place.\n\n### Constraints\n\n- The post-commit invariant checks themselves stay \u2014 this task fixes the\n  state they leave behind, not whether they run (their false-positive causes\n  are `01-unquote-git-paths-for-non-ascii-filenames` and\n  `02-capture-untracked-baseline-on-resume-runs`).\n- Repo-agnostic; sequencing/observability changes only, no new stage.\n- Keep files under the 300-line guard.\n\n### Tests (red first)\n\n- Driver test: commit succeeds, post-commit check flags \u2192 persisted status\n  records stage 12 `Flagged` + reason; re-reading the task directory (fresh\n  hydrate) shows the flag; and the world matches the chosen design in (2)\n  (assert branch state and folder locations explicitly).\n- Regression: a flag at a non-commit stage (e.g. 7) still persists correctly\n  (hoist's case).\n- Duplication guard: after a flag-after-seal cycle, exactly one tracked copy\n  of the task definition exists.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Events.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.NeedsReview.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\ntests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\ntests/VisualRelay.Tests/RelayDriverTestHelpers.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"When stage 12 commits and a post-commit check then flags, the system ends in a contradictory state (commit landed, status=Done, NEEDS-REVIEW present, task duplicated). Four root causes: (1) stage_done(Done) is persisted before the gate finishes, then a later writer clobbers FlagAsync's flag; (2) retirement rollback re-creates the active folder after the commit already moved it to completed/; (3) the auto-commit can re-add a task whose identical completed copy is tracked; (4) two writers use different NEEDS-REVIEW formats. Three solution approaches were evaluated.\",\n  \"options\": [\n    \"Option A \u2014 'Keep the seal, flag is advisory': defer stage-12 Done persistence until after post-commit checks; skip retirement rollback on post-commit flag (task stays in completed/); filter auto-commit against completed copies; unify NEEDS-REVIEW into one owned method. Simplest, safest, preserves the commit on main.\",\n    \"Option B \u2014 'Roll back the seal, flagged means nothing landed': same sub-problem fixes as A, plus git reset --hard to run-base so no commit survives a flag. More consistent semantics but more invasive (destructive reset eliminates the commit).\",\n    \"Option C \u2014 'Defer commit until after post-commit checks': reorder the gate so commit is the last step. Most structurally clean but requires reordering ExecuteCommitStageAsync and may affect event ordering expectations.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"## Four Root Causes of the Committed-but-Pending State\\n\\n### Root Cause 1: Premature stage_done(Done) for stage 12\\n**File:** `RelayDriver.cs` lines 287-293, `RelayDriver.Invocation.cs` lines 76-116\\n\\nThe main stage loop in `RunTaskAsync` iterates ALL stages (1\u201312). For stage 12 (`kind=\\\"driver\\\"`), the loop body at line 116-118 sets `body = \\\"Committed by Visual Relay.\\\"`, then unconditionally calls `RecordStageAsync` (line 289) which writes `status=Done` to status.json and publishes the `stage_done` event. Only AFTER the loop ends does line 293 call `ExecuteCommitStageAsync`, which runs the actual commit gate (retirement, git commit, post-commit invariant checks). So \\\"Done\\\" is persisted and published before the gate's outcome is known \u2014 the generic loop infrastructure records success before the specialized commit logic even starts.\\n\\n### Root Cause 2: status.json shows Done despite FlagAsync writing Flagged\\n**Files:** `RelayDriver.Events.cs` lines 93-136, `RelayDriver.CommitGate.cs` lines 220-240\\n\\nWhen a post-commit check fails inside `ExecuteCommitStageAsync` (CommitGate.cs:229-240), the code calls `retirement?.Rollback?.Invoke()` then `FlagAsync(...)`. Inside `FlagAsync` (Events.cs:98-111), it calls `MarkStatusFlagged(statusEntries, flaggedStage, reason)` and `await WriteStatusAsync(...)`. However, `FlagAsync` has a catch-all at lines 128-133 that silently swallows ANY exception from its body. If the `WriteStatusAsync`, `FlaggedWorkStore.CaptureAsync`, or `File.WriteAllTextAsync` calls throw (e.g., because retirement rollback has disrupted the task directory state, or an I/O error occurs), the exception is swallowed and the `Flagged` outcome is returned WITHOUT status.json being updated. The caller receives `Flagged` outcome but the on-disk file retains the `Done` from `RecordStageAsync`. The evidence confirms this: status.json mtime = flag minute (so `WriteStatusAsync` was attempted) but content = Done (the write silently failed or was partial).\\n\\n### Root Cause 3: Retirement rollback creates duplicate task definitions\\n**Files:** `RelayDriver.CommitGate.cs` lines 167-240, `TaskCompletionArchive.cs` lines 11-184\\n\\nThe commit gate calls `TaskCompletionArchive.RetireAsync` (CommitGate.cs:167) BEFORE the git commit. RetireAsync renames `<id>.md` \u2192 `DONE-<id>.md` (and optionally archives to `completed/`). The git commit (line 220) stages this completed-copy path. If a post-commit invariant check then fails (lines 229-240), `retirement?.Rollback?.Invoke()` is called, which reverses the rename (restores `<id>.md` in the active task folder). Now the task exists in BOTH locations: the completed copy is already tracked in git (from the sealed commit), and the rollback restored the active copy on disk. The next \\\"chore: add tasks\\\" auto-commit re-commits the active copy, producing a byte-identical duplicate in git \u2014 two tracked copies of the same definition.\\n\\n### Root Cause 4: Two NEEDS-REVIEW writers with different formats\\n- **FlagAsync** (`RelayDriver.Events.cs:101`): writes `${\\\"{reason}\\\\nstage {stageNumber}\\\\n\\\"}` and optionally appends details. Format: reason line + stage line + optional detail block.\\n- **WriteNeedsReviewMarker** (`RelayQueueController.PrivateHelpers.cs:20`): writes `reason + Environment.NewLine`. Format: a single 34-byte reason line, no stage line.\\n- The queue controller calls `WriteNeedsReviewMarker` AFTER the driver's `FlagAsync` has already written the more detailed format, overwriting the richer marker with the bare reason line. This also means there's no centralized format \u2014 two callers independently decide what a NEEDS-REVIEW marker looks like.\\n\\n### Other structural observations\\n- **File size guard:** All affected files are at or under 300 lines. RelayDriver.cs, QueueController.cs are at 300 lines exactly \u2014 any new code will need careful splitting or extraction.\\n- **Option A alignment:** The task's \\\"What to build\\\" section (points 1\u20134) matches Option A from the ideate stage (\\\"Keep the seal, flag is advisory\\\"): defer Done persistence, skip retirement rollback on post-commit flags, filter auto-commits against completed copies, unify NEEDS-REVIEW.\\n- **Tests exist for:** ScriptedSubagentRunner, FlagAtStageSubagentRunner, RecordingTaskRunner, TestRepository (TestDoubles.cs), PlanPhaseTestHelpers. These can be extended for the new tests.\\n- **Relevant test files:** `RelayDriverGitCommitTests.cs` (243 lines) has existing Commit-stage test infrastructure. `RelayDriverResumeCommitGateTests.cs` and `RelayDriverResumeCommitGateVerifyTests.cs` test the resume path.\",\n  \"constraints\": [\n    \"Post-commit invariant checks (FindUncommittedAuthoredFilesAsync) must stay \u2014 this task fixes their aftermath, not their existence.\",\n    \"All changes must be repo-agnostic \u2014 sequencing and observability only, no new stage definitions.\",\n    \"All modified files must remain at or under 300 lines. RelayDriver.cs and QueueController.cs are already at 300 \u2014 any additions there require extraction to new partial files.\",\n    \"The change must be verifiable via `./visual-relay check` going fully green.\",\n    \"The commit stage (12) has Kind=\\\"driver\\\" which bypasses subagent runner invocation \u2014 only generic loop handling and ExecuteCommitStageAsync are involved.\",\n    \"The retirement rollback delegate is constructed by TaskCompletionArchive.RetireAsync and stored as `retirement?.Rollback`. Its invocation is the ReAdd.cs-mechanism path; altering rollback behavior requires changes in TaskCompletionArchive.cs.\",\n    \"The auto-commit that re-adds duplicate tasks is the GitCommitter's commit flow in `RelayDriver.CodeChangeGate.cs` and `GitCommitter.cs`. The dedup guard must be placed where the auto-commit reads task definitions.\",\n    \"NEEDS-REVIEW marker writes happen in two places: RelayDriver.Events.cs (FlagAsync, line 118) and RelayQueueController.PrivateHelpers.cs (WriteNeedsReviewMarker, line 20). The queue controller's call (QueueController.cs:264) can overwrite the driver's marker. Unification must pick one format and one owner.\",\n    \"FlagAsync's catch-all (Events.cs:128-133) silently swallows exceptions \u2014 this masks the status.json write failure. Fixing the root cause likely means making the write reliable, not removing the catch-all (which serves as defence-in-depth for rare I/O errors).\",\n    \"Tests must be written red-first: driver test for commit+post-commit-flag scenario, regression test for non-commit-stage flags, and duplication guard test.\",\n    \"FlaggedWorkStore.CaptureAsync (FlaggedWorkStore.cs) captures the working tree for resume. The capture path must still work after any fix.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Four root causes proven: (1) RecordStageAsync writes Done for stage 12 BEFORE ExecuteCommitStageAsync runs the gate (RelayDriver.cs:287-291 \u2192 Invocation.cs:110-112). (2) git checkout -- . in WorktreeResetter.ResetAsync:41 restores status.json to the committed Done version, undoing FlagAsync's Flagged write \u2014 confirmed: both flagged tasks have status.json tracked in HEAD (git ls-tree shows blobs), hoist task (stage-7 flag) does NOT and its Flagged status survived. (3) Retirement rollback (CommitGate.cs:235) re-creates active task after commit sealed the completed copy \u2192 duplicate in git. (4) WriteNeedsReviewMarker (PrivateHelpers.cs:20) overwrites FlagAsync's richer NEEDS-REVIEW format (Events.cs:101,118) with bare reason line.\",\n  \"excerpts\": [\n    \"RelayDriver.cs:287-291 \u2014 generic loop calls RecordStageAsync for stage 12 before ExecuteCommitStageAsync runs the gate; Done persisted and stage_done published prematurely\",\n    \"WorktreeResetter.cs:41 \u2014 git checkout -- . restores ALL tracked files to HEAD; status.json is tracked (force-added via GitCommitter.cs:119), so the sealed Done overwrites Flagged\",\n    \"CommitGate.cs:167,220,235 \u2014 RetireAsync moves task before commit; commit seals it; Rollback after post-commit flag restores active copy while completed copy stays tracked\",\n    \"Events.cs:101,118 vs PrivateHelpers.cs:20 \u2014 two NEEDS-REVIEW writers; queue controller's WriteNeedsReviewMarker overwrites FlagAsync's marker with truncated format\",\n    \"Events.cs:128-133 \u2014 FlagAsync catch-all silently swallows all non-OCE exceptions; masks any WriteStatusAsync failure\"\n  ],\n  \"repro\": \"1. Create task. 2. Run through stage 12. 3. Arrange a post-commit invariant failure (e.g. untracked file with non-ASCII name outside manifest). 4. Observe status.json shows Done after drain (checkout restored sealed version). 5. Observe git log shows sealed commit on main. 6. Observe task exists in both active and completed/ locations. 7. Observe NEEDS-REVIEW marker has truncated format. 8. Contrast with stage-7 flag (hoist): status.json correctly shows Flagged because it was never committed, so checkout doesn't revert it.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Fix 1: Skip premature Done persistence/publish for stage 12\\n\\n**File:** `RelayDriver.cs:287`\\n\\nAdd `stage.Number != 12 &&` to the condition guarding `RecordStageAsync`:\\n```csharp\\nif (stage.Number != 12 && (stage.Number != 10 || !fixVerifyHandled) && ...)\\n```\\nThis prevents the generic loop from writing `status=Done` and publishing `stage_done` before `ExecuteCommitStageAsync` runs. Stage 12's outcome is now owned entirely by `ExecuteCommitStageAsync`.\\n\\n## Fix 2: Move stage_done publish into ExecuteCommitStageAsync with the real outcome\\n\\n**File:** `RelayDriver.CommitGate.cs`\\n\\n- Add `var commitStopwatch = Stopwatch.StartNew();` at method entry.\\n- **Success path** (after line 257 `WriteStatusAsync`): add `await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed, null, 0, 0, cancellationToken, null, \\\"Done\\\");`\\n- **Three flag paths**: restructure from `return await FlagAsync(...)` to capture the outcome, publish `stage_done` with `status=\\\"Flagged\\\"`, then return:\\n  - Line 223-224 (commit failure): capture + publish + return\\n  - Line 235-238 (post-commit invariant failure): capture + publish + return\\n  - Lines 78-80 (resume gate failure): capture + publish + return tuple\\n\\nThis ensures the `stage_done` event carries the gate's real outcome (Done or Flagged), not a premature \\\"Done\\\" from before the gate ran.\\n\\n## Fix 3: Don't rollback retirement on post-commit flag (Option A \u2014 keep the seal)\\n\\n**File:** `RelayDriver.CommitGate.cs:235`\\n\\nDelete `retirement?.Rollback?.Invoke();` on the post-commit invariant failure path. The sealed commit already recorded the folder move; rolling back creates a duplicate task definition (active + completed). Keep the rollback on line 223 (commit-failure path) since that commit never landed.\\n\\n## Fix 4: Unify NEEDS-REVIEW marker \u2014 one owner, one format\\n\\n**New file:** `+src/VisualRelay.Core/Execution/RelayDriver.NeedsReview.cs` (~25 lines)\\n\\nA static method holding the canonical format:\\n```csharp\\ninternal static async Task WriteNeedsReviewMarkerAsync(\\n    string taskDirectory, string reason, int stageNumber,\\n    CancellationToken cancellationToken, string? details = null)\\n```\\nWrites `reason\\\\nstage N\\\\n` (plus optional detail block). Stage number \u2264 0 omits the stage line.\\n\\n**File:** `RelayDriver.Events.cs` \u2014 Replace inline `File.WriteAllTextAsync(\\\"NEEDS-REVIEW\\\", body, \u2026)` (lines 101-103 and 118) with a call to `WriteNeedsReviewMarkerAsync(taskDirectory, reason, flaggedStage, cancellationToken, details)`.\\n\\n**File:** `RelayDriver.TaskInputGate.cs` \u2014 Replace inline `File.WriteAllTextAsync(\\\"NEEDS-REVIEW\\\", \u2026)` (lines 44-47) with a call to `WriteNeedsReviewMarkerAsync(taskDirectory, reason, 0, cancellationToken)`.\\n\\n**File:** `RelayQueueController.PrivateHelpers.cs` \u2014 `WriteNeedsReviewMarker` becomes async, checks if NEEDS-REVIEW already exists (FlagAsync wrote it) and skips; otherwise calls `RelayDriver.WriteNeedsReviewMarkerAsync` with `stageNumber: 0`.\\n\\n**File:** `RelayQueueController.cs` \u2014 Add `await` at the two call sites (lines 183, 264).\\n\\nThis eliminates the format discrepancy (controller's bare reason vs driver's reason+stage) and the overwrite race.\\n\\n## Fix 5: Skip checkout reset for commit-stage flagged tasks\\n\\n**File:** `RelayQueueController.PrivateHelpers.cs` `ResetAndLogAsync`\\n\\nBefore `WorktreeResetter.ResetAsync`, read `status.json` and check if stage 12 is `\\\"Flagged\\\"`. If so, skip the reset (log a summary entry) \u2014 the commit already landed and resetting would restore the committed `Done` status over the flag evidence. Non-commit-stage flags (e.g. stage 7) have no tracked status.json, so reset is harmless and proceeds normally.\\n\\n## Tests (red-first)\\n\\n**New file:** `+tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs` (~180 lines)\\n\\n1. **Commit + post-commit flag \u2192 coherent state:** Use `GitSim` seeded with an untracked file, run through stage 12, arrange the post-commit invariant check to trigger. Assert:\\n   - Persisted `status.json` reads stage 12 `\\\"Flagged\\\"` with reason (survives re-read).\\n   - Fresh hydrate of the task directory shows the flag.\\n   - The sealed commit IS on the branch (Option A: keep the seal).\\n   - Task definition exists in `completed/` only \u2014 NOT in the active tasks folder.\\n\\n2. **Regression \u2014 non-commit-stage flag persists:** Flag at stage 7, assert `status.json` records `\\\"Flagged\\\"` and survives app restart simulation (re-read).\\n\\n3. **No duplicate task definition:** After the flag-after-seal cycle, exactly one tracked copy exists (only in `completed/`).\\n\\n**File:** `tests/VisualRelay.Tests/RelayDriverTestHelpers.cs` \u2014 Add a helper to set up a commit-gate flag scenario (`SetupPostCommitFlagScenario` or extend existing `RunHappyPath`).\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Events.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.NeedsReview.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverTestHelpers.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All three tests compile and run. Results match expectations for red-first:\n\n- **`CommitSucceeds_PostCommitCheckFlags_StatusRecordsFlagged`** \u2014 FAILS (correctly). The flag is detected, status.json assertions pass, the sealed commit is on branch \u2014 but the active task file still exists due to the retirement rollback bug (line 118).\n- **`FlagAtNonCommitStage_PersistsCorrectly`** \u2014 PASSES. Regression: stage-7 flags persist correctly in status.json and survive re-read.\n- **`PostCommitFlag_NoDuplicateTaskDefinition`** \u2014 FAILS (correctly). The flag triggers, but the active task file exists (retirement rollback re-creates it, line 199).\n\n```json\n{\n  \"testFiles\": [\"tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\"],\n  \"rationale\": \"Three tests written red-first. Test 1 (commit+post-commit-flag) fails at the retirement-rollback assertion \u2014 the active task file still exists (the bug). Earlier assertions pass: the flag is detected, status.json records Flagged (survives in GitSim context without checkout revert), sealed commit is on branch. Test 2 (stage-7 regression) passes \u2014 non-commit flags persist correctly. Test 3 (dedup) fails at the same rollback assertion. All failures target the exact bugs described in the task (rollback recreating active task folder, causing duplicate definitions). The PostCommitFlagTriggeringGitInvoker decorator correctly injects a synthetic 'missed file' into the post-commit ls-files check, triggering the flag path.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 65,
+    "tool_calls_total": 95,
+    "tool_calls_succeeded": 95,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 51,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 26,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "python": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 3,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 65,
+    "total_llm_time_s": 1153.97,
+    "prompt_cache": {
+      "cached_tokens": 2702976,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 53.312,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 5,
+      "completed": 5,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.654,
+      "prompt_tokens_est": 9634,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read key source files to understand current code",
+          "Read existing test infrastructure",
+          "Write red (failing) tests for commit gate flag scenario",
+          "Verify tests compile and fail using targeted test command"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 365
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.73,
+      "prompt_tokens_est": 9842,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 22603
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13121
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Events.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6989
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3354
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6492
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15698
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3109
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.262,
+      "prompt_tokens_est": 25776,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 16175
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/RelayDriver*Tests*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.181,
+      "result_length": 2979
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.898,
+      "prompt_tokens_est": 30668,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverGitCommitTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13942
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverGitCommitTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1509
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11058
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 9.937,
+      "prompt_tokens_est": 37381,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Read key source files to understand current code\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 365
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.642,
+      "prompt_tokens_est": 37999,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Read existing test infrastructure\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 364
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.428,
+      "prompt_tokens_est": 38224,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14450
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13038
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeCommitGateTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6490
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 4.762,
+      "prompt_tokens_est": 46652,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class GitSim\\b",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.342,
+      "result_length": 199
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class StageStatusEntry",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.218,
+      "result_length": 17
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayTaskOutcome",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.216,
+      "result_length": 17
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FindUncommittedAuthoredFilesAsync",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.215,
+      "result_length": 2956
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.52,
+      "prompt_tokens_est": 47621,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim/GitSim.Api.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7810
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "StageStatusEntry|StageStatusRecord",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 515
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RelayTaskOutcomeStatus",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 151
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.598,
+      "prompt_tokens_est": 49952,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/StageStatus.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2467
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/RelayTaskOutcome.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 361
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7342
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 19.93,
+      "prompt_tokens_est": 52552,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4185
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3331
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.756,
+      "prompt_tokens_est": 55434,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "offset": 61,
+        "limit": 170
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9868
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs",
+        "offset": 71
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 925
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 47.89,
+      "prompt_tokens_est": 58126,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim/GitSim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3257
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ls-files|ls_files",
+        "path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 406
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 3.572,
+      "prompt_tokens_est": 61774,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim/Commands/LsFiles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3955
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim/GitSimCommandRouter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2276
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 52.422,
+      "prompt_tokens_est": 63552,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "async Task.*RecordStageAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 164
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "PublishStageDoneAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.034,
+      "result_length": 984
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 90.732,
+      "prompt_tokens_est": 66684,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "interface IGitInvoker"
+      },
+      "succeeded": true,
+      "duration_s": 0.354,
+      "result_length": 100
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 2.941,
+      "prompt_tokens_est": 72059,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/IGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 957
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 48.11,
+      "prompt_tokens_est": 72340,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs",
+        "content": "using System.Text.Json;\nusing VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\nusing GitSimEngine = VisualRelay.GitSim.GitSim;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RelayDriverCommitGateFlagTests\n{\n    /// <summary>\n    /// Wraps a <see cref=\"GitSimEngine\"/> so that the N-th\n    /// <c>ls-files --others --exclude-standard</c> call returns an extra\n    /// \"missed\" file path \u2014 simulating a post-commit invariant failure\n    /// without needing a real filesystem race. All other calls pass through.\n    /// </summary>\n    private sealed class PostCommitFlagTriggeringGitInvoker : IGitInvoker\n    {\n        private readonly GitSimEngine _inner;\n        private int _lsFilesOthersCount;\n\n        public PostCommitFlagTriggeringGitInvoker(GitSimEngine inner) => _inner = inner;\n\n        public GitSimEngine Inner => _inner;\n\n        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(\n            string rootPath,\n            IEnumerable<string> arguments,\n            CancellationToken cancellationToken,\n            TimeSpan? timeout = null,\n            IReadOnlyDictionary<string, string>? environment = null,\n            CancellationToken killToken = default,\n            Action<string>? onActivity = null)\n        {\n            var args = arguments.ToList();\n            if (args.Contains(\"ls-files\") && args.Contains(\"--others\"))\n            {\n                var callNum = Interlocked.Increment(ref _lsFilesOthersCount);\n                var result = await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n                // Call 1 = pre-run untracked snapshot.\n                // Call 2 = auto-include scan inside CommitAsync.\n                // Call 3 = FindUncommittedAuthoredFilesAsync post-commit check.\n                // Inject a \"missed\" file only on call 3 so the post-commit gate flags.\n                if (callNum >= 3 && string.IsNullOrWhiteSpace(result.Output))\n                    return (0, \"src/uncommitted-file.cs\", false);\n                return result;\n            }\n            return await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n        }\n    }\n\n    [Fact]\n    public async Task CommitSucceeds_PostCommitCheckFlags_StatusRecordsFlagged()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/app.cs\", []);\n        repo.WriteTask(\"commit-flag\", \"batch: 1\\n\\n# Commit flag test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/app.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        var runner = new ArtifactWritingSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"commit-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // 1. Outcome reports Flagged (not Committed).\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.Contains(\"missed authored files\", outcome.Reason);\n\n        // 2. Persisted status.json records stage 12 Flagged with the reason.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"commit-flag\");\n        Assert.True(Directory.Exists(statusDir), \"task directory must exist\");\n        var statusPath = Path.Combine(statusDir, \"status.json\");\n        Assert.True(File.Exists(statusPath), \"status.json must exist\");\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 12);\n        var stage12 = statusEntries.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", stage12.Status);\n        Assert.NotNull(stage12.Error);\n        Assert.Contains(\"missed authored files\", stage12.Error);\n\n        // 3. Re-read: flag survives a fresh hydrate (no stale in-memory copy).\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead12 = reRead.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", reRead12.Status);\n        Assert.Equal(stage12.Error, reRead12.Error);\n\n        // 4. The sealed commit IS on the branch (Option A: keep the seal).\n        var head = sim.Head(repo.Root);\n        Assert.NotNull(head);\n        var headInfo = sim.CommitInfo(repo.Root, head);\n        Assert.NotNull(headInfo);\n        Assert.Contains(\"Relay-Seal:\", headInfo!.Message);\n        Assert.Contains(\"Task: commit-flag\", headInfo.Message);\n\n        // 5. Task definition exists in completed/ only \u2014 NOT in active tasks.\n        Assert.False(File.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"commit-flag.md\")),\n            \"active task file must not exist \u2014 retirement kept the move\");\n        var completedFiles = Directory.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"completed\"))\n            ? Directory.EnumerateFiles(\n                Path.Combine(repo.Root, \"llm-tasks\", \"completed\"),\n                \"DONE-commit-flag.md\",\n                SearchOption.AllDirectories).ToList()\n            : [];\n        Assert.Single(completedFiles);\n\n        // 6. NEEDS-REVIEW marker exists (written by FlagAsync).\n        Assert.True(File.Exists(Path.Combine(statusDir, \"NEEDS-REVIEW\")));\n        var marker = await File.ReadAllTextAsync(Path.Combine(statusDir, \"NEEDS-REVIEW\"));\n        Assert.Contains(\"missed authored files\", marker);\n        Assert.Contains(\"stage 12\", marker);\n    }\n\n    [Fact]\n    public async Task FlagAtNonCommitStage_PersistsCorrectly()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/app.cs\", []);\n        repo.WriteTask(\"stage7-flag\", \"# Stage 7 flag test\\n\");\n\n        // FlagAtStageSubagentRunner returns invalid result at stage 7.\n        var runner = new FlagAtStageSubagentRunner(flagAtStage: 7);\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            RelayDriverOptions.NoGitCommit);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"stage7-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // Persisted status.json records stage 7 Flagged.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"stage7-flag\");\n        Assert.True(Directory.Exists(statusDir));\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 7);\n        var stage7 = statusEntries.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", stage7.Status);\n\n        // Re-read survives.\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead7 = reRead.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", reRead7.Status);\n    }\n\n    [Fact]\n    public async Task PostCommitFlag_NoDuplicateTaskDefinition()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/app.cs\", []);\n        repo.WriteTask(\"no-dup\", \"batch: 2\\n\\n# No duplicate test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/app.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        var runner = new ArtifactWritingSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"no-dup\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // \u2500\u2500 Assert: exactly one tracked copy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // The task must NOT exist in the active tasks folder (retirement\n        // moved it, and the rollback must NOT have re-created it).\n        var activePath = Path.Combine(repo.Root, \"llm-tasks\", \"no-dup.md\");\n        Assert.False(File.Exists(activePath),\n            \"active task must not exist \u2014 retirement kept the move, rollback skipped\");\n\n        // The task must exist exactly once in completed/.\n        var completedDir = Path.Combine(repo.Root, \"llm-tasks\", \"completed\");\n        var allMdFiles = Directory.Exists(completedDir)\n            ? Directory.EnumerateFiles(completedDir, \"*.md\", SearchOption.AllDirectories).ToList()\n            : [];\n        var taskCopies = allMdFiles\n            .Where(f => Path.GetFileName(f).Contains(\"no-dup\"))\n            .ToList();\n        Assert.Single(taskCopies,\n            $\"expected exactly 1 completed copy of no-dup, found {taskCopies.Count}: {string.Join(\", \", taskCopies)}\");\n\n        // And the completed copy is the DONE- prefixed one.\n        Assert.EndsWith(\"DONE-no-dup.md\", taskCopies[0]);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 129
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 8.258,
+      "prompt_tokens_est": 76215,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Write red (failing) tests for commit gate flag scenario\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 363
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 5.296,
+      "prompt_tokens_est": 76699,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1311
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "PostCommitFlagTriggeringGitInvoker|relay.*check\\|filter.*test"
+      },
+      "succeeded": true,
+      "duration_s": 0.373,
+      "result_length": 417
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 2.668,
+      "prompt_tokens_est": 77420,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/visual-relay",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4893
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 4.168,
+      "prompt_tokens_est": 78988,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\\\"check\\\"|\\\"test\\\"|filter.*test",
+        "path": "/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 607
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 3.961,
+      "prompt_tokens_est": 79334,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Cli/Commands/CheckCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3409
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 5.393,
+      "prompt_tokens_est": 80373,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "static.*ForTests",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.01,
+      "result_length": 136
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 2.333,
+      "prompt_tokens_est": 80649,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5182
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.951,
+      "prompt_tokens_est": 82055,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TestsProject",
+        "path": "/Volumes/Tera/dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 405
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 4.568,
+      "prompt_tokens_est": 82287,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RelayDriverCommitGateFlagTests",
+          "--no-restore",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 15.829,
+      "result_length": 3001
+    },
+    {
+      "turn": 28,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83330,
+      "tokens_after": 32685
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 10.538,
+      "prompt_tokens_est": 32685,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ArtifactWritingSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.288,
+      "result_length": 146
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 8.175,
+      "prompt_tokens_est": 33206,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "expected to modify source"
+      },
+      "succeeded": true,
+      "duration_s": 0.22,
+      "result_length": 166
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.TaskInputGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3354
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 3.192,
+      "prompt_tokens_est": 34421,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CodeChangeGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6175
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 6.644,
+      "prompt_tokens_est": 36060,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestDoubles.cs",
+        "offset": 47,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3533
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 19.65,
+      "prompt_tokens_est": 37268,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\\\"diff\\\"",
+        "path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 118
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverGitCommitTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13942
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 28.138,
+      "prompt_tokens_est": 41873,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ScriptedSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.238,
+      "result_length": 141
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 2.51,
+      "prompt_tokens_est": 43797,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+        "offset": 1,
+        "limit": 120
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6270
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 12.275,
+      "prompt_tokens_est": 45521,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class EditingSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.231,
+      "result_length": 133
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 2.567,
+      "prompt_tokens_est": 46272,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/CommitTestRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15201
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 19.695,
+      "prompt_tokens_est": 50024,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15659
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 56.559,
+      "prompt_tokens_est": 54933,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class FlagAtStageSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.236,
+      "result_length": 194
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3109
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 2.757,
+      "prompt_tokens_est": 59597,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13121
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 7.044,
+      "prompt_tokens_est": 62507,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 250
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4441
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 23.12,
+      "prompt_tokens_est": 63773,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "preRunUntracked",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 477
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 100,
+        "limit": 150
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10907
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 42.591,
+      "prompt_tokens_est": 67359,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CapturePreRunUntrackedAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.235,
+      "result_length": 659
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CaptureUntrackedSnapshotAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.216,
+      "result_length": 5843
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 3.09,
+      "prompt_tokens_est": 71780,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7426
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4516
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 40.511,
+      "prompt_tokens_est": 74715,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": "[\"Rewrite tests with proper file-writing runner and correct GitInvoker counting\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 468
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 59.728,
+      "prompt_tokens_est": 77317,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs",
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\nusing GitSimEngine = VisualRelay.GitSim.GitSim;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RelayDriverCommitGateFlagTests\n{\n    /// <summary>\n    /// Wraps a <see cref=\"GitSimEngine\"/> so that the 4th\n    /// <c>ls-files --others --exclude-standard</c> call (the post-commit\n    /// invariant check inside <c>FindUncommittedAuthoredFilesAsync</c>)\n    /// returns an extra \"missed\" file path \u2014 simulating a post-commit\n    /// invariant failure without needing a real filesystem race.\n    /// All other calls pass through.\n    /// </summary>\n    private sealed class PostCommitFlagTriggeringGitInvoker : IGitInvoker\n    {\n        private readonly GitSimEngine _inner;\n        private int _lsFilesOthersCount;\n\n        public PostCommitFlagTriggeringGitInvoker(GitSimEngine inner) => _inner = inner;\n\n        public GitSimEngine Inner => _inner;\n\n        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(\n            string rootPath,\n            IEnumerable<string> arguments,\n            CancellationToken cancellationToken,\n            TimeSpan? timeout = null,\n            IReadOnlyDictionary<string, string>? environment = null,\n            CancellationToken killToken = default,\n            Action<string>? onActivity = null)\n        {\n            var args = arguments.ToList();\n            if (args.Contains(\"ls-files\") && args.Contains(\"--others\"))\n            {\n                var callNum = Interlocked.Increment(ref _lsFilesOthersCount);\n                var result = await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n                // Call sequence (all use \"ls-files --others --exclude-standard\"):\n                //   1: pre-run snapshot (CapturePreRunUntrackedAsync)\n                //   2: code-change gate   (HasCodeChangeSinceAsync)\n                //   3: auto-include scan  (CommitAsync)\n                //   4: post-commit check  (FindUncommittedAuthoredFilesAsync)\n                // Inject a \"missed\" file only on call 4 so the post-commit\n                // gate flags. Inject even if output is non-empty \u2014 the\n                // invariant is \"this path was not in preRunUntracked\".\n                if (callNum == 4)\n                    return (0, (string.IsNullOrWhiteSpace(result.Output) ? \"\" : result.Output + \"\\n\") + \"src/uncommitted-file.cs\", false);\n                return result;\n            }\n            return await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n        }\n    }\n\n    [Fact]\n    public async Task CommitSucceeds_PostCommitCheckFlags_StatusRecordsFlagged()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/status.cs\", []);\n        repo.WriteTask(\"commit-flag\", \"batch: 2\\n\\n# Commit flag test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        // EditingSubagentRunner actually writes src/status.cs \u2192 \"new\" at\n        // stage 6 so the code-change gate (stage 11) sees a real diff and\n        // lets the run proceed to the commit stage (12).\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(\n                new EditingSubagentRunner(),\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"commit-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // 1. Outcome reports Flagged (not Committed).\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.Contains(\"missed\", outcome.Reason);\n\n        // 2. Persisted status.json records stage 12 Flagged with the reason.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"commit-flag\");\n        Assert.True(Directory.Exists(statusDir), \"task directory must exist\");\n        var statusPath = Path.Combine(statusDir, \"status.json\");\n        Assert.True(File.Exists(statusPath), \"status.json must exist\");\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 12);\n        var stage12 = statusEntries.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", stage12.Status);\n        Assert.NotNull(stage12.Error);\n        Assert.Contains(\"missed\", stage12.Error);\n\n        // 3. Re-read: flag survives a fresh hydrate (no stale in-memory copy).\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead12 = reRead.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", reRead12.Status);\n        Assert.Equal(stage12.Error, reRead12.Error);\n\n        // 4. The sealed commit IS on the branch (Option A: keep the seal).\n        var head = sim.Head(repo.Root);\n        Assert.NotNull(head);\n        var headInfo = sim.CommitInfo(repo.Root, head);\n        Assert.NotNull(headInfo);\n        Assert.Contains(\"Relay-Seal:\", headInfo!.Message);\n        Assert.Contains(\"Task: commit-flag\", headInfo.Message);\n\n        // 5. Task definition exists in completed/ only \u2014 NOT in active tasks.\n        Assert.False(File.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"commit-flag.md\")),\n            \"active task file must not exist \u2014 retirement kept the move\");\n        var completedFiles = Directory.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"completed\"))\n            ? Directory.EnumerateFiles(\n                Path.Combine(repo.Root, \"llm-tasks\", \"completed\"),\n                \"DONE-commit-flag.md\",\n                SearchOption.AllDirectories).ToList()\n            : [];\n        Assert.Single(completedFiles);\n\n        // 6. NEEDS-REVIEW marker exists (written by FlagAsync).\n        Assert.True(File.Exists(Path.Combine(statusDir, \"NEEDS-REVIEW\")));\n        var marker = await File.ReadAllTextAsync(Path.Combine(statusDir, \"NEEDS-REVIEW\"));\n        Assert.Contains(\"missed\", marker);\n        Assert.Contains(\"stage 12\", marker);\n    }\n\n    [Fact]\n    public async Task FlagAtNonCommitStage_PersistsCorrectly()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/app.cs\", []);\n        repo.WriteTask(\"stage7-flag\", \"# Stage 7 flag test\\n\");\n\n        // FlagAtStageSubagentRunner returns invalid result at stage 7.\n        var runner = new FlagAtStageSubagentRunner(flagAtStage: 7);\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            RelayDriverOptions.NoGitCommit);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"stage7-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // Persisted status.json records stage 7 Flagged.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"stage7-flag\");\n        Assert.True(Directory.Exists(statusDir));\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 7);\n        var stage7 = statusEntries.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", stage7.Status);\n\n        // Re-read survives.\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead7 = reRead.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", reRead7.Status);\n    }\n\n    [Fact]\n    public async Task PostCommitFlag_NoDuplicateTaskDefinition()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/status.cs\", []);\n        repo.WriteTask(\"no-dup\", \"batch: 2\\n\\n# No duplicate test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(\n                new EditingSubagentRunner(),\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"no-dup\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // \u2500\u2500 Assert: exactly one tracked copy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // The task must NOT exist in the active tasks folder (retirement\n        // moved it, and the rollback must NOT have re-created it).\n        var activePath = Path.Combine(repo.Root, \"llm-tasks\", \"no-dup.md\");\n        Assert.False(File.Exists(activePath),\n            \"active task must not exist \u2014 retirement kept the move, rollback skipped\");\n\n        // The task must exist exactly once in completed/.\n        var completedDir = Path.Combine(repo.Root, \"llm-tasks\", \"completed\");\n        var allMdFiles = Directory.Exists(completedDir)\n            ? Directory.EnumerateFiles(completedDir, \"*.md\", SearchOption.AllDirectories).ToList()\n            : [];\n        var taskCopies = allMdFiles\n            .Where(f => Path.GetFileName(f).Contains(\"no-dup\"))\n            .ToList();\n        Assert.Single(taskCopies,\n            $\"expected exactly 1 completed copy of no-dup, found {taskCopies.Count}: {string.Join(\", \", taskCopies)}\");\n\n        // And the completed copy is the DONE- prefixed one.\n        Assert.EndsWith(\"DONE-no-dup.md\", taskCopies[0]);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 129
+    },
+    {
+      "turn": 46,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 82549,
+      "tokens_after": 55633
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 15.312,
+      "prompt_tokens_est": 55633,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RelayDriverCommitGateFlagTests",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.158,
+      "result_length": 3296
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 86.759,
+      "prompt_tokens_est": 57206,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "# Quick check: read the test file to verify the current state\nimport os\nprint(os.path.getsize(\"/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\"))\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.089,
+      "result_length": 6
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 13.035,
+      "prompt_tokens_est": 62429,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CodeChangeGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6175
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "offset": 100,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6093
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 10.136,
+      "prompt_tokens_est": 65998,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Snapshot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7426
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 3.828,
+      "prompt_tokens_est": 68319,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4516
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 28.273,
+      "prompt_tokens_est": 69508,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.GitSim/GitSim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3257
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 44.788,
+      "prompt_tokens_est": 71894,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "private static async Task.*GitAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 160
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 7.861,
+      "prompt_tokens_est": 74870,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "offset": 220
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2333
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 35.813,
+      "prompt_tokens_est": 75804,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "void WriteConfig\\(",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.146,
+      "result_length": 271
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 2.589,
+      "prompt_tokens_est": 78043,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 30,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3249
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 25.574,
+      "prompt_tokens_est": 78903,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RelayDriverOptions\\.Default|static.*Default",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.03,
+      "result_length": 1045
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 100.459,
+      "prompt_tokens_est": 80789,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\nusing GitSimEngine = VisualRelay.GitSim.GitSim;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RelayDriverCommitGateFlagTests\n{\n    /// <summary>\n    /// Wraps a <see cref=\"GitSimEngine\"/> so that the first\n    /// <c>ls-files --others --exclude-standard</c> call after a commit\n    /// returns an extra \"missed\" file \u2014 simulating a post-commit invariant\n    /// failure without needing a real filesystem race.\n    /// All other calls pass through.\n    /// </summary>\n    private sealed class PostCommitFlagTriggeringGitInvoker : IGitInvoker\n    {\n        private readonly GitSimEngine _inner;\n        private bool _commitHappened;\n        private bool _alreadyInjected;\n\n        public PostCommitFlagTriggeringGitInvoker(GitSimEngine inner) => _inner = inner;\n\n        public GitSimEngine Inner => _inner;\n\n        public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(\n            string rootPath,\n            IEnumerable<string> arguments,\n            CancellationToken cancellationToken,\n            TimeSpan? timeout = null,\n            IReadOnlyDictionary<string, string>? environment = null,\n            CancellationToken killToken = default,\n            Action<string>? onActivity = null)\n        {\n            var args = arguments.ToList();\n\n            // The post-commit check (FindUncommittedAuthoredFilesAsync) is\n            // the only ls-files --others --exclude-standard call that happens\n            // after a commit. Wait for the commit, then inject on the very\n            // next ls-files --others call.\n            if (!_alreadyInjected && _commitHappened\n                && args.Contains(\"ls-files\") && args.Contains(\"--others\"))\n            {\n                _alreadyInjected = true;\n                var normal = await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n                var injectedPath = \"src/uncommitted-file.cs\";\n                var output = string.IsNullOrWhiteSpace(normal.Output)\n                    ? injectedPath\n                    : normal.Output.TrimEnd() + \"\\n\" + injectedPath;\n                return (0, output, false);\n            }\n\n            if (args.Contains(\"commit\") && args.Contains(\"-m\"))\n                _commitHappened = true;\n\n            return await _inner.RunAsync(rootPath, arguments, cancellationToken, timeout, environment, killToken, onActivity);\n        }\n    }\n\n    [Fact]\n    public async Task CommitSucceeds_PostCommitCheckFlags_StatusRecordsFlagged()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/status.cs\", []);\n        repo.WriteTask(\"commit-flag\", \"batch: 2\\n\\n# Commit flag test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        // EditingSubagentRunner actually writes src/status.cs \u2192 \"new\" at\n        // stage 6 so the code-change gate (stage 11) sees a real diff and\n        // lets the run proceed to the commit stage (12).\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(\n                new EditingSubagentRunner(),\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"commit-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // 1. Outcome reports Flagged (not Committed).\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.Contains(\"missed\", outcome.Reason);\n\n        // 2. Persisted status.json records stage 12 Flagged with the reason.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"commit-flag\");\n        Assert.True(Directory.Exists(statusDir), \"task directory must exist\");\n        var statusPath = Path.Combine(statusDir, \"status.json\");\n        Assert.True(File.Exists(statusPath), \"status.json must exist\");\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 12);\n        var stage12 = statusEntries.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", stage12.Status);\n        Assert.NotNull(stage12.Error);\n        Assert.Contains(\"missed\", stage12.Error);\n\n        // 3. Re-read: flag survives a fresh hydrate (no stale in-memory copy).\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead12 = reRead.First(e => e.Stage == 12);\n        Assert.Equal(\"Flagged\", reRead12.Status);\n        Assert.Equal(stage12.Error, reRead12.Error);\n\n        // 4. The sealed commit IS on the branch (Option A: keep the seal).\n        var head = sim.Head(repo.Root);\n        Assert.NotNull(head);\n        var headInfo = sim.CommitInfo(repo.Root, head);\n        Assert.NotNull(headInfo);\n        Assert.Contains(\"Relay-Seal:\", headInfo!.Message);\n        Assert.Contains(\"Task: commit-flag\", headInfo.Message);\n\n        // 5. Task definition exists in completed/ only \u2014 NOT in active tasks.\n        Assert.False(File.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"commit-flag.md\")),\n            \"active task file must not exist \u2014 retirement kept the move\");\n        var completedFiles = Directory.Exists(Path.Combine(repo.Root, \"llm-tasks\", \"completed\"))\n            ? Directory.EnumerateFiles(\n                Path.Combine(repo.Root, \"llm-tasks\", \"completed\"),\n                \"DONE-commit-flag.md\",\n                SearchOption.AllDirectories).ToList()\n            : [];\n        Assert.Single(completedFiles);\n\n        // 6. NEEDS-REVIEW marker exists (written by FlagAsync).\n        Assert.True(File.Exists(Path.Combine(statusDir, \"NEEDS-REVIEW\")));\n        var marker = await File.ReadAllTextAsync(Path.Combine(statusDir, \"NEEDS-REVIEW\"));\n        Assert.Contains(\"missed\", marker);\n        Assert.Contains(\"stage 12\", marker);\n    }\n\n    [Fact]\n    public async Task FlagAtNonCommitStage_PersistsCorrectly()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/app.cs\", []);\n        repo.WriteTask(\"stage7-flag\", \"# Stage 7 flag test\\n\");\n\n        // FlagAtStageSubagentRunner returns invalid result at stage 7.\n        var runner = new FlagAtStageSubagentRunner(flagAtStage: 7);\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink()),\n            RelayDriverOptions.NoGitCommit);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"stage7-flag\");\n\n        // \u2500\u2500 Assert \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // Persisted status.json records stage 7 Flagged.\n        var statusDir = Path.Combine(repo.Root, \".relay\", \"stage7-flag\");\n        Assert.True(Directory.Exists(statusDir));\n        var statusEntries = StageStatusRecord.Read(statusDir);\n        Assert.Contains(statusEntries, e => e.Stage == 7);\n        var stage7 = statusEntries.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", stage7.Status);\n\n        // Re-read survives.\n        var reRead = StageStatusRecord.Read(statusDir);\n        var reRead7 = reRead.First(e => e.Stage == 7);\n        Assert.Equal(\"Flagged\", reRead7.Status);\n    }\n\n    [Fact]\n    public async Task PostCommitFlag_NoDuplicateTaskDefinition()\n    {\n        // \u2500\u2500 Arrange \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"test -f src/status.cs\", []);\n        repo.WriteTask(\"no-dup\", \"batch: 2\\n\\n# No duplicate test\\n\");\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n\n        var wrapper = new PostCommitFlagTriggeringGitInvoker(sim);\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(\n                new EditingSubagentRunner(),\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(),\n                wrapper),\n            RelayDriverOptions.Default);\n\n        // \u2500\u2500 Act \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        var outcome = await driver.RunTaskAsync(repo.Root, \"no-dup\");\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n\n        // \u2500\u2500 Assert: exactly one tracked copy \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n        // The task must NOT exist in the active tasks folder (retirement\n        // moved it, and the rollback must NOT have re-created it).\n        var activePath = Path.Combine(repo.Root, \"llm-tasks\", \"no-dup.md\");\n        Assert.False(File.Exists(activePath),\n            \"active task must not exist \u2014 retirement kept the move, rollback skipped\");\n\n        // The task must exist exactly once in completed/.\n        var completedDir = Path.Combine(repo.Root, \"llm-tasks\", \"completed\");\n        var allMdFiles = Directory.Exists(completedDir)\n            ? Directory.EnumerateFiles(completedDir, \"*.md\", SearchOption.AllDirectories).ToList()\n            : [];\n        var taskCopies = allMdFiles\n            .Where(f => Path.GetFileName(f).Contains(\"no-dup\"))\n            .ToList();\n        Assert.Single(taskCopies,\n            $\"expected exactly 1 completed copy of no-dup, found {taskCopies.Count}: {string.Join(\", \", taskCopies)}\");\n\n        // And the completed copy is the DONE- prefixed one.\n        Assert.EndsWith(\"DONE-no-dup.md\", taskCopies[0]);\n    }\n}\n",
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 129
+    },
+    {
+      "turn": 58,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages+strip_reasoning_content",
+      "tokens_before": 88584,
+      "tokens_after": 26261
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 5.262,
+      "prompt_tokens_est": 26261,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RelayDriverCommitGateFlagTests",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 10.941,
+      "result_length": 3145
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 15.471,
+      "prompt_tokens_est": 27219,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs",
+        "old_string": "        Assert.Contains(\"missed\", outcome.Reason);",
+        "new_string": "        Assert.Contains(\"sealed commit is missing\", outcome.Reason);"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 115
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 3.565,
+      "prompt_tokens_est": 28137,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs",
+        "old_string": "        Assert.Contains(\"missed\", stage12.Error);",
+        "new_string": "        Assert.Contains(\"sealed commit is missing\", stage12.Error);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 115
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 8.592,
+      "prompt_tokens_est": 28270,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs",
+        "new_string": "        Assert.Contains(\"sealed commit is missing\", marker);\n        Assert.Contains(\"stage 12\", marker);",
+        "old_string": "        Assert.Contains(\"missed\", marker);\n        Assert.Contains(\"stage 12\", marker);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 115
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 4.289,
+      "prompt_tokens_est": 28699,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RelayDriverCommitGateFlagTests",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.355,
+      "result_length": 3070
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 20.763,
+      "prompt_tokens_est": 29773,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "[\"Verify tests compile and fail using targeted test command\", \"Rewrite tests with proper file-writing runner and correct GitInvoker counting\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 467
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 2.57,
+      "prompt_tokens_est": 30876,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11228
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 11.868,
+      "prompt_tokens_est": 33635,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

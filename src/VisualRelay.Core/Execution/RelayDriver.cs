@@ -32,10 +32,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
             await using var activeLock = await ActiveTaskLock.AcquireAsync(rootPath, taskId, cancellationToken);
             Directory.CreateDirectory(taskDirectory);
             File.Delete(Path.Combine(taskDirectory, "NEEDS-REVIEW"));
-            // Self-heal VR's nono profile once per run before any sandboxed stage.
             await NonoProfileEnsurer.EnsureAsync(_dependencies.EnvironmentAccessor, cancellationToken);
-            // Publish command-guard middleware so swival can strip git hook-bypass flags.
-            // Fail-open: if publish fails, swival launches without the middleware.
             _ = await CommandGuardEnsurer.EnsureAsync(rootPath, cancellationToken);
             var pinnedSwivalProfileContent = await ResolvePinnedSwivalProfileContentAsync(rootPath, taskDirectory, cancellationToken);
             var repository = new RelayTaskRepository(rootPath);
@@ -284,11 +281,14 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                     }
                 }
 
-                if ((stage.Number != 10 || !fixVerifyHandled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
+                if (stage.Number != 12 && (stage.Number != 10 || !fixVerifyHandled) && (stage.Number != 5 || !"Skipped".Equals(statusEntries[4].Status, StringComparison.OrdinalIgnoreCase)))
                 {
                     (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
                         stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds);
                 }
+                else if (stage.Number == 12)
+                    (previousSeal, taskHash) = await RecordStageAsync(rootPath, runId, taskId, taskDirectory, stage, body, check, cost,
+                        stopwatch.Elapsed, ledger, seals, statusEntries, manifest, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, skipStatusAndPublish: true);
             }
             return await ExecuteCommitStageAsync(rootPath, runId, taskId, taskDirectory, config, task, commitMessages, manifest, input.Markdown, taskHash, activeLock.Nonce, preRunUntracked, runBaseSha, statusEntries, cancellationToken);
         }

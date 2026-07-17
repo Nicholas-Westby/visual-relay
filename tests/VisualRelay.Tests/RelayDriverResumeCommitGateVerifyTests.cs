@@ -53,9 +53,12 @@ public sealed class RelayDriverResumeCommitGateVerifyTests
         Assert.Contains("FAIL: TestGateFailed", verifyResult.Data?["reason"] ?? "",
             StringComparison.Ordinal);
 
-        // No stage_done for stage 12 must be emitted — we never reached commit.
-        Assert.DoesNotContain(sink.Events,
+        // After the fix, FlagAsync publishes stage_done with status "Flagged"
+        // for the resume re-flag path too — this is the correct, truthful state.
+        var stage12Done = sink.Events.SingleOrDefault(
             e => e is { EventName: "stage_done", StageNumber: 12 });
+        Assert.NotNull(stage12Done);
+        Assert.Equal("Flagged", stage12Done!.Data?["status"]);
     }
 
     /// <summary>

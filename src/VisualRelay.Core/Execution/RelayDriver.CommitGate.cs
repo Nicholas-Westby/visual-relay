@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using VisualRelay.Core.Tasks;
@@ -77,6 +78,8 @@ public sealed partial class RelayDriver
                     ? "commit-gate verify failed" : reason;
                 var flaggedOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 12,
                     enrichedReason, testResult.Output, statusEntries, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, stage12, TimeSpan.Zero,
+                    null, 0, 0, cancellationToken, status: "Flagged");
                 return (previousSeal, taskHash, firstStageToRun, flaggedOutcome);
             }
 
@@ -152,7 +155,9 @@ public sealed partial class RelayDriver
         if (_options.LastStageToRun is not null)
             return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Planned, null, null, null);
 
+        var commitStopwatch = Stopwatch.StartNew();
         var commitSha = "simulated";
+        var doneWritten = false;
         if (_options.CreateGitCommit)
         {
             // Refuse to retire/commit-as-done a code-expecting run that changed no
@@ -217,11 +222,19 @@ public sealed partial class RelayDriver
                     Data: new Dictionary<string, string> { ["message"] = advisory }), cancellationToken);
             }
 
+            // Write final "Done" status BEFORE the commit so status.json is
+            // included in the sealed commit. Publish deferred to the bottom.
+            MarkStatusDone(statusEntries, RelayStages.All[11], commitStopwatch.Elapsed, null, null);
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+            doneWritten = true;
+
             var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker, runBaseSha);
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();
-                return await FlagAsync(rootPath, runId, taskId, taskDirectory, 12, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
+                var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 12, commit.Error ?? "git commit failed", null, statusEntries, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed, null, 0, 0, cancellationToken, status: "Flagged");
+                return outcome;
             }
 
             commitSha = commit.CommitSha ?? "unknown";
@@ -232,10 +245,15 @@ public sealed partial class RelayDriver
                     rootPath, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker);
                 if (missed.Count > 0)
                 {
-                    retirement?.Rollback?.Invoke();
-                    return await FlagAsync(rootPath, runId, taskId, taskDirectory, 12,
+                    // Keep the seal: the commit landed. Do NOT rollback retirement —
+                    // the sealed commit recorded the folder move; rolling back would
+                    // duplicate the task definition (active + completed). The flag is
+                    // an advisory pointing at the sealed commit.
+                    var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 12,
                         $"sealed commit is missing authored files: {string.Join(", ", missed.Order(StringComparer.Ordinal).Select(f => $"`{f}`"))}",
                         null, statusEntries, cancellationToken);
+                    await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed, null, 0, 0, cancellationToken, status: "Flagged");
+                    return outcome;
                 }
             }
 
@@ -253,8 +271,13 @@ public sealed partial class RelayDriver
                     Data: new Dictionary<string, string> { ["path"] = retirement.DestinationPath }), cancellationToken);
             }
         }
-        MarkStatus(statusEntries, 12, "Done");
-        await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+        if (!doneWritten)
+        {
+            MarkStatusDone(statusEntries, RelayStages.All[11], commitStopwatch.Elapsed, null, null);
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+        }
+        await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed,
+            null, 0, 0, cancellationToken, status: "Done");
         FlaggedWorkStore.Delete(taskDirectory);
         return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);
     }

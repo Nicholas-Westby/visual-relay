@@ -13,15 +13,30 @@ public sealed partial class RelayQueueController
         return status.Count >= 4 && status.Take(4).All(e => e.Status == "Done");
     }
 
-    private void WriteNeedsReviewMarker(string taskId, string reason)
+    private async Task WriteNeedsReviewMarkerAsync(string taskId, string reason)
     {
         var dir = Path.Combine(RootPath, ".relay", taskId);
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "NEEDS-REVIEW"), reason + Environment.NewLine);
+        // If FlagAsync already wrote the marker, skip — its format is richer
+        // (includes stage line).  Only write when the driver didn't set one.
+        if (File.Exists(Path.Combine(dir, "NEEDS-REVIEW")))
+            return;
+        await RelayDriver.WriteNeedsReviewMarkerAsync(dir, reason, 0, CancellationToken.None);
     }
 
     private async Task ResetAndLogAsync(string taskId, string? tasksDir, string drainRunId, string phase, CancellationToken ct)
     {
+        // Fix 5: When stage 12 is Flagged, the commit already landed — a checkout
+        // reset would restore the sealed (Done) status.json, wiping the flag
+        // evidence.  Skip the reset and log a summary entry instead.
+        var statusDir = Path.Combine(RootPath, ".relay", taskId);
+        var status = StageStatusRecord.Read(statusDir);
+        if (status.Count >= 12 && status[11].Status == "Flagged")
+        {
+            DrainSummaryLog.Write(RootPath, drainRunId, taskId, phase,
+                "reset-skipped-commit-flagged", "commit sealed; skipping worktree reset to preserve flag evidence");
+            return;
+        }
+
         var gi = _gitInvoker ?? new GitInvoker();
         try
         {

@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T03:17:50.789244+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 07-fix-committed-but-pending-state-after-commit-gate-flags\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Make a commit-stage flag leave coherent state instead of \"committed but pending\"\n\nWhen the Commit stage (12) seals its commit and a POST-commit check then flags\nthe task, the system ends in a self-contradictory state. Observed on\n2026-07-15 for two tasks flagged by the commit gate\n(`merge-nocommit-contamination-tests-data-driven`,\n`split-key-setup-panel-ui-tests`):\n\n- The sealed commit is in history on main \u2014 the work \"landed\".\n- The task card says **Needs review** (NEEDS-REVIEW marker exists).\n- The stage board shows Commit **Complete** \u2014 persisted `status.json` records\n  stage 12 as `\"Done\"` with `error: null`, so after an app restart nothing\n  shows the flag at all.\n- The task definition exists in git **twice**: the sealed commit moved it to\n  `llm-tasks/completed/<id>/DONE-<id>.md`, then the flag path's retirement\n  rollback re-created `llm-tasks/<id>/<id>.md` on disk, and the next\n  \"chore: add tasks\" auto-commit committed that duplicate (byte-identical to\n  the completed copy).\n\nAn operator cannot tell what actually happened: the queue says review the\ntask, the stage board says everything succeeded, git says it shipped, and the\ntask list shows it as still to-do.\n\n### Evidence (verified)\n\n- Run-log ordering for the split task\n  (`.relay/split-key-setup-panel-ui-tests/run.log` lines 382-384):\n  `s12/cheap stage_done \u2026 status=Done` at 05:29:14.93 \u2014 **before** the sealed\n  commit (05:29:16) and the `s12/? flagged` event (05:29:18.71). Stage 12 is\n  reported Done before the gate has done any of its work; the \"Done\" is a\n  premature bookkeeping artifact of the generic stage loop, not the gate's\n  outcome.\n- `FlagAsync` (`src/VisualRelay.Core/Execution/RelayDriver.Events.cs:~95-121`)\n  unconditionally calls `MarkStatusFlagged(statusEntries, 12, reason)` and\n  `WriteStatusAsync` \u2014 yet the final on-disk `status.json` (mtime = flag\n  minute, untouched since) says stage 12 `Done`/no-error for BOTH tasks. So\n  some later writer persists the stale pre-flag entries after `FlagAsync`\n  returns. Contrast: `hoist-pipeline-test-shared-setup` flagged at stage 7\n  (which was `Running`, not pre-marked `Done`) and its `Flagged` status DID\n  survive on disk \u2014 the clobber is specific to the commit-stage path.\n  Find the last writer (driver epilogue after `ExecuteCommitStageAsync`\n  returns, or the queue controller's post-flag handling) and fix the ordering\n  or make flag state win.\n- The queue controller separately overwrites the NEEDS-REVIEW marker with a\n  reason-only body (`RelayQueueController.PrivateHelpers.cs:16-21` \u2014\n  hoist's marker is exactly the 34-byte reason line, without the `stage N`\n  line `FlagAsync` writes) \u2014 two writers with different formats for the same\n  marker file.\n- Retirement rollback (`retirement?.Rollback?.Invoke()` in\n  `RelayDriver.CommitGate.cs:222`, invoked AFTER the sealed commit already\n  recorded the folder move) restores the active task folder on disk but the\n  completed copy from the sealed commit remains tracked \u2014 the duplication\n  described above. `TaskCompletionArchive.RetireAsync` owns the move.\n\n### What to build\n\n1. **Truthful stage state**: after a stage-12 flag, persisted `status.json`\n   must say stage 12 `Flagged` with the reason \u2014 surviving app restarts and\n   any post-flag writes. Do not publish/persist `Done` for the commit stage\n   before the gate (commit + post-commit checks) has actually finished; the\n   stage_done event should carry the gate's real outcome.\n2. **Coherent lifecycle on flag-after-seal**: decide and implement ONE\n   documented outcome when the gate flags after the commit exists. The two\n   defensible designs \u2014 pick one and encode it in tests:\n   - roll back the seal too (reset the branch to run-base, preserving the\n     work in the flagged-work bundle, so \"flagged\" always means \"nothing\n     landed\"), or\n   - keep the seal and do NOT roll back retirement (the task stays completed;\n     the flag becomes a review advisory pointing at the sealed commit).\n   Either way the current halfway state (commit kept + retirement rolled\n   back) must be impossible.\n3. **No duplicate task definitions**: whatever the choice in (2), the task\n   must never end up tracked in both the active and completed locations.\n   Guard the \"chore: add tasks\" auto-commit against re-adding a task whose\n   identical completed copy is already tracked.\n4. **One writer for NEEDS-REVIEW**: unify the driver and queue-controller\n   marker writes so the marker format (and content) is owned in one place.\n\n### Constraints\n\n- The post-commit invariant checks themselves stay \u2014 this task fixes the\n  state they leave behind, not whether they run (their false-positive causes\n  are `01-unquote-git-paths-for-non-ascii-filenames` and\n  `02-capture-untracked-baseline-on-resume-runs`).\n- Repo-agnostic; sequencing/observability changes only, no new stage.\n- Keep files under the 300-line guard.\n\n### Tests (red first)\n\n- Driver test: commit succeeds, post-commit check flags \u2192 persisted status\n  records stage 12 `Flagged` + reason; re-reading the task directory (fresh\n  hydrate) shows the flag; and the world matches the chosen design in (2)\n  (assert branch state and folder locations explicitly).\n- Regression: a flag at a non-commit stage (e.g. 7) still persists correctly\n  (hoist's case).\n- Duplication guard: after a flag-after-seal cycle, exactly one tracked copy\n  of the task definition exists.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Here is the task framing and solution options.\n\n---\n\n## Task framing\n\n**Problem**: When the Commit stage (12) seals a commit and a **post-commit** check then flags the task, the system lands in a self-contradictory state \u2014 the commit is on `main`, `status.json` says `Done` (surviving restart), the NEEDS-REVIEW marker exists, and the task definition appears in both `llm-tasks/<id>/` and `llm-tasks/completed/<id>/`. An operator cannot tell what happened.\n\n**Root causes** (4 distinct sub-problems):\n\n1. **Premature `Done` persistence** \u2014 `stage_done` with `status=Done` is emitted (and persisted) for stage 12 *before* the commit gate's post-commit checks run. When `FlagAsync` later calls `MarkStatusFlagged` + `WriteStatusAsync`, a subsequent writer clobbers the flag state back to `Done`. The background log (`bg_a081beb4667d.log`) confirms many tests now yield `Flagged` instead of `Committed`, suggesting the commit gate's post-commit checks are triggering the false-positive flag path described.\n\n2. **Contradictory lifecycle** \u2014 The retirement rollback (`retirement?.Rollback?.Invoke()`) runs *after* the sealed commit already recorded the folder move to `llm-tasks/completed/`. This restores the active folder on disk but the completed copy is still tracked in git \u2014 producing duplicate task definitions.\n\n3. **Duplicate auto-commit** \u2014 The \"chore: add tasks\" auto-commit can re-add a task whose identical completed copy is already tracked.\n\n4. **Two NEEDS-REVIEW writers** \u2014 `FlagAsync` (driver) writes `\"Flagged: stage N \u2014 <reason>\"` format; the queue controller overwrites with a bare reason line. Two writers, two formats, no single owner.\n\n---\n\n## Solution options\n\n### Option A \u2014 \"Keep the seal, flag is advisory\"\n\n**Philosophy**: Once the commit lands on `main`, it stays. A post-commit flag becomes a *review advisory* pointing at the sealed commit \u2014 it does not undo anything.\n\n- **Sub-problem 1**: Defer the stage-12 `Done` persistence until *after* the gate's post-commit checks finish. The gate loop reports its real outcome (`Done` or `Flagged`). `FlagAsync` always wins the last write to `status.json` \u2014 no subsequent writer clobbers it.\n- **Sub-problem 2**: If the post-commit flag fires, skip the retirement rollback entirely. The task stays in `llm-tasks/completed/<id>/DONE-<id>.md`. The NEEDS-REVIEW marker and `Flagged` status serve as a review note pinned to the sealed commit SHA.\n- **Sub-problem 3**: The \"chore: add tasks\" auto-commit filter checks: if a task's body (or SHA) matches an existing `llm-tasks/completed/<id>/DONE-<id>.md`, skip it.\n- **Sub-problem 4**: Extract NEEDS-REVIEW writing into `RelayDriver.MarkerWriter.cs` (or similar), called by both `FlagAsync` and the queue controller. Single method, single format (`\"Flagged: stage N \u2014 <reason>\\n\"`).\n\n**Tests**:\n- Driver test: commit succeeds \u2192 post-commit check flags \u2192 `status.json` shows stage 12 `Flagged` with reason; task directory remains under `completed/`; the sealed commit is still on `main`; exactly one tracked copy of the task definition exists.\n- Regression: flag at stage 7 still persists correctly (unchanged from current behavior).\n- Duplication guard: after a flag-after-seal cycle, `ls-files` shows the task only under `completed/`.\n\n**Costs**: The commit is on `main` even though the gate found a problem \u2014 operators must act on the advisory. Simpler implementation since no branch reset is needed.\n\n---\n\n### Option B \u2014 \"Roll back the seal, flagged means nothing landed\"\n\n**Philosophy**: A flag at the commit gate is always a veto \u2014 the commit is rolled back as if it never happened. Consistency: \"Flagged\" always means the branch is at run-base, the work is preserved in the flagged-work bundle, and nothing landed on `main`.\n\n- **Sub-problem 1**: Same as Option A \u2014 defer stage-12 `Done` persistence until after post-commit checks. `FlagAsync` wins the last write.\n- **Sub-problem 2**: On post-commit flag, the gate performs a `git reset --hard <run-base>` (or `git rebase --abort` equivalent), resetting the branch to the pre-commit state. The authored work is captured into `flagged-work.bundle` (already done by `FlaggedWorkStore`). Retirement rollback is still invoked (or replaced by the reset), so the task goes back to `llm-tasks/<id>/`. The completed copy in git is removed via the reset.\n- **Sub-problem 3**: Same filter as Option A \u2014 check completed copy before re-adding.\n- **Sub-problem 4**: Same unification as Option A.\n\n**Tests**: Same as Option A, plus asserting that `git rev-parse HEAD` equals the run-base SHA after the flag, and that `flagged-work.bundle` exists.\n\n**Costs**: More invasive \u2014 the driver needs a new \"hard rollback\" path that destroys the sealed commit. If other tasks committed in the same batch exist, the reset must be careful not to lose them. Higher risk of merge conflicts on resume.\n\n---\n\n### Option C \u2014 \"Defer commit until after post-commit checks (reorder the gate)\"\n\n**Philosophy**: Structural fix \u2014 the commit (seal + push) shouldn't happen until *after* the post-commit checks pass. Move the commit to be the last step in the gate, so there is never a window where a landed commit coexists with a flag.\n\n- **Sub-problem 1**: Solved structurally \u2014 `stage_done` is only emitted once, after all gates pass, with the real outcome.\n- **Sub-problem 2**: Eliminated \u2014 no commit exists if a flag fires, so retirement is never sealed. The retirement rollback case disappears.\n- **Sub-problem 3**: Still needed as a safety net, but the window for duplicates is much narrower.\n- **Sub-problem 4**: Same unification.\n\n**Costs**: Requires reordering `ExecuteCommitStageAsync` \u2014 commit must happen last, *after* post-commit checks. This changes the observable ordering of events (e.g., the commit push happens later in wall-clock time). If post-commit checks depend on the commit existing (e.g., CI triggers), they'd need adjustment. The most invasive option but eliminates the root cause most cleanly.\n\n---\n\n### My recommendation\n\n**Option A** (\"Keep the seal, flag is advisory\") is the simplest, safest fix that directly addresses all four sub-problems without redesigning the commit gate's event ordering. It matches the likely design intent: the commit is the valuable output; a post-commit flag is a quality signal for human review, not a veto.\n\n```json\n{\n  \"summary\": \"When stage 12 commits and a post-commit check then flags, the system ends in a contradictory state (commit landed, status=Done, NEEDS-REVIEW present, task duplicated). Four root causes: (1) stage_done(Done) is persisted before the gate finishes, then a later writer clobbers FlagAsync's flag; (2) retirement rollback re-creates the active folder after the commit already moved it to completed/; (3) the auto-commit can re-add a task whose identical completed copy is tracked; (4) two writers use different NEEDS-REVIEW formats. Three solution approaches were evaluated.\",\n  \"options\": [\n    \"Option A \u2014 'Keep the seal, flag is advisory': defer stage-12 Done persistence until after post-commit checks; skip retirement rollback on post-commit flag (task stays in completed/); filter auto-commit against completed copies; unify NEEDS-REVIEW into one owned method. Simplest, safest, preserves the commit on main.\",\n    \"Option B \u2014 'Roll back the seal, flagged means nothing landed': same sub-problem fixes as A, plus git reset --hard to run-base so no commit survives a flag. More consistent semantics but more invasive (destructive reset eliminates the commit).\",\n    \"Option C \u2014 'Defer commit until after post-commit checks': reorder the gate so commit is the last step. Most structurally clean but requires reordering ExecuteCommitStageAsync and may affect event ordering expectations.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 10,
+    "tool_calls_total": 15,
+    "tool_calls_succeeded": 13,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "list_files": {
+        "succeeded": 1,
+        "failed": 2
+      },
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 10,
+    "total_llm_time_s": 57.342,
+    "prompt_cache": {
+      "cached_tokens": 120064,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.051,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.866,
+      "prompt_tokens_est": 5201,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 117,
+      "error": "error: Path '.' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.md",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 117,
+      "error": "error: Path '.' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.609,
+      "prompt_tokens_est": 5471,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 4103
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.172,
+      "prompt_tokens_est": 7130,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8106
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.987,
+      "prompt_tokens_est": 9206,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 139
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FlagAsync|MarkStatusFlagged|commit.*gate|CommitGate",
+        "path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.02,
+      "result_length": 3502
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.024,
+      "prompt_tokens_est": 10468,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/3d4ef5cfb0fa4b9587e49a7290c4a320/RelayDriverResumeTests.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11899
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/659ef0a48dd54d569e97fee2c0c68b61/RelayDriverResumeTests.FlaggedWork.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15032
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/13d13a4181e44471886fb1b331a694b7/RelayDriverResumeTests.FlaggedWork2.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6749
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/trash/36942fad245e44d39cc806ca694de762/RelayDriverResumeTests.FlaggedWork3.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7852
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.076,
+      "prompt_tokens_est": 20688,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FlagAsync|MarkStatusFlagged|stage_done.*Done|Flagged.*stage 12",
+        "path": ".swival",
+        "context_lines": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.013,
+      "result_length": 415
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.649,
+      "prompt_tokens_est": 20925,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/bg/bg_a081beb4667d.log",
+        "offset": 1,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8673
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RelayDriver\\.Events|RelayDriver\\.CommitGate|FlagAsync|MarkStatusFlagged|WriteStatusAsync",
+        "path": ".swival/trash",
+        "context_lines": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 1400
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 7.849,
+      "prompt_tokens_est": 24015,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/bg/bg_a081beb4667d.log",
+        "offset": 101,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11999
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 8.077,
+      "prompt_tokens_est": 27545,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "investigation-complete-ideate"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 88
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 23.032,
+      "prompt_tokens_est": 28158,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

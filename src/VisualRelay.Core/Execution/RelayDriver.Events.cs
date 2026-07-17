@@ -97,11 +97,6 @@ public sealed partial class RelayDriver
     {
         try
         {
-            Directory.CreateDirectory(taskDirectory);
-            var body = $"{reason}\nstage {stageNumber}\n";
-            if (!string.IsNullOrWhiteSpace(details))
-                body += $"\n{details.Trim()}\n";
-
             var flaggedStage = stageNumber > 0 ? stageNumber : FindRunningStage(statusEntries);
             if (flaggedStage > 0)
             {
@@ -115,7 +110,7 @@ public sealed partial class RelayDriver
             await FlaggedWorkStore.CaptureAsync(rootPath, taskId, taskDirectory, flaggedStage,
                 _dependencies.GitInvoker, DateTimeOffset.UtcNow, cancellationToken);
 
-            await File.WriteAllTextAsync(Path.Combine(taskDirectory, "NEEDS-REVIEW"), body, cancellationToken);
+            await WriteNeedsReviewMarkerAsync(taskDirectory, reason, flaggedStage, cancellationToken, details);
             await _dependencies.EventSink.PublishAsync(new RelayEvent(
                 DateTimeOffset.UtcNow, "error", "flagged", runId, rootPath, taskId, flaggedStage,
                 Data: new Dictionary<string, string> { ["reason"] = reason }), cancellationToken);

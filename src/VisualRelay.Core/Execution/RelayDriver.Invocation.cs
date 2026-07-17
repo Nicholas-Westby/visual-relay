@@ -96,7 +96,8 @@ public sealed partial class RelayDriver
         double sessionCostUsd,
         int unknownCostStageCount,
         CancellationToken cancellationToken,
-        double? testDurationSeconds = null)
+        double? testDurationSeconds = null,
+        bool skipStatusAndPublish = false)
     {
         AppendLedgerSection(ledger, stage, body);
         var treeHash = stage.Number >= 4 ? WorkingTreeHash(rootPath, manifest) : string.Empty;
@@ -109,9 +110,12 @@ public sealed partial class RelayDriver
             && "Skipped".Equals(statusEntries[idx].Status, StringComparison.OrdinalIgnoreCase);
         if (!alreadySkipped)
             MarkStatusDone(statusEntries, stage, elapsed, cost, check, testDurationSeconds);
-        await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
-        var status = idx >= 0 && idx < statusEntries.Count ? statusEntries[idx].Status : null;
-        await PublishStageDoneAsync(rootPath, runId, taskId, stage, elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, status: status);
+        if (!skipStatusAndPublish)
+        {
+            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+            var status = idx >= 0 && idx < statusEntries.Count ? statusEntries[idx].Status : null;
+            await PublishStageDoneAsync(rootPath, runId, taskId, stage, elapsed, cost, sessionCostUsd, unknownCostStageCount, cancellationToken, testDurationSeconds, status: status);
+        }
         return (seal, seal);
     }
 }

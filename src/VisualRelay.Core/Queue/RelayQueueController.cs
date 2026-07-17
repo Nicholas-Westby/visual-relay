@@ -180,7 +180,7 @@ public sealed partial class RelayQueueController
                                 if (outcome.Status == RelayTaskOutcomeStatus.Flagged)
                                 {
                                     await ResetAndLogAsync(taskId, configResult?.Config?.TasksDir ?? (await RelayConfigLoader.TryLoadAsync(RootPath, drainCts.Token)).Config.TasksDir, drainRunId, "plan", drainCts.Token);
-                                    try { WriteNeedsReviewMarker(taskId, outcome.Reason ?? "Needs review"); }
+                                    try { await WriteNeedsReviewMarkerAsync(taskId, outcome.Reason ?? "Needs review"); }
                                     catch { DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "exception", "WriteNeedsReviewMarker failed"); }
                                     var idx = IndexOf(taskId);
                                     if (idx >= 0 && queueTask is not null)
@@ -261,7 +261,7 @@ public sealed partial class RelayQueueController
                     var tasksDir = configResult?.Config?.TasksDir
                         ?? (await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken)).Config.TasksDir;
                     await ResetAndLogAsync(outcome.TaskId, tasksDir, drainRunId, "execute", cancellationToken);
-                    try { WriteNeedsReviewMarker(outcome.TaskId, outcome.Reason ?? "Needs review"); }
+                    try { await WriteNeedsReviewMarkerAsync(outcome.TaskId, outcome.Reason ?? "Needs review"); }
                     catch { DrainSummaryLog.Write(RootPath, drainRunId, task.Id, "execute", "exception", "WriteNeedsReviewMarker failed"); }
                     Tasks.Add(task with { ReviewReason = outcome.Reason ?? "Needs review" });
                 }
