@@ -7,35 +7,38 @@ namespace VisualRelay.Tests;
 
 public sealed class RelayDriverGitCommitTests
 {
+    private readonly PipelineTestFixture _fixture;
+
+    public RelayDriverGitCommitTests(PipelineTestFixture fixture)
+    {
+        _fixture = fixture;
+    }
+
     [Fact]
     public async Task RunTaskAsync_WhenGitCommitEnabled_CreatesARealRelayCommit()
     {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.cs", []);
-        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        var sim = RelayDriverTestHelpers.InitSim(repo);
-        sim.Seed(repo.Root, "src/status.cs", "old");
-        sim.Commit(repo.Root, "chore: seed repo");
+        using var clone = _fixture.Clone();
+        var sim = clone.Sim;
 
         var runner = new EditingSubagentRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+        var outcome = await driver.RunTaskAsync(clone.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         Assert.False(string.IsNullOrWhiteSpace(outcome.CommitSha));
-        var message = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message;
+        var message = sim.CommitInfo(clone.Root, sim.Head(clone.Root)!)!.Message;
         Assert.Contains("fix(sample): ship status", message);
         Assert.Contains("Task: ship-status", message);
         Assert.Contains("Relay-Seal:", message);
-        var names = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
+        var names = sim.FilesInCommit(clone.Root, sim.Head(clone.Root)!);
         Assert.Contains(".relay/ship-status/manifest.txt", names);
         Assert.Contains("src/status.cs", names);
         Assert.DoesNotContain("src/ghost.cs", names);
-        Assert.True(File.Exists(Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
-        Assert.False(File.Exists(Path.Combine(repo.Root, "llm-tasks", "ship-status.md")));
+        Assert.True(File.Exists(Path.Combine(clone.Root, "llm-tasks", "completed", "batch-2", "DONE-ship-status.md")));
+        Assert.False(File.Exists(Path.Combine(clone.Root, "llm-tasks", "ship-status.md")));
     }
 
     [Fact]
@@ -145,12 +148,8 @@ public sealed class RelayDriverGitCommitTests
     [Fact]
     public async Task RunTaskAsync_CommitMsgHookRejectsFileNames_FallsBackToLaterCandidate()
     {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.cs", []);
-        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        var sim = RelayDriverTestHelpers.InitSim(repo);
-        sim.Seed(repo.Root, "src/status.cs", "old");
-        sim.Commit(repo.Root, "chore: seed repo");
+        using var clone = _fixture.Clone();
+        var sim = clone.Sim;
 
         // Install a commit-msg hook that rejects subjects containing "foo.cs".
         sim.PreCommitHook = req => Regex.IsMatch(req.Message.Split('\n')[0], "foo\\.cs")
@@ -162,56 +161,48 @@ public sealed class RelayDriverGitCommitTests
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+        var outcome = await driver.RunTaskAsync(clone.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
         // The first candidate ("fix(src): update foo.cs logic") contains foo.cs and
         // should be rejected by the hook.  The second candidate should land.
-        var subject = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message.Split('\n')[0];
+        var subject = sim.CommitInfo(clone.Root, sim.Head(clone.Root)!)!.Message.Split('\n')[0];
         Assert.Equal("fix: correct update logic", subject.Trim());
     }
 
     [Fact]
     public async Task RunTaskAsync_LegacyCommitMessageString_StillCommits()
     {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.cs", []);
-        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        var sim = RelayDriverTestHelpers.InitSim(repo);
-        sim.Seed(repo.Root, "src/status.cs", "old");
-        sim.Commit(repo.Root, "chore: seed repo");
+        using var clone = _fixture.Clone();
+        var sim = clone.Sim;
 
         var runner = new LegacyCommitMessageRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+        var outcome = await driver.RunTaskAsync(clone.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var subject = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message.Split('\n')[0];
+        var subject = sim.CommitInfo(clone.Root, sim.Head(clone.Root)!)!.Message.Split('\n')[0];
         Assert.Equal("fix(legacy): use old field", subject.Trim());
     }
 
     [Fact]
     public async Task RunTaskAsync_MissingCommitMessages_CommitsViaSlugFallback()
     {
-        using var repo = TestRepository.Create();
-        repo.WriteConfig("test -f src/status.cs", []);
-        repo.WriteTask("ship-status", "batch: 2\n\n# Ship status\n");
-        var sim = RelayDriverTestHelpers.InitSim(repo);
-        sim.Seed(repo.Root, "src/status.cs", "old");
-        sim.Commit(repo.Root, "chore: seed repo");
+        using var clone = _fixture.Clone();
+        var sim = clone.Sim;
 
         var runner = new NoCommitMessageRunner();
         var driver = new RelayDriver(
             RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.Default);
 
-        var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");
+        var outcome = await driver.RunTaskAsync(clone.Root, "ship-status");
 
         Assert.True(outcome.Status == RelayTaskOutcomeStatus.Committed, outcome.Reason);
-        var subject = sim.CommitInfo(repo.Root, sim.Head(repo.Root)!)!.Message.Split('\n')[0];
+        var subject = sim.CommitInfo(clone.Root, sim.Head(clone.Root)!)!.Message.Split('\n')[0];
         Assert.Equal("chore(relay): ship-status", subject.Trim());
     }
 

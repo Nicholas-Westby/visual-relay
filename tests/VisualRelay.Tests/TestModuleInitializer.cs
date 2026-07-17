@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
 
+[assembly: AssemblyFixture(typeof(VisualRelay.Tests.PipelineTestFixture))]
+
 namespace VisualRelay.Tests;
 
 /// <summary>
