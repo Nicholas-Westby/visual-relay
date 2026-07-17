@@ -34,7 +34,7 @@ internal static class CommitMessageSanitizer
 
         var lines = raw.Trim().Split('\n');
         var subject = SanitizeSubject(lines[0]);
-        if (!HasConventionalPrefix(subject))
+        if (subject is null || !HasConventionalPrefix(subject))
         {
             return null;
         }
@@ -63,19 +63,97 @@ internal static class CommitMessageSanitizer
 
         var lines = raw.Trim().Split('\n');
         var subject = SanitizeSubject(lines[0]);
-        return HasConventionalPrefix(subject) ? subject : null;
+        return subject is not null && HasConventionalPrefix(subject) ? subject : null;
     }
 
-    private static string SanitizeSubject(string subject)
+    /// <summary>
+    /// Same pipeline as <see cref="TrySanitizeSubject"/> but uses
+    /// <see cref="SanitizeSubjectWithEllipsis"/> so overlong subjects are visibly
+    /// truncated with a <c>…</c> marker instead of being rejected.
+    /// </summary>
+    internal static string? TrySanitizeSubjectWithEllipsis(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var lines = raw.Trim().Split('\n');
+        var subject = SanitizeSubjectWithEllipsis(lines[0]);
+        return subject is not null && HasConventionalPrefix(subject) ? subject : null;
+    }
+
+    /// <summary>
+    /// Same pipeline as <see cref="TrySanitizeMessage"/> but uses
+    /// <see cref="SanitizeSubjectWithEllipsis"/> so overlong subjects are visibly
+    /// truncated with a <c>…</c> marker instead of being rejected. Body bullets
+    /// are preserved.
+    /// </summary>
+    internal static string? TrySanitizeMessageWithEllipsis(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var lines = raw.Trim().Split('\n');
+        var subject = SanitizeSubjectWithEllipsis(lines[0]);
+        if (subject is null || !HasConventionalPrefix(subject))
+        {
+            return null;
+        }
+
+        var bullets = lines
+            .Skip(1)
+            .Select(SanitizeBullet)
+            .Where(line => line is not null)
+            .Take(CommitRules.MaxBullets)
+            .ToArray();
+        return bullets.Length == 0
+            ? subject
+            : $"{subject}{Environment.NewLine}{Environment.NewLine}{string.Join(Environment.NewLine, bullets)}";
+    }
+
+    private static string? SanitizeSubject(string subject)
     {
         var clean = StripTrailingPeriods(subject.Replace(CommitRules.EmDash, '-').TrimEnd());
         clean = LowercaseAfterPrefix(clean);
 
-        // The 72-char word-boundary cut can resurface a trailing period when the
-        // surviving word ends in an internal '.', which the validator rejects.
-        // Re-strip after truncating. If that empties the description, the result
-        // no longer matches the prefix regex, so the caller takes its fallback.
-        return StripTrailingPeriods(Truncate(clean));
+        // Reject overlong subjects — silently word-chopping them produces
+        // mid-sentence gibberish in sealed git history. BuildCommitChain falls
+        // through to the next candidate; the safety-net ellipsis path is a
+        // separate method so callers opt into truncation deliberately.
+        if (clean.Length > CommitRules.MaxSubjectChars)
+        {
+            return null;
+        }
+
+        return StripTrailingPeriods(clean);
+    }
+
+    /// <summary>
+    /// Normalizes <paramref name="subject"/> like <see cref="SanitizeSubject"/>,
+    /// but when it exceeds <see cref="CommitRules.MaxSubjectChars"/> the result is
+    /// visibly truncated with an ellipsis (<c>…</c>) instead of rejected. The
+    /// truncated version is cut at the last word boundary within the budget (minus
+    /// one char for the ellipsis) so the marker is never dropped mid-word.
+    /// </summary>
+    private static string? SanitizeSubjectWithEllipsis(string subject)
+    {
+        var clean = StripTrailingPeriods(subject.Replace(CommitRules.EmDash, '-').TrimEnd());
+        clean = LowercaseAfterPrefix(clean);
+
+        if (clean.Length <= CommitRules.MaxSubjectChars)
+        {
+            return StripTrailingPeriods(clean);
+        }
+
+        // Reserve one char for the ellipsis so the id/description stays recognizable.
+        var budget = CommitRules.MaxSubjectChars - 1;
+        var truncated = clean[..budget];
+        var lastSpace = truncated.LastIndexOf(' ');
+        var head = (lastSpace > 0 ? truncated[..lastSpace] : truncated).TrimEnd();
+        return StripTrailingPeriods(head) + '…';
     }
 
     /// <summary>Removes any trailing period(s) and trailing whitespace.</summary>
@@ -134,10 +212,10 @@ internal static class CommitMessageSanitizer
     /// <summary>
     /// Builds the guaranteed <c>chore(relay): {taskId}</c> fallback subject.  The
     /// <paramref name="taskId"/> is a single hyphenated token with no internal spaces,
-    /// so the generic word-boundary <see cref="Truncate"/> would cut at the lone space
-    /// after the colon and drop the whole id, yielding an empty <c>chore(relay):</c>.
-    /// Instead, when the id overflows the budget we keep a head slice plus an ellipsis
-    /// so the description is never empty; the full id still lives in the commit body.
+    /// so a generic word-boundary cut at the lone space after the colon would drop the
+    /// whole id, yielding an empty <c>chore(relay):</c>.  Instead, when the id
+    /// overflows the budget we keep a head slice plus an ellipsis so the description
+    /// is never empty; the full id still lives in the commit body.
     /// </summary>
     private static string BuildFallbackSubject(string taskId)
     {
@@ -152,18 +230,6 @@ internal static class CommitMessageSanitizer
         var idBudget = CommitRules.MaxSubjectChars - FallbackPrefix.Length - 1;
         var head = trimmed[..idBudget].TrimEnd();
         return $"{FallbackPrefix}{head}…";
-    }
-
-    private static string Truncate(string value)
-    {
-        if (value.Length <= CommitRules.MaxSubjectChars)
-        {
-            return value;
-        }
-
-        var truncated = value[..CommitRules.MaxSubjectChars];
-        var lastSpace = truncated.LastIndexOf(' ');
-        return (lastSpace > 0 ? truncated[..lastSpace] : truncated).TrimEnd();
     }
 
     /// <summary>

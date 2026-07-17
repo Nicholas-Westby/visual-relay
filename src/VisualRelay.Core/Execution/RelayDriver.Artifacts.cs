@@ -91,12 +91,19 @@ public sealed partial class RelayDriver
     /// <summary>
     /// Sanitizes each raw candidate via <see cref="CommitMessageSanitizer.TrySanitizeMessage"/>
     /// (body bullets survive, so task-required commit-message evidence is preserved),
-    /// drops non-Conventional entries, and appends the guaranteed <c>chore(relay): {taskId}</c>
-    /// fallback so the list is never empty.
+    /// drops non-Conventional entries. Overlong candidates (subject &gt;72 chars) are
+    /// rejected (returned as null) so the chain falls through to the next intact
+    /// candidate. An ellipsis-truncated safety-net candidate is injected per overlong
+    /// candidate before the generic <c>chore(relay): {taskId}</c> fallback, and every
+    /// rejection/truncation emits an advisory string so message degradation is
+    /// observable.
     /// </summary>
-    internal static IReadOnlyList<string> BuildCommitChain(IReadOnlyList<string> rawCandidates, string taskId)
+    internal static (IReadOnlyList<string> Chain, IReadOnlyList<string> Advisories) BuildCommitChain(IReadOnlyList<string> rawCandidates, string taskId)
     {
         var chain = new List<string>(rawCandidates.Count + 1);
+        var advisories = new List<string>();
+        var safetyNet = new List<string>();
+
         foreach (var raw in rawCandidates)
         {
             var message = CommitMessageSanitizer.TrySanitizeMessage(raw);
@@ -104,10 +111,24 @@ public sealed partial class RelayDriver
             {
                 chain.Add(message);
             }
+            else
+            {
+                // Candidate rejected — try the ellipsis safety-net path so the
+                // all-overlong case still produces a recognizable subject rather
+                // than only the generic chore(relay) fallback.
+                var ellipsis = CommitMessageSanitizer.TrySanitizeMessageWithEllipsis(raw);
+                if (ellipsis is not null)
+                {
+                    safetyNet.Add(ellipsis);
+                    var firstLine = ellipsis.Split('\n')[0];
+                    advisories.Add($"overlong commit subject truncated with ellipsis: \"{firstLine}\"");
+                }
+            }
         }
 
+        chain.AddRange(safetyNet);
         chain.Add(CommitMessageSanitizer.FromRawOrFallback(null, taskId));
-        return chain;
+        return (chain, advisories);
     }
 
     private static bool IsImpl(string path) =>

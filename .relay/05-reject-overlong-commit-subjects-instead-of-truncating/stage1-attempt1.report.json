@@ -1,0 +1,273 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T01:32:18.898566+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 05-reject-overlong-commit-subjects-instead-of-truncating\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Stop silently truncating commit subjects into mid-sentence gibberish\n\n`CommitMessageSanitizer` hard-truncates any candidate subject longer than\n`CommitRules.MaxSubjectChars` (72) at a word boundary and silently discards the\nrest (`src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs:157-167`,\napplied in `SanitizeSubject` at line 78). The result is permanent git history\nwhose subjects stop mid-sentence, which reads as corruption and destroys the\ninformation the subject was supposed to carry. Two sealed commits from the\n2026-07-15 drain demonstrate it:\n\n| Sealed subject (git log) | Stage-authored candidate (stage 10 report) |\n|---|---|\n| `revert: abandon KeySetupPanelUiTests split - replacement tests 17 %` | `revert: abandon KeySetupPanelUiTests split \u2014 replacement tests 17 % slower` (74 chars after em-dash swap \u2192 \"slower\" cut) |\n| `refactor(test): merge 3 NoCommitContaminationTests facts into` | `refactor(test): merge 3 NoCommitContaminationTests facts into data-driven theory` (81 chars \u2192 cut at \"into\") |\n\n\"replacement tests 17 %\" (17 % *what*?) and \"facts into\" (into *what*?) are\nwhat future readers of this repo's history get. Since the sealed commit is\nVisual Relay's product in every target repository, this is a general quality\nbug, not a cosmetic one.\n\n### Current mechanics (verified)\n\n- Stage reports provide multiple `commitMessages` candidates (the split task's\n  stage 10 offered three, including a 61-char one that would have fit:\n  `docs: record KeySetupPanelUiTests split attempt \u2014 no improvement`).\n- `BuildCommitChain` (`RelayDriver.Artifacts.cs:97-111`) sanitizes each\n  candidate, drops non-Conventional ones, and appends the guaranteed\n  `chore(relay): <taskId>` fallback. `GitCommitter` then tries candidates in\n  order until the hook accepts one (`GitCommitter.cs:189-216`).\n- Because truncation happens *inside* sanitize, an overlong first candidate is\n  never rejected \u2014 it is mangled and then wins, shadowing shorter candidates\n  that would have survived intact.\n- The fallback subject already has the right idea: it truncates with a visible\n  `\u2026` and keeps the id recognizable (`BuildFallbackSubject`, lines 142-155).\n\n### What to build\n\nPick and implement a coherent policy \u2014 the key requirement is that a subject\nthat cannot fit intact must never be silently word-chopped:\n\n1. Preferred: `TrySanitizeMessage` returns null for subjects that exceed 72\n   chars after normalization, so `BuildCommitChain` falls through to the next\n   candidate; the guaranteed fallback still ensures the chain is never empty.\n   Weigh the trade-off: if ALL candidates overflow, history gets the generic\n   `chore(relay): <taskId>` \u2014 decide whether that is acceptable or whether a\n   final \"truncate WITH visible ellipsis\" candidate (fallback-style) should sit\n   between rejection and the generic fallback.\n2. Upstream pressure: the stage contract that asks for `commitMessages` should\n   state the 72-char subject limit so candidates arrive fitting (check the\n   stage prompt/contract text; the hook rules in `docs/commit-messages.md` and\n   `CommitRules` are the source of truth). Prompt-side guidance plus\n   sanitizer-side rejection covers both halves.\n3. Whatever policy lands, add a run-log advisory when a candidate is rejected\n   or altered for length, so message degradation is observable instead of\n   silent.\n\n### Constraints\n\n- The commit-msg hook (`check-commit-message`, rules in\n  `src/VisualRelay.Core/CommitLint/`) stays authoritative; the sanitizer must\n  keep producing hook-passing messages. Body-bullet handling\n  (`SanitizeBullet`) is out of scope except where subject policy touches it.\n- Do not relax `MaxSubjectChars`.\n- Repo-agnostic: target repos' own hooks may be stricter; candidate fallthrough\n  in `GitCommitter` must keep working.\n\n### Tests (red first)\n\n- Sanitizer test: a 74-char-after-normalization subject is not silently\n  truncated (either rejected or visibly ellipsized per chosen policy) \u2014 assert\n  the exact policy.\n- Chain test: overlong candidate #1 + fitting candidate #2 \u2192 the sealed message\n  uses candidate #2 intact (this is the regression the two real commits hit).\n- All-overlong case: asserted, documented outcome (fallback or ellipsis).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the task description (source files are sandbox-restricted), I have a clear picture of the problem and the code structure. Here's my analysis and the solution options.\n\n---\n\n**Problem analysis**\n\n`CommitMessageSanitizer.SanitizeSubject` (line 78) hard-truncates at word boundaries at `CommitRules.MaxSubjectChars` (72 chars), producing gibberish like `\"facts into\"` (into *what*?). Because truncation happens inside sanitization, an overlong first candidate is never rejected \u2014 it's mangled and then wins, shadowing shorter, intact candidates. Two real commits from 2026-07-15 demonstrate the damage in sealed git history.\n\n---\n\n**Three solution options**\n\n1. **Reject-overlong-with-ellipsis-safety-net (recommended)**  \n   `TrySanitizeMessage` returns `null` for subjects exceeding 72 chars after normalization, so `BuildCommitChain` falls through to the next candidate. Between the candidate list and the generic fallback, inject a \"visibly truncated\" candidate (using `BuildFallbackSubject`-style `\u2026` ellipsis truncation). This means:\n   - The chain never silently mangles a subject.\n   - If all candidates overflow, the sealed message has a visible `\u2026` marker (informative, not corrupt).\n   - Add run-log advisory (`RelayEventSink`) when a candidate is rejected for length or visibly truncated.\n   - Update the stage prompt/contract to state the 72-char subject limit, reducing overlong candidates at the source.\n\n2. **Pure reject, rely on generic fallback**  \n   Same rejection logic as option 1, but *no* ellipsis-truncated intermediate candidate. If all candidates overflow, the sealed message is `chore(relay): <taskId>`. This is simpler but loses subject information entirely in the worst case. The trade-off is clean cut vs. informative fallback.\n\n3. **Visible truncation only (no rejection)**  \n   Keep the current word-boundary truncation but change it to always append `\u2026` (like `BuildFallbackSubject`). Add a run-log advisory when truncation occurs. No candidate rejection. This is the smallest code change but still silently discards information past 72 chars \u2014 a reader sees `\"facts into\u2026\"` and wonders \"into *what*?\" The `\u2026` at least signals truncation, but the information is still gone.\n\n---\n\n**Decision: option 1 is the right call** because it eliminates silent corruption, preserves information in the common case (next candidate fits), and uses visible `\u2026` as a final informative guard rather than generic fallback. The upstream prompt change reduces frequency of overlong candidates, and logging makes degradation observable.\n\n```json\n{ \"summary\": \"The CommitMessageSanitizer silently truncates overlong commit subjects at word boundaries, producing gibberish like 'facts into' in sealed git history. The fix: reject subjects >72 chars (return null from TrySanitizeMessage) so BuildCommitChain falls through to shorter intact candidates, with an ellipsis-truncated safety-net candidate before the generic chore(relay) fallback for the all-overlong case. Add run-log advisories on rejection/truncation, and update the stage prompt to document the 72-char subject limit upstream.\", \"options\": [\"Reject-overlong-with-ellipsis-safety-net: TrySanitizeMessage returns null for >72-char subjects; chain falls through; inject visibly-ellipsized candidate before generic fallback; log advisories; update stage prompt. Covers best-case (next candidate fits), worst-case (visible \u2026 marker), and eliminates silent corruption.\", \"Pure-reject-rely-on-generic-fallback: Same rejection logic but no ellipsis candidate; all-overlong case yields chore(relay): <taskId>. Simpler but loses subject info in worst case.\", \"Visible-truncation-only: Keep truncation but append \u2026 (like BuildFallbackSubject) and log advisories. Minimal change but still discards info past 72 chars; reader sees 'facts into\u2026' and still wonders 'into what?'\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 7,
+    "tool_calls_total": 12,
+    "tool_calls_succeeded": 9,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 5,
+        "failed": 3
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 7,
+    "total_llm_time_s": 36.749,
+    "prompt_cache": {
+      "cached_tokens": 58624,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.039,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.903,
+      "prompt_tokens_est": 4858,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 260,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 258,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 240,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs' resolves to /Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.448,
+      "prompt_tokens_est": 5302,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 175
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 4103
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.802,
+      "prompt_tokens_est": 7061,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8106
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.17,
+      "prompt_tokens_est": 9088,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4672
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14466
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.762,
+      "prompt_tokens_est": 14059,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CommitMessageSanitizer|SanitizeSubject|TrySanitizeMessage|BuildFallbackSubject|MaxSubjectChars|BuildCommitChain",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 17
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class CommitMessageSanitizer",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 17
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 1.701,
+      "prompt_tokens_est": 14193,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 139
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 19.963,
+      "prompt_tokens_est": 14296,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

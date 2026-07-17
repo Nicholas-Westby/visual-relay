@@ -203,7 +203,20 @@ public sealed partial class RelayDriver
             if (retirement?.Additions is { Count: > 0 } additions)
                 proofFiles.AddRange(additions);
 
-            var chain = BuildCommitChain(commitMessages, taskId);
+            var (chain, advisories) = BuildCommitChain(commitMessages, taskId);
+            foreach (var advisory in advisories)
+            {
+                await _dependencies.EventSink.PublishAsync(new RelayEvent(
+                    DateTimeOffset.UtcNow,
+                    "warn",
+                    "commit_msg_rejected",
+                    runId,
+                    rootPath,
+                    taskId,
+                    12,
+                    Data: new Dictionary<string, string> { ["message"] = advisory }), cancellationToken);
+            }
+
             var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker, runBaseSha);
             if (!commit.Success)
             {

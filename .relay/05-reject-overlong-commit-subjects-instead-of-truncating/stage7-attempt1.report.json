@@ -1,0 +1,500 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T02:00:01.323890+00:00",
+  "task": "# Relay stage 7: Review\nTask: 05-reject-overlong-commit-subjects-instead-of-truncating\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Stop silently truncating commit subjects into mid-sentence gibberish\n\n`CommitMessageSanitizer` hard-truncates any candidate subject longer than\n`CommitRules.MaxSubjectChars` (72) at a word boundary and silently discards the\nrest (`src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs:157-167`,\napplied in `SanitizeSubject` at line 78). The result is permanent git history\nwhose subjects stop mid-sentence, which reads as corruption and destroys the\ninformation the subject was supposed to carry. Two sealed commits from the\n2026-07-15 drain demonstrate it:\n\n| Sealed subject (git log) | Stage-authored candidate (stage 10 report) |\n|---|---|\n| `revert: abandon KeySetupPanelUiTests split - replacement tests 17 %` | `revert: abandon KeySetupPanelUiTests split \u2014 replacement tests 17 % slower` (74 chars after em-dash swap \u2192 \"slower\" cut) |\n| `refactor(test): merge 3 NoCommitContaminationTests facts into` | `refactor(test): merge 3 NoCommitContaminationTests facts into data-driven theory` (81 chars \u2192 cut at \"into\") |\n\n\"replacement tests 17 %\" (17 % *what*?) and \"facts into\" (into *what*?) are\nwhat future readers of this repo's history get. Since the sealed commit is\nVisual Relay's product in every target repository, this is a general quality\nbug, not a cosmetic one.\n\n### Current mechanics (verified)\n\n- Stage reports provide multiple `commitMessages` candidates (the split task's\n  stage 10 offered three, including a 61-char one that would have fit:\n  `docs: record KeySetupPanelUiTests split attempt \u2014 no improvement`).\n- `BuildCommitChain` (`RelayDriver.Artifacts.cs:97-111`) sanitizes each\n  candidate, drops non-Conventional ones, and appends the guaranteed\n  `chore(relay): <taskId>` fallback. `GitCommitter` then tries candidates in\n  order until the hook accepts one (`GitCommitter.cs:189-216`).\n- Because truncation happens *inside* sanitize, an overlong first candidate is\n  never rejected \u2014 it is mangled and then wins, shadowing shorter candidates\n  that would have survived intact.\n- The fallback subject already has the right idea: it truncates with a visible\n  `\u2026` and keeps the id recognizable (`BuildFallbackSubject`, lines 142-155).\n\n### What to build\n\nPick and implement a coherent policy \u2014 the key requirement is that a subject\nthat cannot fit intact must never be silently word-chopped:\n\n1. Preferred: `TrySanitizeMessage` returns null for subjects that exceed 72\n   chars after normalization, so `BuildCommitChain` falls through to the next\n   candidate; the guaranteed fallback still ensures the chain is never empty.\n   Weigh the trade-off: if ALL candidates overflow, history gets the generic\n   `chore(relay): <taskId>` \u2014 decide whether that is acceptable or whether a\n   final \"truncate WITH visible ellipsis\" candidate (fallback-style) should sit\n   between rejection and the generic fallback.\n2. Upstream pressure: the stage contract that asks for `commitMessages` should\n   state the 72-char subject limit so candidates arrive fitting (check the\n   stage prompt/contract text; the hook rules in `docs/commit-messages.md` and\n   `CommitRules` are the source of truth). Prompt-side guidance plus\n   sanitizer-side rejection covers both halves.\n3. Whatever policy lands, add a run-log advisory when a candidate is rejected\n   or altered for length, so message degradation is observable instead of\n   silent.\n\n### Constraints\n\n- The commit-msg hook (`check-commit-message`, rules in\n  `src/VisualRelay.Core/CommitLint/`) stays authoritative; the sanitizer must\n  keep producing hook-passing messages. Body-bullet handling\n  (`SanitizeBullet`) is out of scope except where subject policy touches it.\n- Do not relax `MaxSubjectChars`.\n- Repo-agnostic: target repos' own hooks may be stricter; candidate fallthrough\n  in `GitCommitter` must keep working.\n\n### Tests (red first)\n\n- Sanitizer test: a 74-char-after-normalization subject is not silently\n  truncated (either rejected or visibly ellipsized per chosen policy) \u2014 assert\n  the exact policy.\n- Chain test: overlong candidate #1 + fitting candidate #2 \u2192 the sealed message\n  uses candidate #2 intact (this is the regression the two real commits hit).\n- All-overlong case: asserted, documented outcome (fallback or ellipsis).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/CommitMessageSanitizer.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\nsrc/VisualRelay.Core/Execution/RelayStages.cs\ntests/VisualRelay.Tests/CommitMessageSanitizerTests.cs\ntests/VisualRelay.Tests/CommitMessageSanitizerHardeningTests.cs\ntests/VisualRelay.Tests/RelayDriverCommitChainTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"The CommitMessageSanitizer silently truncates overlong commit subjects at word boundaries, producing gibberish like 'facts into' in sealed git history. The fix: reject subjects >72 chars (return null from TrySanitizeMessage) so BuildCommitChain falls through to shorter intact candidates, with an ellipsis-truncated safety-net candidate before the generic chore(relay) fallback for the all-overlong case. Add run-log advisories on rejection/truncation, and update the stage prompt to document the 72-char subject limit upstream.\", \"options\": [\"Reject-overlong-with-ellipsis-safety-net: TrySanitizeMessage returns null for >72-char subjects; chain falls through; inject visibly-ellipsized candidate before generic fallback; log advisories; update stage prompt. Covers best-case (next candidate fits), worst-case (visible \u2026 marker), and eliminates silent corruption.\", \"Pure-reject-rely-on-generic-fallback: Same rejection logic but no ellipsis candidate; all-overlong case yields chore(relay): <taskId>. Simpler but loses subject info in worst case.\", \"Visible-truncation-only: Keep truncation but append \u2026 (like BuildFallbackSubject) and log advisories. Minimal change but still discards info past 72 chars; reader sees 'facts into\u2026' and still wonders 'into what?'\"] }\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"CommitMessageSanitizer.SanitizeSubject() (lines 69-79, 157-167) silently word-boundary truncates subjects >72 chars, producing corrupted git history like 'replacement tests 17 %' and 'facts into'. The truncation happens inside TrySanitizeMessage, so overlong candidates are never rejected (never null) and always win the candidate chain in BuildCommitChain (RelayDriver.Artifacts.cs:97-111), shadowing shorter intact candidates. GitCommitter.CommitAsync (GitCommitter.cs:189-216) tries candidates in order until the hook accepts one, so the mangled first candidate is what gets sealed. BuildFallbackSubject (lines 142-155) already does visible-ellipsis truncation correctly. The stage 10 Verify prompt (RelayStages.cs:107) and its output contract lack the 72-char subject limit guidance. The ledger already supports inline advisories via > **Note**: format (Stage5.cs:78, RepoGuards.cs:172). Existing tests (TrySanitizeSubject_TruncatesAt72Chars, OverflowWithInternalPeriod_DoesNotEndWithPeriod) assert the current truncation behavior and must change per policy.\",\n  \"constraints\": [\n    \"MaxSubjectChars (72) must not be relaxed.\",\n    \"The commit-msg hook stays authoritative; sanitizer output must always pass the structural validator (SubjectRules.Check enforces \u226472 chars).\",\n    \"Body-bullet handling (SanitizeBullet) is out of scope except where subject policy touches it.\",\n    \"Repo-agnostic: candidate fallthrough in GitCommitter must keep working for target repos with stricter hooks.\",\n    \"TrySanitizeMessage and TrySanitizeSubject are internal/private \u2014 behavioral change is allowed. FromRawOrFallback is the public entry point used by BuildCommitChain.\",\n    \"BuildCommitChain chain shape changes: must inject ellipsis-truncated safety-net candidate(s) before generic chore(relay) fallback, not replace the generic fallback.\",\n    \"Stage 10 prompt must document the 72-char subject limit so candidates arrive fitting.\",\n    \"Advisories must be observable via ledger > **Note**: lines; optionally via EventSink.PublishAsync warn events.\",\n    \"Existing tests TrySanitizeSubject_TruncatesAt72Chars and OverflowWithInternalPeriod_DoesNotEndWithPeriod must adapt to the new rejection/ellipsis policy.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"CommitMessageSanitizer.SanitizeSubject() (CommitMessageSanitizer.cs:78) calls Truncate() (lines 157-167), which silently cuts any subject >72 chars at the last space boundary, discarding the tail. Because truncation happens inside TrySanitizeMessage() (line 36), overlong candidates are never rejected: they always return a non-null value. BuildCommitChain() (RelayDriver.Artifacts.cs:97-111) collects all non-null sanitized results into the candidate chain and appends the generic chore(relay) fallback. GitCommitter.CommitAsync() (GitCommitter.cs:189-216) tries candidates in order until the commit-msg hook accepts one. Since the truncated candidate is \u226472 chars and structurally valid, it always passes the hook on the first try, shadowing shorter intact candidates that follow \u2014 including the guaranteed fallback and any shorter stage-authored candidate.\\n\\nTwo sealed commits from the 2026-07-15 drain are the real-world repro. For task 'split-key-setup-panel-ui-tests', stage 10 (ledger.md:83-87) offered three candidates: (1) 'revert: abandon KeySetupPanelUiTests split \u2014 replacement tests 17\u202f% slower' [74 chars after em-dash\u2192hyphen normalization], (2) a revert headline, and (3) 'docs: record KeySetupPanelUiTests split attempt \u2014 no improvement' [61 chars]. Candidate 1 was word-boundary truncated at char 72, dropping 'slower', and sealed as 'revert: abandon KeySetupPanelUiTests split - replacement tests 17\u202f%' (git SHA 8727c468) \u2014 the percentage sign is left dangling with '17 %' of what? Candidate 3 at 61 chars would have fit intact. For task 'merge-nocommit-contamination-tests-data-driven', stage 10 (ledger.md:95-99) offered: (1) 'refactor(test): merge 3 NoCommitContaminationTests facts into data-driven theory' [81 chars], (2) 'perf(test): share expensive setup...' [56 chars], (3) 'test: consolidate three near-identical...' [73 chars]. Candidate 1 was truncated at the space before 'data-driven', sealing 'refactor(test): merge 3 NoCommitContaminationTests facts into' (git SHA 10405867) \u2014 'into' what? Candidate 2 at 56 chars would have fit. In both cases, shorter intact candidates existed but were never reached because the mangled first candidate won.\\n\\nBuildFallbackSubject() (lines 142-155) already demonstrates the correct visible-truncation pattern: when the taskId overflows, it preserves a head slice plus an ellipsis '\u2026' so the description is never empty and the truncation is observable. The Truncate() method lacks this.\\n\\nThe stage 10 Verify system prompt (RelayStages.cs:107) tells the agent to produce '3-5 DISTINCT Conventional-Commit subject candidates' but never mentions the 72-char limit. The commit-messages.md doc (docs/commit-messages.md:38) states the limit but is not linked from the prompt. The OutputContract (RelayStages.cs:22) is just '{ \\\"summary\\\": string, \\\"commitMessages\\\": string[] }' \u2014 no length constraint.\\n\\nExisting tests explicitly assert the broken behavior: TrySanitizeSubject_TruncatesAt72Chars (CommitMessageSanitizerTests.cs:50-58) asserts truncation succeeds with length \u226472, and OverflowWithInternalPeriod_DoesNotEndWithPeriod (CommitMessageSanitizerHardeningTests.cs:131-137) relies on the truncation path. Both must adapt to the new rejection/ellipsis policy.\",\n  \"excerpts\": [\n    \"CommitMessageSanitizer.cs:78 \u2014 return StripTrailingPeriods(Truncate(clean)); // silent word-boundary cut inside SanitizeSubject\",\n    \"CommitMessageSanitizer.cs:157-167 \u2014 Truncate() cuts at last space \u226472, no ellipsis, no signal returned to caller\",\n    \"CommitMessageSanitizer.cs:36 \u2014 var subject = SanitizeSubject(lines[0]); // truncation happens HERE inside TrySanitizeMessage, before prefix check, so overlong never yields null\",\n    \"RelayDriver.Artifacts.cs:97-111 \u2014 BuildCommitChain calls TrySanitizeMessage (never null for overlong\u2192truncated) and collects all non-null + fallback; truncated always-first candidate wins in GitCommitter\",\n    \"GitCommitter.cs:189-216 \u2014 foreach candidate in commitMessages \u2192 tries until hook accepts; truncated subject passes hook on first attempt\",\n    \".relay/split-key-setup-panel-ui-tests/ledger.md:83-87 \u2014 stage 10 offered candidate 'replacement tests 17\u202f% slower' (74 chars) plus a 61-char candidate; sealed commit dropped 'slower'\",\n    \".relay/merge-nocommit-contamination-tests-data-driven/ledger.md:95-99 \u2014 stage 10 offered candidate 'facts into data-driven theory' (81 chars) plus a 56-char candidate; sealed commit cut at 'into'\",\n    \"git log \u2014 8727c468: 'revert: abandon KeySetupPanelUiTests split - replacement tests 17\u202f%'; 10405867: 'refactor(test): merge 3 NoCommitContaminationTests facts into'\",\n    \"CommitMessageSanitizerTests.cs:50-58 \u2014 TrySanitizeSubject_TruncatesAt72Chars asserts truncate-succeeds, not reject\",\n    \"CommitMessageSanitizerHardeningTests.cs:131-137 \u2014 OverflowWithInternalPeriod_DoesNotEndWithPeriod relies on truncation path\",\n    \"RelayStages.cs:107 \u2014 stage 10 Verify system prompt: no mention of 72-char subject limit\",\n    \"CommitRules.cs:19 \u2014 public const int MaxSubjectChars = 72; // authoritative limit, shared with SubjectRules.cs:22-25 which enforces it in the hook\",\n    \"RelayStages.cs:22 \u2014 stage 10 OutputContract: { 'summary': string, 'commitMessages': string[] } \u2014 no length constraint\",\n    \"CommitMessageSanitizer.cs:142-155 \u2014 BuildFallbackSubject already does visible '\u2026' truncation correctly when taskId overflows budget\"\n  ],\n  \"repro\": \"1. Create a stage-10-like raw candidate with a valid Conventional Commit prefix that exceeds 72 chars after em-dash\u2192hyphen normalization, e.g.: `fix: this is a deliberately overlong commit subject that should exceed seventy two characters` (79 chars).\\n2. Pass it as the first element of a rawCandidates list to `RelayDriver.BuildCommitChain([overlong, 'fix: short fitting subject'], 'test-task')`.\\n3. Observe: the chain's first element is the silently truncated version (`fix: this is a deliberately overlong commit subject that should exceed`) \u2014 NOT null, NOT the second fitting candidate, NOT an ellipsis-truncated variant.\\n4. Pass this chain to `GitCommitter.CommitAsync()` and confirm the sealed commit subject is the truncated gibberish, because it passes the commit-msg hook (\u226472 chars, valid prefix) and is tried first.\\n5. The real-world git history already contains the two mangled commits: `git log --oneline --all | grep -E 'replacement tests 17|facts into$'` shows `8727c468` and `10405867`.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Policy: Reject-overlong with visible-ellipsis safety-net\\n\\nWhen a commit-subject candidate exceeds 72 chars after normalization, `TrySanitizeMessage` / `TrySanitizeSubject` return **null** instead of silently word-chopping it. `BuildCommitChain` falls through to the next intact candidate. For the all-overlong edge case, an ellipsis-truncated safety-net candidate (using `\u2026`, same spirit as `BuildFallbackSubject`) is injected between the sanitized candidates and the generic `chore(relay): <taskId>` fallback. Every rejection or truncation emits a `warn`-level `commit_msg_rejected` event into the run log, so degradation is observable.\\n\\n### File-by-file changes\\n\\n**1. `src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs`**\\n\\n- `SanitizeSubject()` (line 69-79): change return type `string` \u2192 `string?`. After normalization (`LowercaseAfterPrefix`), if `clean.Length > CommitRules.MaxSubjectChars`, return `null`. Otherwise return `StripTrailingPeriods(clean)` (no Truncate call).\\n- Remove the old `Truncate()` method (lines 157-167) \u2014 no longer called.\\n- Add new private `SanitizeSubjectWithEllipsis(string subject)` (same normalization pipeline), then: if `\u226472` return intact; otherwise reserve 1 char for `\u2026`, cut at last space within budget 71, `StripTrailingPeriods`, append `\u2026`.\\n- `TrySanitizeMessage()` (line 28-51): after `SanitizeSubject(lines[0])`, add null-guard: `if (subject is null || !HasConventionalPrefix(subject)) return null`.\\n- `TrySanitizeSubject()` (line 57-67): same null-guard after `SanitizeSubject(lines[0])`.\\n- Add new `internal static string? TrySanitizeSubjectWithEllipsis(string? raw)` \u2014 same structure as `TrySanitizeSubject` but calls `SanitizeSubjectWithEllipsis`.\\n- Add new `internal static string? TrySanitizeMessageWithEllipsis(string? raw)` \u2014 same structure as `TrySanitizeMessage` but calls `SanitizeSubjectWithEllipsis` for the subject line; preserves body bullets.\\n\\n**2. `src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs`**\\n\\n- Change `BuildCommitChain` return type from `IReadOnlyList<string>` to `(IReadOnlyList<string> Chain, IReadOnlyList<string> Advisories)`.\\n- In the loop: for each raw candidate, try `TrySanitizeMessage`. If non-null, add to chain. If null, try `TrySanitizeMessageWithEllipsis` \u2014 if non-null, add to a `safetyNet` list and append an advisory string (`\\\"overlong commit subject truncated with ellipsis: \\\\\\\"<subject>\\\\\\\"\\\"`). If both null, the candidate had no valid prefix \u2014 silently skipped (no change from current behavior).\\n- After the loop: `chain.AddRange(safetyNet)` then `chain.Add(CommitMessageSanitizer.FromRawOrFallback(null, taskId))`.\\n- Return `(chain, advisories)`.\\n\\n**3. `src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs`** (line 206)\\n\\n- Deconstruct the tuple: `var (chain, advisories) = BuildCommitChain(commitMessages, taskId);`\\n- After building the chain, loop over advisories and publish each via `await _dependencies.EventSink.PublishAsync(new RelayEvent(DateTimeOffset.UtcNow, \\\"warn\\\", \\\"commit_msg_rejected\\\", runId, rootPath, taskId, 12, Data: new Dictionary<string, string> { [\\\"message\\\"] = advisory }), cancellationToken);`\\n\\n**4. `src/VisualRelay.Core/Execution/RelayStages.cs`** (line 107, Verify prompt)\\n\\n- Append to the Verify system prompt: `\\\"Each subject must fit within 72 characters total (type prefix, optional scope, colon, space, and description); subjects exceeding 72 chars will be rejected, not truncated. \\\"` before the existing bullet-requirement sentence.\\n\\n**5. `tests/VisualRelay.Tests/CommitMessageSanitizerTests.cs`**\\n\\n- `TrySanitizeSubject_TruncatesAt72Chars` (line 50-58): rename to `TrySanitizeSubject_Overlong_ReturnsNull`, change assertion from `.NotNull` + `.Length <= 72` to `Assert.Null(result)`.\\n- Add `TrySanitizeSubject_Exactly72Chars_ReturnsSubject`: construct a subject at exactly 72 chars, assert it returns intact (not null, not truncated).\\n- Add `TrySanitizeSubjectWithEllipsis_Overlong_EllipsizedWithinLimit`: overlong subject \u2192 result non-null, length \u226472, ends with `\u2026`.\\n- Add `TrySanitizeSubjectWithEllipsis_FittingSubject_ReturnsIntact`: a \u226472 subject \u2192 returns intact, no ellipsis appended.\\n\\n**6. `tests/VisualRelay.Tests/CommitMessageSanitizerHardeningTests.cs`**\\n\\n- `OverflowWithInternalPeriod_DoesNotEndWithPeriod` (line 131-138): change `TrySanitizeSubject` \u2192 `TrySanitizeSubjectWithEllipsis` so the test exercises the ellipsis path (which must also re-strip trailing periods).\\n- `OverflowStrippedToEmptyDescription_FallsBackAndValidates` (line 140-149): no code change needed. `FromRawOrFallback` now falls through to `BuildFallbackSubject` for overlong input; the test already only asserts the output validates clean.\\n\\n**7. `tests/VisualRelay.Tests/RelayDriverCommitChainTests.cs`**\\n\\n- All three existing tests: deconstruct the tuple from `BuildCommitChain` (`var (chain, _) = \u2026` or `var (chain, advisories) = \u2026` as needed). Assertions on `chain` unchanged.\\n- Add `BuildCommitChain_OverlongFirstFittingSecond_UsesSecondIntact`: feed `[overlong, fitting]`; assert `chain[0] == fitting` (the intact second candidate wins), `advisories` non-empty.\\n- Add `BuildCommitChain_AllOverlong_YieldsEllipsisSafetyNetBeforeFallback`: feed only-overlong candidates; assert chain contains an entry with `\u2026`, the generic `chore(relay):` fallback is last, and advisories are emitted for each overlong.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\",\n    \"src/VisualRelay.Core/Execution/RelayStages.cs\",\n    \"tests/VisualRelay.Tests/CommitMessageSanitizerTests.cs\",\n    \"tests/VisualRelay.Tests/CommitMessageSanitizerHardeningTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverCommitChainTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/CommitMessageSanitizerTests.cs\",\n    \"tests/VisualRelay.Tests/CommitMessageSanitizerHardeningTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverCommitChainTests.cs\"\n  ],\n  \"rationale\": \"Three test files modified to assert the reject-overlong-with-ellipsis-safety-net policy. CommitMessageSanitizerTests.cs: renamed truncation test to assert null, added exactly-72-char boundary test, added TrySanitizeMessage overlong-null test. CommitMessageSanitizerHardeningTests.cs: changed OverflowWithInternalPeriod to assert null (overlong subjects rejected, not truncated-and-stripped). RelayDriverCommitChainTests.cs: added regression test for overlong-first+fitting-second \u2192 uses second intact, and all-overlong \u2192 ellipsis safety net before generic fallback. All 7 new/updated tests fail red against current silent-truncation code as expected.\"\n}\n\n## Stage 6 - Implement\n\n{ \"summary\": \"Implemented reject-overlong-with-visible-ellipsis-safety-net policy. SanitizeSubject returns null for >72-char candidates so BuildCommitChain falls through to shorter intact candidates. Ellipsis-truncated safety-net entries injected before the generic chore(relay) fallback for the all-overlong case. warn-level commit_msg_rejected advisories published per rejection. Verify stage prompt updated with 72-char limit. Old Truncate() method removed. All 3135 tests pass.\" }\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "My review is complete. Let me summarize the findings.\n\n## Review Summary\n\nThe implementation correctly fixes the silent-truncation bug with a coherent **reject-overlong-with-visible-ellipsis-safety-net** policy. I verified all aspects:\n\n**Policy correctness:**\n- `SanitizeSubject` now returns `null` for subjects >72 chars after normalization (line 126-129), eliminating the silent word-chop. The old `Truncate()` method is removed.\n- `SanitizeSubjectWithEllipsis` provides the safety-net path: cuts at word boundary within budget 71, appends `\u2026`, re-strips trailing periods \u2014 never exceeds 72 chars, never leaks em-dashes.\n- `TrySanitizeMessage`/`TrySanitizeSubject` both null-guard the now-nullable `SanitizeSubject` return (lines 37, 66).\n\n**Chain wiring (the core regression fix):**\n- `BuildCommitChain` returns `(Chain, Advisories)`. Intact candidates are added first; overlong candidates fall to the ellipsis safety-net (appended *after* intact candidates, *before* the generic `chore(relay)` fallback). This is the correct ordering \u2014 the two real-world repros now select the shorter intact candidate instead of mangled gibberish. I confirmed this via simulation matching the exact real subjects.\n- All callers updated: `RelayDriver.CommitGate.cs:206` and all 5 tests destructure the tuple correctly.\n\n**Advisories/observability:** Published as `warn`-level `commit_msg_rejected` events via `EventSink.PublishAsync`. The `RelayEvent` positional + `Data:` signature matches exactly. Fires for every length-altered (ellipsis) candidate.\n\n**Stage prompt:** `RelayStages.cs:107` Verify prompt now states the 72-char limit and \"rejected, not truncated\" policy.\n\n**Constraints:** `MaxSubjectChars` unchanged (72); hook stays authoritative (validator only bans em-dash U+2014, not ellipsis U+2026 \u2014 confirmed by hardening tests validating clean); `GitCommitter` candidate fallthrough untouched; body-bullet handling out of scope.\n\n**Verification:** All 41 targeted tests pass (the 3 modified test files). Build is clean \u2014 0 warnings, 0 errors under `TreatWarningsAsErrors` + `AnalysisLevel=latest`. All modified files under the 300-line guard (244/276/261). Boundary test (exactly 72 chars) and the two regression tests (overlong-first\u2192uses-second-intact; all-overlong\u2192ellipsis-before-fallback) all green.\n\n**Minor note (not blocking):** `TrySanitizeSubjectWithEllipsis` (subject-only variant) is defined but never called \u2014 only `TrySanitizeMessageWithEllipsis` is used in `BuildCommitChain`. This is dead code, but the build passes clean (no analyzer fires), and the symmetric API surface parallel to `TrySanitizeSubject`/`TrySanitizeMessage` is a defensible design choice.\n\nThe diff is coherent, well-tested, and correctly resolves the task.\n\n```json\n{ \"verdict\": \"pass\", \"issues\": [] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 14,
+    "tool_calls_total": 25,
+    "tool_calls_succeeded": 25,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "read_multiple_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 7,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "python": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 14,
+    "total_llm_time_s": 583.936,
+    "prompt_cache": {
+      "cached_tokens": 418880,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 11.384,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 9.27,
+      "prompt_tokens_est": 9712,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git log --oneline -5 && echo \"---STATUS---\" && git status --short"
+      },
+      "succeeded": true,
+      "duration_s": 0.19,
+      "result_length": 893
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 23503
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 8.66,
+      "prompt_tokens_est": 15812,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff -- src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.09,
+      "result_length": 9485
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/RelayStages.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 24511
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 7.6,
+      "prompt_tokens_est": 23838,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff -- tests/VisualRelay.Tests/ src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 2197
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/CommitMessageSanitizerTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/CommitMessageSanitizerHardeningTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/RelayDriverCommitChainTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 20320
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 57.621,
+      "prompt_tokens_est": 29763,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "BuildCommitChain",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.396,
+      "result_length": 1646
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "SubjectPrefix|FirstCharAfterPrefix|MaxSubjectChars",
+        "path": "src/VisualRelay.Core/CommitLint"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 802
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "record RelayEvent|class RelayEvent",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.296,
+      "result_length": 296
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 7.159,
+      "prompt_tokens_est": 33438,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayEvent.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2040
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/CommitLint/SubjectRules.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2823
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/CommitLint/CommitRules.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3542
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 33.694,
+      "prompt_tokens_est": 35766,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && ls *.sln *.csproj 2>/dev/null; cat tests/VisualRelay.Tests/*.csproj 2>/dev/null | head -30; echo \"---\"; grep -rn \"dotnet test\" .relay/*/ledger.md 2>/dev/null | head -3"
+      },
+      "succeeded": true,
+      "duration_s": 0.192,
+      "result_length": 6369
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 83.887,
+      "prompt_tokens_est": 39149,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TrySanitizeSubjectWithEllipsis"
+      },
+      "succeeded": true,
+      "duration_s": 0.397,
+      "result_length": 155
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.csproj",
+        "pattern": "TreatWarningsAsErrors|Nullable|AnalysisLevel"
+      },
+      "succeeded": true,
+      "duration_s": 0.149,
+      "result_length": 1993
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/CommitLint/CommitMessageValidator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2655
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 80.517,
+      "prompt_tokens_est": 44917,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "FromRawOrFallback|TrySanitizeSubject\\b|TrySanitizeMessage\\b"
+      },
+      "succeeded": true,
+      "duration_s": 0.307,
+      "result_length": 4898
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && find . -name \"Directory.Build.props\" -o -name \".editorconfig\" | head; echo \"---\"; cat Directory.Build.props 2>/dev/null; echo \"---editorconfig---\"; head -40 .editorconfig 2>/dev/null"
+      },
+      "succeeded": true,
+      "duration_s": 0.344,
+      "result_length": 2188
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "offset": 180,
+        "limit": 45
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2773
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 118.625,
+      "prompt_tokens_est": 51686,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "300.?Line|AreAtMost|MaxLine|file.?size|LineCount|Truncate"
+      },
+      "succeeded": true,
+      "duration_s": 0.419,
+      "result_length": 8891
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && wc -l src/VisualRelay.Core/Execution/CommitMessageSanitizer.cs src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.197,
+      "result_length": 212
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 5.302,
+      "prompt_tokens_est": 61130,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && timeout 220 dotnet test tests/VisualRelay.Tests --filter \"FullyQualifiedName~CommitMessageSanitizerTests|FullyQualifiedName~CommitMessageSanitizerHardeningTests|FullyQualifiedName~RelayDriverCommitChainTests\" --nologo 2>&1 | tail -30",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 36
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.229,
+      "prompt_tokens_est": 61254,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests --filter \"FullyQualifiedName~CommitMessageSanitizerTests|FullyQualifiedName~CommitMessageSanitizerHardeningTests|FullyQualifiedName~RelayDriverCommitChainTests\" --nologo 2>&1 | tail -30",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 6.7,
+      "result_length": 1839
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 84.137,
+      "prompt_tokens_est": 61896,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "\n# Simulate the BuildCommitChain logic to verify ordering correctness\n# and the ellipsis length invariant, mirroring SanitizeSubjectWithEllipsis.\n\nMaxSubjectChars = 72\n\ndef sanitize_subject_with_ellipsis(subject):\n    # mirror: StripTrailingPeriods, replace em-dash, LowercaseAfterPrefix\n    clean = subject.replace('\u2014', '-').rstrip().rstrip('.').rstrip()\n    # LowercaseAfterPrefix: lowercase first char after \"type: \" \u2014 skip detail, approximate\n    if len(clean) <= MaxSubjectChars:\n        return clean\n    budget = MaxSubjectChars - 1  # reserve 1 for ellipsis\n    truncated = clean[:budget]\n    last_space = truncated.rfind(' ')\n    head = (truncated[:last_space] if last_space > 0 else truncated).rstrip()\n    head = head.rstrip('.').rstrip()\n    return head + '\u2026'\n\ndef build_chain(raws, task_id):\n    chain = []\n    safety_net = []\n    advisories = []\n    for raw in raws:\n        # TrySanitizeMessage: reject if >72 (return None); else keep if has prefix\n        line = raw.split('\\n')[0]\n        clean = line.replace('\u2014','-').rstrip().rstrip('.').rstrip()\n        msg = None\n        if len(clean) <= MaxSubjectChars and ': ' in clean:\n            msg = clean\n        if msg is not None:\n            chain.append(msg)\n        else:\n            # overlong or non-conv -> try ellipsis\n            # only if it has a prefix (HasConventionalPrefix) \u2014 assume yes for these\n            ell = sanitize_subject_with_ellipsis(line)\n            if ': ' in ell:\n                safety_net.append(ell)\n                advisories.append(f'overlong commit subject truncated with ellipsis: \"{ell.split(chr(10))[0]}\"\"')\n    chain.extend(safety_net)\n    chain.append(f'chore(relay): {task_id}')\n    return chain, advisories\n\n# Real-world repro 1: overlong first, fitting second present\noverlong1 = \"revert: abandon KeySetupPanelUiTests split \u2014 replacement tests 17 % slower\"\nfitting1  = \"docs: record KeySetupPanelUiTests split attempt \u2014 no improvement\"\nchain, adv = build_chain([overlong1, fitting1], \"test-task\")\nprint(\"Repro1 chain[0]:\", chain[0])\nprint(\"Repro1 (fitting intact?):\", chain[0] == fitting1.replace('\u2014','-').rstrip().rstrip('.').rstrip())\nprint(\"Repro1 has ellipsis entry:\", any('\u2026' in c for c in chain))\nprint(\"Repro1 last:\", chain[-1])\nprint(\"Repro1 advisories:\", len(adv))\nprint()\n\n# All-overlong case\noverlong2 = \"refactor(test): merge 3 NoCommitContaminationTests facts into data-driven theory\"\nchain2, adv2 = build_chain([overlong2], \"test-task\")\nprint(\"Repro2 chain:\", chain2)\nprint(\"Repro2 ellipsis len <=72:\", all(len(c)<=72 for c in chain2))\nprint(\"Repro2 last is fallback:\", chain2[-1] == \"chore(relay): test-task\")\nprint()\n\n# Verify ellipsis never exceeds 72 and ends with \u2026\nfor raw in [overlong1, overlong2, \"fix: \"+\"x\"*200]:\n    e = sanitize_subject_with_ellipsis(raw)\n    assert len(e) <= 72, f\"OVER: {len(e)} {e}\"\n    assert e.endswith('\u2026') or len(raw.replace('\u2014','-'))<=72, f\"no ellipsis: {e}\"\n    assert '\u2014' not in e, f\"em-dash leaked: {e}\"\nprint(\"All ellipsis invariants hold: \u226472 chars, no em-dash.\")\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 427
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 38.691,
+      "prompt_tokens_est": 66383,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet build src/VisualRelay.Core/VisualRelay.Core.csproj --nologo 2>&1 | grep -iE \"warning|error\" | head -20; echo \"EXIT: $?\"",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 1.453,
+      "result_length": 40
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 41.543,
+      "prompt_tokens_est": 68252,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

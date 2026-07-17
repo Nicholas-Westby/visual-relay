@@ -47,14 +47,32 @@ public sealed class CommitMessageSanitizerTests
     }
 
     [Fact]
-    public void TrySanitizeSubject_TruncatesAt72Chars()
+    public void TrySanitizeSubject_Overlong_ReturnsNull()
     {
-        // The truncate helper cuts at the last space to avoid breaking words.
-        // Make sure the space is after the Conventional prefix so it survives.
+        // Overlong subjects must be rejected so BuildCommitChain falls through
+        // to a shorter intact candidate instead of sealing mid-sentence gibberish.
         var longSubject = "feat: add " + new string('x', 200);
         var result = CommitMessageSanitizer.TrySanitizeSubject(longSubject);
-        Assert.NotNull(result);
-        Assert.True(result!.Length <= 72);
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void TrySanitizeSubject_Exactly72Chars_ReturnsSubject()
+    {
+        // A subject at exactly the limit must survive intact — no false rejection.
+        var subject = "feat: " + new string('x', 66); // "feat: " = 6 chars → total 72
+        var result = CommitMessageSanitizer.TrySanitizeSubject(subject);
+        Assert.Equal(subject, result);
+    }
+
+    [Fact]
+    public void TrySanitizeMessage_OverlongSubject_ReturnsNull()
+    {
+        // The full-message path must also reject overlong subjects so body
+        // bullets don't rescue a candidate that should have been skipped.
+        var raw = "feat: " + new string('x', 200) + "\n\n- a bullet";
+        var result = CommitMessageSanitizer.TrySanitizeMessage(raw);
+        Assert.Null(result);
     }
 
     [Fact]

@@ -117,24 +117,19 @@ public sealed class CommitMessageSanitizerHardeningTests
 
     public static IEnumerable<object[]> OverflowInternalPeriodCases()
     {
-        // Each case overflows 72 chars and is built so the word-boundary cut
-        // leaves a surviving word ending in an internal period — the exact shape
-        // that produced a trailing '.' before the post-truncate re-strip. These
-        // heads all keep a non-empty description after the cut; the degenerate
-        // collapse-to-prefix case is covered by the fallback test below.
+        // Each case overflows 72 chars — with the reject-overlong policy,
+        // TrySanitizeSubject returns null for any over-72 input.
         foreach (var head in new[] { 60, 62, 63, 64 })
             yield return [$"feat: {new string('a', head)}. tail goes here and is long enough to overflow the limit"];
     }
 
     [Theory]
     [MemberData(nameof(OverflowInternalPeriodCases))]
-    public void OverflowWithInternalPeriod_DoesNotEndWithPeriod(string raw)
+    public void OverflowWithInternalPeriod_Overlong_ReturnsNull(string raw)
     {
-        Assert.True(raw.Length > CommitRules.MaxSubjectChars, "test input must overflow to exercise truncation");
+        Assert.True(raw.Length > CommitRules.MaxSubjectChars, "test input must overflow to exercise rejection");
         var subject = CommitMessageSanitizer.TrySanitizeSubject(raw);
-        Assert.NotNull(subject);
-        Assert.False(subject!.EndsWith('.'), $"sanitized subject must not end with a period: \"{subject}\"");
-        AssertValidatesClean(subject);
+        Assert.Null(subject);
     }
 
     [Fact]
