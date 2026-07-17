@@ -45,6 +45,7 @@ public sealed partial class StageRowViewModel : ViewModelBase
         "Running" => string.IsNullOrEmpty(ElapsedLabel) ? "Running" : $"Running {ElapsedLabel}",
         "Done" => HasRecordedDuration ? $"Completed in {DurationLabel}" : "Complete",
         "Skipped" => "Skipped",
+        "Stopped" => "Stopped",
         _ => Status
     };
 

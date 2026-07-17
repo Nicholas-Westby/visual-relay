@@ -1,0 +1,399 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T02:04:25.303283+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 06-reconcile-stale-running-stage-state-on-load\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Never render a stage as Running for a task with no active run\n\nThe `hoist-pipeline-test-shared-setup` task flagged at Review (stage 7) on\n2026-07-15 at 20:07. This morning \u2014 13+ hours later, with nothing running \u2014\nits Visual-review card still shows **\"Running 837m 37s\"** with a live green\nborder and a ticking timer. The stage's persisted status is the problem, not\njust the timer: `.relay/hoist-pipeline-test-shared-setup/status.json` records\nstage 8 as `\"status\": \"Running\"` to this day.\n\nCommit `6a49a41` (`fix: stop sibling review-stage timer on flagged event`,\ntask `fix-visual-relay-timing-bug`) fixed the go-forward driver behavior\n(`RelayDriver.Events.cs`: on flag, ALL Running stages are now closed, not just\nstages below the flagged one) and taught the live event handler to settle the\nsibling card (`MainWindowViewModel.Helpers.cs`). What it did NOT do is\nreconcile state that is already wrong, or state that goes wrong through any\npath other than a live flagged event. The screenshot above was taken the\nmorning AFTER that fix landed.\n\n### Evidence (verified)\n\n- `status.json` for the hoist task: stage 7 `Flagged`, stage 8 `Running`,\n  stages 9-12 `Waiting` \u2014 persisted since 20:07 the previous evening.\n- Run log has `s8/vision stage_start` at 19:12:37 and **no terminal s8 event\n  of any kind** (no stage_done, no skip, no kill). The review-red flag path\n  (`RelayDriver.ReviewPair.cs:104-116`) awaits the sibling and discards its\n  result without publishing anything for stage 8, so both rehydrate-from-log\n  and status.json said \"Running\" forever under the pre-fix driver.\n- The UI derives the 837m elapsed from the stage_start event timestamp with no\n  terminal event to stop it; app restarts do not help because the persisted\n  artifacts are the source.\n\n### What to build\n\n1. **Load-time invariant**: when hydrating a task that has no active run (its\n   drain is over; it is flagged/needs-review/idle), any stage in `Running`\n   state must be normalized to a terminal state before display \u2014 in the stage\n   board, the queue card, and `/state`. This repairs existing on-disk state\n   (like hoist's) without requiring a re-run, and protects against every\n   future path that fails to close a stage (crash, kill -9, power loss \u2014\n   a driver-side fix can never cover those).\n2. **Terminal event for the discarded sibling**: in the review-pair flag paths,\n   publish an explicit terminal event for the sibling stage whose result is\n   discarded (today it gets nothing), so rehydrate-from-log agrees with\n   status.json without needing the invariant to kick in.\n3. **Semantics**: closing a killed/discarded sibling as `\"Done\"` (the 6a49a41\n   choice) renders as \"Completed\", which misleads \u2014 the stage's result was\n   thrown away. Decide a truthful terminal presentation (e.g. a distinct\n   `Stopped`/`Discarded` status, or `Done` without a duration and with a note).\n   Check `fix-stuck-visual-review-card-when-skipped` and\n   `report-review-pair-stages-independently` (completed tasks) for the\n   existing status vocabulary before inventing a new one.\n\n### Constraints\n\n- Do not touch how ACTIVE runs report progress; the invariant applies only\n  when no run is active for the task.\n- status.json remains the persisted truth: the invariant should repair it (or\n  overlay it consistently everywhere), not create a UI-only divergence.\n- Keep files under the 300-line guard; `ReviewPairOrphanedStageTimerTests.cs`\n  is the natural home for new coverage.\n\n### Tests (red first)\n\n- Hydration test: a task directory whose status.json has stage 8 `Running` and\n  stage 7 `Flagged`, with no active run \u2192 no stage renders as Running; no\n  ticking elapsed time is exposed.\n- Review-pair test: review-red flag path publishes a terminal event for the\n  sibling stage (assert on the event stream, not just statusEntries).\n- Presentation test: the discarded sibling does not render as an ordinary\n  successful completion.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: after the fix, the existing hoist task's board must show no Running\n  stage without re-running it.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Task framing\n\n**What's wrong**: When a review-pair flag occurs (e.g. stage 7\u2192Flagged at review), the sibling stage (stage 8, Visual-review) whose result is discarded never gets a terminal event. Its `status.json` entry stays `\"Running\"` forever \u2014 surviving app restarts because the artifact is the source of truth. Commit `6a49a41` fixed the *go-forward* driver behavior (closing sibling stages on flag) but did not reconcile already-corrupted on-disk state, nor did it fix the root cause: no terminal event is published for the discarded sibling.\n\n**Three things to build** (from the task input):\n\n1. **Load-time invariant** \u2014 normalize any `Running` stage to a terminal state when the task has no active run (drain over, flagged, needs-review, idle). Runs during hydration, before any UI or `/state` endpoint sees the data.\n2. **Terminal event for the discarded sibling** \u2014 in the review-pair flag paths (`RelayDriver.ReviewPair.cs:104-116`), publish an explicit terminal event so log-rehydration agrees with status.json.\n3. **Semantics** \u2014 decide how the discarded sibling presents. \"Done\" is misleading since the result was thrown away. Need a truthful label (new status or existing vocabulary variant).\n\n### Where changes likely land\n\n| Concern | File |\n|---|---|\n| Task hydration / load-time invariant | `src/VisualRelay.Core/Execution/RelayDriver.Events.cs` or a new hydration method |\n| Review-pair flag path terminal event | `src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs` (around lines 104-116) |\n| Status vocabulary (enum/model) | Somewhere in `src/VisualRelay.Core/` \u2014 likely a `StageStatus` enum or record |\n| UI rendering of discarded status | `src/VisualRelay.App/ViewModels/` (stage card VM) and related XAML converters |\n| Tests | `tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs` (new) |\n\n### Key constraints from the task\n\n- Invariant only fires when **no active run** exists \u2014 never touch live progress reporting.\n- `status.json` remains the persisted truth \u2014 invariant should repair it (or consistently overlay), not create UI-only divergence.\n- Keep files under the 300-line guard.\n\n---\n\n## Solution options\n\n### Option A \u2014 Repair-in-place + new `Discarded` status\n\n- **Hydration**: When loading a task with no active run, iterate its `status.json` stage entries; any `Running` \u2192 rewrite to a new terminal status `Discarded` (or `Stopped`). Persist the fix back to `status.json`.\n- **Review-pair path**: Publish `stage_discarded` (or `stage_done` with `\"Discarded\"` outcome) for the sibling.\n- **Semantics**: Introduce a new `Discarded` terminal status \u2014 visually distinct from `Done` (e.g. grey, no duration, label \"Discarded\"). This is honest: the stage's work was thrown away.\n- **Pros**: Repairs on-disk state permanently; honest semantics; covers crash/power-loss scenarios.  \n- **Cons**: Need to teach all consumers (UI board, queue card, `/state` endpoint) about the new status value; adds an enum variant.\n\n### Option B \u2014 Read-time normalization + reuse `Skipped` status\n\n- **Hydration**: Do NOT write to `status.json`. Instead, during the read/deserialize step that feeds the UI and `/state`, overlay any `Running`\u2192`Skipped` (or `Done`) when no active run is detected. The logic lives in the status accessor, not a mutator.\n- **Review-pair path**: Publish a `stage_skipped` event for the discarded sibling.\n- **Semantics**: Reuse `Skipped` if it already exists in the vocabulary (check `fix-stuck-visual-review-card-when-skipped` branch). If not, use `Done` but with zero duration and a \"Discarded\" annotation in the UI label.\n- **Pros**: No `status.json` writes on the read path (safer); less surface area to test; reuses existing vocabulary.  \n- **Cons**: `status.json` stays permanently wrong (divergence between on-disk truth and in-memory view); a direct file reader sees `Running`. If `Skipped` doesn't exist, still need some new label.\n\n### Option C \u2014 Hybrid: repair + reuse `Done` with annotation\n\n- **Hydration**: Same as Option A \u2014 repair `status.json` in place, writing `Running`\u2192`Done`.\n- **Review-pair path**: Publish a `stage_done` event with a data field `\"outcome\": \"discarded\"` for the sibling.\n- **Semantics**: The UI renders it as `Done` (no green Running border/timer) but with a muted appearance and a tooltip/badge \"Result discarded (sibling was flagged)\". No new enum needed.\n- **Pros**: Repairs on-disk state; no new enum variant; minimal UI changes (just conditional styling based on an existing data field).  \n- **Cons**: A discarded stage technically \"Completed\" is misleading at a glance \u2014 requires the annotation to disambiguate; less obvious than a distinct status color.\n\n### Recommendation\n\n**Option A** is the most robust and honest \u2014 it fixes the root cause (missing terminal event), repairs on-disk state for all crash/power-loss scenarios, and introduces a truthful `Discarded` status that's visually unambiguous. The added surface area is manageable (one new enum value, one new event type, one new UI style). Option C is a lighter-weight fallback if the team prefers to avoid new enum variants.\n\n```json\n{\n  \"summary\": \"Task 06-reconcile-stale-running-stage-state-on-load: Fix the bug where a stage persists as 'Running' forever when its sibling was flagged at review (no terminal event published for the discarded sibling). Build: (1) a load-time invariant that normalizes Running\u2192terminal when no active run exists, (2) an explicit terminal event in the review-pair flag path, and (3) honest semantics for the discarded sibling (not misleading 'Done'). Primary touchpoints: RelayDriver.ReviewPair.cs (flag path), RelayDriver.Events.cs or hydration code (invariant), status enum/model, UI stage-card rendering. New tests in ReviewPairOrphanedStageTimerTests.cs.\",\n  \"options\": [\n    \"Option A \u2014 Repair-in-place + new Discarded status: During hydration, rewrite Running\u2192Discarded in status.json when no active run; publish stage_discarded event from review-pair path; add a new Discarded enum variant with distinct UI (grey, no timer). Repairs on-disk state permanently. Most honest semantics. Requires teaching all consumers about the new status.\",\n    \"Option B \u2014 Read-time normalization + reuse Skipped: Overlay Running\u2192Skipped on the read path only (no status.json writes); publish stage_skipped event. Safer (no writes on read), but leaves on-disk state permanently wrong. Depends on Skipped already existing in vocab.\",\n    \"Option C \u2014 Hybrid repair + Done with annotation: Repair status.json in place (Running\u2192Done); publish stage_done with outcome=dicarded data field; UI renders as Done with muted styling and tooltip. Repairs on-disk state, no new enum, but 'Done' is still slightly misleading at a glance.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 12,
+    "tool_calls_total": 19,
+    "tool_calls_succeeded": 18,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 1
+      },
+      "todo": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 12,
+    "total_llm_time_s": 58.374,
+    "prompt_cache": {
+      "cached_tokens": 166272,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.01,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 2,
+      "completed": 2,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 2.527,
+      "prompt_tokens_est": 4856,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 175
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 146,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.519,
+      "prompt_tokens_est": 5051,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 175
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.037,
+      "prompt_tokens_est": 5153,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 139
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 359
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.538,
+      "prompt_tokens_est": 5569,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 37
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14466
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/runasync-edit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 104
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 1.957,
+      "prompt_tokens_est": 9384,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 20528
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4672
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.059,
+      "prompt_tokens_est": 14766,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1275
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/Volumes/Tera/dev/visual-relay/.swival/bg"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 557
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.543,
+      "prompt_tokens_est": 15986,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg/bg_caca0e201d17.log",
+        "tail_lines": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12798
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/bg/bg_87fc89f2814c.log",
+        "tail_lines": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 42
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.725,
+      "prompt_tokens_est": 20093,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/extract_timings.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 465
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/index.jsonl",
+        "tail_lines": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7956
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 9.684,
+      "prompt_tokens_est": 23540,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/trash/index.jsonl",
+        "offset": 1,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8312
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.29,
+      "prompt_tokens_est": 27697,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Frame the task for 06-reconcile-stale-running-stage-state-on-load",
+          "List 2-3 solution options"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 204
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 6.588,
+      "prompt_tokens_est": 27829,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Frame the task for 06-reconcile-stale-running-stage-state-on-load",
+          "List 2-3 solution options"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 203
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 18.905,
+      "prompt_tokens_est": 28374,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

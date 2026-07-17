@@ -59,7 +59,7 @@ public partial class MainWindowViewModel
         if (relayEvent.EventName == "flagged" && relayEvent.StageNumber is 7 or 8)
         {
             var sib = Stages.FirstOrDefault(s => s.Number == (relayEvent.StageNumber == 7 ? 8 : 7));
-            if (sib is { Status: "Running" }) sib.Status = "Done";
+            if (sib is { Status: "Running" }) sib.Status = "Stopped";
         }
 
         // When a stage_input or stage_done event fires for the currently-selected

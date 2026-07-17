@@ -1,4 +1,5 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
 using static VisualRelay.Tests.RelayEventTestDispatch;
 
@@ -178,5 +179,120 @@ public sealed class ReviewPairOrphanedStageTimerTests
 
         // The orphaned "Running" must not survive the round-trip.
         Assert.NotEqual("Running", stage8Entry.Status);
+    }
+
+    // ── Load-time invariant: stale Running → Stopped ──────────────────────
+
+    /// <summary>Stale "Running" in status.json with no active run ⇒ normalized to "Stopped".</summary>
+    [AvaloniaFact]
+    public async Task Hydration_StaleRunningStage_NormalizedToStopped()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        var taskId = "stale-running";
+        repo.WriteTask(taskId, "# Stale Running stage\n");
+
+        // Write a status.json that mimics the hoist bug: stage 7 Flagged,
+        // stage 8 Running, everything else Waiting. This is the exact
+        // on-disk state that produces a forever-Running card.
+        var taskDir = Path.Combine(repo.Root, ".relay", taskId);
+        Directory.CreateDirectory(taskDir);
+        var staleEntries = new List<StageStatusEntry>();
+        for (var i = 1; i <= 12; i++)
+        {
+            var status = i == 7 ? "Flagged" : i == 8 ? "Running" : "Waiting";
+            staleEntries.Add(new StageStatusEntry(i, $"Stage {i}", status));
+        }
+        await StageStatusRecord.WriteAsync(taskDir, staleEntries);
+
+        // Verify the disk has "Running" for stage 8 before the VM loads.
+        var preRead = StageStatusRecord.Read(taskDir);
+        Assert.Equal("Running", preRead.First(e => e.Stage == 8).Status);
+
+        // Select the task — this triggers LoadRunHistoryAsync which must
+        // apply the dead-run invariant.
+        var (vm, _) = await NewViewModelAsync(repo, taskId);
+
+        // No stage card must render as Running; no ticking elapsed label.
+        Assert.DoesNotContain(vm.Stages, s => s.Status == "Running");
+        var stage8 = vm.Stages[Stage8Index];
+        Assert.Equal("Stopped", stage8.Status);
+        Assert.Equal(string.Empty, stage8.ElapsedLabel);
+
+        // The on-disk status.json must be repaired so the fix survives
+        // an app restart.
+        var postRead = StageStatusRecord.Read(taskDir);
+        Assert.Equal("Stopped", postRead.First(e => e.Stage == 8).Status);
+    }
+
+    // ── Event stream: terminal event for discarded sibling ───────────────
+
+    /// <summary>
+    /// When Review (stage 7) flags red at the review-pair barrier, the
+    /// discarded Visual-review sibling must receive an explicit terminal
+    /// <c>stage_done</c> event with <c>status=Stopped</c> — so rehydrate-from-log
+    /// agrees with status.json and the invariant is a safety net, not the
+    /// primary mechanism.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task ReviewRed_VisualSiblingGetsStageDoneStoppedEvent()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("review-red", "# Review returns red\n");
+        var sink = new InMemoryRelayEventSink();
+        var runner = new FlagStageSubagentRunner(7);
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green")), sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "review-red");
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+
+        // The discarded Visual-review sibling (stage 8) must receive a
+        // terminal stage_done event carrying status=Stopped.
+        Assert.Contains(sink.Events, e =>
+            e is { EventName: "stage_done", StageNumber: 8 } &&
+            e.Data is not null && e.Data.TryGetValue("status", out var status) && status == "Stopped");
+    }
+
+    // ── Presentation: discarded sibling not rendered as success ──────────
+
+    /// <summary>
+    /// A stage whose result was discarded (status "Stopped") must NOT render
+    /// as a successful completion — no green accent, no "Completed in…" label,
+    /// no ticking elapsed timer.
+    /// </summary>
+    [AvaloniaFact]
+    public async Task StoppedStage_NotRenderedAsSuccess()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        var taskId = "stopped-stage";
+        repo.WriteTask(taskId, "# Stopped stage\n");
+
+        // Write status.json with stage 7 Flagged, stage 8 Stopped.
+        var taskDir = Path.Combine(repo.Root, ".relay", taskId);
+        Directory.CreateDirectory(taskDir);
+        var entries = new List<StageStatusEntry>();
+        for (var i = 1; i <= 12; i++)
+        {
+            var status = i == 7 ? "Flagged" : i == 8 ? "Stopped" : "Waiting";
+            entries.Add(new StageStatusEntry(i, $"Stage {i}", status));
+        }
+        await StageStatusRecord.WriteAsync(taskDir, entries);
+
+        var (vm, _) = await NewViewModelAsync(repo, taskId);
+
+        var stage8 = vm.Stages[Stage8Index];
+        Assert.Equal("Stopped", stage8.Status);
+
+        // Must NOT render as a successful green completion. A "Done" stage
+        // would show "Completed in …" / "Complete"; a "Stopped" stage must
+        // render its raw status name without a duration suffix.
+        Assert.Equal("Stopped", stage8.StatusLabel);
+        Assert.DoesNotContain("Completed", stage8.StatusLabel, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, stage8.ElapsedLabel);
     }
 }

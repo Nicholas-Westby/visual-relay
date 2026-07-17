@@ -102,9 +102,14 @@ public sealed partial class MainWindowViewModelTests
             File.WriteAllText(Path.Combine(taskDir, $"stage{i}-attempt1.report.json"),
                 $$"""{"timestamp":"2026-06-07T16:00:0{{i}}+00:00","model":"cheap","result":{"answer":"stage {{i}} done"},"stats":{"total_llm_time_s":1},"timeline":[{"type":"llm_call","prompt_tokens_est":1000}]}""");
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };
+        // Pre-register an active run so LoadRunHistoryAsync (triggered by
+        // LoadInitialAsync's initial task selection) preserves "Running" status.
+        typeof(MainWindowViewModel)
+            .GetField("_runningTaskIds", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .SetValue(viewModel, new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal) { taskId });
         await viewModel.LoadInitialAsync();
-        viewModel.SelectedTask = Assert.Single(viewModel.Tasks);
-        Assert.Equal(taskId, viewModel.SelectedTask.Id);
+        await (viewModel.LastSelectionLoad ?? Task.CompletedTask);
+        viewModel.SelectedTask = viewModel.Tasks.First(t => t.Id == taskId);
         await viewModel.LastSelectionLoad!;
         Assert.Equal(12, viewModel.Stages.Count);
         for (var i = 0; i < 6; i++)

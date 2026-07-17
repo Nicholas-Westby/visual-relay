@@ -64,6 +64,35 @@ public partial class MainWindowViewModel
             ApplyStageEventToBoard(relayEvent);
         }
 
+        // Invariant: when no active run exists for this task, any stage that
+        // still reads "Running" is stale (pre-fix driver, crash, kill -9, etc.).
+        // Normalize to "Stopped" in memory and on disk so the board, queue card,
+        // and /state never render a forever-Running stage with a ticking timer.
+        if (!_runningTaskIds.Contains(taskId))
+        {
+            var repaired = false;
+            foreach (var stage in Stages)
+            {
+                if (stage.Status == "Running")
+                {
+                    stage.Status = "Stopped";
+                    repaired = true;
+                }
+            }
+            if (repaired)
+            {
+                // Update the original statusRecord entries in place so every
+                // optional field (Error, DurationSeconds, CostUsd, Model,
+                // Turns, Check) is preserved — only the stale "Running"
+                // status is changed to "Stopped".
+                var repairedEntries = statusRecord.Select(e =>
+                    e.Status == "Running" ? e with { Status = "Stopped" } : e).ToList();
+                var taskDir = Path.Combine(RootPath, ".relay", taskId);
+                Directory.CreateDirectory(taskDir);
+                await StageStatusRecord.WriteAsync(taskDir, repairedEntries);
+            }
+        }
+
         ApplyLogFilter();
     }
 }

@@ -13,7 +13,7 @@ public sealed partial class RelayDriver
     /// truth so no call site re-hardcodes the "Skipped" literal.
     /// </summary>
     private static bool StageStatusIsComplete(string status) =>
-        status == "Done" || "Skipped".Equals(status, StringComparison.OrdinalIgnoreCase);
+        status == "Done" || "Skipped".Equals(status, StringComparison.OrdinalIgnoreCase) || "Stopped".Equals(status, StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Loads prior-run state for a resume: ledger, seals, manifest, costs, status entries,

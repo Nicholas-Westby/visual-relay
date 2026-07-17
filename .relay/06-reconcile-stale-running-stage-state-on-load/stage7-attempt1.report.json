@@ -1,0 +1,1153 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T03:10:58.471203+00:00",
+  "task": "# Relay stage 7: Review\nTask: 06-reconcile-stale-running-stage-state-on-load\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Never render a stage as Running for a task with no active run\n\nThe `hoist-pipeline-test-shared-setup` task flagged at Review (stage 7) on\n2026-07-15 at 20:07. This morning \u2014 13+ hours later, with nothing running \u2014\nits Visual-review card still shows **\"Running 837m 37s\"** with a live green\nborder and a ticking timer. The stage's persisted status is the problem, not\njust the timer: `.relay/hoist-pipeline-test-shared-setup/status.json` records\nstage 8 as `\"status\": \"Running\"` to this day.\n\nCommit `6a49a41` (`fix: stop sibling review-stage timer on flagged event`,\ntask `fix-visual-relay-timing-bug`) fixed the go-forward driver behavior\n(`RelayDriver.Events.cs`: on flag, ALL Running stages are now closed, not just\nstages below the flagged one) and taught the live event handler to settle the\nsibling card (`MainWindowViewModel.Helpers.cs`). What it did NOT do is\nreconcile state that is already wrong, or state that goes wrong through any\npath other than a live flagged event. The screenshot above was taken the\nmorning AFTER that fix landed.\n\n### Evidence (verified)\n\n- `status.json` for the hoist task: stage 7 `Flagged`, stage 8 `Running`,\n  stages 9-12 `Waiting` \u2014 persisted since 20:07 the previous evening.\n- Run log has `s8/vision stage_start` at 19:12:37 and **no terminal s8 event\n  of any kind** (no stage_done, no skip, no kill). The review-red flag path\n  (`RelayDriver.ReviewPair.cs:104-116`) awaits the sibling and discards its\n  result without publishing anything for stage 8, so both rehydrate-from-log\n  and status.json said \"Running\" forever under the pre-fix driver.\n- The UI derives the 837m elapsed from the stage_start event timestamp with no\n  terminal event to stop it; app restarts do not help because the persisted\n  artifacts are the source.\n\n### What to build\n\n1. **Load-time invariant**: when hydrating a task that has no active run (its\n   drain is over; it is flagged/needs-review/idle), any stage in `Running`\n   state must be normalized to a terminal state before display \u2014 in the stage\n   board, the queue card, and `/state`. This repairs existing on-disk state\n   (like hoist's) without requiring a re-run, and protects against every\n   future path that fails to close a stage (crash, kill -9, power loss \u2014\n   a driver-side fix can never cover those).\n2. **Terminal event for the discarded sibling**: in the review-pair flag paths,\n   publish an explicit terminal event for the sibling stage whose result is\n   discarded (today it gets nothing), so rehydrate-from-log agrees with\n   status.json without needing the invariant to kick in.\n3. **Semantics**: closing a killed/discarded sibling as `\"Done\"` (the 6a49a41\n   choice) renders as \"Completed\", which misleads \u2014 the stage's result was\n   thrown away. Decide a truthful terminal presentation (e.g. a distinct\n   `Stopped`/`Discarded` status, or `Done` without a duration and with a note).\n   Check `fix-stuck-visual-review-card-when-skipped` and\n   `report-review-pair-stages-independently` (completed tasks) for the\n   existing status vocabulary before inventing a new one.\n\n### Constraints\n\n- Do not touch how ACTIVE runs report progress; the invariant applies only\n  when no run is active for the task.\n- status.json remains the persisted truth: the invariant should repair it (or\n  overlay it consistently everywhere), not create a UI-only divergence.\n- Keep files under the 300-line guard; `ReviewPairOrphanedStageTimerTests.cs`\n  is the natural home for new coverage.\n\n### Tests (red first)\n\n- Hydration test: a task directory whose status.json has stage 8 `Running` and\n  stage 7 `Flagged`, with no active run \u2192 no stage renders as Running; no\n  ticking elapsed time is exposed.\n- Review-pair test: review-red flag path publishes a terminal event for the\n  sibling stage (assert on the event stream, not just statusEntries).\n- Presentation test: the discarded sibling does not render as an ordinary\n  successful completion.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: after the fix, the existing hoist task's board must show no Running\n  stage without re-running it.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Resume.cs\nsrc/VisualRelay.App/ViewModels/StageRowViewModel.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\ntests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Task 06-reconcile-stale-running-stage-state-on-load: Fix the bug where a stage persists as 'Running' forever when its sibling was flagged at review (no terminal event published for the discarded sibling). Build: (1) a load-time invariant that normalizes Running\u2192terminal when no active run exists, (2) an explicit terminal event in the review-pair flag path, and (3) honest semantics for the discarded sibling (not misleading 'Done'). Primary touchpoints: RelayDriver.ReviewPair.cs (flag path), RelayDriver.Events.cs or hydration code (invariant), status enum/model, UI stage-card rendering. New tests in ReviewPairOrphanedStageTimerTests.cs.\",\n  \"options\": [\n    \"Option A \u2014 Repair-in-place + new Discarded status: During hydration, rewrite Running\u2192Discarded in status.json when no active run; publish stage_discarded event from review-pair path; add a new Discarded enum variant with distinct UI (grey, no timer). Repairs on-disk state permanently. Most honest semantics. Requires teaching all consumers about the new status.\",\n    \"Option B \u2014 Read-time normalization + reuse Skipped: Overlay Running\u2192Skipped on the read path only (no status.json writes); publish stage_skipped event. Safer (no writes on read), but leaves on-disk state permanently wrong. Depends on Skipped already existing in vocab.\",\n    \"Option C \u2014 Hybrid repair + Done with annotation: Repair status.json in place (Running\u2192Done); publish stage_done with outcome=dicarded data field; UI renders as Done with muted styling and tooltip. Repairs on-disk state, no new enum, but 'Done' is still slightly misleading at a glance.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"## Codebase Architecture\\n\\n### Status Model (StageStatus.cs)\\n- `StageStatusEntry` is a plain record with `string Status` \u2014 no enum. Known values: `\\\"Waiting\\\"`, `\\\"Running\\\"`, `\\\"Done\\\"`, `\\\"Flagged\\\"`, `\\\"Skipped\\\"`. All consumers switch on these literal strings.\\n- `StageStatusRecord.WriteAsync/Read` persists to/from `.relay/{taskId}/status.json` as a JSON array.\\n\\n### Hydration Path (MainWindowViewModel.RunHistory.cs:19-68)\\n- `LoadRunHistoryAsync` reads status.json directly and assigns `stage.Status = statusEntry.Status` for each stage (line 44). **No normalization of `\\\"Running\\\"` occurs** \u2014 if status.json says `\\\"Running\\\"`, the UI shows a live green border with ticking elapsed timer.\\n- After status assignment, the method replays stored events through `ApplyStageEventToBoard` (lines 62-65), which can advance stages further (e.g., stage_done \u2192 `\\\"Done\\\"`). But if no terminal event exists for the stage, it stays `\\\"Running\\\"`.\\n- Active run detection: `_runningTaskIds` (a `HashSet<string>`) tracks currently-draining tasks. The hydration runs inside `RunOneAsync` (line 33) while the task IS still in `_runningTaskIds` (cleared in `finally` at line 41).\\n\\n### Live Event Handler (MainWindowViewModel.Helpers.cs:13-73)\\n- `HandleRelayEvent` calls `ApplyStageEventToBoard(relayEvent)` for flagged events **outside** the selected-task guard (line 30), so the flagged stage card stops ticking for ANY task.\\n- The sibling-settling logic (lines 59-63, the 6a49a41 fix) is **inside** the selected-task guard: only settles sibling when the flagged task IS the currently viewed task.\\n- `ApplyStageEventToBoard` (lines 94-131): `stage_start` \u2192 `MarkRunning`, `stage_done`/`stage_report` \u2192 set status from data[\\\"status\\\"] or `\\\"Done\\\"`, `flagged` \u2192 `\\\"Flagged\\\"`.\\n\\n### FlagAsync (RelayDriver.Events.cs:93-136)\\n- Lines 108-109: **All** `\\\"Running\\\"` stages \u2192 `\\\"Done\\\"` (this is the 6a49a41 fix at the driver level \u2014 before that, only stages below the flagged stage were closed).\\n- Line 110: flagged stage \u2192 `\\\"Flagged\\\"`.\\n- Line 111: Writes status.json. So after FlagAsync runs, on-disk status is correct.\\n- Line 119-121: Publishes a single `\\\"flagged\\\"` event \u2014 **no stage_done event** for the sibling.\\n\\n### Review-Pair Flag Paths (RelayDriver.ReviewPair.cs)\\n- When Review flags and review finished first (lines 158-203): sibling Visual-review result is awaited and discarded. The `FlagAsync` call (line 201) does close all Running stages to `\\\"Done\\\"` in status.json, but **no stage_done event** is published for the sibling. This means event-based rehydration (LoadRunHistoryAsync's event replay) never sees a terminal event for the sibling.\\n- When Visual-review flags (lines 220-243): symmetric \u2014 Review sibling result is already recorded (line 207-209) since it finished first, so this path is clean.\\n- Fast-visual flag paths (lines 79-142): Similar \u2014 when review flags in the fast-visual case (lines 79-112), both stages' results are present. FlagAsync closes all Running. But the discarded stage still lacks its own terminal event.\\n\\n### StageRowViewModel UI Rendering (StageRowViewModel.cs:43-49)\\n- `StatusLabel`: `\\\"Running\\\"` \u2192 `\\\"Running {ElapsedLabel}\\\"`; `\\\"Done\\\"` \u2192 `\\\"Completed in {DurationLabel}\\\"`; `\\\"Skipped\\\"` \u2192 `\\\"Skipped\\\"`; everything else \u2192 raw Status string.\\n- `AccentBrush`: `\\\"Done\\\"`/`\\\"Running\\\"` \u2192 green; `\\\"Flagged\\\"` \u2192 red; everything else \u2192 muted.\\n- `CardBackgroundBrush`: `\\\"Running\\\"` \u2192 green-tinted; `\\\"Flagged\\\"` \u2192 red-tinted; selected \u2192 blue; else dark.\\n- `MarkRunning` starts the live timer. Status setter stops the timer when leaving `\\\"Running\\\"`.\\n\\n### Resume Path (RelayDriver.Resume.cs:15-16)\\n- `StageStatusIsComplete` recognizes only `\\\"Done\\\"` and `\\\"Skipped\\\"` as terminal. `\\\"Running\\\"` is NOT complete \u2014 resume would re-run it.\\n\\n### ControlApi /state (ControlApi.State.cs:55-61)\\n- Exposes `status = s.Status` directly from the StageRowViewModel. So if the VM says `\\\"Running\\\"`, /state reports `\\\"Running\\\"`.\\n\\n### Existing Test Infrastructure\\n- `ReviewPairOrphanedStageTimerTests.cs` (182 lines): Tests sibling timer settling for selected/background tasks and status.json round-trip. Uses `RelayEventTestDispatch.Dispatch` to inject events into the VM via reflection. Tests assert on `StageRowViewModel.Status` and `ElapsedLabel`.\\n- `InMemoryRelayEventSink` captures all events from a RelayDriver run, used in orchestration tests to assert on event streams.\\n- `RelayDriverReviewPairTests.Orchestration.cs`: Full integration tests using `ScriptedSubagentRunner` + `RelayDriver`. Asserts on event sink contents and status.json.\\n- Test helpers: `TestRepository` (temp dir setup), `RelayDriverTestHelpers.DepsFor` (driver dependencies with GitSim), `StageStatusRecord.WriteAsync/Read`.\\n\\n### Current Bug Root Cause\\n1. **Load-time**: `LoadRunHistoryAsync` blindly trusts status.json. A stale `\\\"Running\\\"` (from pre-fix driver, crash, kill -9, power loss) persists across app restarts with no normalization.\\n2. **Event gap**: The review-pair flag path publishes no stage_done for the discarded sibling \u2014 only `FlagAsync`'s single `\\\"flagged\\\"` event. Event-based rehydration cannot reconstruct the sibling's terminal state.\\n3. **Misleading label**: The sibling is marked `\\\"Done\\\"` (which renders as \\\"Completed\\\") even though its result was discarded.\",\n  \"constraints\": [\n    \"DO NOT touch how ACTIVE runs report progress \u2014 the invariant applies only when no active run exists for the task\",\n    \"status.json must remain the persisted truth; the invariant should repair it (or overlay consistently), not create UI-only divergence\",\n    \"All modified/created files must stay under the 300-line guard\",\n    \"ReviewPairOrphanedStageTimerTests.cs is the natural home for new UI-level coverage\",\n    \"New tests must be red-first (failing before implementation)\",\n    \"Check existing vocabulary (\\\"Waiting\\\", \\\"Running\\\", \\\"Done\\\", \\\"Skipped\\\", \\\"Flagged\\\") before inventing a new status \u2014 adding a new status requires changes to StageRowViewModel.cs (StatusLabel, AccentBrush, CardBackgroundBrush, BorderBrush, CardBorderThickness, CardShadow), RelayDriver.Artifacts.cs (MarkStatus helpers), RelayDriver.Resume.cs (StageStatusIsComplete), and potentially ControlApi.State.cs\",\n    \"The load-time invariant must repair in-memory state (and optionally on-disk status.json) consistently across: the stage board (Stages collection), the queue card (TaskRowViewModel.StateLabel), and the /state endpoint\",\n    \"Terminal event for the discarded sibling must be published from the review-pair flag paths in RelayDriver.ReviewPair.cs \u2014 the event stream test should assert on the InMemoryRelayEventSink contents, not just on status.json entries\",\n    \"Discarded sibling must NOT render as a successful completion \u2014 the StatusLabel for the chosen terminal status must be truthful\",\n    \"The hydration fix should go in LoadRunHistoryAsync (MainWindowViewModel.RunHistory.cs) \u2014 after reading status.json, if the task is NOT in _runningTaskIds, normalize any \\\"Running\\\" to a terminal state\",\n    \"Flagged events arrive for non-selected tasks via HandleRelayEvent's line 30 (outside the selected-task guard), but sibling settling (lines 59-63 in Helpers.cs) is inside the guard \u2014 the load-time invariant covers the non-selected case for already-persisted state\",\n    \"The driver-side resume already treats \\\"Running\\\" as incomplete (StageStatusIsComplete returns false), so the driver will re-run an orphaned Running stage on resume \u2014 fine for the driver, but the UI needs the invariant\",\n    \"`./visual-relay check` must be fully green after implementation including new tests\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Root Cause: Two gaps combine to produce a forever-Running stage card\\n\\n### Gap 1: No terminal event published for the discarded review-pair sibling\\n\\nWhen Review (stage 7) flags red at the review-pair barrier, the sibling Visual-review (stage 8) result is awaited and discarded \u2014 its work is thrown away because both stages must pass for the pair to succeed. FlagAsync (RelayDriver.Events.cs:93-136) closes ALL Running stages to \\\"Done\\\" in statusEntries and writes status.json (the 6a49a41 fix at lines 108-109), but it publishes ONLY a single \\\"flagged\\\" event (line 119-121). No stage_done event is published for the sibling.\\n\\nThis affects three flag-return paths in RelayDriver.ReviewPair.cs:\\n- Review-finishes-first, red (lines 158-203): sibling awaited at 162-166, FlagAsync at 201, sibling result discarded at 203.\\n- Fast-visual, review-red, retry-fails (lines 79-112): FlagAsync at 110, visual sibling discarded at 112.\\n- Fast-visual, visual-red (lines 138-141): FlagAsync at 139, review sibling discarded at 141.\\n\\nThe missing stage_done event means LoadRunHistoryAsync's event replay (RunHistory.cs:62-65) never sees a terminal event for the sibling. With only a stage_start in the log (line 597 of run.log: `s8/vision stage_start`) and no matching terminal event, the event replay cannot advance the stage beyond \\\"Running\\\".\\n\\n### Gap 2: LoadRunHistoryAsync blindly trusts status.json with no dead-run detection\\n\\nMainWindowViewModel.RunHistory.cs:19-68 reads status.json and assigns `stage.Status = statusEntry.Status` at line 44 with ZERO normalization. The code does not check whether the task actually has an active run (`_runningTaskIds`). If status.json says \\\"Running\\\" \u2014 whether from a pre-fix driver, a crash, kill -9, or the missing-event gap above \u2014 the UI renders a live green-bordered card with a ticking elapsed timer that counts up from the stage_start timestamp forever.\\n\\nHandleRelayEvent's sibling-settling fix (Helpers.cs:59-63, the 6a49a41 companion) only fires on LIVE flagged events for the SELECTED task \u2014 it cannot repair already-persisted bad state on app restart.\\n\\n### Verified on the hoist task\\n\\n- `.relay/hoist-pipeline-test-shared-setup/status.json` lines 81-105: stage 7 = \\\"Flagged\\\", stage 8 = \\\"Running\\\" (persisted since 2026-07-15 20:07)\\n- `.relay/hoist-pipeline-test-shared-setup/run.log` line 597: only `s8/vision stage_start` at 02:12:37 \u2014 zero terminal s8 events follow (confirmed with `grep s8/ run.log`)\\n- The Review stage was killed at 03:07:40 (line 656) and flagged at 03:07:41 (line 657). The Visual-review sibling was awaited and discarded by the review-finishes-first red path (ReviewPair.cs:158-203). FlagAsync wrote stage 8 \u2192 \\\"Done\\\" in status.json\u2026 wait, no \u2014 the hoist task's status.json still says \\\"Running\\\" for stage 8, NOT \\\"Done\\\". This means the 6a49a41 fix was NOT deployed when hoist ran (it ran pre-fix), so even the status.json write didn't close stage 8. The fix only affects go-forward runs.\",\n\n  \"excerpts\": [\n    \"RelayDriver.Events.cs:108-111: FlagAsync closes ALL Running stages to \\\"Done\\\" in statusEntries and writes status.json \u2014 but publishes only a single \\\"flagged\\\" event at line 119, never stage_done for siblings.\",\n    \"RelayDriver.ReviewPair.cs:158-203: Review-finishes-first red path awaits sibling (162-166), calls FlagAsync (201), discards sibling result with no stage_done event published. Return at 203.\",\n    \"RelayDriver.ReviewPair.cs:79-112: Fast-visual review-red retry-fails path \u2014 sibling visual result discarded at line 112 with no stage_done event.\",\n    \"RelayDriver.ReviewPair.cs:138-141: Fast-visual visual-red path \u2014 sibling review result discarded at line 141 with no stage_done event.\",\n    \"MainWindowViewModel.RunHistory.cs:44: `stage.Status = statusEntry.Status` \u2014 blind assignment from status.json with zero normalization for dead runs.\",\n    \"MainWindowViewModel.Helpers.cs:59-63: Sibling settling (`sib.Status = \\\"Done\\\"`) fires only on LIVE flagged events for the SELECTED task \u2014 cannot repair persisted bad state.\",\n    \"StageRowViewModel.cs:43-49: StatusLabel switch \u2014 \\\"Running\\\" \u21d2 \\\"Running {ElapsedLabel}\\\" (green border/shadow/ticking timer); \\\"Done\\\" \u21d2 \\\"Completed in\u2026\\\" or \\\"Complete\\\".\",\n    \"StageRowViewModel.cs:72-80: AccentBrush green for \\\"Done\\\"+\\\"Running\\\", red for \\\"Flagged\\\", muted for everything else. CardBackgroundBrush green-tinted for \\\"Running\\\" only.\",\n    \"RelayDriver.Resume.cs:15-16: StageStatusIsComplete recognizes only \\\"Done\\\" and \\\"Skipped\\\" as terminal. \\\"Running\\\" \u21d2 incomplete \u21d2 resume re-runs it.\",\n    \"ControlApi.State.cs:55-61: /state exposes `s.Status` directly \u2014 if VM says \\\"Running\\\", /state reports \\\"Running\\\".\",\n    \".relay/hoist-pipeline-test-shared-setup/status.json:93-105: stage 8 name=Visual-review status=\\\"Running\\\" \u2014 persisted since 2026-07-15 20:07, 13+ hours stale.\",\n    \".relay/hoist-pipeline-test-shared-setup/run.log:597: only `s8/vision stage_start` at 02:12:37. No terminal s8 event exists (confirmed via `grep s8/`).\"\n  ],\n\n  \"repro\": \"## Reproduction\\n\\n### 1. Observe the stale live state (hoist task)\\n```bash\\ncat .relay/hoist-pipeline-test-shared-setup/status.json | jq '.[] | select(.stage==7 or .stage==8)'\\n# stage 7: \\\"Flagged\\\", stage 8: \\\"Running\\\" \u2014 13+ hours stale\\n```\\n\\n### 2. Confirm no terminal event for stage 8 in run log\\n```bash\\ngrep 's8/' .relay/hoist-pipeline-test-shared-setup/run.log\\n# Only: s8/vision stage_start \u2014 no stage_done, no skip, no kill\\n```\\n\\n### 3. Reproduce in a test (would fail before fix, pass after)\\n- Write a status.json with stage 7=\\\"Flagged\\\", stage 8=\\\"Running\\\" for a task that has NO active run\\n- Call LoadRunHistoryAsync for that task\\n- Assert: no stage.Status equals \\\"Running\\\", no ElapsedLabel is non-empty\\n- Currently stage 8 shows \\\"Running\\\" with green border and ticking timer forever\\n\\n### 4. Verify the event gap in orchestration\\n- Run a task through RelayDriver where the Review subagent returns red\\n- Assert on InMemoryRelayEventSink.Events: currently no stage_done event exists for stage 8\\n- After fix: a stage_done with status=\\\"Stopped\\\" must be present for stage 8\\n\\n### 5. Verify truthful presentation\\n- After the sibling is closed as \\\"Stopped\\\", the stage card must NOT render green (no SuccessBrush), must NOT show \\\"Completed in\u2026\\\", and must have no ticking elapsed timer\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Plan: Reconcile stale Running stages on load\\n\\n### Root cause\\nTwo gaps combine: (1) review-pair flag paths publish no terminal event for the discarded sibling, and (2) `LoadRunHistoryAsync` blindly trusts `status.json` with no dead-run detection. A stage_start without a matching terminal event + persistent `\\\"Running\\\"` in status.json = the UI renders a live green-bordered card with ticking timer forever.\\n\\n### Changes\\n\\n#### 1. `RelayDriver.ReviewPair.cs` \u2014 Publish terminal `stage_done{status:Stopped}` for discarded siblings\\nIn three flag-return paths where a sibling result is discarded, after `FlagAsync` closes all Running\u2192Done, override the sibling's statusEntry to `\\\"Stopped\\\"`, rewrite status.json, and publish `stage_done` via `PublishStageDoneAsync(\u2026, status: \\\"Stopped\\\")` with `TimeSpan.Zero` elapsed and `null` cost:\\n- **Path A** (fast-visual, review-red, retry-fails, ~line 110): sibling = stage 8 (fastVisual). After `FlagAsync(\u20267\u2026)`, mark entries[8]=Stopped, write status.json, publish stage_done for stage 8.\\n- **Path B** (fast-visual, visual-red, ~line 139): sibling = stage 7 (reviewResult). After `FlagAsync(\u20268\u2026)`, mark entries[7]=Stopped, publish stage_done for stage 7.\\n- **Path C** (review-finishes-first, red, ~line 201): sibling = stage 8 (siblingResult, if non-null). After `FlagAsync(\u20267\u2026)`, mark entries[8]=Stopped, publish stage_done for stage 8.\\n\\n#### 2. `RelayDriver.Resume.cs` \u2014 Treat Stopped as complete\\nAdd `\\\"Stopped\\\"` to `StageStatusIsComplete` so resume advances past Stopped stages (same as Done/Skipped).\\n\\n#### 3. `StageRowViewModel.cs` \u2014 Truthful \\\"Stopped\\\" label\\nAdd `\\\"Stopped\\\" => \\\"Stopped\\\"` to the `StatusLabel` switch. All other properties (AccentBrush, CardBackgroundBrush, etc.) already fall through to muted/stale defaults for unknown statuses \u2014 no changes needed.\\n\\n#### 4. `MainWindowViewModel.RunHistory.cs` \u2014 Load-time invariant\\nAfter the event-replay loop (after line 65), when the task is NOT in `_runningTaskIds`: scan all stages for `Status == \\\"Running\\\"` \u2192 set to `\\\"Stopped\\\"`. If any were repaired, write the corrected entries back to disk via `StageStatusRecord.WriteAsync`. This repairs both in-memory state (`Stages` collection, `/state` endpoint, queue card) and on-disk `status.json`. During active runs (`_runningTaskIds` contains the task) the invariant is skipped \u2014 live Running stages are preserved.\\n\\n#### 5. `MainWindowViewModel.Helpers.cs` \u2014 Sibling settling uses Stopped\\nChange line 62 from `sib.Status = \\\"Done\\\"` to `sib.Status = \\\"Stopped\\\"`. In the normal case the `stage_done{status:Stopped}` already set it (no-op), but if the flagged event arrives first we set the truthful status.\\n\\n#### 6. `ReviewPairOrphanedStageTimerTests.cs` \u2014 Three new tests\\n**Test A (Hydration):** Write status.json with stage 7=Flagged, stage 8=Running; select task; assert no stage.Status == \\\"Running\\\", stage 8 Status is \\\"Stopped\\\", ElapsedLabel is empty, disk status.json now has \\\"Stopped\\\".\\n**Test B (Event stream):** Run driver with review-red subagent + InMemoryRelayEventSink; assert sink.Events contains stage_done for stage 8 with data[\\\"status\\\"]==\\\"Stopped\\\".\\n**Test C (Presentation):** Write status.json with stage 8=Stopped; select task; assert StatusLabel does not contain \\\"Completed\\\", AccentBrush is not green, ElapsedLabel is empty.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Resume.cs\",\n    \"src/VisualRelay.App/ViewModels/StageRowViewModel.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs\",\n    \"tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\"tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs\"],\n  \"rationale\": \"Three tests added:\\n\\n**Test A \u2014 Hydration_StaleRunningStage_NormalizedToStopped** (FAILS): Writes status.json with stage 7=Flagged, stage 8=Running, selects the task (no active run). Currently fails because LoadRunHistoryAsync blindly trusts status.json and renders stage 8 as Running with green border/ticking timer. After the invariant is implemented, asserts no stage has Status==Running, stage 8 is Stopped, ElapsedLabel is empty, and disk status.json is repaired.\\n\\n**Test B \u2014 ReviewRed_VisualSiblingGetsStageDoneStoppedEvent** (FAILS): Runs RelayDriver with FlagStageSubagentRunner(7) + InMemoryRelayEventSink. Currently fails because no stage_done event exists for the discarded stage 8 sibling. After the terminal-event fix, asserts sink.Events contains stage_done with StageNumber=8 and data[\\\"status\\\"]=\\\"Stopped\\\".\\n\\n**Test C \u2014 StoppedStage_NotRenderedAsSuccess** (PASSES): Writes status.json with stage 8=Stopped, selects task. Already passes because \\\"Stopped\\\" falls through to the StatusLabel default (`_ => Status`), showing muted colors and no \\\"Completed\\\" suffix. Validates that the presentation needs no code changes beyond setting the correct status.\\n\\nFile at 298 lines \u2014 under the 300-line guard.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"## Changes Made\\n\\n### 1. `RelayDriver.ReviewPair.cs` \u2014 Publish terminal `stage_done{status:Stopped}` for discarded siblings (3 paths, +15 lines)\\n- **Path A** (fast-visual, review-red, retry-fails): after `FlagAsync(..., 7, ...)`, mark entries[8]=\\\"Stopped\\\", write status.json, publish `stage_done` for stage 8\\n- **Path B** (fast-visual, visual-red): after `FlagAsync(..., 8, ...)`, mark entries[7]=\\\"Stopped\\\", write status.json, publish `stage_done` for stage 7\\n- **Path C** (review-finishes-first, red): when `siblingResult` is non-null, mark entries[8]=\\\"Stopped\\\", write status.json, publish `stage_done` for stage 8\\n- An additional path (retry succeeds, visual red) now also publishes `stage_done` for the discarded review sibling (stage 7)\\n\\n### 2. `RelayDriver.Resume.cs` \u2014 Treat \\\"Stopped\\\" as complete (+1 line)\\n- Added `\\\"Stopped\\\"` to `StageStatusIsComplete` so resume advances past Stopped stages\\n\\n### 3. `StageRowViewModel.cs` \u2014 Truthful \\\"Stopped\\\" label (+1 line)\\n- Added `\\\"Stopped\\\" => \\\"Stopped\\\"` case to `StatusLabel` switch. All other properties (AccentBrush, CardBackgroundBrush, etc.) already fall through to muted defaults for unknown statuses\\n\\n### 4. `MainWindowViewModel.RunHistory.cs` \u2014 Load-time invariant (+19 lines)\\n- After reading status.json and replaying events, when the task is NOT in `_runningTaskIds`: scan all stages for `Status == \\\"Running\\\"` \u2192 set to `\\\"Stopped\\\"`. If any were repaired, write corrected entries back to disk via `StageStatusRecord.WriteAsync`. During active runs the invariant is skipped\\n\\n### 5. `MainWindowViewModel.Helpers.cs` \u2014 Sibling settling uses \\\"Stopped\\\" (1 char)\\n- Changed line 62 from `sib.Status = \\\"Done\\\"` to `sib.Status = \\\"Stopped\\\"`\\n\\n### 6. Tests \u2014 Fixed pre-existing + new tests pass\\n- `ReviewPairOrphanedStageTimerTests.cs` (298 lines): 3 new tests (Hydration, Event stream, Presentation) all pass\\n- `MainWindowViewModelTests.Status.cs` (255 lines): Fixed `LoadRunHistoryAsync_ReviewPairRunning_BothStagesShowRunning` to pre-register an active run via reflection before `LoadInitialAsync`, so the invariant preserves \\\"Running\\\" when an active run is simulated\\n- Full suite: 3138 passed, 0 failed, 114 skipped\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "I've completed a thorough review of the diff. Let me summarize my findings.\n\n## Review Summary\n\nThe implementation addresses all three task requirements: (1) a load-time invariant that normalizes stale `Running` \u2192 `Stopped` when no active run exists, (2) explicit terminal `stage_done{status:Stopped}` events for discarded review-pair siblings, and (3) truthful \"Stopped\" presentation (muted, no green, no ticking timer, no \"Completed\" label).\n\n**Strengths verified:**\n- All four review-pair flag paths (fast-visual review-red, fast-visual visual-red, fast-visual retry-succeeds-visual-red, review-finishes-first review-red) correctly publish terminal events for the genuinely-discarded sibling \u2014 no duplicates, no missed paths. The review-green/visual-red path (line 245-268) correctly needs no change since review is already recorded.\n- `StageRowViewModel` renders \"Stopped\" truthfully: `AccentBrush` falls through to `MutedBrush`, `CardBackgroundBrush`/`BorderBrush`/`CardShadow` all skip the green/active Running styling, and the `Status` setter stops the elapsed timer.\n- `StageStatusIsComplete` treats \"Stopped\" as terminal for resume. \u2713\n- All files are within the 300-line guard (ReviewPair.cs exactly 300, tests at 298). \u2713\n- Tests are well-structured: Test A (hydration) verifies in-memory + on-disk repair, Test B (event stream) asserts on the sink, Test C (presentation) validates non-success rendering. The modified `MainWindowViewModelTests.Status.cs` test correctly pre-registers an active run via reflection so the invariant preserves \"Running\" during simulated active runs.\n- Targeted test run: 7/7 pass; review-pair + resume suite: 53/53 pass.\n\n**Blocking issue found:**\n\nThe load-time invariant's disk-write path (`MainWindowViewModel.RunHistory.cs:84-88`) rebuilds **all** status.json entries as `new StageStatusEntry(s.Number, s.Name, s.Status)` \u2014 only 3 of the record's 12 fields. This strips the `Error` field from Flagged stages and `DurationSeconds`/`CostUsd`/`Model`/`Turns`/`Check` from Done stages whenever the invariant repairs any stale Running stage.\n\nThis directly affects the exact scenario being fixed: the hoist task's status.json has stage 7 = `Flagged` with `error=\"Review returned an invalid result\"` and stages 1-6 = `Done` with populated cost/duration data. When the invariant repairs stage 8, it rewrites the entire file with stripped entries \u2014 so on the next app restart, `LatestFlaggedError(statusRecord)` returns `null` and the \"LATEST RUN FAILED\" banner disappears for the flagged task. This contradicts the task's explicit constraint that \"status.json remains the persisted truth.\" The fix is to update the original `statusRecord` entries in place (e.g., `statusRecord.Select(e => e.Status == \"Running\" ? e with { Status = \"Stopped\" } : e)`) to preserve all fields.\n\n```json\n{ \"verdict\": \"changes\", \"issues\": [\"Load-time invariant disk-write data loss: MainWindowViewModel.RunHistory.cs:84-88 rebuilds all status.json entries as `new StageStatusEntry(s.Number, s.Name, s.Status)`, stripping the Error field from Flagged stages (causing the 'LATEST RUN FAILED' banner to vanish on restart for the exact hoist scenario being fixed) and stripping DurationSeconds/CostUsd/Model/Turns/Check from Done stages. This contradicts the task constraint that 'status.json remains the persisted truth.' Fix: update the original statusRecord entries in place \u2014 e.g. `statusRecord.Select(e => e.Status == \\\"Running\\\" ? e with { Status = \\\"Stopped\\\" } : e).ToList()` \u2014 to preserve all fields. This is safe because the invariant only fires when no terminal event exists for the Running stage, so statusRecord's Running entries exactly match the in-memory ones needing repair.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 44,
+    "tool_calls_total": 59,
+    "tool_calls_succeeded": 58,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 27,
+        "failed": 1
+      },
+      "read_file": {
+        "succeeded": 21,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 7,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 44,
+    "total_llm_time_s": 858.865,
+    "prompt_cache": {
+      "cached_tokens": 1577088,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 74.976,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 11.987,
+      "prompt_tokens_est": 11324,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git status && echo \"---DIFFSTAT---\" && git diff --stat HEAD 2>/dev/null | head -50"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 1536
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git log --oneline -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.08,
+      "result_length": 702
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 8.572,
+      "prompt_tokens_est": 12080,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff HEAD -- src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs src/VisualRelay.Core/Execution/RelayDriver.Resume.cs src/VisualRelay.App/ViewModels/StageRowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.079,
+      "result_length": 5532
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff HEAD -- src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.076,
+      "result_length": 2352
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 7.53,
+      "prompt_tokens_est": 14012,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff HEAD -- tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 7711
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 11.897,
+      "prompt_tokens_est": 15988,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"PublishStageDoneAsync\" src/VisualRelay.Core/Execution/ | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.1,
+      "result_length": 1076
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"MarkStatus\\|WriteStatusAsync\" src/VisualRelay.Core/Execution/ | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.096,
+      "result_length": 2637
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 7.459,
+      "prompt_tokens_est": 17083,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Events.cs",
+        "offset": 1,
+        "limit": 140
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6989
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "offset": 70,
+        "limit": 170
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11925
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 37.928,
+      "prompt_tokens_est": 21272,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "limit": 70,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3815
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs",
+        "limit": 60,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2827
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 9.869,
+      "prompt_tokens_est": 24168,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FlagStageSubagentRunner|InMemoryRelayEventSink|SeedHappyPath",
+        "include": "*.cs",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.169,
+      "result_length": 9519
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"NewViewModelAsync\\|LastSelectionLoad\\|LoadRunHistoryAsync\\|_runningTaskIds\" src/VisualRelay.App/ViewModels/MainWindowViewModel*.cs | head -40"
+      },
+      "succeeded": true,
+      "duration_s": 0.075,
+      "result_length": 3816
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 8.794,
+      "prompt_tokens_est": 27800,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4254
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs",
+        "offset": 205,
+        "limit": 75
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3669
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 19.944,
+      "prompt_tokens_est": 29779,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverReviewPairTests.Orchestration.cs",
+        "limit": 60,
+        "offset": 130
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4041
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"WriteConfig\" tests/VisualRelay.Tests/TestRepository.cs 2>/dev/null || grep -rn \"void WriteConfig\\|WriteConfig(\" tests/VisualRelay.Tests/*.cs | head -10"
+      },
+      "succeeded": true,
+      "duration_s": 0.142,
+      "result_length": 1017
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 9.571,
+      "prompt_tokens_est": 31499,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"visionConfigured\\|TierProfiles\\|WriteConfig\" tests/VisualRelay.Tests/TestRepository.cs src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs src/VisualRelay.Core/Execution/RelayDriver.cs 2>/dev/null | head -30"
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 513
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && sed -n '1,60p' tests/VisualRelay.Tests/TestRepository.cs 2>/dev/null | grep -n \"WriteConfig\" "
+      },
+      "succeeded": true,
+      "duration_s": 0.061,
+      "result_length": 12
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.076,
+      "prompt_tokens_est": 31834,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && find tests -name \"TestRepository.cs\" && grep -rn \"WriteConfig\" $(find tests -name \"TestRepository.cs\") | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.241,
+      "result_length": 1309
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 8.512,
+      "prompt_tokens_est": 32222,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -n \"public.*WriteConfig\\|WriteConfigWith\" tests/VisualRelay.Tests/TestDoubles.cs | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 416
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.531,
+      "prompt_tokens_est": 32372,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 48,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2136
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 63.131,
+      "prompt_tokens_est": 32921,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.Core/Execution",
+        "pattern": "RunReviewPairStageWithRetryAsync|RecordPairStageAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.029,
+      "result_length": 2129
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 6.408,
+      "prompt_tokens_est": 35675,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPairRetry.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7696
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 77.848,
+      "prompt_tokens_est": 37549,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+        "limit": 135,
+        "offset": 90
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5982
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 56.464,
+      "prompt_tokens_est": 42258,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && wc -l src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs src/VisualRelay.Core/Execution/RelayDriver.Resume.cs src/VisualRelay.App/ViewModels/StageRowViewModel.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.RunHistory.cs src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs tests/VisualRelay.Tests/ReviewPairOrphanedStageTimerTests.cs tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.153,
+      "result_length": 487
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -n \"record StageStatusEntry\\|class StageStatusEntry\\|StageStatusEntry(\" src/VisualRelay.Domain/*.cs | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.072,
+      "result_length": 80
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 9.12,
+      "prompt_tokens_est": 44473,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/StageStatus.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2467
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "limit": 45,
+        "offset": 85
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2956
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 10.532,
+      "prompt_tokens_est": 45900,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "limit": 40,
+        "offset": 123
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2722
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -n \"_runningTaskId\\b\\|_runningTaskId \" src/VisualRelay.App/ViewModels/*.cs | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.074,
+      "result_length": 2894
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 60.734,
+      "prompt_tokens_est": 47430,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.LiveState.cs",
+        "limit": 60,
+        "offset": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2749
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.App/ViewModels",
+        "pattern": "RunningStepLabel"
+      },
+      "succeeded": true,
+      "duration_s": 0.013,
+      "result_length": 472
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 11.642,
+      "prompt_tokens_est": 50643,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/MainWindowViewModelTests.Status.cs",
+        "limit": 30,
+        "offset": 123
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2107
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -n \"LoadInitialAsync\\|SelectTaskAsync\\|LoadRunHistoryAsync\\|SelectedTask = \" src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.153,
+      "result_length": 378
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 5.618,
+      "prompt_tokens_est": 51409,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 60,
+        "offset": 195
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3066
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 16.209,
+      "prompt_tokens_est": 52161,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && timeout 220 dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --no-restore --filter \"FullyQualifiedName~ReviewPairOrphanedStageTimerTests|FullyQualifiedName~MainWindowViewModelTests.Status\" 2>&1 | tail -40",
+        "timeout": 230
+      },
+      "succeeded": true,
+      "duration_s": 0.062,
+      "result_length": 36
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 8.696,
+      "prompt_tokens_est": 52408,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --no-restore --filter \"FullyQualifiedName~ReviewPairOrphanedStageTimerTests|FullyQualifiedName~MainWindowViewModelTests.Status\" 2>&1 | tail -45",
+        "timeout": 230
+      },
+      "succeeded": true,
+      "duration_s": 6.646,
+      "result_length": 1681
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 8.197,
+      "prompt_tokens_est": 53013,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --no-restore --filter \"FullyQualifiedName~RelayDriverReviewPairTests|FullyQualifiedName~RelayDriverResumeTests\" 2>&1 | tail -15",
+        "timeout": 230
+      },
+      "succeeded": true,
+      "duration_s": 34.173,
+      "result_length": 1679
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 57.566,
+      "prompt_tokens_est": 53655,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me carefully analyze each concern from the review:\n\n1. **Duplicate terminal events in the \"retry succeeds, visual red\" path (line 97-101)**: This is the fast-visual path where review's retry succeeded (`retryResult.Check != \"red\"`) but fastVisual is red. The code calls FlagAsync for stage 8 (visual). Before my change, FlagAsync closed all Running\u2192Done. The question: does the review retry path already publish a stage_done for stage 7?\n\nLooking at the code at lines 83-101: `RunReviewPairStageWithRetryAsync` is called, which calls `RunStageAsync`. `RunStageAsync` (ReviewPairRetry.cs:113-133) returns a `StageRunResult` but does NOT itself publish a stage_done event \u2014 it just runs the subagent and returns the result. The stage_done for the retried review would only be published when `RecordPairStageAsync` is called (which calls `RecordStageAsync`). \n\nBut in the `retryResult.Check != \"red\"` + `fastVisual.Check == \"red\"` branch (lines 90-102), `RecordPairStageAsync` is NEVER called for stage 7 (review) \u2014 it goes straight to FlagAsync(stage 8) and returns. So stage 7's result (the successful retry) is DISCARDED here too! So publishing stage_done{status:Stopped} for stage 7 is correct \u2014 stage 7's result was discarded because the pair failed on visual.\n\nWait, but is that right? The retry SUCCEEDED for review (green), but visual is red. So the review result IS valid but gets discarded because the pair as a whole flags. Yes \u2014 the review result is discarded, so \"Stopped\" is the truthful terminal. And no prior stage_done was published for stage 7 in this branch. So this is CORRECT and not a duplicate. Good.\n\n2. **The path B (fast-visual, visual-red, ~line 148-156)**: Here review is green (we're in `reviewResult.Check != \"red\"` branch since the outer `if (reviewResult.Check == \"red\")` at line 79 was NOT taken, then `if (fastVisual.Check == \"red\")` at line 124 IS taken). Wait, let me re-read...\n\nActually line 124: `if (fastVisual.Check == \"red\")` \u2014 this is inside the `visualTask is { IsCompleted: true }` block (fast-visual). Review already finished (reviewResult is available). If fastVisual is red, retry visual; if retry still red, FlagAsync(stage 8). Then MarkStatus(stage 7, \"Stopped\") + publish stage_done for review (stage 7).\n\nBut wait \u2014 did review (stage 7) get a stage_done already? In the fast-visual path, reviewResult was obtained at line 67 (`var reviewResult = await reviewTask;`). But RecordPairStageAsync for review is NOT called until line 163 (the success path). In the visual-red branch, we go to FlagAsync(8) and return at 156. So review (stage 7) was never recorded \u2014 its result is discarded. So publishing stage_done{status:Stopped} for stage 7 is correct. Good.\n\n3. **Path A (fast-visual, review-red, ~line 114-122)**: review is red. FlagAsync(7). Then MarkStatus(8, \"Stopped\") + stage_done for visual (stage 8). Visual was fast (already completed) but its result is discarded because review flagged. Was visual recorded? No \u2014 RecordPairStageAsync for visual is at line 160-162 (success path only). So visual's result is discarded \u2192 Stopped is correct. Good.\n\n4. **Path C (review-finishes-first, red, ~line 215-227)**: review flags (7). siblingResult (visual, stage 8) was awaited and discarded. MarkStatus(8, \"Stopped\") + stage_done for visual. Guarded by `if (siblingResult is not null)`. Correct \u2014 if there's no visual task (vision not configured), nothing to publish. Good.\n\nSo all four paths are correct \u2014 no duplicate terminal events, and each correctly publishes a terminal event for the genuinely-discarded sibling.\n\nNow, one concern: in Path A and the retry-succeeds-visual-red path, `FlagAsync` already set stage 7 to \"Flagged\" (for Path A, FlagAsync(7) sets stage 7 Flagged; then MarkStatus(8, \"Stopped\")). Wait, in Path A (line 114-122): FlagAsync is called with stageNumber=7. FlagAsync closes ALL Running\u2192Done, then marks stage 7 as Flagged. So after FlagAsync: stage 7=Flagged, stage 8=Done (was Running, closed by FlagAsync's loop at Events.cs:108-109). Then the new code does MarkStatus(8, \"Stopped\") \u2014 overriding 8 from Done to Stopped. Good, that's the fix: 8 should be Stopped (discarded) not Done (misleading). And writes status.json. Then publishes stage_done{status:Stopped} for stage 8. \n\nBut wait \u2014 FlagAsync already wrote status.json with stage 8=Done (Events.cs:111). Then MarkStatus(8, \"Stopped\") + WriteStatusAsync overwrites with 8=Stopped. So the final on-disk state is correct. Good.\n\n5. **Concern about the invariant writing ALL stages to disk**: The invariant at RunHistory.cs:82-89 rebuilds ALL stage entries from `Stages` (including their current Status) and writes them. But `StageStatusEntry` has many optional fields (Check, DurationSeconds, CostUsd, Turns, Model, Error, TaskInputHash, TestDurationSeconds). The rebuild at line 84-85 only constructs `new StageStatusEntry(s.Number, s.Name, s.Status)` \u2014 DROPPING all the optional fields! This means when the invariant repairs a stale Running stage, it rewrites the ENTIRE status.json with only (Stage, Name, Status), losing all cost/duration/model/error data for ALL stages (not just the repaired one).\n\nThis is a DATA LOSS BUG. The original status.json entries for completed stages 1-6 had DurationSeconds, CostUsd, Model, Turns, etc. After the invariant writes, those are all null. This would affect the UI display of completed stages (losing \"Completed in Xs\", cost labels, etc.) and the /state endpoint.\n\nLet me verify this is actually a problem by checking what StageRowViewModel does with the metric data \u2014 does it come from status.json's DurationSeconds or from the report.json metrics?",
+        "thought_number": 1,
+        "next_thought_needed": true,
+        "mode": "new"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 26.502,
+      "prompt_tokens_est": 55191,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": true,
+        "revises_thought": 1,
+        "thought": "Wait \u2014 let me reconsider. The invariant rebuilds entries from `Stages` (the StageRowViewModel collection), NOT from the original `statusRecord` that was read. The `StageRowViewModel` holds Status, but does it hold DurationSeconds/CostUsd etc.? Let me check.\n\nActually, looking at RunHistory.cs more carefully: at line 44, `stage.Status = statusEntry.Status`. At line 45, `stage.SetTestDurationSeconds(statusEntry.TestDurationSeconds)`. At line 48-52, `stage.ApplyMetric(stageMetric)` applies metrics from `RelayRunHistory.ReadTaskMetric` (not from status.json). So the StageRowViewModel gets its display data from the task metric file, NOT from status.json's optional fields.\n\nBut the status.json WRITE at line 84-88 reconstructs StageStatusEntry(s.Number, s.Name, s.Status) \u2014 only 3 fields. This loses: Check, DurationSeconds, CostUsd, Turns, Model, Error, TaskInputHash, TestDurationSeconds for ALL stages.\n\nThe question is: does anything READ those optional fields from status.json after this point? Let me check:\n- `RelayRunHistory.ReadStatusRecord` returns the entries, and `LatestFlaggedError` reads `.Error` (RunHistory.cs:16). If the invariant runs and writes stripped entries, the Flagged stage's Error field would be LOST from disk. Then on next app restart, `LatestFlaggedError` would return null for a flagged task \u2192 the \"LATEST RUN FAILED\" banner would disappear.\n\nBut wait \u2014 does the invariant even run for a Flagged task? Yes! The hoist task has stage 7=Flagged, stage 8=Running. The invariant repairs stage 8 to Stopped and rewrites ALL entries including stage 7 (Flagged) \u2014 but strips stage 7's Error field. So the flagged error reason would be lost from disk after the invariant writes.\n\nActually, let me check whether stage 7's Flagged entry even HAS an Error field in the original status.json. MarkStatusFlagged might set it. Let me check.\n\nActually, this is a real concern but let me assess severity. The in-memory `SelectedTaskError` is set at line 34 BEFORE the invariant runs (from the original statusRecord). So during THIS load, the error is correct. The problem is on the NEXT app restart: the invariant would have stripped the Error field, so `LatestFlaggedError` returns null.\n\nBut actually \u2014 wait. On next restart, the invariant runs again. It reads statusRecord (now stripped), sets SelectedTaskError from it (null), then repairs Running\u2192Stopped and writes stripped entries again. So the error IS lost permanently after the first invariant write.\n\nThis is a real bug: the invariant's disk write strips optional fields (especially Error on Flagged stages) from status.json. The fix should reconstruct entries from the ORIGINAL statusRecord, only updating the Status field for repaired stages, rather than rebuilding from the StageRowViewModel.\n\nHowever, let me verify: does the test actually catch this? Test A writes entries with only (Number, Name, Status) \u2014 no Error field. So it wouldn't catch the data loss. And the test asserts on Status only. So the bug is real but not caught by tests.\n\nLet me verify whether MarkStatusFlagged actually sets the Error field, to confirm this is a real concern.",
+        "thought_number": 2,
+        "total_thoughts": 4
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 8.468,
+      "prompt_tokens_est": 55996,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"MarkStatusFlagged\\|MarkStatusDone\\|MarkStatusSkipped\\|void MarkStatus\\b\\|private.*MarkStatus\" src/VisualRelay.Core/Execution/*.cs | head -20"
+      },
+      "succeeded": true,
+      "duration_s": 0.225,
+      "result_length": 1922
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 7.534,
+      "prompt_tokens_est": 56538,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.Artifacts.cs",
+        "limit": 45,
+        "offset": 225
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2074
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 41.672,
+      "prompt_tokens_est": 57122,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": true,
+        "revises_thought": 2,
+        "thought": "Confirmed: `MarkStatusFlagged` sets `Error = error` on the Flagged stage entry. So a flagged task's status.json DOES have the Error field populated on the Flagged stage.\n\nNow the invariant at RunHistory.cs:84-88 rebuilds entries as `new StageStatusEntry(s.Number, s.Name, s.Status)` \u2014 this STRIPS the Error field from the Flagged stage, plus DurationSeconds/CostUsd/Model/Turns/Check from all Done stages.\n\nImpact assessment:\n1. **Flagged stage Error field lost from disk**: After the invariant writes, the Flagged stage's Error is null. On next app restart, `LatestFlaggedError(statusRecord)` returns null \u2192 `SelectedTaskError` is null \u2192 the \"LATEST RUN FAILED\" banner disappears for a flagged task. This is a regression for the exact scenario the task is fixing (the hoist task is a Flagged task with a stale Running sibling).\n\n2. **Done stage cost/duration data lost from disk**: MarkStatusDone sets DurationSeconds, CostUsd, Turns, Model, Check. The invariant strips these. Does anything read these from disk? Let me check if the UI reads cost/duration from status.json or from the metric/report files.\n\nLooking at RunHistory.cs:48-52, the metric data comes from `RelayRunHistory.ReadTaskMetric` (task-metric.json or similar), NOT from status.json. And `stage.ApplyMetric(stageMetric)` applies it. So the UI DISPLAY is fine (it gets cost/duration from metrics). But the /state endpoint or resume might read from status.json.\n\nActually, the driver's resume path reads status.json via `StageStatusIsComplete` which only checks the Status string \u2014 it doesn't need the optional fields. And `RelayRunHistory.ReadStatusRecord` is used by the UI which also applies metrics separately.\n\nSo the main concrete impact is #1: the Flagged Error field being stripped, causing the error banner to disappear on restart for flagged tasks that also had a stale Running sibling.\n\nThis is a real bug in the implementation. The correct fix would be to reconstruct the repaired entries from the original `statusRecord` (preserving all fields) and only update the Status for repaired stages, e.g.:\n```csharp\nvar repairedEntries = statusRecord.Select(e =>\n    e.Status == \"Running\" ? e with { Status = \"Stopped\" } : e).ToList();\n```\nBut `statusRecord` is the original read \u2014 wait, but the stages might have been advanced by event replay (line 62-65). So the in-memory Stages could differ from statusRecord. However, the invariant only cares about Running\u2192Stopped, and event replay would have already set terminal events. The safest approach: map from statusRecord, only changing Running\u2192Stopped.\n\nActually, the cleanest fix: use `statusRecord` (the original disk read) and only flip Running\u2192Stopped, preserving all other fields. But there's a subtlety: the event replay (lines 62-65) may have changed some stages' Status in memory but NOT in statusRecord. The invariant checks `stage.Status == \"Running\"` on the IN-MEMORY Stages (which includes replay effects). If a stage was Running in statusRecord but the replay set it to Done, the in-memory check skips it (good), but then writing from statusRecord would revert it to... no, we'd write `e with { Status = \"Stopped\" }` only for Running entries in statusRecord. Hmm, this gets complicated.\n\nThe simplest correct fix: build repairedEntries from statusRecord, but for each entry, if the corresponding in-memory stage is \"Running\", set \"Stopped\"; otherwise keep the statusRecord entry as-is (which preserves all fields). Actually even simpler: `statusRecord.Select(e => e with { Status = e.Status == \"Running\" ? \"Stopped\" : e.Status }).ToList()`. But this doesn't account for replay changes. However, the invariant's PURPOSE is only to fix Running\u2192Stopped for dead runs. If replay already fixed a stage, it's not Running in memory, and statusRecord still says Running \u2014 but we'd write statusRecord's \"Running\" \u2192 \"Stopped\". That's fine actually, because if the in-memory stage is not Running (replay fixed it), we wouldn't enter the `if (repaired)` block at all (since we check `stage.Status == \"Running\"`). Wait, no \u2014 `repaired` is set based on in-memory Stages. If in-memory has no Running stages, `repaired` is false and we don't write at all. So the disk write only happens when there IS a stale Running stage in memory. In that case, statusRecord also has Running for that stage (since replay didn't fix it). So writing `statusRecord.Select(e => e with { Status = e.Status == \"Running\" ? \"Stopped\" : e.Status })` would be correct and preserve all fields.\n\nThis is a legitimate issue worth flagging. Severity: medium \u2014 it causes the error banner to disappear on restart for flagged tasks with stale siblings (the exact hoist scenario), and strips cost/duration metadata from disk (though UI display is unaffected since it uses metrics).\n\nLet me also check: is there a concern about the invariant running during `LoadInitialAsync`'s initial selection for the modified test? The test injects `_runningTaskIds` via reflection BEFORE `LoadInitialAsync`, so the invariant is skipped. Good.\n\nLet me also verify one more thing: the `ControlApi.State.cs` /state endpoint \u2014 does it need any change for \"Stopped\"? The plan says /state exposes `s.Status` directly, so it would report \"Stopped\" \u2014 which is correct and truthful. No change needed. Good.\n\nLet me also check whether there are other consumers of the status string that need to handle \"Stopped\" \u2014 e.g., TaskRowViewModel.StateLabel, or any switch that has a default case that would break.",
+        "thought_number": 3,
+        "total_thoughts": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 12.952,
+      "prompt_tokens_est": 58476,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn '\"Running\"\\|\"Done\"\\|\"Flagged\"\\|\"Skipped\"\\|\"Waiting\"' src/VisualRelay.App/ViewModels/TaskRowViewModel.cs src/VisualRelay.App/ViewModels/StageRowViewModel.cs src/VisualRelay.Core/ControlApi*.cs 2>/dev/null | head -40"
+      },
+      "succeeded": true,
+      "duration_s": 0.063,
+      "result_length": 2053
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn '\"Running\"\\|\"Done\"\\|\"Flagged\"\\|\"Skipped\"' src/VisualRelay.App/ src/VisualRelay.Core/ControlApi*.cs 2>/dev/null | grep -iv \"test\\|\\.cs:.*//\" | grep -i \"switch\\|=>\\|==\\|case\\|StatusLabel\\|StateLabel\\|AccentBrush\\|Border\\|Background\" | head -40"
+      },
+      "succeeded": false,
+      "duration_s": 30.061,
+      "result_length": 34,
+      "error": "error: command timed out after 30s"
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 8.18,
+      "prompt_tokens_est": 59258,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/StageRowViewModel.cs",
+        "limit": 85,
+        "offset": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4459
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 15.03,
+      "prompt_tokens_est": 60354,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": true,
+        "revises_thought": 3,
+        "thought": "Good. For \"Stopped\" status, the UI rendering is correct:\n- StatusLabel: \"Stopped\" (added explicitly, line 48) \u2713\n- AccentBrush: falls through to `_ => MutedBrush` (line 76) \u2014 muted, NOT green \u2713\n- CardBackgroundBrush: NOT \"Running\" \u2192 WaitingCardBrush (or SelectedCardBrush) \u2713\n- BorderBrush: NOT \"Running\" \u2192 WaitingBorderBrush \u2713\n- CardBorderThickness: NOT \"Running\" \u2192 Thickness(1) \u2713\n- CardShadow: NOT \"Running\" \u2192 NoShadow \u2713\n- Status setter: `value != \"Running\"` \u2192 stops the elapsed segment, clears ElapsedLabel \u2713\n\nSo the presentation is truthful: muted, no green, no ticking timer, no \"Completed\" label. Test C validates this. Good.\n\nNow let me also check the ControlApi /state endpoint and whether \"Stopped\" needs handling there. And check if there's a TaskRowViewModel.StateLabel that switches on stage statuses.\n\nActually, the /state endpoint exposes `s.Status` directly (per the research notes), so \"Stopped\" would be reported as-is \u2014 which is truthful. No change needed.\n\nNow let me also verify there's no issue with the `CompleteRunningStage` method or the live event handler when a `stage_done{status:Stopped}` event arrives for a Running stage. Looking at Helpers.cs:89-90: `else if (relayEvent is { EventName: \"stage_done\" or \"flagged\", ... } && _runningTaskIds.Contains(doneTaskId))` \u2192 calls `CompleteRunningStage(doneTaskId, stageNumber)`. This is for task-row tracking, separate from stage card status. The stage card status is set by `ApplyStageEventToBoard` (line 30, outside the guard for flagged; but for stage_done it's at line... let me check where stage_done is applied).\n\nActually, looking at HandleRelayEvent: ApplyStageEventToBoard is called at line 30 only for flagged events outside the guard. For stage_done events, where is ApplyStageEventToBoard called? Let me check the full handler.",
+        "thought_number": 4,
+        "total_thoughts": 6
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 9.607,
+      "prompt_tokens_est": 60893,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Helpers.cs",
+        "limit": 92,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4009
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 34.072,
+      "prompt_tokens_est": 61935,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": true,
+        "revises_thought": 4,
+        "thought": "Now I understand the full live event flow:\n\n1. When `flagged` event arrives (stage 7 or 8): `ApplyStageEventToBoard` is called at line 30 (outside the selected-task guard, so for ANY task). This sets the flagged stage to \"Flagged\". Then at line 58 (inside the guard, selected task only), `ApplyStageEventToBoard` is called AGAIN \u2014 but ApplyStageEventToBoard for \"flagged\" sets stage.Status = \"Flagged\" again (no-op). Then at lines 59-62, the sibling Running stage is set to \"Stopped\".\n\n2. When the new `stage_done{status:Stopped}` event arrives for the sibling: at line 30, it's NOT a \"flagged\" event so ApplyStageEventToBoard is NOT called outside the guard. At line 58 (inside the guard, selected task only), ApplyStageEventToBoard IS called \u2192 sets stage.Status from data[\"status\"] = \"Stopped\". Good.\n\nBut wait \u2014 there's a timing concern. The driver publishes the `flagged` event FIRST (inside FlagAsync at Events.cs:119), THEN publishes `stage_done{status:Stopped}` for the sibling (in ReviewPair.cs after FlagAsync returns). So the sequence is:\n1. `flagged` event for stage 7 \u2192 sets stage 7 to Flagged, sibling (stage 8) to Stopped (if selected)\n2. `stage_done{status:Stopped}` for stage 8 \u2192 sets stage 8 to Stopped (if selected)\n\nBoth set stage 8 to Stopped, so no conflict. For non-selected tasks, only the flagged event's ApplyStageEventToBoard (line 30) runs \u2014 it sets stage 7 to Flagged but does NOT touch stage 8. The stage_done event for stage 8 does NOT get ApplyStageEventToBoard'd (it's not \"flagged\", and the task isn't selected). So for non-selected tasks, stage 8 stays \"Running\" in memory until the task is selected and LoadRunHistoryAsync runs (which now has the invariant). \n\nBut wait \u2014 is there a scenario where a non-selected task has a stale Running stage 8 in memory while the task IS in _runningTaskIds? If the task is actively running (in _runningTaskIds), the invariant doesn't apply. But the flagged event already set stage 8 to Stopped via the sibling-settling at line 59-62... NO, that's inside the selected-task guard! For a non-selected RUNNING task, the sibling settling at line 59-62 doesn't run. And ApplyStageEventToBoard for stage_done (line 58) also doesn't run (not selected).\n\nSo for a non-selected task that's actively draining and flags: stage 8's stage_done{Stopped} event arrives, but since the task isn't selected, ApplyStageEventToBoard is NOT called for it. Stage 8 stays \"Running\" in the Stages collection. But this is OK because:\n- The task IS in _runningTaskIds (actively running), so the invariant won't touch it.\n- When the drain completes and the task is no longer in _runningTaskIds, if the user selects it, LoadRunHistoryAsync runs with the invariant \u2014 but by then, status.json already has stage 8=Stopped (written by the driver), so the read at line 44 sets it to Stopped. Good.\n- But what if the Stages collection still has stage 8=Running from a prior selection? No \u2014 SelectTaskAsync calls ResetStages() (line 221) before LoadRunHistoryAsync, clearing all stages. So the stale in-memory state is wiped. Good.\n\nActually wait \u2014 there's a subtle issue. During an active drain of task A, while viewing task B (non-selected), task A flags. The `flagged` event fires ApplyStageEventToBoard at line 30 (outside guard) \u2014 but that sets stage 7 to \"Flagged\" on the SHARED Stages board. But the Stages board currently shows task B's stages (since B is selected)! So setting stage 7 to \"Flagged\" would corrupt task B's stage display.\n\nHmm, but this is pre-existing behavior \u2014 the flagged event at line 30 has always called ApplyStageEventToBoard outside the guard. The 6a49a41 fix didn't change this. So this is not a regression introduced by this change. And actually, looking more carefully, ApplyStageEventToBoard finds `Stages.FirstOrDefault(s => s.Number == stageNumber)` \u2014 it operates on stage NUMBER, not task. So if task A's flagged event for stage 7 fires while viewing task B, it sets stage 7 (whatever task that belongs to in the current view) to Flagged. This is a pre-existing issue, not introduced by this change. Not my concern for this review.\n\nOK so the live event flow is fine. No regressions there.\n\nNow let me finalize my assessment of the data-loss bug in the invariant's disk write. Let me verify by actually checking what the hoist task's status.json looks like \u2014 does the Flagged stage have an Error field?",
+        "thought_number": 5,
+        "total_thoughts": 7
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 11.549,
+      "prompt_tokens_est": 63125,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && cat .relay/hoist-pipeline-test-shared-setup/status.json 2>/dev/null | python3 -c \"import json,sys; d=json.load(sys.stdin); [print(f'stage {e[\\\"stage\\\"]}: status={e[\\\"status\\\"]}, error={e.get(\\\"error\\\",\\\"N/A\\\")[:60]}, duration={e.get(\\\"durationSeconds\\\",\\\"N/A\\\")}, cost={e.get(\\\"costUsd\\\",\\\"N/A\\\")}, model={e.get(\\\"model\\\",\\\"N/A\\\")}') for e in d]\" 2>/dev/null || echo \"File not found or parse error\""
+      },
+      "succeeded": true,
+      "duration_s": 0.226,
+      "result_length": 30
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 8.455,
+      "prompt_tokens_est": 63312,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && ls .relay/hoist-pipeline-test-shared-setup/ 2>/dev/null | head; echo \"---\"; find .relay -name \"status.json\" 2>/dev/null | head -5"
+      },
+      "succeeded": true,
+      "duration_s": 0.099,
+      "result_length": 453
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 8.889,
+      "prompt_tokens_est": 63505,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && python3 -c \"\nimport json\nwith open('.relay/01-replace-target-env-base-not-overlay/status.json') as f:\n    d = json.load(f)\nfor e in d:\n    print(f'stage {e[\\\"stage\\\"]}: status={e[\\\"status\\\"]}, error={str(e.get(\\\"error\\\",\\\"N/A\\\"))[:50]}, dur={e.get(\\\"durationSeconds\\\",\\\"N/A\\\")}, cost={e.get(\\\"costUsd\\\",\\\"N/A\\\")}, model={e.get(\\\"model\\\",\\\"N/A\\\")}')\n\""
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 941
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 11.917,
+      "prompt_tokens_est": 64016,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && for f in $(find .relay -name \"status.json\" 2>/dev/null | head -20); do python3 -c \"\nimport json\nwith open('$f') as fh:\n    d = json.load(fh)\nflagged = [e for e in d if e.get('status')=='Flagged']\nif flagged:\n    print(f'$f:')\n    for e in flagged:\n        print(f'  stage {e[\\\"stage\\\"]}: error={str(e.get(\\\"error\\\",\\\"MISSING\\\"))[:80]}')\n\" 2>/dev/null; done"
+      },
+      "succeeded": true,
+      "duration_s": 1.234,
+      "result_length": 104
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 31.105,
+      "prompt_tokens_est": 64206,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": true,
+        "revises_thought": 5,
+        "thought": "Confirmed. The hoist task's status.json has stage 7 = Flagged with error=\"Review returned an invalid result\", AND the Done stages have durationSeconds, costUsd, model fields populated.\n\nThe invariant at RunHistory.cs:84-88 rebuilds entries as `new StageStatusEntry(s.Number, s.Name, s.Status)` \u2014 only 3 fields. When the invariant repairs the hoist task's stale stage 8 (Running\u2192Stopped), it rewrites the ENTIRE status.json with stripped entries:\n- Stage 7 (Flagged): Error field LOST (becomes null) \u2192 the \"LATEST RUN FAILED\" banner disappears on next restart\n- Stages 1-6 (Done): durationSeconds, costUsd, model, turns all LOST \u2192 though UI display uses metrics (task-metric.json), so display is OK, but the persisted proof data is corrupted\n\nThis is a real, concrete bug that affects the EXACT scenario the task is fixing (the hoist task). The task explicitly says: \"status.json remains the persisted truth: the invariant should repair it (or overlay it consistently everywhere), not create a UI-only divergence.\" By stripping fields, the invariant corrupts the persisted truth.\n\nThe fix is straightforward: instead of rebuilding from StageRowViewModel, update the original statusRecord entries in place:\n```csharp\nvar repairedEntries = statusRecord\n    .Select(e => e.Status == \"Running\" ? e with { Status = \"Stopped\" } : e)\n    .ToList();\n```\nBut there's a subtlety: the in-memory Stages may have been modified by event replay (lines 62-65), so checking `stage.Status == \"Running\"` on Stages is the right trigger, but the disk write should preserve the original entries' fields. The cleanest approach: check in-memory for the trigger, but write from statusRecord with only the status flipped.\n\nActually, even simpler and more robust: loop over statusRecord, and for each entry whose corresponding in-memory stage is \"Running\", flip to \"Stopped\". This preserves all fields and aligns with the in-memory state.\n\nWait, but there's another subtlety: what if event replay changed a stage from \"Running\" (in statusRecord) to \"Done\" (in memory)? Then in-memory is not \"Running\", so `repaired` would be false only if NO stage is Running in memory. But if another stage IS still Running in memory, `repaired` is true, and we'd write statusRecord with all Running\u2192Stopped. The stage that replay set to Done \u2014 in statusRecord it's still \"Running\" \u2014 would be written as \"Stopped\" instead of \"Done\". That's wrong.\n\nHmm, but does event replay ever change a stage from Running to Done without a corresponding status.json update? Event replay processes live events (EventsFor(taskId)) \u2014 these are events from the CURRENT app session that haven't been persisted yet. If a stage_done event was received live but status.json wasn't updated... actually status.json is written by the driver, not by the UI's event replay. So there could be a window where a live stage_done event arrived (replay sets in-memory to Done) but the driver hasn't written status.json yet (or the UI read a stale status.json).\n\nThe safest approach that avoids ALL these issues: build repairedEntries from the IN-MEMORY Stages but preserve the original statusRecord's optional fields by merging. Or simpler: just update the specific repaired stages in the statusRecord:\n\n```csharp\nvar repairedEntries = statusRecord.ToList();\nforeach (var stage in Stages)\n{\n    if (stage.Status == \"Stopped\")  // was Running, now repaired\n    {\n        var idx = stage.Number - 1;\n        if (idx >= 0 && idx < repairedEntries.Count)\n            repairedEntries[idx] = repairedEntries[idx] with { Status = \"Stopped\" };\n    }\n}\n```\n\nBut this requires knowing WHICH stages were repaired. The current code sets `repaired = true` but doesn't track which ones. A simple fix: track the original status before repair, or just flip Running\u2192Stopped in statusRecord directly (since if the in-memory stage is Running and not in _runningTaskIds, the statusRecord entry is also Running \u2014 replay couldn't have advanced it because there's no terminal event, which is the whole point of the bug).\n\nActually, the whole REASON the invariant fires is that there's NO terminal event for the Running stage. So event replay (which only processes existing events) couldn't have advanced it. Therefore, statusRecord's \"Running\" entries EXACTLY match the in-memory \"Running\" entries that need repair. So `statusRecord.Select(e => e.Status == \"Running\" ? e with { Status = \"Stopped\" } : e)` is correct and safe.\n\nThis is a legitimate issue. Let me classify its severity: it's a \"changes\" verdict because the implementation has a real data-loss bug in the disk-write path that corrupts status.json (stripping Error from Flagged stages and cost/duration from Done stages), directly contradicting the task's constraint that \"status.json remains the persisted truth.\"\n\nLet me also check if there are any other issues I should note.",
+        "thought_number": 6,
+        "total_thoughts": 7
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 10.113,
+      "prompt_tokens_est": 65411,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "limit": 20,
+        "offset": 240
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1225
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && grep -rn \"CompleteRunningStage\" src/VisualRelay.App/ViewModels/*.cs | head"
+      },
+      "succeeded": true,
+      "duration_s": 0.074,
+      "result_length": 266
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 8.09,
+      "prompt_tokens_est": 65879,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriver.ReviewPair.cs",
+        "limit": 42,
+        "offset": 260
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2584
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 38.375,
+      "prompt_tokens_est": 66523,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "mode": "revision",
+        "next_thought_needed": false,
+        "revises_thought": 6,
+        "thought": "I found an important missed path. At line 245-268 (the \"review-finishes-first, review green, visual red\" path): when visual flags (stage 8), the review sibling (stage 7) was ALREADY recorded at line 232-234 (`RecordPairStageAsync` for reviewStage). So stage 7 already got a `stage_done{status:Done}` event and status.json entry. The review result is NOT discarded here \u2014 it's recorded as Done. So FlagAsync(8) at line 266 closes any Running stages (stage 8 was Running \u2192 Done via FlagAsync, then... wait, FlagAsync(8) marks stage 8 as Flagged, not Done). \n\nLet me re-read: FlagAsync(rootPath, runId, taskId, taskDirectory, 8, ...) \u2014 stageNumber=8. FlagAsync closes ALL Running\u2192Done (Events.cs:108-109), then marks stage 8 as Flagged (Events.cs:110). So stage 7 (already Done from line 232) stays Done. Stage 8 becomes Flagged. No sibling is discarded here \u2014 review was already recorded. So this path does NOT need a Stopped event. And the implementation correctly does NOT add one here. Good.\n\nBut wait \u2014 the implementation summary says \"An additional path (retry succeeds, visual red) now also publishes stage_done for the discarded review sibling (stage 7)\". Let me find this. Looking at the diff, the paths modified are:\n1. Lines 97-101 (fast-visual, retry-succeeds, visual-red): MarkStatus(7, \"Stopped\") + stage_done for reviewStage(7). \u2713 Correct \u2014 review retry result discarded.\n2. Lines 117-121 (fast-visual, review-red, retry-fails): MarkStatus(8, \"Stopped\") + stage_done for visualStage(8). \u2713 Correct \u2014 visual discarded.\n3. Lines 151-155 (fast-visual, visual-red): MarkStatus(7, \"Stopped\") + stage_done for reviewStage(7). \u2713 Correct \u2014 review discarded.\n4. Lines 220-227 (review-finishes-first, review-red): MarkStatus(8, \"Stopped\") + stage_done for visualStage(8), guarded by siblingResult != null. \u2713 Correct \u2014 visual discarded.\n\nPath at line 245-268 (review-finishes-first, review-green, visual-red): NOT modified. \u2713 Correct \u2014 review already recorded, visual flags. No discarded sibling.\n\nSo all paths are correctly handled. No duplicate events. No missed paths. Good.\n\nNow, the data-loss bug in the invariant's disk write is the main issue. Let me also consider: is there any issue with the test `ReviewRed_VisualSiblingGetsStageDoneStoppedEvent` using `FlagStageSubagentRunner(7)` which returns an INVALID result (not a kill). The review-red path at line 173 (`if (reviewResult.Check == \"red\")`) is taken. Since reviewResult.Kill is null (FlagStageSubagentRunner returns no Kill), the retry block at 183 is skipped. We go straight to line 215: FlagAsync(7), then the sibling publish at 220-227. The sibling (visual, stage 8) was awaited at 178. siblingResult is non-null. So stage_done{status:Stopped} for stage 8 is published. The test asserts on this. \u2713\n\nBut wait \u2014 does the visual sibling actually RUN in this test? The test uses `WriteConfig(\"dotnet test\", [])` which sets tierProfiles with vision. So visionConfigured=true, triage runs, and if triage says \"needed\", visualTask is launched. The FlagStageSubagentRunner only flags stage 7; stage 8 uses the inner ScriptedSubagentRunner (happy path). So visual runs and produces a valid result. siblingResult is non-null with Check=null (green). So the sibling IS discarded (its result is thrown away because review flagged). The test correctly asserts stage_done{status:Stopped} for stage 8. \u2713\n\nOne more check: the test `ReviewRed_VisualSiblingGetsStageDoneStoppedEvent` doesn't configure vision rendering. Let me check if RunVisualRenderAsync would fail without actual rendering... Actually, the ScriptedSubagentRunner and test setup handle this. The existing orchestration tests (e.g., RunTaskAsync_ReviewInvalid_SiblingFinishesThenFlags at line 131) use the exact same setup and pass, so the infrastructure handles it.\n\nFINAL ASSESSMENT:\n- The implementation correctly addresses all three requirements: load-time invariant, terminal event for discarded sibling, truthful \"Stopped\" semantics.\n- All four review-pair flag paths are correctly handled with no duplicate or missing terminal events.\n- The \"Stopped\" presentation is truthful (muted, no green, no timer, no \"Completed\").\n- Resume treats \"Stopped\" as complete. \u2713\n- All files under 300-line guard. \u2713\n- Tests are well-structured and pass.\n\nISSUE (medium severity, changes verdict): The load-time invariant's disk-write path at RunHistory.cs:84-88 rebuilds ALL status.json entries as `new StageStatusEntry(s.Number, s.Name, s.Status)` \u2014 only 3 of 12 fields. This STRIPS the Error field from Flagged stages (causing the \"LATEST RUN FAILED\" banner to disappear on restart) and strips durationSeconds/costUsd/model/turns from Done stages. This directly affects the hoist task scenario (stage 7 Flagged with error=\"Review returned an invalid result\") and contradicts the task constraint that \"status.json remains the persisted truth.\" The fix should update the original statusRecord entries in place (e.g., `statusRecord.Select(e => e.Status == \"Running\" ? e with { Status = \"Stopped\" } : e)`) to preserve all fields.\n\nThis is the only blocking issue. Everything else is solid.",
+        "thought_number": 7,
+        "total_thoughts": 7
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 20.515,
+      "prompt_tokens_est": 67872,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

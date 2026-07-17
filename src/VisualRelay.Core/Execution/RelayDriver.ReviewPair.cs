@@ -94,6 +94,11 @@ public sealed partial class RelayDriver
                             var vReason = BuildReviewFlagReason("Visual-review", fastVisual, rootPath);
                             var vOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                                 vReason, fastVisual.Body, statusEntries, cancellationToken);
+                            MarkStatus(statusEntries, 7, "Stopped");
+                            await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+                            await PublishStageDoneAsync(rootPath, runId, taskId, reviewStage,
+                                TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
+                                cancellationToken, status: "Stopped");
                             return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, vOutcome, false);
                         }
                         (previousSeal, taskHash) = await RecordPairStageAsync(rootPath, runId, taskId, taskDirectory,
@@ -109,6 +114,11 @@ public sealed partial class RelayDriver
                 var reason = BuildReviewFlagReason("Review", reviewResult, rootPath);
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
                     reason, reviewResult.Body, statusEntries, cancellationToken);
+                MarkStatus(statusEntries, 8, "Stopped");
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, visualStage,
+                    TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
+                    cancellationToken, status: "Stopped");
                 return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
             }
             if (fastVisual.Check == "red")
@@ -138,6 +148,11 @@ public sealed partial class RelayDriver
                 var reason = BuildReviewFlagReason("Visual-review", fastVisual, rootPath);
                 var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 8,
                     reason, fastVisual.Body, statusEntries, cancellationToken);
+                MarkStatus(statusEntries, 7, "Stopped");
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, reviewStage,
+                    TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
+                    cancellationToken, status: "Stopped");
                 return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
             }
 
@@ -200,6 +215,16 @@ public sealed partial class RelayDriver
             var reason = BuildReviewFlagReason("Review", reviewResult, rootPath);
             var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, 7,
                 reason, reviewResult.Body, statusEntries, cancellationToken);
+            // Publish terminal event for the discarded sibling so rehydrate-from-log
+            // agrees with status.json.
+            if (siblingResult is not null)
+            {
+                MarkStatus(statusEntries, 8, "Stopped");
+                await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
+                await PublishStageDoneAsync(rootPath, runId, taskId, visualStage,
+                    TimeSpan.Zero, null, sessionCostUsd, unknownCostStageCount,
+                    cancellationToken, status: "Stopped");
+            }
             return new PairState(previousSeal, taskHash, sessionCostUsd, unknownCostStageCount, outcome, false);
         }
 
