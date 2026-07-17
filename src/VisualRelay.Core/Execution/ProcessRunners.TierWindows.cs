@@ -9,12 +9,14 @@ public sealed partial class SwivalSubagentRunner
     // null inactivity map) falls back to the flat default. Extracted from RunAsync
     // (and split into its own partial to keep RunAsync.cs under the file-size guard)
     // so the runner→tier→window wiring is unit-testable without a real clock.
-    internal static (int FirstOutputMs, int InactivityMs) ResolveTierWindows(RelayConfig config, string tier)
+    internal static (int FirstOutputMs, int InactivityMs, int OutputSilenceMs) ResolveTierWindows(RelayConfig config, string tier)
     {
         var firstOutputMs = config.FirstOutputTimeoutMsByTier.TryGetValue(tier, out var ctMs)
             ? ctMs : config.FirstOutputTimeoutMs;
         var inactivityMs = config.InactivityTimeoutMsByTier?.TryGetValue(tier, out var itMs) == true
             ? itMs : config.InactivityTimeoutMs;
-        return (firstOutputMs, inactivityMs);
+        var outputSilenceMs = config.OutputSilenceTimeoutMsByTier?.TryGetValue(tier, out var osMs) == true
+            ? osMs : config.OutputSilenceTimeoutMs;
+        return (firstOutputMs, inactivityMs, outputSilenceMs);
     }
 }

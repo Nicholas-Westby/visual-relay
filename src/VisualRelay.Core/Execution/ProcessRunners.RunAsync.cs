@@ -55,11 +55,9 @@ public sealed partial class SwivalSubagentRunner
         // at the run cap OR when the next rung's (tier, turns) equals the current
         // config: under the flat 10× boost turn doubling is suppressed, so a
         // frontier-tier run would compute an identical config, and re-running the same
-        // (tier, max-turns) is exactly what the always-escalate policy rejects (a
-        // boosted frontier-base stage therefore gets exactly one attempt). The caller
-        // owns the corrective-context carry: contract failures set it before
-        // escalating (so the higher tier sees what the prior output got wrong);
-        // stall/crash escalations clear it.
+        // (tier, max-turns) is exactly what the always-escalate policy rejects. The
+        // caller owns the corrective-context carry: contract failures set it before
+        // escalating; stall/crash escalations clear it.
         async Task<bool> TryEscalateAsync(int currentAttempt)
         {
             if (escalationCount >= maxEscalations)
@@ -84,7 +82,7 @@ public sealed partial class SwivalSubagentRunner
         while (true)
         {
             // Recompute first-output / inactivity for current tier (may have escalated).
-            var (currentFirstOutputMs, currentInactivityMs) = ResolveTierWindows(_config, currentInvocation.Tier);
+            var (currentFirstOutputMs, currentInactivityMs, currentOutputSilenceMs) = ResolveTierWindows(_config, currentInvocation.Tier);
             var traceDir = attempt == startAttempt
                 ? invocation.TraceDirectory
                 : Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");
@@ -109,6 +107,7 @@ public sealed partial class SwivalSubagentRunner
             // incremented, so the capture always sees this iteration's attempt value.
             var watchdog = new ActivityWatchdog(currentFirstOutputMs, currentInactivityMs, absoluteCeilingMs, watchdogCts,
                 timeProvider: _timeProvider,
+                outputSilenceTimeoutMs: currentOutputSilenceMs,
                 onHeartbeat: _eventSink is null ? null : msg => _ = _eventSink.PublishAsync(new RelayEvent(
                     DateTimeOffset.UtcNow, "debug", "watchdog_heartbeat",
                     attemptInvocation.RunId, attemptInvocation.TargetRoot,
@@ -159,7 +158,8 @@ public sealed partial class SwivalSubagentRunner
                         killedOutputPath, cancellationToken);
 
                     // Hard infra aborts never escalate (re-running burns the budget):
-                    // the absolute wall-clock ceiling and the backend socket wedge.
+                    // the absolute wall-clock ceiling, the output-silence ceiling
+                    // (hung LLM requests), and the backend socket wedge.
                     if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredAbsoluteCeiling)
                     {
                         stallResult = new SubagentResult(string.Empty, null, false,
@@ -168,6 +168,15 @@ public sealed partial class SwivalSubagentRunner
                                 $"Last signal: {wdResult.LastPulseSource}, silence: {wdResult.SilenceMs}ms."),
                             HardAbort: true,
                             Kill: new KillSignature("absolute_ceiling", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath));
+                    }
+                    else if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredOutputSilence)
+                    {
+                        stallResult = new SubagentResult(string.Empty, null, false,
+                            ErrorHintClassifier.WithHint(
+                                $"swival output-silence ceiling: no real output for {wdResult.SilenceMs}ms " +
+                                $"while CPU pulses kept the inactivity deadline reset. Last signal: {wdResult.LastPulseSource}."),
+                            HardAbort: true,
+                            Kill: new KillSignature("output_silence_ceiling", wdResult.LastPulseSource, wdResult.SilenceMs, killedOutputPath));
                     }
                     else if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredSocketWedge)
                     {

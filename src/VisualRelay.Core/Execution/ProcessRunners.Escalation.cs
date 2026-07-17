@@ -44,6 +44,7 @@ public sealed partial class SwivalSubagentRunner
                 {
                     ActivityWatchdog.Outcome.FiredAbsoluteCeiling => "absolute_ceiling",
                     ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
+                    ActivityWatchdog.Outcome.FiredOutputSilence => "output_silence_ceiling",
                     _ => "stall"
                 },
                 ["lastSignal"] = wdResult.LastPulseSource,

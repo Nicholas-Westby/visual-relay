@@ -161,6 +161,7 @@ public sealed partial class SwivalSubagentRunner
             {
                 ActivityWatchdog.Outcome.FiredAbsoluteCeiling => "absolute_ceiling",
                 ActivityWatchdog.Outcome.FiredSocketWedge => "socket_wedge",
+                ActivityWatchdog.Outcome.FiredOutputSilence => "output_silence_ceiling",
                 _ => "stall"
             };
             var traceDir = Path.Combine(traceDirParent, $"stage{stageNum}-attempt{attempt}");

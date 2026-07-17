@@ -1,26 +1,18 @@
 namespace VisualRelay.Core.Execution;
 
 /// <summary>
-/// Tracks a sliding inactivity deadline, reset on every liveness pulse from
-/// process output (stdout/stderr bytes) or trace-dir activity (new entries,
-/// trace-file growth).  Two consumers:
-/// (a) first-output detection – arms until the first pulse, then disarms permanently;
-/// (b) ongoing inactivity deadline – resets on every pulse.
-/// An optional absolute ceiling kills the stage regardless of activity.
-///
-/// Additive SOCKET-WEDGE detector (see <see cref="TryDecideSocketWedge"/>): the
-/// CPU-time pulse (source "cpu") intentionally resets the inactivity deadline so a
-/// genuinely-working agent whose target filesystem froze its trace view is never
-/// killed.  But that same reset masks a wedged agent when CPU is accruing somewhere
-/// in the process tree OTHER than the wedged agent itself.  To catch that without
-/// any risk to a healthy run, the watchdog ALSO tracks silence since the last
-/// *real-output* pulse (stdout/stderr/trace — NOT "cpu") and, only once that
-/// real-output silence exceeds the full inactivity window, fires a stall when the
-/// agent subtree is idle AND a backend socket is still ESTABLISHED.
+/// Tracks a sliding inactivity deadline, reset on every liveness pulse. Two
+/// consumers: (a) first-output detection — disarms after first pulse; (b) ongoing
+/// inactivity deadline — resets on every pulse. Absolute ceiling kills regardless of
+/// activity. ADDITIVE: OUTPUT-SILENCE CEILING fires when real output is silent past a
+/// per-tier limit while CPU pulses mask the ordinary deadline (hung-LLM shape).
+/// SOCKET-WEDGE (<see cref="TryDecideSocketWedge"/>) catches a wedged agent when CPU
+/// accrues elsewhere in the process tree: fires when real-output silence + sustained
+/// subtree idleness + an ESTABLISHED backend socket all exceed the inactivity window.
 /// </summary>
 internal sealed class ActivityWatchdog
 {
-    public enum Outcome { Disarmed, FiredStall, FiredAbsoluteCeiling, FiredSocketWedge }
+    public enum Outcome { Disarmed, FiredStall, FiredAbsoluteCeiling, FiredSocketWedge, FiredOutputSilence }
 
     public readonly record struct Result(
         Outcome Outcome, string LastPulseSource, long SilenceMs, long SubtreeIdleForMs = 0);
@@ -35,6 +27,7 @@ internal sealed class ActivityWatchdog
     private readonly int _firstOutputTimeoutMs;
     private readonly int _inactivityTimeoutMs;
     private readonly int _absoluteCeilingMs;
+    private readonly int _outputSilenceTimeoutMs;
     private readonly CancellationTokenSource _kill;
     private readonly Action<string>? _onHeartbeat;
     private readonly TimeProvider _timeProvider;
@@ -75,11 +68,13 @@ internal sealed class ActivityWatchdog
         int absoluteCeilingMs,
         CancellationTokenSource kill,
         Action<string>? onHeartbeat = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        int outputSilenceTimeoutMs = 0)
     {
         _firstOutputTimeoutMs = firstOutputTimeoutMs;
         _inactivityTimeoutMs = inactivityTimeoutMs;
         _absoluteCeilingMs = absoluteCeilingMs;
+        _outputSilenceTimeoutMs = outputSilenceTimeoutMs;
         _kill = kill;
         _onHeartbeat = onHeartbeat;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -152,12 +147,8 @@ internal sealed class ActivityWatchdog
         && sample is { SubtreeIdle: true, BackendSocketEstablished: true };
 
     /// <summary>
-    /// Pure stall/ceiling/first-output/wedge fire decision, extracted from
-    /// <see cref="WaitAsync"/> so the exact production algorithm is unit-testable
-    /// against simulated time values (mirrors <see cref="TryDecideSocketWedge"/>).
-    /// Priority matches the loop: the absolute ceiling wins when set, then the
-    /// first-output (before any pulse) / inactivity (after) stall deadline, then the
-    /// additive socket wedge; otherwise <see cref="Outcome.Disarmed"/>.
+    /// Pure fire decision: absolute ceiling > output-silence > first-output/inactivity
+    /// stall > socket wedge; <see cref="Outcome.Disarmed"/> otherwise.
     /// </summary>
     internal static Outcome DecideOutcome(
         long elapsedMs,
@@ -168,11 +159,20 @@ internal sealed class ActivityWatchdog
         int firstOutputTimeoutMs,
         int inactivityTimeoutMs,
         int absoluteCeilingMs,
+        int outputSilenceTimeoutMs,
         WedgeSample sample)
     {
         // Absolute ceiling first (it wins when set).
         if (absoluteCeilingMs > 0 && elapsedMs >= absoluteCeilingMs)
             return Outcome.FiredAbsoluteCeiling;
+
+        // Output-silence ceiling: fired when real output (stdout/stderr/trace)
+        // has been silent past the per-tier limit while CPU pulses mask the
+        // ordinary inactivity deadline — the hung-LLM shape. Requires at least
+        // one real-output pulse (firstPulseReceived) so before-first-output
+        // stages fall through to the ordinary first-output gate below.
+        if (outputSilenceTimeoutMs > 0 && firstPulseReceived && realOutputSilenceMs >= outputSilenceTimeoutMs)
+            return Outcome.FiredOutputSilence;
 
         // First-output phase compares elapsed from start; inactivity phase compares
         // silence since the last pulse.
@@ -193,13 +193,9 @@ internal sealed class ActivityWatchdog
     /// <summary>
     /// Polls every 200 ms (or sooner when a deadline is imminent).
     /// Returns <see cref="Outcome.Disarmed"/> when <paramref name="ct"/> is cancelled
-    /// (process exited cleanly).  Returns <see cref="Outcome.FiredStall"/> when the
-    /// first-output or inactivity deadline expires, <see cref="Outcome.FiredSocketWedge"/>
-    /// when the additive socket-wedge gate trips, or
-    /// <see cref="Outcome.FiredAbsoluteCeiling"/> when the absolute wall-clock
-    /// ceiling is reached (only when <c>_absoluteCeilingMs &gt; 0</c>).
-    /// On any fire, <see cref="_kill"/> is cancelled before returning so
-    /// ProcessCapture reacts.
+    /// (process exited cleanly). Fires FiredStall, FiredSocketWedge, FiredOutputSilence,
+    /// or FiredAbsoluteCeiling based on deadline expiry. On any fire,
+    /// <see cref="_kill"/> is cancelled before returning so ProcessCapture reacts.
     /// </summary>
     public async Task<Result> WaitAsync(CancellationToken ct)
     {
@@ -231,7 +227,7 @@ internal sealed class ActivityWatchdog
                 outcome = DecideOutcome(
                     elapsedMs, silenceMs, realOutputSilenceMs, subtreeIdleForMs,
                     _firstPulseReceived, _firstOutputTimeoutMs, _inactivityTimeoutMs,
-                    _absoluteCeilingMs, _lastWedgeSample);
+                    _absoluteCeilingMs, _outputSilenceTimeoutMs, _lastWedgeSample);
 
                 // Snapshot the deadline for heartbeat logging (outside lock).
                 heartbeatDeadlineMs = !_firstPulseReceived
@@ -244,12 +240,15 @@ internal sealed class ActivityWatchdog
                 if (!ct.IsCancellationRequested)
                     _kill.Cancel();
 
-                // For the wedge outcome, report real-output silence (≈ the inactivity
-                // window) — NOT silenceMs, which the cpu pulse keeps at ~one sample and
-                // which made the autopsy read like a "4s kill" — plus sustained-idle.
+                // For the wedge and output-silence outcomes, report real-output silence
+                // (≈ the relevant window) — NOT silenceMs, which the cpu pulse keeps at
+                // ~one sample and which made the autopsy read like a "4s kill" — plus
+                // sustained-idle for wedge.
                 return outcome == Outcome.FiredSocketWedge
                     ? new Result(outcome, lastSource, realOutputSilenceMs, subtreeIdleForMs)
-                    : new Result(outcome, lastSource, silenceMs);
+                    : outcome == Outcome.FiredOutputSilence
+                        ? new Result(outcome, lastSource, realOutputSilenceMs)
+                        : new Result(outcome, lastSource, silenceMs);
             }
 
             // Emit a diagnostic heartbeat line every ~60 s so the watchdog's

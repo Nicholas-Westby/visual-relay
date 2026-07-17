@@ -35,6 +35,8 @@ public static partial class RelayConfigLoader
             MaxPlanConcurrency: 10,
             InactivityTimeoutMsByTier: null,
             InactivityTimeoutMs: 600_000,
+            OutputSilenceTimeoutMsByTier: null,
+            OutputSilenceTimeoutMs: 0,
             CommitProofArtifacts: true,
             BoostTurnsTaskIds: [],
             SkipTestsTaskIds: [],
@@ -113,18 +115,21 @@ public static partial class RelayConfigLoader
                 }
             }
 
-            var inactivityTiers = defaults.InactivityTimeoutMsByTier is not null
-                ? new Dictionary<string, int>(defaults.InactivityTimeoutMsByTier)
-                : null;
-            if (root.TryGetProperty("inactivityTimeoutMsByTier", out var inactivityJson) && inactivityJson.ValueKind == JsonValueKind.Object)
+            // Per-tier dictionary parse helper: defaults + json overrides.
+            static Dictionary<string, int>? ParseTierDict(JsonElement root, string prop, IReadOnlyDictionary<string, int>? defaults)
             {
-                inactivityTiers ??= new Dictionary<string, int>();
-                foreach (var property in inactivityJson.EnumerateObject())
+                var map = defaults is not null ? new Dictionary<string, int>(defaults) : null;
+                if (root.TryGetProperty(prop, out var json) && json.ValueKind == JsonValueKind.Object)
                 {
-                    if (property.Value.TryGetInt32(out var ms))
-                        inactivityTiers[property.Name] = ms;
+                    map ??= new Dictionary<string, int>();
+                    foreach (var p in json.EnumerateObject())
+                        if (p.Value.TryGetInt32(out var ms)) map[p.Name] = ms;
                 }
+                return map;
             }
+
+            var inactivityTiers = ParseTierDict(root, "inactivityTimeoutMsByTier", defaults.InactivityTimeoutMsByTier);
+            var outputSilenceTiers = ParseTierDict(root, "outputSilenceTimeoutMsByTier", defaults.OutputSilenceTimeoutMsByTier);
 
             // Read and validate sandboxExtraAllowPaths.
             IReadOnlyList<string>? sandboxExtraAllowPaths = null;
@@ -177,8 +182,7 @@ public static partial class RelayConfigLoader
                             Path.Combine(normalizedHome, "Library", "Keychains"),
                             Path.Combine(normalizedHome, ".bashrc"), Path.Combine(normalizedHome, ".zshrc"),
                             Path.Combine(normalizedHome, ".profile"), Path.Combine(normalizedHome, ".bash_profile"),
-                            Path.Combine(normalizedHome, ".zprofile"),
-                        };
+                            Path.Combine(normalizedHome, ".zprofile") };
                         foreach (var subtree in sensitiveSubtrees)
                             if (normalized == subtree || normalized.StartsWith(subtree + Path.DirectorySeparatorChar, StringComparison.Ordinal))
                                 return new RelayConfigResult(defaults, RelayConfigStatus.Malformed,
@@ -218,6 +222,8 @@ public static partial class RelayConfigLoader
                 MaxPlanConcurrency = OptionalInt(root, "maxPlanConcurrency", defaults.MaxPlanConcurrency),
                 InactivityTimeoutMsByTier = inactivityTiers,
                 InactivityTimeoutMs = OptionalInt(root, "inactivityTimeoutMs", defaults.InactivityTimeoutMs),
+                OutputSilenceTimeoutMsByTier = outputSilenceTiers,
+                OutputSilenceTimeoutMs = OptionalInt(root, "outputSilenceTimeoutMs", defaults.OutputSilenceTimeoutMs),
                 TestIdleGraceMilliseconds = OptionalInt(root, "testIdleGraceMs", defaults.TestIdleGraceMilliseconds),
                 BootstrapFiles = OptionalStringArray(root, "bootstrapFiles", []),
                 BootstrapCheckCommand = OptionalStringOrNull(root, "bootstrapCheckCmd"),
@@ -272,11 +278,10 @@ public static partial class RelayConfigLoader
             ? value.GetString() ?? fallback
             : fallback;
     private static int OptionalInt(JsonElement root, string name, int fallback) =>
-        root.TryGetProperty(name, out var value) && value.TryGetInt32(out var number) ? number : fallback;
+        root.TryGetProperty(name, out var value) && value.TryGetInt32(out var n) ? n : fallback;
     private static bool OptionalBool(JsonElement root, string name, bool fallback) =>
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
-            ? value.GetBoolean()
-            : fallback;
+            ? value.GetBoolean() : fallback;
     // Absent or non-array → fallback; present array → string values.
     private static IReadOnlyList<string> OptionalStringArray(JsonElement root, string name, IReadOnlyList<string> fallback)
     {

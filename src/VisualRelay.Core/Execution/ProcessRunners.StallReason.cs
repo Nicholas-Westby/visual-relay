@@ -22,6 +22,14 @@ public sealed partial class SwivalSubagentRunner
                 $"{maxStallAttempts} attempts exhausted.";
         }
 
+        if (wdResult.Outcome == ActivityWatchdog.Outcome.FiredOutputSilence)
+        {
+            return $"persistent model-backend stall: swival output-silence ceiling — no real output " +
+                $"(stdout/stderr/trace) for {wdResult.SilenceMs}ms while CPU pulses kept the inactivity " +
+                $"deadline alive. Last signal: {wdResult.LastPulseSource}. " +
+                $"{maxStallAttempts} attempts exhausted.";
+        }
+
         var firstOutputPhase = wdResult.LastPulseSource == "none";
         return $"persistent model-backend stall: swival had no activity for " +
             $"{wdResult.SilenceMs}ms (phase={(firstOutputPhase ? "first-output" : "inactivity")}, " +

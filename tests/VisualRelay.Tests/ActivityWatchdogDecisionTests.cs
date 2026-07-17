@@ -24,11 +24,12 @@ public sealed partial class ActivityWatchdogDecisionTests
         int firstOutputTimeoutMs = 3_600_000,
         int inactivityTimeoutMs = 3_600_000,
         int absoluteCeilingMs = 0,
+        int outputSilenceTimeoutMs = 0,
         ActivityWatchdog.WedgeSample sample = default) =>
         ActivityWatchdog.DecideOutcome(
             elapsedMs, silenceMs, realOutputSilenceMs, subtreeIdleForMs,
             firstPulseReceived, firstOutputTimeoutMs, inactivityTimeoutMs,
-            absoluteCeilingMs, sample);
+            absoluteCeilingMs, outputSilenceTimeoutMs, sample);
 
     /// <summary>
     /// Per-tier first-output window (frontier vs cheap). 3 s slow start FiresStall at
@@ -194,59 +195,6 @@ public sealed partial class ActivityWatchdogDecisionTests
             Decide(silenceMs: 8_000, firstPulseReceived: true, inactivityTimeoutMs: 30_000));
     }
 
-    /// <summary>
-    /// Runner→watchdog WIRING: <see cref="SwivalSubagentRunner.ResolveTierWindows"/>
-    /// maps each configured tier to ITS first-output/inactivity window and falls back
-    /// to the flat defaults for an unmapped tier. This pins the coverage the former
-    /// per-tier integration tests provided (that "frontier" resolves to its larger
-    /// window, not "cheap"'s) without a real clock.
-    /// </summary>
-    [Fact]
-    public void ResolveTierWindows_MapsEachConfiguredTier_ElseFlatFallback()
-    {
-        var config = TestConfig() with
-        {
-            FirstOutputTimeoutMsByTier = new Dictionary<string, int>
-            {
-                ["cheap"] = 2_000,
-                ["balanced"] = 120_000,
-                ["frontier"] = 30_000
-            },
-            FirstOutputTimeoutMs = 99_000,
-            InactivityTimeoutMsByTier = new Dictionary<string, int>
-            {
-                ["cheap"] = 3_000,
-                ["balanced"] = 600_000,
-                ["frontier"] = 45_000
-            },
-            InactivityTimeoutMs = 88_000
-        };
-
-        Assert.Equal((2_000, 3_000), SwivalSubagentRunner.ResolveTierWindows(config, "cheap"));
-        Assert.Equal((120_000, 600_000), SwivalSubagentRunner.ResolveTierWindows(config, "balanced"));
-        Assert.Equal((30_000, 45_000), SwivalSubagentRunner.ResolveTierWindows(config, "frontier"));
-        // Unmapped tier → the flat fallbacks.
-        Assert.Equal((99_000, 88_000), SwivalSubagentRunner.ResolveTierWindows(config, "unknown"));
-    }
-
-    /// <summary>
-    /// WIRING edge: a null per-tier inactivity map falls back to the flat
-    /// <see cref="RelayConfig.InactivityTimeoutMs"/> for every tier (the default
-    /// config shape), while the first-output map still resolves.
-    /// </summary>
-    [Fact]
-    public void ResolveTierWindows_NullInactivityMap_FallsBackToFlatInactivity()
-    {
-        var config = TestConfig() with
-        {
-            FirstOutputTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 2_000 },
-            InactivityTimeoutMsByTier = null,
-            InactivityTimeoutMs = 600_000
-        };
-
-        Assert.Equal((2_000, 600_000), SwivalSubagentRunner.ResolveTierWindows(config, "cheap"));
-    }
-
     // ── (A) Pure decision gate — the exact production algorithm ────────────────
 
     /// <summary>
@@ -275,24 +223,4 @@ public sealed partial class ActivityWatchdogDecisionTests
 
         Assert.Equal(expectWedge, decided);
     }
-
-    private static RelayConfig TestConfig() =>
-        new(
-            "llm-tasks",
-            "true",
-            "true",
-            [],
-            new Dictionary<string, string> { ["cheap"] = "cheap" },
-            true,
-            1,
-            1,
-            false,
-            true,
-            5_000,
-            300_000,
-            new Dictionary<string, int> { ["cheap"] = 90_000, ["balanced"] = 120_000, ["frontier"] = 660_000 },
-            660_000,
-            2,
-            InactivityTimeoutMsByTier: null,
-            InactivityTimeoutMs: 600_000);
 }

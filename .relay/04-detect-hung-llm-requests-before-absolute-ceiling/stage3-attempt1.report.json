@@ -1,0 +1,701 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T00:47:51.510631+00:00",
+  "task": "# Relay stage 3: Diagnose\nTask: 04-detect-hung-llm-requests-before-absolute-ceiling\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Stop CPU pulses from letting a hung LLM request run to the absolute ceiling\n\nThe stage watchdog treats CPU activity as liveness. A stage whose LLM HTTP\nrequest hangs forever produces no output but still registers periodic CPU\npulses, so the inactivity timeout never fires and the stage runs all the way to\nthe absolute ceiling before being killed. On the 2026-07-15 drain that wasted\n~44 minutes of wall time on a review stage that had been dead-in-the-water\nsince its last output, and it will do the same on any repo whenever a provider\nrequest hangs.\n\n### Evidence (task `hoist-pipeline-test-shared-setup`, stage 7)\n\n- Autopsy header (`.relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt`):\n  `reason: absolute_ceiling  lastSignal: cpu  silenceMs: 52373\n  firstOutputTimeoutMs: 660000  inactivityTimeoutMs: 1200000` \u2014 i.e. neither\n  output timeout tripped; the kill came only from the ceiling.\n- The traceback shows the swival agent blocked in `httpcore \u2026\n  self._sock.recv(max_bytes)` waiting for chat-completion response headers from\n  the litellm proxy (`127.0.0.1:4000`) \u2014 a hung request, not model thinking.\n- 54 `watchdog_heartbeat` events with `lastPulseSource=cpu` and silence around\n  1.4 s: background CPU activity (runtime housekeeping) kept resetting the\n  liveness clock the whole time.\n- Total: stage output stopped ~10.7 KB in; the process survived to the ~55\n  minute ceiling. The run was then flagged (see companion task\n  `03-carry-stall-kill-reason-into-review-pair-flags` for the reporting/retry\n  side; THIS task is about detecting the hang earlier).\n- Watchdog implementation: `src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs`\n  (pulse sources, ceiling at lines ~170-180); tier timeouts come from\n  `.relay/config.json` (`firstOutputTimeoutMsByTier`, `inactivityTimeoutMsByTier`,\n  `subagentTimeoutMs`).\n\n### What to build\n\nInvestigate and implement layered detection so a hung request dies in minutes,\nnot at the ceiling. Candidate layers \u2014 diagnose stage picks the right\ncombination:\n\n1. **Output-silence secondary limit in the watchdog**: CPU pulses may extend\n   liveness only up to a bounded budget; beyond N minutes with zero\n   output/trace bytes, treat the stage as stalled regardless of CPU. The limit\n   must comfortably exceed legitimate silent periods (long tool runs pipe\n   output; pure model thinking between turns is bounded by provider streaming\n   keep-alives) and be configurable per tier alongside the existing\n   `inactivityTimeoutMsByTier`.\n2. **Request-level timeout at the agent/proxy layer Visual Relay controls**:\n   the pinned swival profile (`pinned-swival.toml` generation) and/or the\n   generated litellm config could carry an explicit per-request timeout so a\n   hung upstream call raises instead of blocking `recv()` forever. Only pursue\n   knobs Visual Relay itself generates \u2014 do not hand-edit user machines.\n3. Whatever is chosen, the kill event should say what tripped (e.g.\n   `output_silence_ceiling`) so autopsies distinguish it from `absolute_ceiling`.\n\n### Constraints\n\n- Do not lower the absolute ceiling or the existing tier timeouts; this adds a\n  more specific detector, it does not tighten general budgets.\n- Must not kill healthy long stages: a stage steadily emitting trace/tool\n  output for 50 minutes is fine; only zero-output-with-CPU-only is suspect.\n- Repo-agnostic; nothing here may depend on the target repo's toolchain.\n- Respect the existing watchdog test patterns (`virtualize-watchdog-test-waits`\n  landed TimeProvider-driven tests \u2014 use them; no real-time sleeps).\n\n### Tests (red first)\n\n- Watchdog unit test (virtualized time): process emits output, then goes\n  output-silent while CPU pulses continue \u2192 killed at the output-silence limit\n  with the new outcome reason, well before the absolute ceiling.\n- Healthy case: continuous output pulses for longer than the silence limit \u2192\n  not killed.\n- Config plumbing test: per-tier override of the new limit is honored.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add an output-silence secondary limit to the ActivityWatchdog: a new configurable timeout (per-tier, with flat fallback) that tracks real-output silence (_lastRealOutputTimestamp, NOT reset by CPU pulses) and fires a new Outcome.FiredOutputSilence well before the absolute ceiling. The watchdog already tracks _lastRealOutputTimestamp separately; the gap is that DecideOutcome has no check for it when the subtree is still CPU-busy (the hung-LLM case). A new DecidedOutcome branch between the absolute-ceiling check and the ordinary stall check closes the gap. Config plumbing mirrors the existing InactivityTimeoutMsByTier pattern. The stall_kill event reports reason=\\\"output_silence_ceiling\\\" and the stall-reason builder distinguishes it from \\\"inactivity\\\" and \\\"absolute_ceiling\\\".\",\n  \"options\": [\n    \"**Layer 1 \u2014 Output-silence secondary limit in the watchdog (primary):** Add `OutputSilenceTimeoutMsByTier` + `OutputSilenceTimeoutMs` to `RelayConfig`. Thread through `ResolveTierWindows` into `ActivityWatchdog` as `_outputSilenceTimeoutMs`. In `DecideOutcome`, add a check after the absolute-ceiling gate: if `realOutputSilenceMs >= _outputSilenceTimeoutMs`, return `Outcome.FiredOutputSilence`. (The existing `_lastRealOutputTimestamp` tracks exactly this \u2014 no new bookkeeping needed.) In `WaitAsync`, when that outcome fires, publish `reason=\\\"output_silence_ceiling\\\"` and pass `realOutputSilenceMs` as `SilenceMs`. Update `BuildPersistentStallReason` to handle the new outcome. **Tests:** (a) pure `DecideOutcome` with CPU pulses ongoing but real output silent \u2192 fires `FiredOutputSilence`; (b) virtualized `WaitAsync` with CPU pulses + no real output \u2192 killed at the silence limit, not at absolute ceiling; (c) continuous real output for longer than silence limit \u2192 `Disarmed`; (d) `ResolveTierWindows` honors per-tier override.\",\n    \"**Layer 2 \u2014 Request-level timeout at the agent/proxy layer (complementary):** Set a `request_timeout` / `timeout` field in the generated `pinned-swival.toml` (via `SwivalProfileSession.PrepareWithPinnedContentAsync` / the TOML template) and/or the generated litellm `proxy_config.yaml` config (via `BackendConfigStep` / `BackendConfigGenerator`). This makes the HTTP client raise `httpx.ReadTimeout` or `openai.APITimeoutError` instead of blocking `recv()` forever when the upstream provider hangs. The timeout should be generous (e.g., the tier's inactivity window) so legitimate long-thinking responses are not cut short. **Pro:** catches the hang at source, no process-tree overhead. **Con:** requires provider/library support; only covers the agent\u2192proxy and proxy\u2192upstream hops; a proxy-before-router or a hang in the router itself (litellm) would still need the watchdog. Only pursue knobs Visual Relay itself generates.\",\n    \"**Layers 1+2 combined (defense in depth):** Implement both. Layer 1 (watchdog output-silence limit) catches any output-silent stall regardless of mechanism \u2014 hung HTTP, wedged proxy, crashed agent-but-process-alive \u2014 and is repo-agnostic. Layer 2 (request-level timeout) prevents the hang from ever reaching the watchdog in the common case, converting a 55-minute waste into a prompt retry. The watchdog limit should be set higher than the request timeout so Layer 2 fires first in the expected case while Layer 1 remains the backstop for anything Layer 2 misses (e.g., a hang in litellm itself, or a tier where the request timeout is not configured). This matches the existing architecture where the inactivity timeout is the normal path and the absolute ceiling is the backstop.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Investigated the full codebase. The ActivityWatchdog (ProcessRunners.Watchdog.cs) already tracks _lastRealOutputTimestamp separately from _lastPulseTimestamp \u2014 CPU pulses do NOT reset the real-output clock. The gap is that DecideOutcome has no check for real-output silence when the subtree is still CPU-busy (the hung-LLM case). A new Outcome.FiredOutputSilence between the absolute-ceiling check and the ordinary stall check closes the gap. Eight files need changes: RelayConfig (add fields), RelayConfigLoader (parse them), TierWindows (resolve 3-tuple), Watchdog (new enum value + check + field), RunAsync (thread value, handle outcome), Helpers, Escalation, StallReason (switch cases). Six existing ActivityWatchdog constructor call sites (plus one at SandboxedTestRunner) are safe with a defaulted parameter. Eleven test files reference Outcome enum values and will need minor updates. New tests follow existing ManualTimeProvider/decision-seam patterns. The key design choice: FiredOutputSilence sits between FiredAbsoluteCeiling (priority 1) and FiredStall (priority 3) in the DecideOutcome decision order, and is a hard abort (not escalate-able) since it indicates a truly hung upstream request.\",\n  \"constraints\": [\n    \"Do not lower the absolute ceiling or existing tier timeouts \u2014 the new detector is additive only\",\n    \"Must not kill healthy stages steadily emitting trace/tool output \u2014 only zero-output-with-CPU-only is suspect\",\n    \"Repo-agnostic \u2014 no dependency on target repo's toolchain\",\n    \"Respect existing virtualized-time test patterns (ManualTimeProvider) \u2014 no real-time sleeps\",\n    \"New outcome reason must be 'output_silence_ceiling' in autopsy headers and stall_kill events\",\n    \"Config defaults must mirror existing InactivityTimeoutMsByTier pattern with per-tier override + flat fallback\",\n    \"Layer 1 (watchdog output-silence limit) is the primary implementation; Layer 2 (request-level proxy timeout) is deferred as complementary\",\n    \"Symbols: Only add Outcome variant, not modify existing enum order to preserve serialization compatibility\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"evidence\": string, \"excerpts\": string[], \"repro\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have all the evidence. Let me write the complete diagnosis.\n\n---\n\n## Diagnosis\n\n### The gap\n\nThe `ActivityWatchdog` (`src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs`) tracks two separate clocks: `_lastPulseTimestamp` (reset by ANY pulse, including `\"cpu\"`) and `_lastRealOutputTimestamp` (NOT reset by `\"cpu\"`). The `DecideOutcome` method uses `_lastPulseTimestamp`-derived `silenceMs` for the ordinary inactivity stall check, and `_lastRealOutputTimestamp`-derived `realOutputSilenceMs` ONLY inside the additive socket-wedge gate. **There is no standalone decision path for \"real output has been silent too long even though the CPU pulse keeps the main deadline alive.\"**\n\nThe hung-LLM shape: a `litellm.completion()` call blocks in `httpcore`'s `recv()` (or similar upstream I/O) \u2014 no stdout/stderr/trace output is produced \u2014 but the litellm proxy process still accrues housekeeping CPU, so `ProcessTreeCpuSampler` reports a non-idle subtree. This means:\n1. The ordinary inactivity deadline is reset by the `\"cpu\"` pulse \u2192 `silenceMs` stays at ~1-4 s, never reaching the 20 min inactivity window.\n2. The socket-wedge gate requires `SubtreeIdle == true`, which fails because litellm burns CPU \u2192 `FiredSocketWedge` cannot fire.\n3. Only the absolute ceiling (70 min) finally kills the stage.\n\n### Concrete evidence from the incident\n\n**Autopsy header** (`.relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt`):\n```\nreason: absolute_ceiling  lastSignal: cpu  silenceMs: 52373\nfirstOutputTimeoutMs: 660000  inactivityTimeoutMs: 1200000\n```\n\n- `silenceMs: 52373` = 52 seconds since last CPU pulse \u2014 far below the 1,200,000 ms (20 min) inactivity window. The CPU pulse fires every ~4 s (`CpuPulseSampleIntervalMs = 4_000`), perpetually resetting the inactivity clock.\n- `reason: absolute_ceiling` \u2014 no other kill reason triggered. The stage ran to the ~70 min hard cap.\n- Output bytes: 10,684 \u2014 the stage produced ~10.7 KB early on, then went silent. The agent was deep in a `litellm.completion()` call that never returned.\n- 54 `watchdog_heartbeat` events with `lastPulseSource=cpu` confirm the CPU pulse kept the liveness clock alive the entire time.\n\n### Root cause in code\n\n`DecideOutcome` (Watchdog.cs:162-191) has three decision paths, in order:\n1. **Absolute ceiling** (line 174): `absoluteCeilingMs > 0 && elapsedMs >= absoluteCeilingMs` \u2192 `FiredAbsoluteCeiling`\n2. **Stall** (lines 179-183): `silenceMs >= inactivityTimeoutMs` (after first pulse) or `elapsedMs >= firstOutputTimeoutMs` (before) \u2192 `FiredStall` \u2014 **but `silenceMs` is derived from `_lastPulseTimestamp`, which the CPU pulse resets**\n3. **Socket wedge** (lines 186-188): requires `realOutputSilenceMs >= inactivityTimeoutMs` AND `subtreeIdleForMs >= inactivityTimeoutMs` AND `SubtreeIdle == true` AND `BackendSocketEstablished == true` \u2014 **requires subtree idle, which the busy litellm proxy violates**\n\nThe missing check: `realOutputSilenceMs >= outputSilenceTimeoutMs` \u2014 a standalone output-silence gate that fires regardless of CPU activity. This would go between the absolute-ceiling check and the stall check.\n\n### What needs to change\n\n**Eight files**:\n\n1. **`src/VisualRelay.Domain/RelayConfig.cs`** \u2014 Add `OutputSilenceTimeoutMsByTier` (nullable dictionary, mirrors `InactivityTimeoutMsByTier`) and `OutputSilenceTimeoutMs` (flat fallback, default 600_000 = 10 min).\n\n2. **`src/VisualRelay.Core/Configuration/RelayConfigLoader.cs`** \u2014 Parse `outputSilenceTimeoutMsByTier` and `outputSilenceTimeoutMs` from `.relay/config.json`, mirroring the inactivity-timeout parsing pattern (lines 116-127).\n\n3. **`src/VisualRelay.Core/Execution/ProcessRunners.TierWindows.cs`** \u2014 Extend `ResolveTierWindows` return type from `(int FirstOutputMs, int InactivityMs)` to `(int FirstOutputMs, int InactivityMs, int OutputSilenceMs)`. Add resolution: `config.OutputSilenceTimeoutMsByTier?.TryGetValue(...) ?? config.OutputSilenceTimeoutMs`.\n\n4. **`src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs`**:\n   - Add `FiredOutputSilence` to the `Outcome` enum (append, don't reorder).\n   - Add `_outputSilenceTimeoutMs` field.\n   - Add `int outputSilenceTimeoutMs = 0` parameter to the constructor (0 = disabled, backward-compatible default for all existing call sites).\n   - In `DecideOutcome`, add after the absolute-ceiling gate: `if (outputSilenceTimeoutMs > 0 && realOutputSilenceMs >= outputSilenceTimeoutMs) return Outcome.FiredOutputSilence;`\n   - In `WaitAsync`, when returning a `Result` for `FiredOutputSilence`, report `realOutputSilenceMs` (not `silenceMs`) as `SilenceMs` \u2014 same pattern as `FiredSocketWedge`.\n\n5. **`src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs`**:\n   - Thread `outputSilenceTimeoutMs` from `ResolveTierWindows` through to the `ActivityWatchdog` constructor (line 110).\n   - Add a branch for `FiredOutputSilence` between the `FiredAbsoluteCeiling` and `FiredSocketWedge` branches: treat it as a hard abort (no escalation), with `KillSignature(\"output_silence_ceiling\", ...)`.\n\n6. **`src/VisualRelay.Core/Execution/ProcessRunners.Helpers.cs`** \u2014 In `TryPersistKilledOutput` (line 161-165), add case `FiredOutputSilence => \"output_silence_ceiling\"`.\n\n7. **`src/VisualRelay.Core/Execution/ProcessRunners.Escalation.cs`** \u2014 In `PublishStallKillAsync` (line 43-48), add `FiredOutputSilence => \"output_silence_ceiling\"` to the switch expression.\n\n8. **`src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs`** \u2014 Pass `outputSilenceTimeoutMs: 0` (disabled) to the `ActivityWatchdog` constructor at line 101, since the sandboxed test runner doesn't use this feature.\n\n9. **`src/VisualRelay.Core/Execution/ProcessRunners.StallReason.cs`** \u2014 Add a case for `FiredOutputSilence` in `BuildPersistentStallReason` with a descriptive message mentioning the output-silence ceiling.\n\n**Tests** (new file `tests/VisualRelay.Tests/ActivityWatchdogDecisionTests.OutputSilence.cs`, following the existing `sealed partial class ActivityWatchdogDecisionTests` pattern):\n\n1. **`DecideOutcome_FiresOutputSilence_WhenRealOutputSilentButCpuPulsesActive`**: Drive `DecideOutcome` with `realOutputSilenceMs >= outputSilenceTimeoutMs`, `silenceMs` low (CPU pulses), all other conditions disarmed \u2192 assert `FiredOutputSilence`.\n\n2. **`DecideOutcome_OutputSilenceDisarmed_WhenRealOutputWithinWindow`**: `realOutputSilenceMs < outputSilenceTimeoutMs` \u2192 `Disarmed`.\n\n3. **`WaitAsync_OutputSilence_FiresBeforeAbsoluteCeiling`** (virtualized): Inline pulse loop: emit one real `\"stdout\"` pulse, then only `\"cpu\"` pulses while advancing virtual time past the output-silence limit \u2192 watchdog fires `FiredOutputSilence` well before the ceiling.\n\n4. **`WaitAsync_ContinuousRealOutput_SurvivesPastOutputSilenceLimit`** (virtualized): Emit real output (`\"trace\"` or `\"stdout\"`) pulses each sub-window step \u2192 watchdog stays `Disarmed` well past the output-silence limit.\n\n5. **`ResolveTierWindows_HonorsPerTierOutputSilence`**: Extend the existing `ResolveTierWindows_MapsEachConfiguredTier_ElseFlatFallback` test (ActivityWatchdogDecisionTests.cs:204-230) to assert the third tuple element resolves correctly per tier.\n\nAll existing `ActivityWatchdog` constructor call sites (12 in production + tests) remain valid because the new `outputSilenceTimeoutMs` parameter defaults to `0` (disabled). Only `ProcessRunners.RunAsync.cs:110` and `SandboxedTestRunner.Watched.cs:101` need explicit values threaded through.\n\n```json\n{\n  \"evidence\": \"The ActivityWatchdog.DecideOutcome method (ProcessRunners.Watchdog.cs:162-191) has three fire paths: (1) absolute ceiling (elapsed-based), (2) stall (silenceMs-based, where silenceMs is derived from _lastPulseTimestamp which the cpu pulse resets every ~4s), and (3) socket wedge (requires realOutputSilenceMs >= inactivityMs AND subtree idle AND socket established). In a hung-LLM scenario \u2014 the agent blocks on httpcore recv() waiting for a chat-completion response \u2014 the litellm proxy still accrues housekeeping CPU. Thus: the cpu pulse keeps silenceMs low (~1-4s), so the stall path is permanently disarmed; the subtree is NOT idle, so the socket-wedge path cannot fire; and only the absolute ceiling (70 min) eventually kills the stage. The watchdog already tracks _lastRealOutputTimestamp separately (NOT reset by cpu pulses, line 108-109), but DecideOutcome never reads realOutputSilenceMs as a standalone fire condition \u2014 it only feeds it into the socket-wedge gate which additionally requires subtree idleness. The fix: add a standalone output-silence check between the absolute-ceiling gate and the ordinary stall gate: if realOutputSilenceMs >= outputSilenceTimeoutMs (configurable per-tier), fire FiredOutputSilence. The holdup-prints-2026-07-15 incident autopsy confirms the exact shape: reason=absolute_ceiling lastSignal=cpu silenceMs=52373 (cpu pulse reset the clock 52s ago, well under the 1200s inactivity window), and the stage ran 55+ minutes with zero real output.\",\n  \"excerpts\": [\n    \"ProcessRunners.Watchdog.cs:100-111 \u2014 Pulse method: cpu source resets _lastPulseTimestamp but NOT _lastRealOutputTimestamp\",\n    \"ProcessRunners.Watchdog.cs:162-191 \u2014 DecideOutcome: three fire paths, none checks realOutputSilenceMs standalone\",\n    \"ProcessRunners.Watchdog.cs:217-235 \u2014 WaitAsync loop: computes realOutputSilenceMs at line 224 but only feeds it to DecideOutcome, which ignores it as a solo gate\",\n    \"ProcessRunners.RunAsync.cs:110 \u2014 ActivityWatchdog constructor call: passes firstOutputMs, inactivityMs, absoluteCeilingMs \u2014 no output-silence timeout\",\n    \"ProcessRunners.TierWindows.cs:12-19 \u2014 ResolveTierWindows returns 2-tuple; would need 3-tuple to carry outputSilenceTimeoutMs\",\n    \"RelayConfig.cs:67-75 \u2014 InactivityTimeoutMsByTier + InactivityTimeoutMs pattern to mirror for OutputSilenceTimeoutMs\",\n    \"RelayConfigLoader.cs:116-127 \u2014 inactivityTiers parsing pattern to mirror for outputSilenceTimeoutMsByTier\",\n    \"ProcessRunners.Escalation.cs:43-48 \u2014 PublishStallKillAsync reason switch: needs FiredOutputSilence \u2192 'output_silence_ceiling'\",\n    \"ProcessRunners.Helpers.cs:161-165 \u2014 TryPersistKilledOutput reason switch: same\",\n    \"ProcessRunners.StallReason.cs:13-31 \u2014 BuildPersistentStallReason: needs FiredOutputSilence case\",\n    \"SandboxedTestRunner.Watched.cs:101-102 \u2014 second ActivityWatchdog constructor: pass 0 (disabled) for new param\",\n    \".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt:2-4 \u2014 autopsy: reason=absolute_ceiling lastSignal=cpu silenceMs=52373, firstOutputTimeoutMs=660000 inactivityTimeoutMs=1200000 \u2014 cpu pulses masked the deadline for 55+ min\"\n  ],\n  \"repro\": \"1. Create a fake swival script that emits ~10KB of stdout (simulating early output), then execs 'tail -f /dev/null' while a sidecar process (simulating litellm proxy) burns ~1% CPU in a loop. 2. Run with config: firstOutputTimeoutMs=90s, inactivityTimeoutMs=600s (10 min), absoluteCeilingMs=3600s (60 min). The CPU pulse from ProcessTreeCpuSampler will fire every 4s, keeping silenceMs at ~4s and the inactivity watchdog permanently disarmed. The subtree shows CPU activity (sidecar), so socket-wedge also won't fire. 3. Without the fix, the stage runs to the 60 min ceiling. With the fix and outputSilenceTimeoutMs=600s (10 min), the watchdog fires FiredOutputSilence after 10 minutes of zero stdout/stderr/trace output despite CPU pulses.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 21,
+    "tool_calls_total": 39,
+    "tool_calls_succeeded": 39,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "outline": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 25,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 12,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 21,
+    "total_llm_time_s": 203.509,
+    "prompt_cache": {
+      "cached_tokens": 872192,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 3.135,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.445,
+      "prompt_tokens_est": 6164,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs",
+        "depth": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 136
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core",
+        "depth": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 226
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.284,
+      "prompt_tokens_est": 6372,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Watchdog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15592
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2784
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.285,
+      "prompt_tokens_est": 10936,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.TierWindows.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1085
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.StallReason.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1862
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18371
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12745
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/ProcessRunners.Escalation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3912
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.493,
+      "prompt_tokens_est": 19726,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class RelayConfig",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.277,
+      "result_length": 2153
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "InactivityTimeoutMs",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.258,
+      "result_length": 5742
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ActivityWatchdog",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.26,
+      "result_length": 9519
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.214,
+      "prompt_tokens_est": 24353,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/RelayConfig.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9693
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ActivityWatchdogDecisionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14229
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/RelayConfigLoader.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 16856
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.639,
+      "prompt_tokens_est": 34383,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ActivityWatchdogDecisionTests.WaitAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13714
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6966
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1641
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.285,
+      "prompt_tokens_est": 40155,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class KillSignature",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.271,
+      "result_length": 17
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class ManualTimeProvider",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.261,
+      "result_length": 128
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class SubagentResult",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.262,
+      "result_length": 17
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.971,
+      "prompt_tokens_est": 40303,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record KillSignature"
+      },
+      "succeeded": true,
+      "duration_s": 0.262,
+      "result_length": 102
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record SubagentResult"
+      },
+      "succeeded": true,
+      "duration_s": 0.259,
+      "result_length": 104
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.854,
+      "prompt_tokens_est": 40411,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Domain/SubagentResult.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1305
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ManualTimeProvider.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4077
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.985,
+      "prompt_tokens_est": 41795,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/ActivityWatchdogSocketWedgeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7278
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Outcome\\.",
+        "include": "*.cs",
+        "path": "tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.094,
+      "result_length": 6171
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.737,
+      "prompt_tokens_est": 45292,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SplitGuardVerificationTests.Conventions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14794
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4782
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 68.347,
+      "prompt_tokens_est": 49877,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "new ActivityWatchdog\\("
+      },
+      "succeeded": true,
+      "duration_s": 0.394,
+      "result_length": 1242
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.565,
+      "prompt_tokens_est": 54450,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "ResolveTierWindows\\("
+      },
+      "succeeded": true,
+      "duration_s": 0.258,
+      "result_length": 1659
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 4.303,
+      "prompt_tokens_est": 55082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SwivalTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3700
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 2.694,
+      "prompt_tokens_est": 56203,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerTests.Timeout.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4717
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.924,
+      "prompt_tokens_est": 57422,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Guards/RealSleepGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12879
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 10.627,
+      "prompt_tokens_est": 60681,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "SwivalTestHelpers\\.TestConfig"
+      },
+      "succeeded": true,
+      "duration_s": 0.257,
+      "result_length": 362
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.CpuPulse.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5380
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 4.697,
+      "prompt_tokens_est": 62688,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/config.json",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1322
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 5.412,
+      "prompt_tokens_est": 63213,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt",
+        "offset": 31,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1660
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 2.796,
+      "prompt_tokens_est": 63911,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "tail_lines": 30,
+        "file_path": ".relay/hoist-pipeline-test-shared-setup/stage7-attempt1.killed-output.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1916
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 53.954,
+      "prompt_tokens_est": 64539,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -73,6 +73,18 @@ public sealed record RelayConfig(
     // Fallback inactivity timeout (ms) for tiers absent from InactivityTimeoutMsByTier.
     // Default 600_000 (10 min).
     int InactivityTimeoutMs = 600_000,
+    // Per-tier output-silence ceiling (ms). A stage that has emitted at least one
+    // real-output pulse but produced zero output/trace bytes for this long is
+    // killed as FiredOutputSilence regardless of CPU activity that keeps the
+    // ordinary inactivity deadline reset. This catches hung LLM requests where
+    // background housekeeping CPU pulses mask the normal stall path. Tiers not in
+    // the map fall back to OutputSilenceTimeoutMs.
+    // Suggested: cheap/balanced ~600_000 (10 min), frontier ~1_200_000 (20 min).
+    IReadOnlyDictionary<string, int>? OutputSilenceTimeoutMsByTier = null,
+    // Fallback output-silence ceiling (ms) for tiers absent from
+    // OutputSilenceTimeoutMsByTier. Default 0 (disabled — the gate is opt-in per
+    // config so existing repos upgrade without surprise timeouts).
+    int OutputSilenceTimeoutMs = 0,
     // When true (default), the proof files under .relay/<taskId>/
     // (ledger.md, <taskId>.seals, manifest.txt, status.json, and per-stage
     // .input.json/.report.json — final attempt only) are force-added to each
