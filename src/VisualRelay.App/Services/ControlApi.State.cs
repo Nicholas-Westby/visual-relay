@@ -120,7 +120,7 @@ public sealed partial class ControlApi
     [
         "bootstrap", "run-all", "run-selected", "resume", "refresh", "pause-toggle",
         "archive-toggle", "new-task", "follow-running", "start-backend", "edit",
-        "rewrite-selected", "cancel-rewrite", "revert-rewrite", "mark-done"
+        "rewrite-selected", "cancel-rewrite", "revert-rewrite", "mark-done", "reset-selected"
     ];
 
     /// <summary>

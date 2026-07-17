@@ -157,4 +157,7 @@ public sealed partial class RelayQueueController
         }
         return merged;
     }
+
+    /// <summary>Evicts a task from the drain's seen set so it becomes eligible at the next boundary. No-op when no drain is active.</summary>
+    public void RemoveFromSeen(string taskId) => _drainSeenIds?.Remove(taskId);
 }

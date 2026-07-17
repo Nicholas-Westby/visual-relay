@@ -46,6 +46,7 @@ public sealed partial class ControlApi(
         "cancel-rewrite" => viewModel.CancelRewriteSelectedCommand,
         "revert-rewrite" => viewModel.RevertRewriteSelectedCommand,
         "mark-done" => viewModel.MarkSelectedTaskDoneCommand,
+        "reset-selected" => viewModel.ResetSelectedTaskCommand,
         _ => null
     };
 
@@ -61,7 +62,7 @@ public sealed partial class ControlApi(
     // (see InvokeCommandOnUiThreadAsync). Defaults to the standard set; overridable
     // via the constructor so tests can exercise the universal never-hang path with a
     // confirm-gated command deliberately absent from this set.
-    private static readonly string[] DefaultConfirmGatedCommands = ["mark-done", "rewrite-selected"];
+    private static readonly string[] DefaultConfirmGatedCommands = ["mark-done", "rewrite-selected", "reset-selected"];
 
     private readonly HashSet<string> _confirmGatedCommands =
         new(confirmGatedCommands ?? DefaultConfirmGatedCommands, StringComparer.Ordinal);

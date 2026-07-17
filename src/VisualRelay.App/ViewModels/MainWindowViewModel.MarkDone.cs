@@ -43,6 +43,8 @@ public partial class MainWindowViewModel
     {
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsMarkDoneButtonVisible));
+        ResetSelectedTaskCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsResetButtonVisible));
     }
 
     // ReSharper disable once UnusedParameterInPartialMethod — value parameter is part of generated partial method signature

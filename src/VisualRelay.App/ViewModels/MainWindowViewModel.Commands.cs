@@ -191,6 +191,9 @@ public partial class MainWindowViewModel
         MarkSelectedTaskDoneCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(IsMarkDoneButtonVisible));
 
+        ResetSelectedTaskCommand.NotifyCanExecuteChanged();
+        OnPropertyChanged(nameof(IsResetButtonVisible));
+
         // Capture the task so tests can await it deterministically
         // (no 1 000 ms wall-clock budget — the real operation decides).
         // Faults are surfaced to StatusText (the VM's operation-error

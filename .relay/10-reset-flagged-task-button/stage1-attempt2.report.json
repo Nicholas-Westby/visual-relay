@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T06:18:34.510295+00:00",
+  "task": "# Relay stage 1: Ideate \u2014 CORRECTIVE RETRY\nTask: 10-reset-flagged-task-button\n\nThe previous completion was missing the required fenced JSON block. Reply with ONLY that block \u2014 derive it from the prior answer below. Do NOT redo the work or add any other text.\n\n## Expected contract\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }\n\n## Prior output\n## Task framing\n\n**Goal:** Add a **Reset** button for flagged (\"Needs review\") tasks that archives the live run-state directory (`.relay/<taskId>/`) out of the scan path so the task reappears as Pending and its next run starts fresh from stage 1\u2014without ever launching a run or destroying the flagged-work bundle or autopsy artifacts.\n\n**Key constraints from the evidence:**\n1. Flagged = `.relay/<taskId>/NEEDS-REVIEW` exists \u2192 `RelayTaskRepository.ListAsync` maps it to `NeedsReview`, `CollectNewTasks` excludes it via `!t.NeedsReview`\n2. GUI always runs with `Resume: true` \u2192 leftover stage state would resume mid-pipeline if not removed\n3. `flagged-work.bundle` may be the sole copy of authored work \u2192 must never delete\n4. Mark-done is the template: confirm modal + `DefaultConfirmGatedCommands` + `ResolveCommand` switch + `ICommandNames` + awaited completion\n5. Drain seeds `seenIds` at start \u2192 a flipped-flag task is collected at the next Sequential/RestartBetweenTasks boundary (no mid-drain collection in Standard)\n6. `.reset-*` dirs must be invisible to the repository, stage-state loading, and drain scans\n7. Concurrency: resetting task A while B runs must not touch B's state or the drain's control flow\n\n---\n\n## Solution options\n\n### Option A \u2014 Directory-rename archive (the \"clean sweep\")\n\n**How it works:** Move `.relay/<taskId>/` \u2192 `.relay/<taskId>.reset-<utc-timestamp>/` in a single filesystem rename (`Directory.Move`). The NEEDS-REVIEW marker, stage state, logs, and flagged-work bundle leave the live path together. The task repo listing ignores `.reset-*` directories. The task's next collection by `CollectNewTasks` succeeds because `!t.NeedsReview` is now `true` and `seenIds` doesn't contain it (or if it does, the reset clears it from the seen set).\n\n**Implementation sketch:**\n- Add `ResetAsync(string taskId)` to `RelayTaskRepository` (or a new helper) that does the rename + removes the task from any in-memory `seenIds` cache\n- In the control API: register `\"reset-selected\"` in `ResolveCommand` \u2192 calls `ResetAsync`, add to `DefaultConfirmGatedCommands`, add `\"reset-selected\"` to `ICommandNames`\n- In the ViewModel: add `ResetSelectedTaskCommand` (ICommand), `CanExecute` = `SelectedTask?.State == NeedsReview` (not gated by `IsBusy`)\n- In `TaskActionBar.axaml`: add Reset button bound to that command, same confirm-modal pattern as Mark done\n- In repository scanning: `Directory.EnumerateDirectories(relayRoot, \"*.reset-*\")` \u2192 skip\n- Tooltip: \"Reset returns the task to Pending without starting it. Under a running Sequential/RestartBetweenTasks drain, it becomes eligible at the next task boundary.\"\n\n**Pros:** Simple, atomic (`Directory.Move` is filesystem-atomic on the same volume), preserves everything, no new marker files, no scanning changes beyond a glob skip, matches `RestartHandoff.MarkConsumed` rename precedent.\n\n**Cons:** A concurrent `Directory.EnumerateDirectories(...)` in the repository could race with the rename and see a partial listing (the dir is present or absent atomically per-process on most OS filesystems, so this is safe in practice \u2014 the reader sees either the pre- or post-rename view).\n\n---\n\n### Option B \u2014 In-place reset with a `.reset` witness file\n\n**How it works:** Write a zero-byte `.reset` file inside `.relay/<taskId>/` and remove `NEEDS-REVIEW`. No directory move. The repository scanner and stage-state loader check for `.reset` and treat it as \"no run state exists\" (i.e., the task is Pending). On the next run request, the runner cleans up the old run state lazily before starting fresh.\n\n**Implementation sketch:**\n- Same UI/API wiring as Option A\n- Instead of rename, `ResetAsync` writes `.relay/<taskId>/.reset` and deletes `NEEDS-REVIEW`\n- `RelayTaskRepository.ListAsync` checks for `.reset` \u2192 treat as Pending regardless of other artifacts\n- `CollectNewTasks` checks `!t.NeedsReview` (true now) AND `!hasResetMarker` \u2192 eligible\n- The stage-state reconciliation code (from task 06) needs a new case: \"ignore `.reset` dirs\"\n- A `RunAsync` pre-flight step detects `.reset`, deletes the old run state from `.relay/<taskId>/`, removes the `.reset` marker, then proceeds with a fresh run\n\n**Pros:** No filesystem rename racing with concurrent readers; the `.reset` file is written atomically (small write); easier to reason about consistency.\n\n**Cons:** More invasive changes: repository scanner, stage-state loading, reconciliation, AND run-start preflight all need new branches. Lazy cleanup at run-start is a correctness hazard (what if the run fails before cleanup completes?). Two-phase semantics (mark + later cleanup) add state. Violates the \"archive only, never delete\" constraint unless the old state is moved to an archive dir at cleanup time, which circles back to Option A's rename.\n\n---\n\n### Option C \u2014 Repository-abstraction archive (encapsulated reset in `RelayTaskRepository`)\n\n**How it works:** Add a `ResetTaskAsync` method to `RelayTaskRepository` that acquires a per-task lock, reads the current run directory path, `Directory.Move`s it to an archive sibling (same as Option A), and updates any in-memory caches. The repository already owns the mapping from task-IDs to directories and the `ListAsync` scan, so the rename and the \"ignore `.reset-*`\" skip logic live together. The ViewModel and API call into the repository through a clean interface, never touching filesystem paths directly.\n\n**Implementation sketch:**\n- `IRelayTaskRepository` gets `Task<bool> ResetTaskAsync(string taskId)`\n- `RelayTaskRepository.ResetTaskAsync`: validate task is flagged, `Directory.Move(.relay/<id>/, .relay/<id>.reset-<stamp>/)`, invalidate any cached `ListAsync` result, return true\n- `ListAsync` already enumerates `.relay/` subdirs; add `&& !name.EndsWith(\"-reset-\")` filter (actually safer: skip dirs matching `*.reset-*` via a regex or `Path.GetFileName` check like `name.Contains(\".reset-\")`)\n- Same UI/API wiring as Option A, but command handler calls `_repository.ResetTaskAsync(taskId)` instead of inline filesystem ops\n- The `seenIds` management in the drain controller may need a `RemoveFromSeen(taskId)` call after reset so the task is collected at the next boundary even within an active Sequential drain\n\n**Pros:** All reset logic lives in one place (the repository), clean separation of concerns, easy to test with a fake repo, the filesystem scan skip is co-located with the scan code, the rename race analysis is the same as Option A.\n\n**Cons:** Adds a dependency on per-task locking (already present? unknown). The `seenIds` eviction is a drain concern that crosses the repository boundary \u2014 needs a callback or the controller must explicitly call `DrainAsync`'s helper. Slightly more code surface than a standalone helper.\n\n---\n\n**Recommendation:** Option C (repository-encapsulated archive) combines the clean atomicity of Option A with the encapsulation and testability of a repository pattern. The `seenIds` eviction from the drain's active set is the one cross-cutting concern that needs explicit handling \u2014 a `RelayQueueController.RemoveFromSeen(string taskId)` method called after the repository rename completes. The task-authored description leans heavily on the rename-don't-delete archive (Option A/C core mechanism), so the architectural choice is where that rename lives, not whether to do it.\n",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 400,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"summary\": \"Add a Reset button for flagged (NeedsReview) tasks that archives the live run-state directory (.relay/<taskId>/) to a .reset-<timestamp> archive outside the scan path, so the task reappears as Pending at the next drain boundary without launching a run or deleting flagged-work/autopsy artifacts.\",\n  \"options\": [\n    \"Option A \u2014 Directory-rename archive: Move .relay/<taskId>/ \u2192 .relay/<taskId>.reset-<utc-timestamp>/ via Directory.Move; skip *.reset-* dirs in repository scan; clear seenIds cache. Simple, atomic rename, matches RestartHandoff.MarkConsumed precedent.\",\n    \"Option B \u2014 In-place reset with .reset witness file: Write .relay/<taskId>/.reset marker, delete NEEDS-REVIEW; repository/stage-loader/drain all check for .reset; lazy cleanup at run-start. More invasive, two-phase semantics, risks violating archive-only constraint.\",\n    \"Option C \u2014 Repository-encapsulated archive: Add ResetTaskAsync to IRelayTaskRepository that does the rename + cache invalidation; UI/API call through repository interface; seenIds eviction via RelayQueueController.RemoveFromSeen(). Clean separation, testable, co-located scan-skip logic.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 1,
+    "tool_calls_total": 0,
+    "tool_calls_succeeded": 0,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {},
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 1,
+    "total_llm_time_s": 10.594,
+    "total_tool_time_s": 0.0,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 10.594,
+      "prompt_tokens_est": 5508,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
