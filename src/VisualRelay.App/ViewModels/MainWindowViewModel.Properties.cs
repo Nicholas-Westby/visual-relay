@@ -22,7 +22,7 @@ public partial class MainWindowViewModel
             "One task at a time, checking for new tasks between"),
         new(RunAllMode.RestartBetweenTasks,
             "Restart Between Tasks",
-            "Sequential, plus the app rebuilds and relaunches after each committed task — for repos that build Visual Relay itself"),
+            "Sequential, plus the app rebuilds and relaunches after each committed task (uncommon)"),
     ];
 
     /// <summary>
