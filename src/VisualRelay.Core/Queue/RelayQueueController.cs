@@ -116,7 +116,7 @@ public sealed partial class RelayQueueController
         // Per-drain CTS; pause/stop cancels in-flight planning.
         using var drainCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var drainRunId = $"drain-{DateTimeOffset.UtcNow:yyyyMMddHHmmss}";
-        var queue = Tasks.ToList();
+        var queue = BuildDrainQueue(Tasks, mode, RootPath, drainRunId);
         _drainSeenIds = new HashSet<string>(queue.Select(t => t.Id), StringComparer.Ordinal);
         var seenIds = _drainSeenIds;
         var firstPass = true;

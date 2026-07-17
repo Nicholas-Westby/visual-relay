@@ -1,0 +1,542 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T11:22:01.656104+00:00",
+  "task": "# Relay stage 6: Implement\nTask: 11-hold-flagged-tasks-in-restart-between-tasks-drains\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Hold flagged tasks out of Restart Between Tasks drains\n\nRun All deliberately re-attempts flagged (\"Needs review\") tasks \u2014 commit\n0dc9408 (2026-06-23) loads them during refresh and drains them, so an\nerrored/flagged task gets another chance on the next Run All. That is\nacceptable for Standard and Sequential, where a drain is one bounded pass:\neach queue entry runs at most once, and a task that flags again just returns\nto the review pile.\n\nRestart Between Tasks breaks that boundedness. Every committed task ends the\ncycle and the relaunched app starts a FRESH drain with a fresh\n`Tasks.ToList()` queue \u2014 so a flagged task is re-attempted in EVERY cycle.\nA task that always flags gets re-run (at up to watchdog-ceiling cost) once\nper remaining committed task; ranked early, it delays every real task by\nthat much; and a task that both seals and flags (the commit-gate\nflag-after-seal family) can sustain a genuine self-perpetuating restart\nloop: seal \u2192 restart \u2192 re-attempt \u2192 seal \u2192 restart. In this mode a flag must\nmean HOLD: only an explicit human Resume or Reset re-queues the task.\n\n### Evidence (verified)\n\n- `RelayQueueController.DrainAsync` builds the initial queue as\n  `var queue = Tasks.ToList()` \u2014 no NeedsReview filter \u2014 and `RefreshAsync`\n  loads flagged tasks into `Tasks` (both since 0dc9408; its test\n  `DrainQueueToolTests.ValidateTaskIds_NeedsReviewTask_IsStillPendingAndRecognized`\n  documents \"NEEDS-REVIEW tasks are included during RefreshAsync so\n  'Run All' can re-attempt them\").\n- The `!t.NeedsReview` filter exists only in `CollectNewTasks`\n  (`RelayQueueController.PrivateHelpers.cs`), which guards mid-drain\n  ADDITIONS at boundaries \u2014 not the starting queue of each restart cycle.\n- `RelayDriver.RunTaskAsync` (`RelayDriver.cs:34`) deletes the task's\n  NEEDS-REVIEW marker unconditionally at run start, so each re-attempt also\n  erases the hold silently (no archive; contrast task 10's\n  archive-don't-delete Reset).\n- Field occurrence, 2026-07-17: `hoist-pipeline-test-shared-setup`, flagged\n  since 2026-07-15, was auto-re-attempted by the 05:53:16 UTC restart-cycle\n  drain the moment it reached the queue head (`drain-20260717055316.log`;\n  `stage7-attempt2` artifacts). It happened to pass and seal (502556a) \u2014 a\n  chronic flagger in the same position would have re-run every cycle.\n- Task 00's own spec intended \"flagged tasks skipped via NEEDS-REVIEW\" as\n  the restart protocol's anti-loop guard, and\n  `RelayQueueControllerRestartTests.cs` asserts a needs-review task is\n  skipped \u2014 but only via the boundary-collection path; the initial-queue\n  path is unguarded, so the shipped protocol does not deliver the spec's\n  guarantee.\n\n### What to build\n\n1. **Mode-scoped hold**: when a drain runs in `RunAllMode.RestartBetweenTasks`\n   (whether started from the Run All button or by the startup\n   auto-continuation in `App.TryAutoResumeFromHandoff`), needs-review tasks\n   are excluded from the drain queue at build time. They must not be\n   started, and their `.relay/<id>/` state (marker included) must not be\n   touched. Standard and Sequential keep today's re-attempt behavior\n   unchanged.\n2. **Covers mid-chain flags too**: a task that flags during cycle N must not\n   be re-attempted by cycles N+1\u2026 of the same restart chain \u2014 the same\n   queue-build exclusion applies to every continuation cycle.\n3. **Observability**: when an RBT queue build excludes flagged tasks, write\n   one drain-log event naming the count and ids (e.g.\n   `skipped-needs-review n=2 ids=\u2026`), so an operator can see why a flagged\n   task didn't run. Update the Restart Between Tasks dropdown description\n   and/or tooltip only if it currently implies flagged tasks are attempted.\n4. **Explicit re-runs still work**: Resume and the task-10 Reset button\n   remain the (only) ways to run flagged work in this mode \u2014 Reset returns\n   the task to Pending, after which the next cycle picks it up normally.\n\n### Constraints\n\n- Do not change Standard/Sequential semantics (0dc9408's behavior is\n  deliberate and stays), the boundary `CollectNewTasks` filter, or the\n  run-start marker delete for tasks that DO run.\n- Repo-agnostic; keep files under the 300-line guard; TimeProvider patterns\n  for any test waits.\n\n### Tests (red first)\n\n- RBT drain whose task list contains a pre-flagged task: the flagged task is\n  never started, its marker and state dir are untouched, the skip event is\n  in the drain log \u2014 fails today (it runs when it reaches the head).\n- Same setup in Sequential mode: the flagged task IS re-attempted\n  (regression-pin of 0dc9408).\n- Restart-chain regression: an always-flagging task plus tasks that seal \u2014\n  across the full chain the flagger runs at most once (the cycle in which it\n  first flags, if it entered as pending) and never again in later cycles.\n- Startup auto-continuation with a fresh handoff and a flagged task in the\n  list: continuation runs only non-flagged pending tasks.\n- After a task-10 Reset of a flagged task, the next RBT cycle runs it (the\n  hold applies to flagged state, not to the task id).\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: flag a scratch task, start Restart Between Tasks with one other\n  trivial task queued; confirm the flagged task never runs across the chain\n  and the skip event appears in each cycle's drain log.\n\n\n## Manifest\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\ntests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Task 11: In Restart Between Tasks mode, flagged (NeedsReview) tasks must be excluded from the drain queue at build time in DrainAsync to prevent infinite re-attempt loops. Standard/Sequential modes keep the 0dc9408 re-attempt behavior. The fix is a mode-conditional `.Where(!t.NeedsReview)` on `Tasks.ToList()`, plus a `skipped-needs-review` drain-log event. Five red-first tests are required. Recommended approach: extract a BuildDrainQueue helper into PrivateHelpers.cs alongside the existing CollectNewTasks.\",\n  \"options\": [\n    \"Option A \u2014 Inline filter in DrainAsync: add a Where clause gated on RunAllMode.RestartBetweenTasks at the single queue-build line (~5 lines changed, minimal diff, couples event emission inline).\",\n    \"Option B \u2014 Extracted BuildDrainQueue method in PrivateHelpers.cs: move filtering + skip-event emission into a private method alongside the existing CollectNewTasks helper (testable, co-located, cleanest balance of minimalism and separation).\",\n    \"Option C \u2014 IDrainQueueFilter strategy service: inject a mode-selected filter (most testable but over-engineered for a single Where clause; adds interface, DI, and file ceremony).\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The sole queue-build site is `RelayQueueController.DrainAsync` line 119 (`var queue = Tasks.ToList()`). This unfiltered snapshot populates every drain cycle, and in RestartBetweenTasks each cycle is a fresh `DrainAsync` call (via `TryRestartBetweenTasks` \u2192 handoff \u2192 relaunch \u2192 `App.TryAutoResumeFromHandoff` \u2192 `DrainQueueCommand.ExecuteAsync` \u2192 `DrainAsync`). Because `CollectNewTasks` (PrivateHelpers.cs:116-121) already filters `!t.NeedsReview` for mid-drain boundary additions, the only gap is the initial queue build. The mode reaches `DrainAsync` as a parameter; `SelectedRunAllMode` is set to `RestartBetweenTasks` before the auto-continuation call. `RelayDriver.RunTaskAsync` line 34 deletes the NEEDS-REVIEW marker unconditionally at run start, so any task that slips through loses its hold. The existing test `StartupContinuation_FreshHandoff_MixedQueue_OnlyPendingRuns` (RestartTests.cs:131-173) has a doc comment describing the desired skip behavior but assertions that currently expect the flagged task to run \u2014 it must be updated to become a red-to-green transition test. The RBT description string ('Sequential, plus the app rebuilds and relaunches after each committed task (uncommon)') does not imply flagged-task retries, so no UI text change is required per the spec. The `DrainSummaryLog.Write` API is available for the skip event. Option A (inline filter in DrainAsync) is the most minimal change \u2014 a single `Where` clause gated on mode, plus the log line \u2014 but Option B (extracted `BuildDrainQueue` helper in PrivateHelpers.cs) keeps the method clean and co-locates filtering with the already-existing `CollectNewTasks` helper. Recommend Option B for testability and separation.\",\n  \"constraints\": [\n    \"Do not change Standard/Sequential drain semantics \u2014 0dc9408's re-attempt behavior for those modes is deliberate and must remain\",\n    \"Do not change the `CollectNewTasks` boundary filter in PrivateHelpers.cs (already correct)\",\n    \"Do not change the run-start NEEDS-REVIEW marker delete in RelayDriver.cs:34 (tasks that DO run still need it erased)\",\n    \"Keep each file under the 300-line guard (RelayQueueController.cs is exactly 300 lines, PrivateHelpers.cs is 163 lines)\",\n    \"Use TimeProvider patterns for any test waits (ManualTimeProvider is the established pattern in the project)\",\n    \"The fix must apply to all code paths that start an RBT drain: the Run All button, startup auto-continuation (TryAutoResumeFromHandoff), and CLI drain\",\n    \"Explicit Resume and Reset (task-10) must still work to re-queue flagged tasks \u2014 the hold applies to flagged state, not the task id\",\n    \"Repo-agnostic \u2014 no assumptions about specific task names or repository structure beyond the .relay/ conventions\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The sole queue-build site in DrainAsync line 119 (`var queue = Tasks.ToList()`) snapshots all tasks including NeedsReview. In RestartBetweenTasks mode every cycle is a fresh DrainAsync call (via relaunch \u2192 TryAutoResumeFromHandoff \u2192 DrainQueueCommand.ExecuteAsync \u2192 DrainAsync), so a flagged task is re-attempted in every cycle \u2014 unbounded. The existing CollectNewTasks filter (PrivateHelpers.cs:116-121, `!t.NeedsReview`) guards only mid-drain boundary additions, not the initial queue. RelayDriver.RunTaskAsync line 34 unconditionally deletes the NEEDS-REVIEW marker, silently erasing the hold on each re-attempt. The field log drain-20260717055316.log shows hoist-pipeline-test-shared-setup auto-re-attempted at 05:53:16 UTC. The StartupContinuation_FreshHandoff_MixedQueue_OnlyPendingRuns test doc comment claims flagged tasks are filtered but its assertions expect both tasks to run \u2014 it's green today testing the wrong behavior. DrainQueueToolTests line 127-139 documents 0dc9408's deliberate re-attempt for Standard/Sequential. The RBT description string does not imply flagged-task retries, so no UI text change is needed. RelayQueueController.cs is at the 300-line guard; PrivateHelpers.cs at 163 has room for an extracted helper.\",\n  \"excerpts\": [\n    \"RelayQueueController.cs:119: `var queue = Tasks.ToList();` \u2014 initial queue build, no NeedsReview filter\",\n    \"RelayQueueController.PrivateHelpers.cs:116-121: `CollectNewTasks` has `!t.NeedsReview` but only for mid-drain boundary additions, not the initial queue\",\n    \"RelayDriver.cs:34: `File.Delete(Path.Combine(taskDirectory, \\\"NEEDS-REVIEW\\\"));` \u2014 unconditionally erases hold marker at run start\",\n    \"DrainQueueToolTests.cs:127-139: documents that NEEDS-REVIEW tasks are included during RefreshAsync so 'Run All' can re-attempt them \u2014 deliberate for Standard/Sequential\",\n    \"RelayQueueControllerRestartTests.cs:125-173: `StartupContinuation_FreshHandoff_MixedQueue_OnlyPendingRuns` \u2014 doc comment says 'the needs-review task is filtered from the drain' but assertions at 169-172 expect both tasks to run\",\n    \"drain-20260717055316.log: hoist-pipeline-test-shared-setup (flagged since 2026-07-15) was auto-re-attempted by the 05:53:16 UTC restart-cycle drain\",\n    \"App.axaml.cs:133-137: TryAutoResumeFromHandoff sets SelectedRunAllMode = RestartBetweenTasks and calls DrainQueueCommand.ExecuteAsync \u2014 fresh DrainAsync every cycle\",\n    \"RelayQueueController.cs:300 lines (at guard limit); PrivateHelpers.cs:163 lines (has room); Restart.cs:66 lines\"\n  ],\n  \"repro\": \"Create a TestRepository with one pre-flagged task (repo.WriteTask + repo.WriteNeedsReview) and one pending task. Create a ScriptedOutcomeTaskRunner with outcomes for both. Call RefreshAsync then DrainAsync(mode: RestartBetweenTasks). Assert the flagged task's id does NOT appear in runner.TasksRun and its NEEDS-REVIEW file still exists \u2014 these assertions fail today because line 119 includes it in the queue and RelayDriver line 34 deletes the marker.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation Plan\\n\\n### 1. Add `BuildDrainQueue` helper to `RelayQueueController.PrivateHelpers.cs`\\n\\nInsert after the `CollectNewTasks` method (after line 121). The method is a private static helper that:\\n- Returns `tasks.ToList()` unchanged when `mode != RunAllMode.RestartBetweenTasks` (preserving 0dc9408's re-attempt for Standard/Sequential).\\n- When `mode == RunAllMode.RestartBetweenTasks`, filters out all `NeedsReview` tasks and writes one `skipped-needs-review` drain-log event with count and ids.\\n\\n### 2. Replace queue build in `RelayQueueController.cs` line 119\\n\\nChange `var queue = Tasks.ToList();` to `var queue = BuildDrainQueue(Tasks, mode, RootPath, drainRunId);`.\\n\\n### 3. Update `StartupContinuation_FreshHandoff_MixedQueue_OnlyPendingRuns` in `RelayQueueControllerRestartTests.cs`\\n\\nThis test currently asserts both beta (needs-review) and gamma (pending) run in RBT mode (lines 169-172). The doc comment says flagged tasks are filtered, but the assertions test the bug behavior. Change assertions to:\\n- Only gamma runs (Committed).\\n- beta is NOT in runner.TasksRun.\\n- beta's NEEDS-REVIEW marker still exists on disk.\\n- The drain log contains `skipped-needs-review n=1 ids=beta`.\\n\\n### 4. Add four new tests to `RelayQueueControllerRestartTests.cs`\\n\\n**`RbtDrain_PreFlaggedTask_NotStarted_MarkerUntouched`** \u2014 RBT drain with one pre-flagged + one pending task: flagged task is never started, its marker and state dir untouched, skip event in drain log. Fails today (flagged task runs when it reaches the head).\\n\\n**`SequentialDrain_PreFlaggedTask_IsReattempted`** \u2014 Same setup in Sequential mode: the flagged task IS re-attempted (regression-pin of 0dc9408).\\n\\n**`RbtChain_AlwaysFlaggingTask_RunsAtMostOnce`** \u2014 Two-cycle restart chain. Cycle 1: flaky flags + gets NEEDS-REVIEW marker, stable commits \u2192 handoff. Cycle 2 (fresh controller, RefreshAsync, DrainAsync RBT): flaky is filtered (skipped), only stable runs. Flaky appears at most once across the chain.\\n\\n**`RbtDrain_AfterReset_FlaggedTaskRuns`** \u2014 Pre-flagged task skipped in RBT cycle 1. Delete NEEDS-REVIEW marker, RefreshAsync \u2192 task now Pending. Cycle 2 RBT drain picks it up and runs it (the hold applies to flagged state, not the task id).\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs\",\n    \"tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\"tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\"],\n  \"rationale\": \"Added 4 new tests and updated 1 existing test in RelayQueueControllerRestartTests.cs. The 5 tests cover: (1) RBT drain filters pre-flagged tasks from initial queue, (2) Sequential mode regression-pin preserves 0dc9408 re-attempt, (3) startup auto-continuation filters flagged tasks, (4) always-flagging task runs at most once across RBT chain, (5) after Reset the task runs again. Four tests fail red because the BuildDrainQueue filtering is not yet implemented; six pass (existing tests + Sequential pin).\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs\n\n## Before you declare done\nOnce the targeted command above passes, run the project's FULL test suite ONCE to catch cross-cutting checks the targeted run cannot surface:\n- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\n- Lint / style / format gates\n- Tests that enforce special standards or invariants\n- Test-ordering hazards that only appear in a full run\n\nRun this exact command for the full suite:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none\n\nIf the full suite fails, fix the failures and re-run the full command until it exits 0. Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks to make it pass.",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All green. Here's the summary:\n\n**Changes made:**\n\n1. **`RelayQueueController.PrivateHelpers.cs`** \u2014 Added `BuildDrainQueue` static helper that filters out `NeedsReview` tasks from the initial drain queue when `mode == RunAllMode.RestartBetweenTasks`, and writes a `skipped-needs-review` event to the drain log with count and ids. Standard/Sequential modes return all tasks unchanged (preserving 0dc9408's re-attempt behavior).\n\n2. **`RelayQueueController.cs`** line 119 \u2014 Changed `var queue = Tasks.ToList()` to `var queue = BuildDrainQueue(Tasks, mode, RootPath, drainRunId)` to apply the mode-scoped hold at queue-build time.\n\n3. **`RelayQueueControllerRestartTests.cs`** \u2014 Trimmed to 242 lines (under 300-line guard) by extracting the 4 new tests. Retains the updated `StartupContinuation_FreshHandoff_MixedQueue_OnlyPendingRuns` with corrected assertions (flagged task filtered, marker untouched, skip event logged).\n\n4. **`RelayQueueControllerRestartRbtHoldTests.cs`** (new, 219 lines) \u2014 Four new tests:\n   - `RbtDrain_PreFlaggedTask_NotStarted_MarkerUntouched` \u2014 pre-flagged task skipped, marker + state dir untouched, skip event logged\n   - `SequentialDrain_PreFlaggedTask_IsReattempted` \u2014 regression-pin for 0dc9408 in Sequential\n   - `RbtChain_AlwaysFlaggingTask_RunsAtMostOnce` \u2014 always-flagging task runs at most once across RBT chain\n   - `RbtDrain_AfterReset_FlaggedTaskRuns` \u2014 after deleting NEEDS-REVIEW, the task runs again in next cycle\n\n```json\n{ \"summary\": \"Implemented mode-scoped flagged-task hold in RestartBetweenTasks. Added BuildDrainQueue helper in PrivateHelpers.cs that filters NeedsReview tasks from the initial drain queue when mode==RestartBetweenTasks, writing a skipped-needs-review drain-log event. Standard/Sequential modes keep 0dc9408's re-attempt behavior unchanged. Split the 4 new tests into RelayQueueControllerRestartRbtHoldTests.cs to stay under the 300-line guard. Full suite: 3278 pass, 0 fail.\" }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 19,
+    "tool_calls_total": 25,
+    "tool_calls_succeeded": 24,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 7,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 19,
+    "total_llm_time_s": 153.588,
+    "prompt_cache": {
+      "cached_tokens": 512896,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 183.43,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 0,
+      "completed": 0,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.954,
+      "prompt_tokens_est": 8454,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 16412
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7664
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 22283
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 7.157,
+      "prompt_tokens_est": 19488,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "DrainSummaryLog\\.Write",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core",
+        "context_lines": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 4538
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RunAllMode",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 788
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 54
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.698,
+      "prompt_tokens_est": 21171,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 365
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/DrainSummaryLog.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 106,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/DrainSummaryLog.cs\""
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RunAllMode.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 716
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.Restart.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2801
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.455,
+      "prompt_tokens_est": 22380,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DrainSummaryLog",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 109
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.466,
+      "prompt_tokens_est": 22468,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Logging/DrainSummaryLog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1529
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 20.575,
+      "prompt_tokens_est": 22951,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "clear"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 60
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.842,
+      "prompt_tokens_est": 24285,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs 2>&1 | tail -50",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 6.095,
+      "result_length": 4620
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 13.543,
+      "prompt_tokens_est": 25656,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs",
+        "old_string": "    /// <summary>\n    /// Returns tasks from <see cref=\"Tasks\"/> that have not yet been queued in\n    /// this drain and do not need review. Used to discover tasks that were added\n    /// to the controller's collection after the drain started.\n    /// </summary>\n    private static List<RelayTaskItem> CollectNewTasks(\n        IList<RelayTaskItem> tasks,\n        HashSet<string> seenIds)\n    {\n        return tasks.Where(t => !t.NeedsReview && !seenIds.Contains(t.Id)).ToList();\n    }",
+        "new_string": "    /// <summary>\n    /// Returns tasks from <see cref=\"Tasks\"/> that have not yet been queued in\n    /// this drain and do not need review. Used to discover tasks that were added\n    /// to the controller's collection after the drain started.\n    /// </summary>\n    private static List<RelayTaskItem> CollectNewTasks(\n        IList<RelayTaskItem> tasks,\n        HashSet<string> seenIds)\n    {\n        return tasks.Where(t => !t.NeedsReview && !seenIds.Contains(t.Id)).ToList();\n    }\n\n    /// <summary>\n    /// Builds the initial drain queue from the task list. In RestartBetweenTasks\n    /// mode, needs-review tasks are excluded to prevent unbounded re-attempt\n    /// loops; a skip event is written to the drain log. Standard and Sequential\n    /// modes keep the 0dc9408 re-attempt behavior unchanged.\n    /// </summary>\n    private static List<RelayTaskItem> BuildDrainQueue(\n        IList<RelayTaskItem> tasks,\n        RunAllMode mode,\n        string rootPath,\n        string drainRunId)\n    {\n        var all = tasks.ToList();\n        if (mode != RunAllMode.RestartBetweenTasks)\n            return all;\n\n        var flagged = all.Where(t => t.NeedsReview).ToList();\n        if (flagged.Count == 0)\n            return all;\n\n        var ids = string.Join(\", \", flagged.Select(t => t.Id));\n        DrainSummaryLog.Write(rootPath, drainRunId, \"*\", \"drain\",\n            \"skipped-needs-review\", $\"n={flagged.Count} ids={ids}\");\n        return all.Where(t => !t.NeedsReview).ToList();\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 123
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.367,
+      "prompt_tokens_est": 26710,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs",
+        "old_string": "        var queue = Tasks.ToList();",
+        "new_string": "        var queue = BuildDrainQueue(Tasks, mode, RootPath, drainRunId);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 108
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.221,
+      "prompt_tokens_est": 26867,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs 2>&1 | tail -30",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 22.342,
+      "result_length": 1937
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.112,
+      "prompt_tokens_est": 27634,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -40",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 66.286,
+      "result_length": 3972
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 8.122,
+      "prompt_tokens_est": 28836,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*Tests.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 5569
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 6.826,
+      "prompt_tokens_est": 30729,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 22283
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 26.273,
+      "prompt_tokens_est": 36581,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartRbtHoldTests.cs",
+        "content": "using VisualRelay.Core.Queue;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for the RestartBetweenTasks needs-review hold: flagged tasks are\n/// excluded from the drain queue at build time to prevent unbounded\n/// re-attempt loops. Standard and Sequential modes keep the 0dc9408\n/// re-attempt behavior.\n/// </summary>\npublic sealed class RelayQueueControllerRestartRbtHoldTests\n{\n    /// <summary>\n    /// RBT drain with one pre-flagged task + one pending task: the flagged\n    /// task is not started, its NEEDS-REVIEW marker and state dir are\n    /// untouched, and the skip event appears in the drain log.\n    /// Fails today: the flagged task runs when it reaches the queue head.\n    /// </summary>\n    [Fact]\n    public async Task RbtDrain_PreFlaggedTask_NotStarted_MarkerUntouched()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task with a NEEDS-REVIEW marker.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task that should run normally.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        // Only beta has a scripted outcome \u2014 alpha must never be started.\n        var runner = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n\n        // Both tasks are visible in the controller.\n        Assert.Contains(controller.Tasks, t => t.Id == \"alpha\" && t.NeedsReview);\n        Assert.Contains(controller.Tasks, t => t.Id == \"beta\" && !t.NeedsReview);\n\n        var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Only beta ran; alpha must NOT be in TasksRun.\n        Assert.Single(results);\n        Assert.Contains(results, r => r is { TaskId: \"beta\", Status: RelayTaskOutcomeStatus.Committed });\n        Assert.DoesNotContain(\"alpha\", runner.TasksRun);\n\n        // Alpha's NEEDS-REVIEW marker must still exist (untouched).\n        var alphaReviewPath = Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(alphaReviewPath));\n\n        // Alpha's state dir intact.\n        Assert.True(Directory.Exists(Path.Combine(repo.Root, \".relay\", \"alpha\")));\n\n        // Drain log must contain skipped-needs-review event naming alpha.\n        var drainLogs = Directory.GetFiles(Path.Combine(repo.Root, \".relay\"), \"drain-*.log\");\n        Assert.Single(drainLogs);\n        var logContent = File.ReadAllText(drainLogs[0]);\n        Assert.Contains(\"skipped-needs-review\", logContent, StringComparison.Ordinal);\n        Assert.Contains(\"alpha\", logContent, StringComparison.Ordinal);\n    }\n\n    /// <summary>\n    /// Sequential mode: the flagged task IS re-attempted \u2014 regression-pin\n    /// of commit 0dc9408's deliberate re-attempt behavior for\n    /// Standard/Sequential.\n    /// </summary>\n    [Fact]\n    public async Task SequentialDrain_PreFlaggedTask_IsReattempted()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        var runner = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"alpha\", RelayTaskOutcomeStatus.Committed, \"hash-a\", \"sha-a\", null),\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n\n        var results = await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        // Both tasks ran in Sequential \u2014 alpha is re-attempted.\n        Assert.Equal(2, results.Count);\n        Assert.Contains(\"alpha\", runner.TasksRun);\n        Assert.Contains(\"beta\", runner.TasksRun);\n    }\n\n    /// <summary>\n    /// An always-flagging task in an RBT chain runs at most once (the cycle\n    /// where it first flags, if it entered as pending) and never again in\n    /// later cycles. Demonstrates the boundedness guarantee.\n    /// </summary>\n    [Fact]\n    public async Task RbtChain_AlwaysFlaggingTask_RunsAtMostOnce()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // flaky: enters pending but always flags.\n        repo.WriteTask(\"flaky\", \"# Always flags\\n\");\n        // stable: commits cleanly.\n        repo.WriteTask(\"stable\", \"# Stable\\n\");\n\n        // \u2500\u2500 Cycle 1: flaky flags, stable commits \u2192 handoff \u2500\u2500\n        var runner1 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"flaky\", RelayTaskOutcomeStatus.Flagged, null, null, \"always fails\"),\n            new RelayTaskOutcome(\"stable\", RelayTaskOutcomeStatus.Committed, \"hash-s\", \"sha-s\", null));\n\n        var controller1 = new RelayQueueController(repo.Root, runner1);\n        await controller1.RefreshAsync();\n        var results1 = await controller1.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Cycle 1: both tasks ran, flaky flagged, stable committed.\n        Assert.Equal(2, results1.Count);\n        Assert.Contains(\"flaky\", runner1.TasksRun);\n        Assert.Contains(\"stable\", runner1.TasksRun);\n\n        // Flaky now has a NEEDS-REVIEW marker.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"flaky\", \"NEEDS-REVIEW\")));\n\n        // \u2500\u2500 Cycle 2: fresh controller, RefreshAsync, RBT drain \u2500\u2500\n        // Flaky is now flagged; only stable should be available to run.\n        // Script only stable's outcome \u2014 if flaky runs, the test fails on\n        // missing outcome or wrong result count.\n        var runner2 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"stable\", RelayTaskOutcomeStatus.Committed, \"hash-s2\", \"sha-s2\", null));\n\n        var controller2 = new RelayQueueController(repo.Root, runner2);\n        await controller2.RefreshAsync();\n\n        // Flaky must appear in Tasks with NeedsReview=true.\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"flaky\", NeedsReview: true });\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"stable\", NeedsReview: false });\n\n        var results2 = await controller2.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Only stable ran in cycle 2; flaky was filtered.\n        Assert.Single(results2);\n        Assert.Contains(results2, r => r.TaskId == \"stable\");\n        Assert.DoesNotContain(\"flaky\", runner2.TasksRun);\n\n        // Flaky's NEEDS-REVIEW marker still exists.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"flaky\", \"NEEDS-REVIEW\")));\n\n        // Drain log for cycle 2 must contain the skip event.\n        var drainLogs2 = Directory.GetFiles(Path.Combine(repo.Root, \".relay\"), \"drain-*.log\");\n        // We have two drain logs total (one per cycle).\n        Assert.Equal(2, drainLogs2.Length);\n        var logContents = drainLogs2.Select(File.ReadAllText).ToList();\n        // At least one log (cycle 2) must contain skipped-needs-review.\n        Assert.Contains(logContents, l => l.Contains(\"skipped-needs-review\", StringComparison.Ordinal));\n    }\n\n    /// <summary>\n    /// After a task-10 Reset of a flagged task (deleting the NEEDS-REVIEW\n    /// marker and re-adding as Pending), the next RBT cycle runs it.\n    /// The hold applies to flagged state, not the task id.\n    /// </summary>\n    [Fact]\n    public async Task RbtDrain_AfterReset_FlaggedTaskRuns()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task to keep RBT moving.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        // \u2500\u2500 Cycle 1: RBT drain \u2014 alpha skipped (flagged), beta commits \u2500\u2500\n        var runner1 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller1 = new RelayQueueController(repo.Root, runner1);\n        await controller1.RefreshAsync();\n        var results1 = await controller1.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Alpha was not run.\n        Assert.DoesNotContain(\"alpha\", runner1.TasksRun);\n\n        // \u2500\u2500 Simulate task-10 Reset: delete NEEDS-REVIEW, re-add as Pending \u2500\u2500\n        var reviewPath = Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(reviewPath));\n        File.Delete(reviewPath);\n        Assert.False(File.Exists(reviewPath));\n\n        // Now create a fresh controller, RefreshAsync \u2014 alpha should be Pending.\n        // Alpha runs in RBT cycle 2 and commits \u2192 handoff stops drain.\n        // (beta was already committed in cycle 1 but may still appear as\n        // pending because the drain doesn't archive; in RBT alpha commits\n        // first, stopping before beta reaches execution.)\n        var runner2 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"alpha\", RelayTaskOutcomeStatus.Committed, \"hash-a\", \"sha-a\", null));\n\n        var controller2 = new RelayQueueController(repo.Root, runner2);\n        await controller2.RefreshAsync();\n\n        // Alpha is now Pending (no NeedsReview).\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"alpha\", NeedsReview: false });\n\n        var results2 = await controller2.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Alpha runs in cycle 2 (it was reset to pending).\n        Assert.Contains(\"alpha\", runner2.TasksRun);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 137
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 24.962,
+      "prompt_tokens_est": 39362,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs",
+        "old_string": "        Assert.True(RestartHandoff.IsStale(handoff, DateTimeOffset.UtcNow));\n    }\n\n    /// <summary>\n    /// RBT drain with one pre-flagged task + one pending task: the flagged\n    /// task is not started, its NEEDS-REVIEW marker and state dir are\n    /// untouched, and the skip event appears in the drain log.\n    /// Fails today: the flagged task runs when it reaches the queue head.\n    /// </summary>\n    [Fact]\n    public async Task RbtDrain_PreFlaggedTask_NotStarted_MarkerUntouched()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task with a NEEDS-REVIEW marker.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task that should run normally.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        // Only beta has a scripted outcome \u2014 alpha must never be started.\n        var runner = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n\n        // Both tasks are visible in the controller.\n        Assert.Contains(controller.Tasks, t => t.Id == \"alpha\" && t.NeedsReview);\n        Assert.Contains(controller.Tasks, t => t.Id == \"beta\" && !t.NeedsReview);\n\n        var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Only beta ran; alpha must NOT be in TasksRun.\n        Assert.Single(results);\n        Assert.Contains(results, r => r is { TaskId: \"beta\", Status: RelayTaskOutcomeStatus.Committed });\n        Assert.DoesNotContain(\"alpha\", runner.TasksRun);\n\n        // Alpha's NEEDS-REVIEW marker must still exist (untouched).\n        var alphaReviewPath = Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(alphaReviewPath));\n\n        // Alpha's state dir intact.\n        Assert.True(Directory.Exists(Path.Combine(repo.Root, \".relay\", \"alpha\")));\n\n        // Drain log must contain skipped-needs-review event naming alpha.\n        var drainLogs = Directory.GetFiles(Path.Combine(repo.Root, \".relay\"), \"drain-*.log\");\n        Assert.Single(drainLogs);\n        var logContent = File.ReadAllText(drainLogs[0]);\n        Assert.Contains(\"skipped-needs-review\", logContent, StringComparison.Ordinal);\n        Assert.Contains(\"alpha\", logContent, StringComparison.Ordinal);\n    }\n\n    /// <summary>\n    /// Sequential mode: the flagged task IS re-attempted \u2014 regression-pin\n    /// of commit 0dc9408's deliberate re-attempt behavior for\n    /// Standard/Sequential.\n    /// </summary>\n    [Fact]\n    public async Task SequentialDrain_PreFlaggedTask_IsReattempted()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        var runner = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"alpha\", RelayTaskOutcomeStatus.Committed, \"hash-a\", \"sha-a\", null),\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller = new RelayQueueController(repo.Root, runner);\n        await controller.RefreshAsync();\n\n        var results = await controller.DrainAsync(mode: RunAllMode.Sequential);\n\n        // Both tasks ran in Sequential \u2014 alpha is re-attempted.\n        Assert.Equal(2, results.Count);\n        Assert.Contains(\"alpha\", runner.TasksRun);\n        Assert.Contains(\"beta\", runner.TasksRun);\n    }\n\n    /// <summary>\n    /// An always-flagging task in an RBT chain runs at most once (the cycle\n    /// where it first flags, if it entered as pending) and never again in\n    /// later cycles. Demonstrates the boundedness guarantee.\n    /// </summary>\n    [Fact]\n    public async Task RbtChain_AlwaysFlaggingTask_RunsAtMostOnce()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // flaky: enters pending but always flags.\n        repo.WriteTask(\"flaky\", \"# Always flags\\n\");\n        // stable: commits cleanly.\n        repo.WriteTask(\"stable\", \"# Stable\\n\");\n\n        // \u2500\u2500 Cycle 1: flaky flags, stable commits \u2192 handoff \u2500\u2500\n        var runner1 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"flaky\", RelayTaskOutcomeStatus.Flagged, null, null, \"always fails\"),\n            new RelayTaskOutcome(\"stable\", RelayTaskOutcomeStatus.Committed, \"hash-s\", \"sha-s\", null));\n\n        var controller1 = new RelayQueueController(repo.Root, runner1);\n        await controller1.RefreshAsync();\n        var results1 = await controller1.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Cycle 1: both tasks ran, flaky flagged, stable committed.\n        Assert.Equal(2, results1.Count);\n        Assert.Contains(\"flaky\", runner1.TasksRun);\n        Assert.Contains(\"stable\", runner1.TasksRun);\n\n        // Flaky now has a NEEDS-REVIEW marker.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"flaky\", \"NEEDS-REVIEW\")));\n\n        // \u2500\u2500 Cycle 2: fresh controller, RefreshAsync, RBT drain \u2500\u2500\n        // Flaky is now flagged; only stable should be available to run.\n        // Script only stable's outcome \u2014 if flaky runs, the test fails on\n        // missing outcome or wrong result count.\n        var runner2 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"stable\", RelayTaskOutcomeStatus.Committed, \"hash-s2\", \"sha-s2\", null));\n\n        var controller2 = new RelayQueueController(repo.Root, runner2);\n        await controller2.RefreshAsync();\n\n        // Flaky must appear in Tasks with NeedsReview=true.\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"flaky\", NeedsReview: true });\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"stable\", NeedsReview: false });\n\n        var results2 = await controller2.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Only stable ran in cycle 2; flaky was filtered.\n        Assert.Single(results2);\n        Assert.Contains(results2, r => r.TaskId == \"stable\");\n        Assert.DoesNotContain(\"flaky\", runner2.TasksRun);\n\n        // Flaky's NEEDS-REVIEW marker still exists.\n        Assert.True(File.Exists(Path.Combine(repo.Root, \".relay\", \"flaky\", \"NEEDS-REVIEW\")));\n\n        // Drain log for cycle 2 must contain the skip event.\n        var drainLogs2 = Directory.GetFiles(Path.Combine(repo.Root, \".relay\"), \"drain-*.log\");\n        // We have two drain logs total (one per cycle).\n        Assert.Equal(2, drainLogs2.Length);\n        var logContents = drainLogs2.Select(File.ReadAllText).ToList();\n        // At least one log (cycle 2) must contain skipped-needs-review.\n        Assert.Contains(logContents, l => l.Contains(\"skipped-needs-review\", StringComparison.Ordinal));\n    }\n\n    /// <summary>\n    /// After a task-10 Reset of a flagged task (deleting the NEEDS-REVIEW\n    /// marker and re-adding as Pending), the next RBT cycle runs it.\n    /// The hold applies to flagged state, not the task id.\n    /// </summary>\n    [Fact]\n    public async Task RbtDrain_AfterReset_FlaggedTaskRuns()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n\n        // Pre-flagged task.\n        repo.WriteTask(\"alpha\", \"# Flagged\\n\");\n        repo.WriteNeedsReview(\"alpha\", \"test failure\");\n\n        // Pending task to keep RBT moving.\n        repo.WriteTask(\"beta\", \"# Pending\\n\");\n\n        // \u2500\u2500 Cycle 1: RBT drain \u2014 alpha skipped (flagged), beta commits \u2500\u2500\n        var runner1 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"beta\", RelayTaskOutcomeStatus.Committed, \"hash-b\", \"sha-b\", null));\n\n        var controller1 = new RelayQueueController(repo.Root, runner1);\n        await controller1.RefreshAsync();\n        var results1 = await controller1.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Alpha was not run.\n        Assert.DoesNotContain(\"alpha\", runner1.TasksRun);\n\n        // \u2500\u2500 Simulate task-10 Reset: delete NEEDS-REVIEW, re-add as Pending \u2500\u2500\n        var reviewPath = Path.Combine(repo.Root, \".relay\", \"alpha\", \"NEEDS-REVIEW\");\n        Assert.True(File.Exists(reviewPath));\n        File.Delete(reviewPath);\n        Assert.False(File.Exists(reviewPath));\n\n        // Now create a fresh controller, RefreshAsync \u2014 alpha should be Pending.\n        // Alpha runs in RBT cycle 2 and commits \u2192 handoff stops drain.\n        // (beta was already committed in cycle 1 but may still appear as\n        // pending because the drain doesn't archive; in RBT alpha commits\n        // first, stopping before beta reaches execution.)\n        var runner2 = new ScriptedOutcomeTaskRunner(\n            new RelayTaskOutcome(\"alpha\", RelayTaskOutcomeStatus.Committed, \"hash-a\", \"sha-a\", null));\n\n        var controller2 = new RelayQueueController(repo.Root, runner2);\n        await controller2.RefreshAsync();\n\n        // Alpha is now Pending (no NeedsReview).\n        Assert.Contains(controller2.Tasks, t => t is { Id: \"alpha\", NeedsReview: false });\n\n        var results2 = await controller2.DrainAsync(mode: RunAllMode.RestartBetweenTasks);\n\n        // Alpha runs in cycle 2 (it was reset to pending).\n        Assert.Contains(\"alpha\", runner2.TasksRun);\n    }\n}",
+        "new_string": "        Assert.True(RestartHandoff.IsStale(handoff, DateTimeOffset.UtcNow));\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 117
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.906,
+      "prompt_tokens_est": 42025,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs /Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayQueueControllerRestartRbtHoldTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.221,
+      "result_length": 222
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 2.944,
+      "prompt_tokens_est": 42193,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -20",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 82.718,
+      "result_length": 2385
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 3.75,
+      "prompt_tokens_est": 43001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && sh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RelayQueueControllerRestartTests.cs 2>&1 | tail -10",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.62,
+      "result_length": 1082
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 9.414,
+      "prompt_tokens_est": 43444,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

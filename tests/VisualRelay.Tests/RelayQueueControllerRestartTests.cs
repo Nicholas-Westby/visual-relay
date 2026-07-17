@@ -152,8 +152,9 @@ public sealed class RelayQueueControllerRestartTests
         Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "restart-handoff.json")));
 
         // Refresh loads only pending + needs-review (completed is archived).
+        // Beta has a scripted outcome but must never be started — the RBT drain
+        // filters needs-review tasks from the initial queue.
         var runner = new ScriptedOutcomeTaskRunner(
-            new RelayTaskOutcome("beta", RelayTaskOutcomeStatus.Flagged, null, null, "Flagged: test failure"),
             new RelayTaskOutcome("gamma", RelayTaskOutcomeStatus.Committed, "hash-g", "sha-g", null));
 
         var controller = new RelayQueueController(repo.Root, runner);
@@ -166,10 +167,19 @@ public sealed class RelayQueueControllerRestartTests
 
         var results = await controller.DrainAsync(mode: RunAllMode.RestartBetweenTasks);
 
-        // Both tasks are in the queue; needs-review task flags, pending task commits.
-        Assert.Equal(2, results.Count);
-        Assert.Contains(results, r => r is { TaskId: "beta", Status: RelayTaskOutcomeStatus.Flagged });
+        // Only gamma runs; beta (needs-review) is filtered from the drain.
+        Assert.Single(results);
         Assert.Contains(results, r => r is { TaskId: "gamma", Status: RelayTaskOutcomeStatus.Committed });
+        Assert.DoesNotContain("beta", runner.TasksRun);
+
+        // Beta's NEEDS-REVIEW marker must be untouched.
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "beta", "NEEDS-REVIEW")));
+
+        // Drain log must record the skip.
+        var drainLogs = Directory.GetFiles(Path.Combine(repo.Root, ".relay"), "drain-*.log");
+        Assert.Single(drainLogs);
+        var logContent = File.ReadAllText(drainLogs[0]);
+        Assert.Contains("skipped-needs-review", logContent, StringComparison.Ordinal);
     }
 
     /// <summary>

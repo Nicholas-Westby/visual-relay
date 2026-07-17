@@ -121,6 +121,32 @@ public sealed partial class RelayQueueController
     }
 
     /// <summary>
+    /// Builds the initial drain queue from the task list. In RestartBetweenTasks
+    /// mode, needs-review tasks are excluded to prevent unbounded re-attempt
+    /// loops; a skip event is written to the drain log. Standard and Sequential
+    /// modes keep the 0dc9408 re-attempt behavior unchanged.
+    /// </summary>
+    private static List<RelayTaskItem> BuildDrainQueue(
+        IList<RelayTaskItem> tasks,
+        RunAllMode mode,
+        string rootPath,
+        string drainRunId)
+    {
+        var all = tasks.ToList();
+        if (mode != RunAllMode.RestartBetweenTasks)
+            return all;
+
+        var flagged = all.Where(t => t.NeedsReview).ToList();
+        if (flagged.Count == 0)
+            return all;
+
+        var ids = string.Join(", ", flagged.Select(t => t.Id));
+        DrainSummaryLog.Write(rootPath, drainRunId, "*", "drain",
+            "skipped-needs-review", $"n={flagged.Count} ids={ids}");
+        return all.Where(t => !t.NeedsReview).ToList();
+    }
+
+    /// <summary>
     /// Merges newly-discovered tasks into the current execution queue, preserving
     /// the existing queue's relative order while inserting new tasks at their
     /// position in <paramref name="tasks"/> (honouring any user reorder). New
