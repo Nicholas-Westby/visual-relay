@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T07:11:59.864539+00:00",
+  "task": "# Relay stage 4: Plan\nTask: virtualize-backend-lifecycle-test-loops\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Virtualize BackendLifecycle test pump loops\n\nTwo `BackendLifecycleStatusTests` tests use a `while (!task.IsCompleted)` pump\nloop that advances virtual time in 1-second steps with `Task.Yield()` between\neach \u2014 the same pattern that was removed from the watchdog\n`WaitAsync_BurstThenTotalSilence` test. The `ManualTimeProvider` already fires\ntimers synchronously on `Advance`, so the yield between steps is wasted real\ntime.\n\n## Measured cost\n\nFrom the baseline:\n- `BackendLifecycleStatusTests.Start_RemovesLegacyRepoLocalState` \u2014 33.2 s\n- `BackendLifecycleStatusTests.Start_MissingToolchain_LogsRemediation_Exit1` \u2014 10.8 s\n\nTogether they contribute ~44 s to the wall-time tail under the 2.0\u00d7 parallelism\nbudget. These two are the biggest non-pipeline, non-guard tests.\n\n(See `llm-tasks/completed/speed-up-automated-tests-july-17/timings-baseline.txt`.)\n\n## Prescribed approach\n\nBoth tests follow an identical structure:\n\n```csharp\nvar task = lifecycle.StartAsync(timeProvider: time);\nwhile (!task.IsCompleted)\n{\n    time.Advance(TimeSpan.FromSeconds(1));\n    await Task.Yield();\n}\nawait task;\n```\n\nReplace with a single large advance past the `ReadyTimeout` plus a few\n`await Task.Delay(1)` ticks for the async state machine \u2014 the exact same\ntwo-phase fix applied to `WaitAsync_BurstThenTotalSilence`:\n\n```csharp\nvar task = lifecycle.StartAsync(timeProvider: time);\n\n// Advance time well past the ReadyTimeout (50 ms in the test).\n// ManualTimeProvider fires the internal Task.Delay(1s, timeProvider)\n// synchronously during Advance, so the poll loop exits instantly.\ntime.Advance(TimeSpan.FromSeconds(10));\n\n// Pump the async state machine: at most 5 real-time ticks.\nfor (var i = 0; i < 5 && !task.IsCompleted; i++)\n    await Task.Delay(1);\n\nawait task;\n```\n\n### Steps\n\n1. Open `tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs`.\n2. In `Start_RemovesLegacyRepoLocalState` (line ~128\u2013134): replace the\n   `while`/`Advance`/`Yield` pump with the two-phase pattern above.\n3. In `Start_MissingToolchain_LogsRemediation_Exit1` (line ~159\u2013163): same\n   replacement.\n4. Run the full suite to green. Expected: same assertions pass, each test\n   drops from 10\u201333 s to well under 50 ms.\n\n### Guardrails\n- The `ReadyTimeout` is set to 50 ms in both tests \u2014 advancing 10 s is more\n  than enough.\n- `ManualTimeProvider.Advance` fires `Task.Delay(timeout, timeProvider)` timers\n  synchronously; `PollReadinessAsync` calls `Task.Delay(1s, timeProvider)`.\n- Coverage rules: no assertion changes, no deletions, no weakenings.\n\n## Expected savings\n\nPer test: ~33 s \u2192 0.05 s, ~11 s \u2192 0.05 s (99.9 % reduction each). Wall-time\nsaving: ~44 s tail removed.\n\n## Commit-message evidence\n\nMeasure before and after while implementing, then put one filled-in evidence\nbullet in the commit message body, following the attached\n`commit-message-evidence.md`. Never pre-fill that bullet \u2014 numbers are measured\nat implementation time and go into the eventual commit message, nowhere else.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Replace while-loop pump with two-phase advance+pump in two BackendLifecycleStatusTests, cutting ~44s of wall-clock tail. Three options vary from minimal (option 2) to proven (option 1) to extracted-helper (option 3). All preserve assertions and differ only in the pump mechanism.\",\n  \"options\": [\n    \"Prescribed two-phase pattern (Advance(10s) + 5\u00d7 Delay(1) loop) \u2014 identical to WaitAsync_BurstThenTotalSilence fix; known-working, matches convention.\",\n    \"Single Advance(10s) + single await Task.Delay(1) \u2014 simplest possible, relies on ManualTimeProvider firing timers synchronously in one tick.\",\n    \"Extract a static PumpUntilCompleted helper \u2014 centralizes the pattern, avoids duplication across tests, but adds a helper method boundary.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The file `tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs` (276 lines, checksum 31b59e15) contains two tests with the `while (!task.IsCompleted)` / `Advance(1s)` / `Task.Yield()` pump loop:\\n\\n1. **`Start_RemovesLegacyRepoLocalState`** (lines 108\u2013140, pump at lines 129\u2013133): Creates legacy `.venv` and `.relay-scratch` dirs under a temp repo root, sets `ReadyTimeout = 50ms`, then starts the lifecycle with `healthy: false` (no health-check server). The pump wastes ~33s wall-clock in the baseline.\\n\\n2. **`Start_MissingToolchain_LogsRemediation_Exit1`** (lines 144\u2013170, pump at lines 159\u2013163): Passes a null venv result (no toolchain), `ReadyTimeout = 50ms`, `healthCheck: false`. The pump wastes ~11s wall-clock in the baseline.\\n\\nBoth call `lifecycle.StartAsync(timeProvider: time)` where `time` is a `ManualTimeProvider`. The internal `PollReadinessAsync` (src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs lines 153\u2013191) loops with `await Task.Delay(TimeSpan.FromSeconds(1), timeProvider, cancellationToken)`. Since `ManualTimeProvider.Advance` fires all due timers synchronously on the calling thread (ManualTimeProvider.cs lines 35\u201356), each iteration's 1s delay resolves instantly during `Advance` \u2014 the `Task.Yield()` between iterations is pure real-time overhead.\\n\\nThe same two-phase pattern (single large advance + tight yield pump) was already applied to `WaitAsync_BurstThenTotalSilence` in ActivityWatchdogDecisionTests.WaitAsync.cs (lines 235\u2013237):\\n```csharp\\ntime.Advance(TimeSpan.FromMilliseconds(inactivityTimeoutMs + 200));\\nfor (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)\\n    await Task.Yield();\\n```\\n\\nBaseline timings (from timings-baseline.txt):\\n- `Start_RemovesLegacyRepoLocalState`: 00:00:33.2287240\\n- `Start_MissingToolchain_LogsRemediation_Exit1`: 00:00:10.8152443 (matching the ~10.8s cited in the task; the second test listed at line 130 is a different test, `ControlApiState_AfterFailedSetupCheck`)\\n\\nBoth tests set `ReadyTimeout = 50ms`. Advancing by 10s (200\u00d7 the timeout) is more than sufficient. The task prescribes replacing with `time.Advance(TimeSpan.FromSeconds(10))` + a `for (var i = 0; i < 5 && !task.IsCompleted; i++) await Task.Yield()` pump, identical in spirit to the watchdog fix.\\n\\nNo other files need changes. Similar pump loops exist in `BackendLifecycleStalenessCheckTests.cs`, `BackendSpawnTests.cs`, `GitCommitterResilienceTests.cs`, and `GitCommitterHookRejectionTests.cs` but those are outside the task scope.\\n\\nThe task guardrails are: no assertion changes, no deletions, no weakenings. The commit message body must carry exactly one evidence bullet with measured before/after numbers, following commit-message-evidence.md.\",\n  \"constraints\": [\n    \"Only edit `tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs` \u2014 no other files\",\n    \"Modify exactly two tests: `Start_RemovesLegacyRepoLocalState` and `Start_MissingToolchain_LogsRemediation_Exit1`\",\n    \"Replace the `while (!task.IsCompleted)` / `Advance(1s)` / `Task.Yield()` pump with the two-phase pattern: `time.Advance(TimeSpan.FromSeconds(10))` then `for (var i = 0; i < 5 && !task.IsCompleted; i++) await Task.Yield()`\",\n    \"Preserve all assertions exactly \u2014 no additions, deletions, or weakenings\",\n    \"Preserve the `await task;` call after the pump in both tests\",\n    \"The evidence bullet in the commit message must be filled with real measurements taken on this machine at implementation time (before and after), not copied from the task description\",\n    \"Exactly one evidence bullet per commit, at most 3 body bullets total, each \u226420 words\",\n    \"The `ReadyTimeout` of 50ms is already set in both tests \u2014 advancing 10s is more than sufficient\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"Cannot measure: tooling sandbox lacks dotnet/shell. The expected evidence bullet is: '- test time dropped from ~44s to ~0.1s, saving ~44s (BackendLifecycleStatusTests file total)' \u2014 fill with real numbers from `./visual-relay test BackendLifecycleStatusTests` before and after.\",\n  \"excerpts\": [\n    \"Start_RemovesLegacyRepoLocalState (line 128-139): replaced `while (!task.IsCompleted) { time.Advance(1s); await Task.Yield(); } await task;` with `time.Advance(10s); for (var i = 0; i < 5 && !task.IsCompleted; i++) await Task.Delay(1); await task;`\",\n    \"Start_MissingToolchain_LogsRemediation_Exit1 (line 162-174): same `while`/`Advance`/`Yield` \u2192 `Advance(10s)` + `for`/`Delay(1)` pump replacement\"\n  ],\n  \"repro\": \"cd /Volumes/Tera/dev/visual-relay && NO_BUILD=1 time ./visual-relay test 'BackendLifecycleStatusTests.Start_RemovesLegacyRepoLocalState|BackendLifecycleStatusTests.Start_MissingToolchain_LogsRemediation_Exit1'\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "The diff confirms both pump-loop replacements have already been applied in the working tree \u2014 the exact two-phase pattern from the task prescription. The plan below accounts for what remains: verifying the changes pass and measuring the real speedup for the commit-message evidence bullet.\n\n**Plan:**\n\n1. **Verify the existing diff** \u2014 `git diff tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs` shows both `while (!task.IsCompleted)` / `Advance(1s)` / `Task.Yield()` loops have been replaced with `time.Advance(TimeSpan.FromSeconds(10))` + `for (var i = 0; i < 5 && !task.IsCompleted; i++) await Task.Delay(1)`. Comments document the ManualTimeProvider synchronous-timer guarantee. All assertions are untouched. No other files changed.\n\n2. **Measure baseline** \u2014 run the two targeted tests with the *current committed* (pre-fix) code to get a real `<before>` wall-time number on this machine. Command: `./visual-relay test 'BackendLifecycleStatusTests.Start_RemovesLegacyRepoLocalState|BackendLifecycleStatusTests.Start_MissingToolchain_LogsRemediation_Exit1'` after stashing or checking out the committed version.\n\n3. **Run the fixed version** \u2014 same command with the working-tree changes applied. Confirm both tests pass green with identical assertions, and capture the `<after>` wall time.\n\n4. **Run full `BackendLifecycleStatusTests` class** to ensure no regressions in the other tests (`Status_*`, `Stop_*`, `Start_AlreadyHealthy_NoOp_Exit0`, `Start_LoadsUserLevelKeys_ButNotRepoRootKeys`).\n\n5. **Fill the evidence bullet** \u2014 using the measured before/after numbers, produce exactly one bullet of the form: `- test time dropped from <before> to <after>, saving <delta> (BackendLifecycleStatusTests file total)` for the eventual commit message body.\n\n```json\n{\n  \"plan\": \"Both pump loops in BackendLifecycleStatusTests.cs are already replaced with the two-phase Advance(10s) + 5-tick Delay(1) pump in the working tree (uncommitted, diff confirmed). Remaining work: (1) measure before-time from the committed version for the evidence bullet, (2) run the fixed tests to confirm green + capture after-time, (3) run the full class for regression safety, (4) fill the commit-message evidence bullet with real numbers. No new code changes needed.\",\n  \"manifest\": [\n    \"tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 4,
+    "tool_calls_total": 4,
+    "tool_calls_succeeded": 4,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 4,
+    "total_llm_time_s": 25.4,
+    "prompt_cache": {
+      "cached_tokens": 28544,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.169,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.669,
+      "prompt_tokens_est": 6458,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12600
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 7.772,
+      "prompt_tokens_est": 9664,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "diff",
+          "--name-only"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.065,
+      "result_length": 55
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "log",
+          "--oneline",
+          "-5"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.051,
+      "result_length": 344
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.852,
+      "prompt_tokens_est": 10417,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "git",
+          "diff",
+          "tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.053,
+      "result_length": 2086
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 11.106,
+      "prompt_tokens_est": 11006,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

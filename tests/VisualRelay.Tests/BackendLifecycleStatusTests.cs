@@ -33,7 +33,8 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
     private BackendLifecycle Lifecycle(
         bool healthy,
         BackendStartOptions? options = null,
-        List<string>? log = null)
+        List<string>? log = null,
+        Func<BackendPaths, Action<string>, BackendVenv.Result>? ensureVenv = null)
     {
         var paths = Paths();
         Directory.CreateDirectory(paths.Scratch);
@@ -42,7 +43,8 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
             options ?? new BackendStartOptions(),
             log is null ? _ => { }
         : log.Add,
-            healthCheck: _ => Task.FromResult(healthy));
+            healthCheck: _ => Task.FromResult(healthy),
+            ensureVenv: ensureVenv);
     }
 
     // ── Status ───────────────────────────────────────────────────────────
@@ -120,17 +122,22 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
             RepoRoot = repoRoot,
             ReadyTimeout = TimeSpan.FromMilliseconds(50),
         };
-        // Unhealthy + no toolchain (HOME-only env, empty PATH lookups via the real
-        // venv probe which fails) => start returns down quickly, but legacy
-        // cleanup runs first.
-        var lifecycle = Lifecycle(healthy: false, options: options, log: log);
+        // Unhealthy + injected no-toolchain (skips real venv probe) => start
+        // returns down quickly, but legacy cleanup runs first.
+        var lifecycle = Lifecycle(healthy: false, options: options, log: log,
+            ensureVenv: (_, _) => new BackendVenv.Result(null));
         var time = new ManualTimeProvider();
         var task = lifecycle.StartAsync(timeProvider: time);
-        while (!task.IsCompleted)
-        {
-            time.Advance(TimeSpan.FromSeconds(1));
+
+        // Advance time well past the ReadyTimeout (50 ms).
+        // ManualTimeProvider fires the internal Task.Delay(1s, timeProvider)
+        // synchronously during Advance, so the poll loop exits instantly.
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        // Pump the async state machine: at most 5 real-time ticks.
+        for (var i = 0; i < 5 && !task.IsCompleted; i++)
             await Task.Yield();
-        }
+
         await task;
 
         Assert.False(Directory.Exists(legacyVenv));
@@ -156,11 +163,16 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
 
         var time = new ManualTimeProvider();
         var task = lifecycle.StartAsync(timeProvider: time);
-        while (!task.IsCompleted)
-        {
-            time.Advance(TimeSpan.FromSeconds(1));
+
+        // Advance time well past the ReadyTimeout (50 ms).
+        // ManualTimeProvider fires the internal Task.Delay(1s, timeProvider)
+        // synchronously during Advance, so the poll loop exits instantly.
+        time.Advance(TimeSpan.FromSeconds(10));
+
+        // Pump the async state machine: at most 5 real-time ticks.
+        for (var i = 0; i < 5 && !task.IsCompleted; i++)
             await Task.Yield();
-        }
+
         var result = await task;
 
         Assert.Equal(1, result.ExitCode);
