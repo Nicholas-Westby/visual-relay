@@ -56,6 +56,34 @@ public sealed partial class RelayDriver
         return mismatch;
     }
 
+    /// <summary>
+    /// Non-resume guard: when a fresh (non-resume) run finds an all-Done
+    /// <c>status.json</c> left over from a prior completed same-name task,
+    /// and the task content hash differs from what was previously recorded,
+    /// archives the stale state and resets for a fresh run. Returns true
+    /// when stale state was detected and archived.
+    /// </summary>
+    private static bool DetectStaleCompletedState(
+        string rootPath, string taskId, string taskDirectory, string runId,
+        string currentMarkdown, StringBuilder ledger, List<string> manifest,
+        List<string> seals, ref string previousSeal, ref string taskHash,
+        ref double sessionCostUsd, ref int unknownCostStageCount,
+        List<StageStatusEntry> statusEntries, ref int firstStageToRun)
+    {
+        var existing = StageStatusRecord.Read(taskDirectory);
+        if (existing.Count == 0 || !existing.All(e => StageStatusIsComplete(e.Status)))
+            return false;
+        var currentHash = Hashing.Sha256Hex(currentMarkdown);
+        var priorHash = existing.Select(e => e.TaskInputHash).FirstOrDefault(h => h is not null);
+        if (priorHash is null || string.Equals(currentHash, priorHash, StringComparison.Ordinal))
+            return false;
+        ArchivePriorRunState(rootPath, taskId, taskDirectory, runId,
+            ledger, manifest, seals, out previousSeal, out taskHash,
+            out sessionCostUsd, out unknownCostStageCount,
+            statusEntries, out firstStageToRun);
+        return true;
+    }
+
     private static void StampTaskInputHash(List<StageStatusEntry> entries, string hash)
     {
         for (int i = 0; i < entries.Count; i++)

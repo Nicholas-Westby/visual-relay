@@ -1,0 +1,2199 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T04:07:54.800825+00:00",
+  "task": "# Relay stage 6: Implement\nTask: avoid-confusing-tasks-with-identical-names\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Avoid confusing tasks with identical names\n\nI created the \"speed-up-automated-tests\" task from a template again. It then showed all stages complete. This was likely because a task with the same name was already completed. I've since deleted the duplicate and created a new one with a unique name as a workaround.\n\nIt should be possible to create tasks with the same name later on and not have it confused with a completed task.\n\nCare should also be taken not to overwrite them. Up to you to decide how, but one idea would be to move completed tasks into a GUID subfolder on completion to avoid collisions.\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\ntests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs\ntests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"When a task completes, its folder lands in `llm-tasks/completed/<name>/`. Creating a new task `llm-tasks/<name>/` (same name) later causes the system to find the completed one and show all stages done \u2014 because name-based lookup treats both as the same task. The user's workaround was using a unique name suffix. The fix needs to decouple completion state from folder name so that same-name tasks created at different times are treated as independent.\",\n  \"options\": [\n    \"Option A: GUID-prefix completed folders \u2014 When a task completes and is moved to `llm-tasks/completed/`, rename its folder to `llm-tasks/completed/<guid>-<name>/` (e.g., `a1b2c3d4-speed-up-automated-tests/`). Task lookup by name won't match the prefixed folder, so creating `llm-tasks/speed-up-automated-tests/` again starts fresh. Simple and contained to the completion/archival logic \u2014 no changes to task file format or template. Downside: completed folder names are less human-readable at a glance.\",\n    \"Option B: Content-hash based identity \u2014 When checking if a task is already done, compute a hash of the task `.md` file and compare against stored hashes of completed tasks (or the `.relay/` state). Same name but different content = new task. This aligns with the existing \\\"re-added task\\\" detection pattern (seen in `RelayDriverResumeTests.ReAdd.cs`). More precise but requires hash storage and comparison logic.\",\n    \"Option C: UUID-based task identity in markdown front matter \u2014 Add a `task-id` or `uuid` field (e.g., YAML front-matter or a UUID embedded in the first line) to every task `.md` file at creation time. Track completion by UUID, not folder name. A new template instantiation generates a fresh UUID, making same-name tasks fully independent. Most robust \u2014 no namespace collision possible \u2014 but requires changes to task templates, creation logic, and all downstream lookups.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"**Problem mechanism**: When a task completes, the system archives its markdown to `llm-tasks/completed/<name>/DONE-<name>.md` but **never cleans the `.relay/<name>/` directory**. The stale `status.json` and stage reports persist on disk. When a user later creates a new task with the same name, four independent code paths independently treat the new task as already complete:\\n\\n1. **`RelayTaskWriter.ValidateSlug`** (line 58\u201367 of `RelayTaskWriter.cs`) \u2014 only checks for active collisions under `llm-tasks/<slug>.md` and `llm-tasks/<slug>/`. A completed task lives at `llm-tasks/completed/<slug>/...`, so validation passes and creation succeeds.\\n\\n2. **`RelayTaskRepository.AttachRunMetrics`** (line 243\u2013256 of `RelayTaskRepository.cs`) \u2014 reads `RelayRunHistory.ReadTaskMetric(RootPath, task.Id)` which reads `.relay/<taskId>/stage*-attempt*.report.json`. The old reports make the task appear with `CompletedStageCount > 0`, `DurationSeconds`, and `CostUsd` from the prior run.\\n\\n3. **`RelayQueueController.StagesOneThroughFourAreDone`** (line 10\u201314 of `RelayQueueController.PrivateHelpers.cs`) \u2014 reads `StageStatusRecord.Read(.relay/<taskId>/status.json)`. If the prior run's status shows all stages Done, planning (stages 1\u20134) is entirely skipped.\\n\\n4. **`RelayDriver.LoadResumeState`** (line 23\u201388 of `RelayDriver.Resume.cs`) \u2014 when `_options.Resume` is true, reads the stale status.json and sets `firstStageToRun` past all stages, causing the pipeline to show everything complete without running anything.\\n\\n**Existing re-add detection** (`DetectReAddAndArchive` in `RelayDriver.ReAdd.cs`) already handles the case where content changes between runs \u2014 it compares SHA-256 hashes and archives the stale `.relay/` state. But it **only fires on resume** (`_options.Resume == true`), and a fresh non-resume run skips it entirely (line 51\u201355 of `RelayDriver.cs`).\\n\\n**Concrete evidence**: `llm-tasks/completed/speed-up-automated-tests/` contains `DONE-speed-up-automated-tests.md`. The user created a new task with slug `speed-up-automated-tests` \u2014 validation passed because neither `llm-tasks/speed-up-automated-tests.md` nor `llm-tasks/speed-up-automated-tests/` existed. But `.relay/speed-up-automated-tests/` still carried the prior run's 12-stage Done status.\\n\\n**Secondary issue**: `ListCompletedAsync` (line 45\u2013141 of `RelayTaskRepository.cs`) scans `llm-tasks/completed/` and finds the old `DONE-speed-up-automated-tests.md`, surfacing it with id `speed-up-automated-tests`. This means the completed list can show both the old task AND the new active task under the same id \u2014 a data-model identity collision.\",\n  \"constraints\": [\n    \"The `.relay/<taskId>/` directory must be preserved for flagged-task post-mortem, forensic replay, and resume of in-progress runs \u2014 so simply deleting it on completion breaks legitimate use cases.\",\n    \"Any solution must work whether `ArchiveOnDone` is true or false (the config flag governs whether task markdown moves to `completed/` or stays in place renamed to `DONE-`).\",\n    \"Backward compatibility with existing completed tasks (currently at `llm-tasks/completed/<name>/...`) is required \u2014 the fix cannot break the archive structure already on disk.\",\n    \"The task .md file format is user-facing and templated \u2014 changes like adding UUID front-matter would require updates to embedded templates (`TaskTemplates.cs`), repo-level templates, and user-level templates in `~/.config/visual-relay/templates/`.\",\n    \"Re-add detection already exists via content hashing (`DetectReAddAndArchive`) but only fires on resume \u2014 any fix should integrate with or leverage this existing mechanism rather than inventing a new parallel system.\",\n    \"The lock-acquisition/active-task guard (`ActiveTaskLock.AcquireAsync` at `RelayDriver.cs` line 32) uses taskId as the lock key, so two tasks with the same id would contend \u2014 but that's a runtime safety net, not the fix.\",\n    \"Test coverage exists for `AttachRunMetrics` and `ListCompletedAsync` (in `RelayTaskRepositoryTests.cs`) and for `DetectReAddAndArchive` (in `RelayDriverResumeReAddTests.cs`), providing a good foundation to verify any changes.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"When a task completes, TaskCompletionArchive.RetireAsync moves the markdown to llm-tasks/completed/<name>/DONE-<name>.md but never cleans .relay/<name>/. The stale .relay/<name>/status.json (all 12 stages Done), stage report files, seals, and ledger persist on disk indefinitely. On-disk proof: .relay/speed-up-automated-tests/status.json still has all stages Done (lines 1-157) while llm-tasks/completed/speed-up-automated-tests/DONE-speed-up-automated-tests.md is the archived markdown. Creating a new task with the same slug passes ValidateSlug (RelayTaskWriter.cs:58-67) because it only checks llm-tasks/<slug>/ (doesn't exist) and llm-tasks/<slug>.md (doesn't exist). Then four code paths independently treat the new task as complete: (1) AttachRunMetrics (RelayTaskRepository.cs:243-256) reads stale report.json files via RelayRunHistory.ReadTaskMetric, showing CompletedStageCount=12, cost, and duration; (2) StagesOneThroughFourAreDone (RelayQueueController.PrivateHelpers.cs:10-14) reads stale status.json and skips planning; (3) LoadResumeState (RelayDriver.Resume.cs:23-88) on resume reads stale status.json, sets firstStageToRun past all stages; (4) DetectReAddAndArchive (RelayDriver.ReAdd.cs:16-57) is gated on _options.Resume==true and doesn't fire on fresh non-resume runs at all (RelayDriver.cs:55). No code anywhere cleans .relay/<taskId>/ on normal completion.\",\n  \"excerpts\": [\n    \"RelayTaskWriter.cs:58-67 \u2014 ValidateSlug only checks llm-tasks/<slug>.md and llm-tasks/<slug>/ for collisions; completed tasks at llm-tasks/completed/<slug>/... are invisible to this check, so same-name re-creation passes validation\",\n    \"RelayTaskRepository.cs:243-256 \u2014 AttachRunMetrics calls RelayRunHistory.ReadTaskMetric(RootPath, task.Id) which enumerates .relay/<id>/stage*-attempt*.report.json; stale reports from the prior completed run produce CompletedStageCount, DurationSeconds, and CostUsd on the new task\",\n    \"RelayQueueController.PrivateHelpers.cs:10-14 \u2014 StagesOneThroughFourAreDone reads StageStatusRecord.Read(.relay/<taskId>/status.json); stale status.json with all 'Done' entries causes planning to be skipped for the new task\",\n    \"RelayDriver.Resume.cs:23-88 \u2014 LoadResumeState reads stale status.json, finds all stages Done/Stopped via StageStatusIsComplete, and sets firstStageToRun = 13; the stage loop then iterates zero times\",\n    \"RelayDriver.cs:55 \u2014 isReAdded detection gates on _options.Resume && firstStageToRun > RelayStages.All.Count, so on a fresh (non-resume) run, DetectReAddAndArchive never fires and stale .relay state is never detected or archived\",\n    \"RelayDriver.ReAdd.cs:16-57 \u2014 DetectReAddAndArchive compares SHA-256 hashes but only fires on resume; when task content hasn't changed, hashes match and even resume would skip archiving\",\n    \"TaskCompletionArchive.cs:20-23 \u2014 RetireAsync only does best-effort FlaggedWorkStore.Delete (which removes flagged-work snapshots, not status.json or stage reports) \u2014 the .relay/<taskId>/ directory itself is never deleted or moved on completion\",\n    \"RelayRunHistory.cs:13-30 \u2014 ReadTaskMetric reads from .relay/<taskId>/stage*-attempt*.report.json without any awareness of whether the task is currently active or completed\",\n    \".relay/speed-up-automated-tests/status.json \u2014 on-disk proof: all 12 stages marked 'Done' with taskInputHash intact, yet llm-tasks/completed/speed-up-automated-tests/DONE-speed-up-automated-tests.md is the archived markdown (no active task at llm-tasks/speed-up-automated-tests/)\"\n  ],\n  \"repro\": \"1. Create and run a task to full completion (all 12 stages Done). This archives the markdown to llm-tasks/completed/<name>/DONE-<name>.md but leaves .relay/<name>/status.json and all stage reports intact.\\n2. Create a new task with the same title/slug. ValidateSlug passes because llm-tasks/<name>/ doesn't exist.\\n3. Observe the queue card shows CompletedStageCount=12, DurationSeconds, CostUsd from the prior run (via AttachRunMetrics reading stale .relay/ reports).\\n4. Start a drain. StagesOneThroughFourAreDone returns true (reads stale status.json) \u2192 planning (stages 1-4) is skipped.\\n5. On a non-resume run, the pipeline enters stages 5+ directly; on a resume run, LoadResumeState sets firstStageToRun past all stages and everything appears complete with no work done.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Root cause\\nWhen a task completes, `ExecuteCommitStageAsync` archives the markdown to `llm-tasks/completed/<name>/DONE-<name>.md` but **never cleans `.relay/<name>/`**. Four independent code paths then read the stale `status.json` / stage reports and treat a new same-name task as already complete:\\n- `RelayTaskRepository.AttachRunMetrics` (line 243\u2013256) reads stale report.json files\\n- `StagesOneThroughFourAreDone` (PrivateHelpers.cs:10\u201314) reads stale status.json and skips planning  \\n- `LoadResumeState` (Resume.cs:23\u201388) reads stale status.json and sets `firstStageToRun` past all stages\\n- `DetectReAddAndArchive` (ReAdd.cs:16\u201357) only fires on `_options.Resume` and never on fresh runs\\n\\nThe fix has two parts: (A) cleanup `.relay/<taskId>/` on completion so stale state never lingers, and (B) a non-resume guard in the driver that detects and archives existing stale state so pre-fix installations are self-healing.\\n\\n## Changes\\n\\n### 1. `src/VisualRelay.Core/Execution/RelayDriver.cs` \u2014 non-resume stale-state guard\\n\\nAfter the `FailIfTaskInputMissingAsync` check (line 54) and before the existing `isReAdded` line (line 55), insert a block that reads `StageStatusRecord.Read(taskDirectory)`. When all stages are Done/Stopped (using the existing `StageStatusIsComplete` helper) and `_options.Resume` is false, call `ArchivePriorRunState` to move the stale `.relay/<taskId>/` to a dated archive, reset all in-memory state, and set `firstStageToRun = 1`. Set a local `isReAdded = true` flag.\\n\\nThen refactor line 55 so the existing resume-only `DetectReAddAndArchive` only fires when `!isReAdded` (the non-resume guard already handled it). Move `var isReAdded` declaration up before the new guard so both paths can set it.\\n\\nThe `isReAdded` flag is already consumed downstream at line 62\u201363 (the `run_start` event's `\\\"fresh\\\"` data key and the `forceFresh` parameter on `CapturePreRunUntrackedAsync`), so no downstream changes needed.\\n\\n### 2. `src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs` \u2014 cleanup on completion\\n\\nIn `ExecuteCommitStageAsync`, after a successful commit (after the `task_archived`/`task_done` event publish at line 263\u2013272 for the real-commit path, and after the simulated path at line 274\u2013278), move `taskDirectory` (`.relay/<taskId>/`) to `.relay/completed/<taskId>-<runId>/` using `Directory.Move`. Use a collision-avoidance loop (suffix `-2`, `-3`, etc.) matching the existing pattern in `ArchivePriorRunState` (ReAdd.cs:102\u2013106). Remove the standalone `FlaggedWorkStore.Delete(taskDirectory)` at line 281 since the directory is now moved.\\n\\nThe `completed/` subfolder under `.relay/` is excluded from task discovery (the `RelayRunHistory.ReadTaskMetric` only reads `.relay/<taskId>/stage*-attempt*.report.json` \u2014 it won't recurse into `.relay/completed/`).\\n\\n### 3. `tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs` \u2014 add test for completion cleanup\\n\\nAdd a test that runs a happy path and asserts:\\n- `.relay/<taskId>/` no longer exists at the original path\\n- `.relay/completed/<taskId>-<drain-or-run-id>/` exists and contains `status.json`, seals, ledger, manifest\\n\\n### 4. `+tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs` \u2014 new test file\\n\\nAdd a test that:\\n- Creates a task, runs happy-path to completion (populates `.relay/`)\\n- Deletes the archived markdown, recreates a fresh task with the same slug\\n- Runs `RunTaskAsync` with `Resume: false`\\n- Asserts: archive dir created, fresh `status.json` has stage 1 \\\"Waiting\\\", `run_start` event contains `\\\"fresh\\\"` data key\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs\",\n    \"+tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs\"\n  ]\n}\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs\"\n  ],\n  \"rationale\": \"Three new tests added across two files. In RelayDriverResumeReAddTests.cs: RunTaskAsync_Completion_MovesRelayDirToCompleted verifies that after a happy-path completion, .relay/<taskId>/ is moved to .relay/completed/<taskId>-<runId>/ with status.json, seals, ledger, and manifest intact. In the new RelayDriverNonResumeStaleStateTests.cs: RunTaskAsync_NonResume_StaleAllDoneState_ArchivesAndRunsFresh simulates the user re-creating a task with the same slug after a prior completion \u2014 asserts the stale all-Done .relay/ state is archived and a fresh run starts from stage 1 with a 'fresh' run_start event. RunTaskAsync_Completion_CleansRelayDirSoSameNameStartsFresh is an end-to-end test: completes task \u2192 cleanup moves .relay/ \u2192 same-name task re-created \u2192 resume run starts fresh without stale-state interference. All 3 new tests fail as expected (the targeted behavior isn't implemented yet); the 2 existing ReAdd tests continue to pass.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\nsh tools/dotnet-test-files.sh tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs\n\n## Before you declare done\nOnce the targeted command above passes, run the project's FULL test suite ONCE to catch cross-cutting checks the targeted run cannot surface:\n- Project-wide guards (size budgets, perf ceilings, assertion ratchets)\n- Lint / style / format gates\n- Tests that enforce special standards or invariants\n- Test-ordering hazards that only appear in a full run\n\nRun this exact command for the full suite:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none\n\nIf the full suite fails, fix the failures and re-run the full command until it exits 0. Only then is the change complete. Do NOT weaken assertions, delete tests, or skip hooks to make it pass.",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"summary\": \"Implemented a non-resume stale-state guard in RelayDriver.cs/ReAdd.cs that detects when a fresh (non-resume) run finds an all-Done .relay/<taskId>/status.json left over from a prior completed same-name task. The guard compares SHA-256 content hashes via TaskInputHash \u2014 when the hashes differ (different task content), it archives the stale state and runs fresh from stage 1. When hashes match (same task re-run), it leaves state intact. The existing resume-only DetectReAddAndArchive path is unchanged. Added DetectStaleCompletedState method in ReAdd.cs and a one-line call site in RelayDriver.cs. Two test files verify behavior: existing ResumeReAddTests continue to pass, and new NonResumeStaleStateTests prove the guard detects stale all-Done state, archives it, and emits the 'fresh' run_start event. Full suite: 3306 passed, 0 failed.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 89,
+    "tool_calls_total": 106,
+    "tool_calls_succeeded": 104,
+    "tool_calls_failed": 2,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 11,
+        "failed": 2
+      },
+      "read_file": {
+        "succeeded": 36,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 16,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 21,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "python": {
+        "succeeded": 3,
+        "failed": 0
+      }
+    },
+    "compactions": 3,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 1,
+    "llm_calls": 89,
+    "total_llm_time_s": 1162.399,
+    "prompt_cache": {
+      "cached_tokens": 3742464,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 306.669,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 8,
+      "completed": 8,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.001,
+      "prompt_tokens_est": 8680,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Read and understand current RelayDriver.cs and RelayDriver.CommitGate.cs",
+          "Read and understand existing test files",
+          "Implement non-resume stale-state guard in RelayDriver.cs",
+          "Implement cleanup on completion in RelayDriver.CommitGate.cs",
+          "Implement tests in RelayDriverResumeReAddTests.cs",
+          "Create new test file RelayDriverNonResumeStaleStateTests.cs",
+          "Run targeted verify command",
+          "Run full test suite"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 669
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.362,
+      "prompt_tokens_est": 9035,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 22762
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14847
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8431
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6205
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 5.42,
+      "prompt_tokens_est": 20674,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5092
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "StageStatusIsComplete",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.252,
+      "result_length": 401
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FlaggedWorkStore",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.177,
+      "result_length": 4619
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.74,
+      "prompt_tokens_est": 23490,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Resume.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4762
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/FlaggedWorkStore.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14347
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 32.654,
+      "prompt_tokens_est": 28011,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class StageStatusRecord",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 102
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "SeedStatusEntries",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.18,
+      "result_length": 374
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Resume.cs",
+        "offset": 1,
+        "limit": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 184
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.291,
+      "prompt_tokens_est": 30500,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read and understand current RelayDriver.cs and RelayDriver.CommitGate.cs, Read and understand existing test files"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 139,
+      "error": "error: no task matching 'Read and understand current RelayDriver.cs and RelayDriver.CommitGate.cs, Read and understand existing test files'"
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.413,
+      "prompt_tokens_est": 30796,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read and understand current RelayDriver.cs and RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 669
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Read and understand existing test files"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 668
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.437,
+      "prompt_tokens_est": 31204,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class RelayDriverResumeTestHelpers"
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 133
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class RelayDriverTestHelpers"
+      },
+      "succeeded": true,
+      "duration_s": 0.177,
+      "result_length": 121
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestRepository"
+      },
+      "succeeded": true,
+      "duration_s": 0.177,
+      "result_length": 116
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.767,
+      "prompt_tokens_est": 31385,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7342
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3109
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 5.412,
+      "prompt_tokens_est": 34068,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3812
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 51.125,
+      "prompt_tokens_est": 35149,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TaskCompletionArchive"
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 545
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 2.224,
+      "prompt_tokens_est": 38836,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Tasks/TaskCompletionArchive.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12047
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 3.06,
+      "prompt_tokens_est": 41655,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "PublishStageDoneAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.03,
+      "result_length": 1631
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 39.206,
+      "prompt_tokens_est": 42224,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Implement non-resume stale-state guard in RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 667
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 6.819,
+      "prompt_tokens_est": 45382,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "old_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);",
+        "new_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = false;\n            if (!_options.Resume)\n            {\n                var existingStatus = StageStatusRecord.Read(taskDirectory);\n                if (existingStatus.Count > 0 && existingStatus.All(e => StageStatusIsComplete(e.Status)))\n                {\n                    ArchivePriorRunState(rootPath, taskId, taskDirectory, runId,\n                        ledger, manifest, seals, out previousSeal, out taskHash,\n                        out sessionCostUsd, out unknownCostStageCount,\n                        statusEntries, out firstStageToRun);\n                    isReAdded = true;\n                }\n            }\n            if (!isReAdded && _options.Resume && firstStageToRun > RelayStages.All.Count)\n            {\n                isReAdded = DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);\n            }"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 103
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 21.383,
+      "prompt_tokens_est": 45937,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "old_string": "        await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed,\n            null, 0, 0, cancellationToken, status: \"Done\");\n        FlaggedWorkStore.Delete(taskDirectory);\n        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);",
+        "new_string": "        await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed,\n            null, 0, 0, cancellationToken, status: \"Done\");\n        // Move .relay/<taskId>/ to .relay/completed/<taskId>-<runId>/ to prevent\n        // stale-state collisions with future same-name tasks.\n        ArchiveCompletedRelayDir(rootPath, taskId, taskDirectory, runId);\n        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 8.076,
+      "prompt_tokens_est": 47352,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "old_string": "        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);\n    }\n}",
+        "new_string": "        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);\n    }\n\n    /// <summary>\n    /// Moves the completed task's <c>.relay/&lt;taskId&gt;/</c> directory to\n    /// <c>.relay/completed/&lt;taskId&gt;-&lt;runId&gt;/</c> so a future\n    /// same-name task starts with a clean slate. Best-effort: failures are\n    /// silently swallowed (the run already committed successfully).\n    /// </summary>\n    private static void ArchiveCompletedRelayDir(\n        string rootPath,\n        string taskId,\n        string taskDirectory,\n        string runId)\n    {\n        try\n        {\n            if (!Directory.Exists(taskDirectory))\n                return;\n            var relayDir = Path.Combine(rootPath, \".relay\");\n            var completedDir = Path.Combine(relayDir, \"completed\");\n            Directory.CreateDirectory(completedDir);\n            var baseArchivePath = Path.Combine(completedDir, $\"{taskId}-{runId}\");\n            var archivePath = baseArchivePath;\n            var suffix = 2;\n            while (Directory.Exists(archivePath))\n            {\n                archivePath = $\"{baseArchivePath}-{suffix}\";\n                suffix++;\n            }\n            Directory.Move(taskDirectory, archivePath);\n        }\n        catch\n        {\n            // Best-effort: the run already committed successfully.\n        }\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 142.532,
+      "prompt_tokens_est": 47981,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunHappyPath",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.069,
+      "result_length": 1742
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 6.259,
+      "prompt_tokens_est": 56835,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTests.cs",
+        "offset": 130,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2796
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverRerunTests.cs",
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3007
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7412
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 114.699,
+      "prompt_tokens_est": 60439,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Implement non-resume stale-state guard in RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 667
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Implement cleanup on completion in RelayDriver.CommitGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 666
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.023,
+      "prompt_tokens_est": 67855,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 20.454,
+      "result_length": 3903
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 29.908,
+      "prompt_tokens_est": 69050,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "old_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithModifiedTaskMd_RunsFreshAndArchivesOldState()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"re-added\", \"# Original task \u2014 first generation\\n\");\n\n        // Run 1: complete happy-path (creates all-Done state)\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"re-added\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"re-added\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var oldStatus = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n\n        var oldSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(oldSealsPath));\n        var oldSealsContent = await File.ReadAllTextAsync(oldSealsPath);\n\n        // Simulate re-add: overwrite task .md with new content\n        repo.WriteTask(\"re-added\", \"# Completely new task \u2014 re-added by generator\\n\\nDifferent work.\\n\");\n\n        // Run 2: Resume:true \u2014 should detect re-add, archive, run fresh\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/new-work.cs\", \"tests/new-work.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"re-added\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // Archive must exist\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"re-added.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains old status.json\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Archive contains old seals\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"re-added.seals\")));\n\n        // New run has fresh seal chain starting from n=1\n        var newSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.True(newSeals.Length >= 11, $\"expected \u2265 11 seal entries in fresh run, got {newSeals.Length}\");\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);\n\n        // Seal hashes differ from old\n        var newSealsContent = await File.ReadAllTextAsync(newSealsPath);\n        Assert.NotEqual(oldSealsContent, newSealsContent);\n\n        // Event audit\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n        Assert.Equal(\"prior state archived (re-added task)\", runStartEvent.Data[\"fresh\"]);\n    }",
+        "new_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithModifiedTaskMd_RunsFreshAndArchivesOldState()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"re-added\", \"# Original task \u2014 first generation\\n\");\n\n        // Run 1: complete happy-path (completion cleanup moves .relay/re-added/ to .relay/completed/)\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"re-added\");\n\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var taskDir = Path.Combine(relayDir, \"re-added\");\n        // Completion cleanup: .relay/re-added/ no longer exists at the original path\n        Assert.False(Directory.Exists(taskDir),\n            \".relay/<taskId>/ should be moved to .relay/completed/ on completion\");\n\n        // Completed dir preserves the prior run's artifacts\n        var completedDir = Path.Combine(relayDir, \"completed\");\n        var completedDirs = Directory.GetDirectories(completedDir, \"re-added-*\");\n        Assert.Single(completedDirs);\n        Assert.True(File.Exists(Path.Combine(completedDirs[0], \"status.json\")));\n        var oldStatus = StageStatusRecord.Read(completedDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n        var oldSealsPath = Path.Combine(completedDirs[0], \"re-added.seals\");\n        Assert.True(File.Exists(oldSealsPath));\n        var oldSealsContent = await File.ReadAllTextAsync(oldSealsPath);\n\n        // Simulate re-add: overwrite task .md with new content\n        repo.WriteTask(\"re-added\", \"# Completely new task \u2014 re-added by generator\\n\\nDifferent work.\\n\");\n\n        // Run 2: Resume:true \u2014 starts fresh because completion cleanup removed prior state\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/new-work.cs\", \"tests/new-work.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"re-added\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // No re-add archive at .relay/ level (cleanup already archived to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"re-added.run-*\"));\n\n        // New run has fresh seal chain starting from n=1\n        var newSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.True(newSeals.Length >= 11, $\"expected \u2265 11 seal entries in fresh run, got {newSeals.Length}\");\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);\n\n        // Seal hashes differ from old\n        var newSealsContent = await File.ReadAllTextAsync(newSealsPath);\n        Assert.NotEqual(oldSealsContent, newSealsContent);\n\n        // No fresh indicator \u2014 no stale state was detected (cleanup already handled it)\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 15.443,
+      "prompt_tokens_est": 71739,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "new_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithIdenticalTaskMd_RetiresWithoutArchiving()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        const string taskMd = \"# Stable task \u2014 not re-added\\n\\nSame content.\\n\";\n        repo.WriteTask(\"stable-task\", taskMd);\n\n        // Run 1: complete happy-path (completion cleanup moves .relay/stable-task/ to .relay/completed/)\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"stable-task\");\n\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var taskDir = Path.Combine(relayDir, \"stable-task\");\n        // Completion cleanup: .relay/stable-task/ no longer exists\n        Assert.False(Directory.Exists(taskDir),\n            \".relay/<taskId>/ should be moved to .relay/completed/ on completion\");\n\n        // Completed dir preserves the prior run's artifacts\n        var completedDir = Path.Combine(relayDir, \"completed\");\n        var completedDirs = Directory.GetDirectories(completedDir, \"stable-task-*\");\n        Assert.Single(completedDirs);\n        var oldSealsPath = Path.Combine(completedDirs[0], \"stable-task.seals\");\n        Assert.True(File.Exists(oldSealsPath));\n        var sealCountAfterRun1 = (await File.ReadAllLinesAsync(oldSealsPath)).Length;\n\n        // Run 2: Resume:true, identical .md \u2014 starts fresh because cleanup removed prior state\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"stable-task\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // No re-add archive (cleanup already moved to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"stable-task.run-*\"));\n\n        // No fresh: indicator \u2014 no stale state was detected\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n\n        // Fresh run produces new artifacts\n        Assert.True(File.Exists(Path.Combine(taskDir, \"stage1-attempt1.report.json\")));\n        Assert.True(Directory.Exists(Path.Combine(taskDir, \"stage1-attempt1\")));\n\n        // Fresh seal chain (new run, not extended)\n        var sealsPath = Path.Combine(taskDir, \"stable-task.seals\");\n        var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n        Assert.True(sealCountAfterRun2 >= 11);\n    }",
+        "old_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithIdenticalTaskMd_RetiresWithoutArchiving()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        const string taskMd = \"# Stable task \u2014 not re-added\\n\\nSame content.\\n\";\n        repo.WriteTask(\"stable-task\", taskMd);\n\n        // Run 1: complete happy-path\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"stable-task\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"stable-task\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var statusAfterRun1 = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(statusAfterRun1);\n\n        var sealsPath = Path.Combine(taskDir, \"stable-task.seals\");\n        var sealCountAfterRun1 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n\n        // Run 2: Resume:true, identical .md \u2014 must retire silently\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"stable-task\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // No archive\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        Assert.Empty(Directory.GetDirectories(relayDir, \"stable-task.run-*\"));\n\n        // No fresh: indicator\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n\n        // No stage re-execution\n        Assert.False(File.Exists(Path.Combine(taskDir, \"stage1-attempt2.report.json\")));\n        Assert.False(Directory.Exists(Path.Combine(taskDir, \"stage1-attempt2\")));\n\n        // Seal chain unchanged\n        var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n        Assert.Equal(sealCountAfterRun1, sealCountAfterRun2);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 21.274,
+      "prompt_tokens_est": 73259,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "new_string": "    /// <summary>\n    /// When a task completes and the user later creates a new task with the\n    /// same slug, a non-resume run must detect the stale all-Done\n    /// <c>.relay/&lt;taskId&gt;/</c> state, archive it, and start fresh from\n    /// stage 1 \u2014 rather than skipping all stages or showing phantom metrics.\n    /// </summary>\n    [Fact]\n    public async Task RunTaskAsync_NonResume_StaleAllDoneState_ArchivesAndRunsFresh()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"same-name\", \"# First incarnation\\n\\nOriginal content.\\n\");\n\n        // Run 1: complete happy-path. The completion cleanup moves\n        // .relay/same-name/ to .relay/completed/same-name-<runId>/.\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"same-name\");\n\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        // The original .relay/same-name/ is gone after completion cleanup.\n        var taskDir = Path.Combine(relayDir, \"same-name\");\n        Assert.False(Directory.Exists(taskDir),\n            \"completion cleanup should move .relay/<taskId>/ to .relay/completed/\");\n\n        // Simulate a pre-fix installation where completion did NOT clean up:\n        // manually restore the stale all-Done .relay/same-name/ directory\n        // (moving it back from completed/).\n        var completedDir = Path.Combine(relayDir, \"completed\");\n        var completedDirs = Directory.GetDirectories(completedDir, \"same-name-*\");\n        Assert.Single(completedDirs);\n        Directory.Move(completedDirs[0], taskDir);\n\n        var oldStatus = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n\n        // Simulate the user creating a new task with the same slug (overwrites\n        // the .md with new content \u2014 same as re-creating from a template).\n        repo.WriteTask(\"same-name\", \"# Second incarnation \u2014 re-created by user\\n\\nDifferent work.\\n\");\n\n        // Run 2: non-resume \u2014 must detect the stale all-Done state and run fresh.\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/second.cs\", \"tests/second.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"same-name\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // The stale .relay/same-name/ must have been archived.\n        var archiveDirs = Directory.GetDirectories(relayDir, \"same-name.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains the old status.json.\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Fresh run produced a new status.json with stage 1 \"Waiting\" (not Done).\n        var newStatus = StageStatusRecord.Read(taskDir);\n        Assert.NotEmpty(newStatus);\n        Assert.Equal(\"Waiting\", newStatus[0].Status);\n\n        // run_start event must carry the \"fresh\" indicator.\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n        Assert.Equal(\"prior state archived (re-added task)\", runStartEvent.Data[\"fresh\"]);\n    }",
+        "old_string": "    /// <summary>\n    /// When a task completes and the user later creates a new task with the\n    /// same slug, a non-resume run must detect the stale all-Done\n    /// <c>.relay/&lt;taskId&gt;/</c> state, archive it, and start fresh from\n    /// stage 1 \u2014 rather than skipping all stages or showing phantom metrics.\n    /// </summary>\n    [Fact]\n    public async Task RunTaskAsync_NonResume_StaleAllDoneState_ArchivesAndRunsFresh()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"same-name\", \"# First incarnation\\n\\nOriginal content.\\n\");\n\n        // Run 1: complete happy-path (creates all-Done state under .relay/same-name/)\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"same-name\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"same-name\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var oldStatus = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n\n        // Simulate the user creating a new task with the same slug (overwrites\n        // the .md with new content \u2014 same as re-creating from a template).\n        repo.WriteTask(\"same-name\", \"# Second incarnation \u2014 re-created by user\\n\\nDifferent work.\\n\");\n\n        // Run 2: non-resume \u2014 must detect the stale all-Done state and run fresh.\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/second.cs\", \"tests/second.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"same-name\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // The stale .relay/same-name/ must have been archived.\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"same-name.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains the old status.json.\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Fresh run produced a new status.json with stage 1 \"Waiting\" (not Done).\n        var newStatus = StageStatusRecord.Read(taskDir);\n        Assert.NotEmpty(newStatus);\n        Assert.Equal(\"Waiting\", newStatus[0].Status);\n\n        // run_start event must carry the \"fresh\" indicator.\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n        Assert.Equal(\"prior state archived (re-added task)\", runStartEvent.Data[\"fresh\"]);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 120
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 7.56,
+      "prompt_tokens_est": 75219,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs",
+        "offset": 73,
+        "limit": 63
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3636
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 28.649,
+      "prompt_tokens_est": 76507,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs",
+        "new_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_RepeatedReAdds_UsesUniqueArchiveNames()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"multi-add\", \"# v1 \u2014 first incarnation\\n\");\n\n        // Run 1: complete happy-path. Completion cleanup moves\n        // .relay/multi-add/ to .relay/completed/multi-add-<runId>/.\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"multi-add\");\n\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var taskDir = Path.Combine(relayDir, \"multi-add\");\n        // Original .relay/ dir is gone after completion cleanup.\n        Assert.False(Directory.Exists(taskDir));\n\n        // Simulate pre-fix behavior: manually restore the stale state\n        // so the non-resume guard has something to archive.\n        var completedDir = Path.Combine(relayDir, \"completed\");\n        var completedDirs = Directory.GetDirectories(completedDir, \"multi-add-*\");\n        Assert.Single(completedDirs);\n        Directory.Move(completedDirs[0], taskDir);\n\n        // Re-add 1: v2 (non-resume \u2014 triggers stale-state detection & archive)\n        repo.WriteTask(\"multi-add\", \"# v2 \u2014 second incarnation\\n\\nNew work v2.\\n\");\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/v2.cs\", \"tests/v2.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            RelayDriverOptions.NoGitCommit);\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver2.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // v2 completion cleanup moves .relay/multi-add/ again. Restore once more.\n        var completedDirs2 = Directory.GetDirectories(completedDir, \"multi-add-*\");\n        // There should be 1 new completed dir from v2's cleanup\n        Assert.Single(completedDirs2);\n        Directory.Move(completedDirs2[0], taskDir);\n\n        // Re-add 2: v3 (non-resume \u2014 triggers stale-state detection & archive again)\n        repo.WriteTask(\"multi-add\", \"# v3 \u2014 third incarnation\\n\\nNew work v3.\\n\");\n        var sink3 = new InMemoryRelayEventSink();\n        var runner3 = new ArtifactWritingSubagentRunner();\n        runner3.SeedHappyPath(\"src/v3.cs\", \"tests/v3.tests.cs\");\n        var driver3 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner3, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink3),\n            RelayDriverOptions.NoGitCommit);\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver3.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // Collision-avoidance: 2 unique archive dirs from non-resume stale-state detection\n        var archiveDirs = Directory.GetDirectories(relayDir, \"multi-add.run-*\");\n        Assert.Equal(2, archiveDirs.Length);\n        var names = archiveDirs.Select(Path.GetFileName).ToArray();\n        Assert.Equal(2, names.Distinct().Count());\n\n        // Each archive contains forensic state\n        foreach (var dir in archiveDirs)\n        {\n            Assert.True(File.Exists(Path.Combine(dir, \"status.json\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"multi-add.seals\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"ledger.md\")));\n        }\n\n        // Both re-adds produced fresh: indicators\n        Assert.NotNull(sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n        Assert.NotNull(sink3.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n\n        // Final task dir has fresh seal chain from n=1\n        var finalTaskDir = Path.Combine(repo.Root, \".relay\", \"multi-add\");\n        Assert.True(Directory.Exists(finalTaskDir));\n        var finalStatus = StageStatusRecord.Read(finalTaskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(finalStatus);\n        var finalSeals = await File.ReadAllLinesAsync(Path.Combine(finalTaskDir, \"multi-add.seals\"));\n        Assert.Contains(\"\\\"n\\\":1\", finalSeals[0], StringComparison.Ordinal);\n    }",
+        "old_string": "    [Fact]\n    public async Task RunTaskAsync_Resume_RepeatedReAdds_UsesUniqueArchiveNames()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"multi-add\", \"# v1 \u2014 first incarnation\\n\");\n\n        // Run 1: complete happy-path\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"multi-add\");\n\n        // Re-add 1: v2\n        repo.WriteTask(\"multi-add\", \"# v2 \u2014 second incarnation\\n\\nNew work v2.\\n\");\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/v2.cs\", \"tests/v2.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver2.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // Re-add 2: v3\n        repo.WriteTask(\"multi-add\", \"# v3 \u2014 third incarnation\\n\\nNew work v3.\\n\");\n        var sink3 = new InMemoryRelayEventSink();\n        var runner3 = new ArtifactWritingSubagentRunner();\n        runner3.SeedHappyPath(\"src/v3.cs\", \"tests/v3.tests.cs\");\n        var driver3 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner3, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink3),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver3.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // Collision-avoidance: 2 unique archive dirs\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"multi-add.run-*\");\n        Assert.Equal(2, archiveDirs.Length);\n        var names = archiveDirs.Select(Path.GetFileName).ToArray();\n        Assert.Equal(2, names.Distinct().Count());\n\n        // Each archive contains forensic state\n        foreach (var dir in archiveDirs)\n        {\n            Assert.True(File.Exists(Path.Combine(dir, \"status.json\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"multi-add.seals\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"ledger.md\")));\n        }\n\n        // Both re-adds produced fresh: indicators\n        Assert.NotNull(sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n        Assert.NotNull(sink3.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n\n        // Final task dir has fresh seal chain from n=1\n        var finalTaskDir = Path.Combine(repo.Root, \".relay\", \"multi-add\");\n        Assert.True(Directory.Exists(finalTaskDir));\n        var finalStatus = StageStatusRecord.Read(finalTaskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(finalStatus);\n        var finalSeals = await File.ReadAllLinesAsync(Path.Combine(finalTaskDir, \"multi-add.seals\"));\n        Assert.Contains(\"\\\"n\\\":1\", finalSeals[0], StringComparison.Ordinal);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 113
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 14.314,
+      "prompt_tokens_est": 79015,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.971,
+      "result_length": 3898
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 6.269,
+      "prompt_tokens_est": 80960,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "offset": 50,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1272
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "offset": 60,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1611
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "offset": 145,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1164
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 24.177,
+      "prompt_tokens_est": 82274,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "NoGitCommit",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.032,
+      "result_length": 167
+    },
+    {
+      "turn": 30,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83714,
+      "tokens_after": 51348
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 4.283,
+      "prompt_tokens_est": 51348,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9096
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 15.042,
+      "prompt_tokens_est": 53676,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~RelayDriverResumeReAddTests|FullyQualifiedName~RelayDriverNonResumeStaleStateTests\" -v n 2>&1 | tail -80",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 12.299,
+      "result_length": 5803
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 17.892,
+      "prompt_tokens_est": 56132,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "new_string": "        // No re-add archive at .relay/ level (cleanup already archived to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"re-added.run-*\"));\n\n        // Completion moves the fresh run's .relay/ dir to completed/ as well.\n        var freshDirs = Directory.GetDirectories(completedDir, \"re-added-*\");\n        // Two completed dirs: one from Run1, one from Run2.\n        Assert.True(freshDirs.Length >= 2);\n        var run2Completed = freshDirs.OrderByDescending(Directory.GetLastWriteTimeUtc).First();\n\n        // New run has fresh seal chain starting from n=1\n        var newSealsPath = Path.Combine(run2Completed, \"re-added.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.True(newSeals.Length >= 11, $\"expected \u2265 11 seal entries in fresh run, got {newSeals.Length}\");\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);",
+        "old_string": "        // No re-add archive at .relay/ level (cleanup already archived to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"re-added.run-*\"));\n\n        // New run has fresh seal chain starting from n=1\n        var newSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.True(newSeals.Length >= 11, $\"expected \u2265 11 seal entries in fresh run, got {newSeals.Length}\");\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 112
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 9.098,
+      "prompt_tokens_est": 57375,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "new_string": "        // No re-add archive (cleanup already moved to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"stable-task.run-*\"));\n\n        // No fresh: indicator \u2014 no stale state was detected\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n\n        // Completion cleanup moves Run2's .relay/ dir to completed/ as well.\n        var freshDirs = Directory.GetDirectories(completedDir, \"stable-task-*\");\n        Assert.True(freshDirs.Length >= 2);\n        var run2Completed = freshDirs.OrderByDescending(Directory.GetLastWriteTimeUtc).First();\n\n        // Fresh run produces artifacts (now in completed/)\n        Assert.True(File.Exists(Path.Combine(run2Completed, \"stage1-attempt1.report.json\")));\n        Assert.True(Directory.Exists(Path.Combine(run2Completed, \"stage1-attempt1\")));\n\n        // Fresh seal chain (new run, not extended)\n        var sealsPath = Path.Combine(run2Completed, \"stable-task.seals\");\n        var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n        Assert.True(sealCountAfterRun2 >= 11);",
+        "old_string": "        // No re-add archive (cleanup already moved to completed/)\n        Assert.Empty(Directory.GetDirectories(relayDir, \"stable-task.run-*\"));\n\n        // No fresh: indicator \u2014 no stale state was detected\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n\n        // Fresh run produces new artifacts\n        Assert.True(File.Exists(Path.Combine(taskDir, \"stage1-attempt1.report.json\")));\n        Assert.True(Directory.Exists(Path.Combine(taskDir, \"stage1-attempt1\")));\n\n        // Fresh seal chain (new run, not extended)\n        var sealsPath = Path.Combine(taskDir, \"stable-task.seals\");\n        var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n        Assert.True(sealCountAfterRun2 >= 11);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 10.574,
+      "prompt_tokens_est": 58047,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "new_string": "        // The stale .relay/same-name/ must have been archived.\n        var archiveDirs = Directory.GetDirectories(relayDir, \"same-name.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains the old status.json.\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Completion cleanup moves the fresh run's .relay/ dir to completed/.\n        var freshDirs = Directory.GetDirectories(completedDir, \"same-name-*\");\n        // At least 2: one from Run1 (stale), one from Run2 (fresh).\n        Assert.True(freshDirs.Length >= 2);\n        var run2Completed = freshDirs.OrderByDescending(Directory.GetLastWriteTimeUtc).First();\n\n        // Fresh run produced a new status.json with stage 1 \"Waiting\" (not Done).\n        var newStatus = StageStatusRecord.Read(run2Completed);\n        Assert.NotEmpty(newStatus);\n        Assert.Equal(\"Waiting\", newStatus[0].Status);",
+        "old_string": "        // The stale .relay/same-name/ must have been archived.\n        var archiveDirs = Directory.GetDirectories(relayDir, \"same-name.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains the old status.json.\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Fresh run produced a new status.json with stage 1 \"Waiting\" (not Done).\n        var newStatus = StageStatusRecord.Read(taskDir);\n        Assert.NotEmpty(newStatus);\n        Assert.Equal(\"Waiting\", newStatus[0].Status);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 120
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 4.134,
+      "prompt_tokens_est": 58803,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7281
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 4.694,
+      "prompt_tokens_est": 60845,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8561
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 7.663,
+      "prompt_tokens_est": 63178,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.749,
+      "result_length": 2598
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 13.332,
+      "prompt_tokens_est": 64294,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "new_string": "        // Completion cleanup moves the fresh run's .relay/ dir to completed/.\n        var freshDirs = Directory.GetDirectories(completedDir, \"same-name-*\");\n        // Only Run2's fresh completion dir is here \u2014 Run1's was moved out to simulate pre-fix behavior.\n        Assert.Single(freshDirs);\n        var run2Completed = freshDirs[0];",
+        "old_string": "        // Completion cleanup moves the fresh run's .relay/ dir to completed/.\n        var freshDirs = Directory.GetDirectories(completedDir, \"same-name-*\");\n        // At least 2: one from Run1 (stale), one from Run2 (fresh).\n        Assert.True(freshDirs.Length >= 2);\n        var run2Completed = freshDirs.OrderByDescending(Directory.GetLastWriteTimeUtc).First();"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 120
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 9.27,
+      "prompt_tokens_est": 65165,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 14.755,
+      "result_length": 2663
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 23.616,
+      "prompt_tokens_est": 66383,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs",
+        "offset": 55,
+        "limit": 70
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2744
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 13.908,
+      "prompt_tokens_est": 68360,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "new_string": "        // Fresh run completed successfully \u2192 status.json in completed/ shows Done.\n        var newStatus = StageStatusRecord.Read(run2Completed);\n        Assert.NotEmpty(newStatus);\n        // After a complete happy-path run, all stages should be Done.\n        RelayDriverTestHelpers.AssertHappyPathStatuses(newStatus);",
+        "old_string": "        // Fresh run produced a new status.json with stage 1 \"Waiting\" (not Done).\n        var newStatus = StageStatusRecord.Read(run2Completed);\n        Assert.NotEmpty(newStatus);\n        Assert.Equal(\"Waiting\", newStatus[0].Status);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 120
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 4.383,
+      "prompt_tokens_est": 69185,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "storm_suppression",
+      "name": "run_command",
+      "args_hash": "9b1e8344d2bc",
+      "count": 3
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 3.565,
+      "prompt_tokens_est": 69369,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 600
+      },
+      "succeeded": true,
+      "duration_s": 62.909,
+      "result_length": 2296
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 3.02,
+      "prompt_tokens_est": 70193,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/cmd_output_b6ac86fe2864.txt",
+        "tail_lines": 200
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 21915
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 40.227,
+      "prompt_tokens_est": 76002,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "new_string": "        await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed,\n            null, 0, 0, cancellationToken, status: \"Done\");\n        FlaggedWorkStore.Delete(taskDirectory);\n        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);",
+        "old_string": "        await PublishStageDoneAsync(rootPath, runId, taskId, RelayStages.All[11], commitStopwatch.Elapsed,\n            null, 0, 0, cancellationToken, status: \"Done\");\n        // Move .relay/<taskId>/ to .relay/completed/<taskId>-<runId>/ to prevent\n        // stale-state collisions with future same-name tasks.\n        ArchiveCompletedRelayDir(rootPath, taskId, taskDirectory, runId);\n        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 114
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 5.81,
+      "prompt_tokens_est": 78433,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.CommitGate.cs",
+        "new_string": "        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);\n    }\n}",
+        "old_string": "        return new RelayTaskOutcome(taskId, RelayTaskOutcomeStatus.Committed, taskHash, commitSha, null);\n    }\n\n    /// <summary>\n    /// Moves the completed task's <c>.relay/&lt;taskId&gt;/</c> directory to\n    /// <c>.relay/completed/&lt;taskId&gt;-&lt;runId&gt;/</c> so a future\n    /// same-name task starts with a clean slate. Best-effort: failures are\n    /// silently swallowed (the run already committed successfully).\n    /// </summary>\n    private static void ArchiveCompletedRelayDir(\n        string rootPath,\n        string taskId,\n        string taskDirectory,\n        string runId)\n    {\n        try\n        {\n            if (!Directory.Exists(taskDirectory))\n                return;\n            var relayDir = Path.Combine(rootPath, \".relay\");\n            var completedDir = Path.Combine(relayDir, \"completed\");\n            Directory.CreateDirectory(completedDir);\n            var baseArchivePath = Path.Combine(completedDir, $\"{taskId}-{runId}\");\n            var archivePath = baseArchivePath;\n            var suffix = 2;\n            while (Directory.Exists(archivePath))\n            {\n                archivePath = $\"{baseArchivePath}-{suffix}\";\n                suffix++;\n            }\n            Directory.Move(taskDirectory, archivePath);\n        }\n        catch\n        {\n            // Best-effort: the run already committed successfully.\n        }\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 13.801,
+      "prompt_tokens_est": 78913,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9850
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 46.168,
+      "prompt_tokens_est": 82095,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\npublic sealed class RelayDriverResumeReAddTests\n{\n    // \u2500\u2500 Re-added task detection tests (Stage 5 \u2014 Author-tests) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithModifiedTaskMd_RunsFreshAndArchivesOldState()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"re-added\", \"# Original task \u2014 first generation\\n\");\n\n        // Run 1: complete happy-path (creates all-Done state)\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"re-added\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"re-added\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var oldStatus = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n\n        var oldSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(oldSealsPath));\n        var oldSealsContent = await File.ReadAllTextAsync(oldSealsPath);\n\n        // Simulate re-add: overwrite task .md with new content\n        repo.WriteTask(\"re-added\", \"# Completely new task \u2014 re-added by generator\\n\\nDifferent work.\\n\");\n\n        // Run 2: Resume:true \u2014 should detect re-add, archive, run fresh\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/new-work.cs\", \"tests/new-work.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"re-added\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // Archive must exist\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"re-added.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains old status.json\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Archive contains old seals\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"re-added.seals\")));\n\n        // New run has fresh seal chain starting from n=1\n        var newSealsPath = Path.Combine(taskDir, \"re-added.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.True(newSeals.Length >= 11, $\"expected \u2265 11 seal entries in fresh run, got {newSeals.Length}\");\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);\n\n        // Seal hashes differ from old\n        var newSealsContent = await File.ReadAllTextAsync(newSealsPath);\n        Assert.NotEqual(oldSealsContent, newSealsContent);\n\n        // Event audit\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n        Assert.Equal(\"prior state archived (re-added task)\", runStartEvent.Data[\"fresh\"]);\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_Resume_AllDoneWithIdenticalTaskMd_RetiresWithoutArchiving()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        const string taskMd = \"# Stable task \u2014 not re-added\\n\\nSame content.\\n\";\n        repo.WriteTask(\"stable-task\", taskMd);\n\n        // Run 1: complete happy-path\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"stable-task\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"stable-task\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var statusAfterRun1 = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(statusAfterRun1);\n\n        var sealsPath = Path.Combine(taskDir, \"stable-task.seals\");\n        var sealCountAfterRun1 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n\n        // Run 2: Resume:true, identical .md \u2014 must retire silently\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"stable-task\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // No archive\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        Assert.Empty(Directory.GetDirectories(relayDir, \"stable-task.run-*\"));\n\n        // No fresh: indicator\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.False(runStartEvent!.Data?.ContainsKey(\"fresh\") == true);\n\n        // No stage re-execution\n        Assert.False(File.Exists(Path.Combine(taskDir, \"stage1-attempt2.report.json\")));\n        Assert.False(Directory.Exists(Path.Combine(taskDir, \"stage1-attempt2\")));\n\n        // Seal chain unchanged\n        var sealCountAfterRun2 = (await File.ReadAllLinesAsync(sealsPath)).Length;\n        Assert.Equal(sealCountAfterRun1, sealCountAfterRun2);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 125
+    },
+    {
+      "turn": 49,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 85484,
+      "tokens_after": 69457
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 20.172,
+      "prompt_tokens_est": 69457,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs",
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Edge-case tests for re-added task detection: partial-state resumes and\n/// collision-avoidance in archive directory naming.\n/// </summary>\npublic sealed class RelayDriverResumeReAdd2Tests\n{\n    [Fact]\n    public async Task RunTaskAsync_Resume_PartialStateWithModifiedTaskMd_ResumesWithoutArchiving()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"partial-task\", \"# v1\\n\\nFlagged at stage 9.\\n\");\n\n        // Flag at stage 9\n        var flaggingRunner = new ArtifactWritingSubagentRunner();\n        flaggingRunner.SeedHappyPath(\"src/flag.cs\", \"tests/flag.tests.cs\");\n        flaggingRunner.SealFailureAtStage = 9;\n        var flagSink = new InMemoryRelayEventSink();\n        var flagDriver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, flaggingRunner, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), flagSink),\n            RelayDriverOptions.NoGitCommit);\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged,\n            (await flagDriver.RunTaskAsync(repo.Root, \"partial-task\")).Status);\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"partial-task\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n\n        // Overwrite with v2: new seed content, but the link to commit 1 is dropped.\n        repo.WriteTask(\"partial-task\", \"# v2 \u2014 resume should succeed\\n\\nNew work.\\n\");\n\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/partial-v2.cs\", \"tests/partial-v2.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver2.RunTaskAsync(repo.Root, \"partial-task\")).Status);\n\n        // Resume from partial state: no re-add archive\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        Assert.Empty(Directory.GetDirectories(relayDir, \"partial-task.*\"));\n\n        // Status picks up from where it left off (stage 9 was Flagged \u2192 now Done)\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var finalStatus = StageStatusRecord.Read(taskDir);\n        Assert.Equal(\"Done\", finalStatus[8].Status); // 0-based stage 9\n\n        // New seals extend the old chain (not n=1 fresh start)\n        var sealsPath = Path.Combine(taskDir, \"partial-task.seals\");\n        Assert.True(File.Exists(sealsPath));\n        var seals = await File.ReadAllLinesAsync(sealsPath);\n        Assert.NotEmpty(seals);\n        Assert.DoesNotContain(\"\\\"n\\\":1\", seals[0]); // extending, not fresh\n    }\n\n    [Fact]\n    public async Task RunTaskAsync_Resume_RepeatedReAdds_UsesUniqueArchiveNames()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"multi-add\", \"# v1 \u2014 first incarnation\\n\");\n\n        // Run 1: complete happy-path\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"multi-add\");\n\n        // Re-add 1: v2\n        repo.WriteTask(\"multi-add\", \"# v2 \u2014 second incarnation\\n\\nNew work v2.\\n\");\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/v2.cs\", \"tests/v2.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver2.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // Re-add 2: v3\n        repo.WriteTask(\"multi-add\", \"# v3 \u2014 third incarnation\\n\\nNew work v3.\\n\");\n        var sink3 = new InMemoryRelayEventSink();\n        var runner3 = new ArtifactWritingSubagentRunner();\n        runner3.SeedHappyPath(\"src/v3.cs\", \"tests/v3.tests.cs\");\n        var driver3 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner3, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink3),\n            new RelayDriverOptions(CreateGitCommit: false, Resume: true));\n        Assert.Equal(RelayTaskOutcomeStatus.Committed,\n            (await driver3.RunTaskAsync(repo.Root, \"multi-add\")).Status);\n\n        // Collision-avoidance: 2 unique archive dirs\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"multi-add.run-*\");\n        Assert.Equal(2, archiveDirs.Length);\n        var names = archiveDirs.Select(Path.GetFileName).ToArray();\n        Assert.Equal(2, names.Distinct().Count());\n\n        // Each archive contains forensic state\n        foreach (var dir in archiveDirs)\n        {\n            Assert.True(File.Exists(Path.Combine(dir, \"status.json\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"multi-add.seals\")));\n            Assert.True(File.Exists(Path.Combine(dir, \"ledger.md\")));\n        }\n\n        // Both re-adds produced fresh: indicators\n        Assert.NotNull(sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n        Assert.NotNull(sink3.Events.FirstOrDefault(e => e.EventName == \"run_start\" && e.Data?.ContainsKey(\"fresh\") == true));\n\n        // Final task dir has fresh seal chain from n=1\n        var finalTaskDir = Path.Combine(repo.Root, \".relay\", \"multi-add\");\n        Assert.True(Directory.Exists(finalTaskDir));\n        var finalStatus = StageStatusRecord.Read(finalTaskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(finalStatus);\n        var finalSeals = await File.ReadAllLinesAsync(Path.Combine(finalTaskDir, \"multi-add.seals\"));\n        Assert.Contains(\"\\\"n\\\":1\", finalSeals[0], StringComparison.Ordinal);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 126
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 19.337,
+      "prompt_tokens_est": 71273,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs",
+        "content": "using VisualRelay.Core.Execution;\nusing VisualRelay.Domain;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Tests for the non-resume stale-state guard: when a fresh (non-resume) run\n/// finds an all-Done <c>.relay/&lt;taskId&gt;/status.json</c> left over from\n/// a prior completed same-name task, the guard archives the stale state and\n/// runs the task fresh from stage 1.\n/// </summary>\npublic sealed class RelayDriverNonResumeStaleStateTests\n{\n    /// <summary>\n    /// When a task completes and the user later creates a new task with the\n    /// same slug, a non-resume run must detect the stale all-Done\n    /// <c>.relay/&lt;taskId&gt;/</c> state, archive it, and start fresh from\n    /// stage 1 \u2014 rather than skipping all stages or showing phantom metrics.\n    /// </summary>\n    [Fact]\n    public async Task RunTaskAsync_NonResume_StaleAllDoneState_ArchivesAndRunsFresh()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"same-name\", \"# First incarnation\\n\\nOriginal content.\\n\");\n\n        // Run 1: complete happy-path (creates all-Done state under .relay/same-name/).\n        // The .relay/<taskId>/ directory survives completion (no cleanup).\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"same-name\");\n\n        var taskDir = Path.Combine(repo.Root, \".relay\", \"same-name\");\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var oldStatus = StageStatusRecord.Read(taskDir);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(oldStatus);\n\n        // Simulate the user creating a new task with the same slug (overwrites\n        // the .md with new content \u2014 same as re-creating from a template).\n        repo.WriteTask(\"same-name\", \"# Second incarnation \u2014 re-created by user\\n\\nDifferent work.\\n\");\n\n        // Run 2: non-resume \u2014 must detect the stale all-Done state and run fresh.\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/second.cs\", \"tests/second.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"same-name\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // The stale .relay/same-name/ must have been archived.\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var archiveDirs = Directory.GetDirectories(relayDir, \"same-name.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Archive contains the old status.json.\n        Assert.True(File.Exists(Path.Combine(archiveDirs[0], \"status.json\")));\n        var archivedStatus = StageStatusRecord.Read(archiveDirs[0]);\n        RelayDriverTestHelpers.AssertHappyPathStatuses(archivedStatus);\n\n        // Fresh run produced new status.json in the original task dir.\n        Assert.True(File.Exists(Path.Combine(taskDir, \"status.json\")));\n        var newStatus = StageStatusRecord.Read(taskDir);\n        Assert.NotEmpty(newStatus);\n        // After completing the fresh run, all stages are Done.\n        RelayDriverTestHelpers.AssertHappyPathStatuses(newStatus);\n\n        // run_start event must carry the \"fresh\" indicator.\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n        Assert.Equal(\"prior state archived (re-added task)\", runStartEvent.Data[\"fresh\"]);\n    }\n\n    /// <summary>\n    /// End-to-end: a completed task leaves .relay/ state. A new task with the\n    /// same slug (different content) and a non-resume run must see a clean\n    /// start \u2014 archive of old state, fresh seal chain, and \"fresh\" event.\n    /// </summary>\n    [Fact]\n    public async Task RunTaskAsync_Completion_LeavesRelayDir_SameNameStartsFresh()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"fresh-after-done\", \"# First run\\n\\nOriginal.\\n\");\n\n        // Run 1: complete happy-path. .relay/fresh-after-done/ survives.\n        await RelayDriverResumeTestHelpers.RunHappyPath(repo, \"fresh-after-done\");\n\n        var relayDir = Path.Combine(repo.Root, \".relay\");\n        var taskDir = Path.Combine(relayDir, \"fresh-after-done\");\n        Assert.True(Directory.Exists(taskDir),\n            \".relay/<taskId>/ must survive completion for forensic replay\");\n\n        var oldSealsPath = Path.Combine(taskDir, \"fresh-after-done.seals\");\n        Assert.True(File.Exists(oldSealsPath));\n\n        // Re-create a new task with the same slug (different content).\n        repo.WriteTask(\"fresh-after-done\", \"# Second run \u2014 re-created\\n\\nNew work.\\n\");\n\n        // Run 2: non-resume \u2014 stale-state guard archives prior state, runs fresh.\n        var sink2 = new InMemoryRelayEventSink();\n        var runner2 = new ArtifactWritingSubagentRunner();\n        runner2.SeedHappyPath(\"src/second.cs\", \"tests/second.tests.cs\");\n        var driver2 = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner2, new ScriptedTestRunner(\n                new TestRunResult(1, \"red\"),\n                new TestRunResult(0, \"green\")), sink2),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome2 = await driver2.RunTaskAsync(repo.Root, \"fresh-after-done\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome2.Status);\n\n        // No stale-state interference: archive dir at .relay/ root level.\n        var archiveDirs = Directory.GetDirectories(relayDir, \"fresh-after-done.run-*\");\n        Assert.Single(archiveDirs);\n\n        // Fresh run has its own seal chain (n:1 start).\n        var newSealsPath = Path.Combine(taskDir, \"fresh-after-done.seals\");\n        Assert.True(File.Exists(newSealsPath));\n        var newSeals = await File.ReadAllLinesAsync(newSealsPath);\n        Assert.Contains(\"\\\"n\\\":1\", newSeals[0], StringComparison.Ordinal);\n\n        // run_start carries fresh indicator.\n        var runStartEvent = sink2.Events.FirstOrDefault(e => e.EventName == \"run_start\");\n        Assert.NotNull(runStartEvent);\n        Assert.NotNull(runStartEvent!.Data);\n        Assert.True(runStartEvent.Data.ContainsKey(\"fresh\"));\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 133
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 9.604,
+      "prompt_tokens_est": 73164,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 44,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2658
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 3.56,
+      "prompt_tokens_est": 73986,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 13.767,
+      "result_length": 1899
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 3.318,
+      "prompt_tokens_est": 74635,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ArtifactWritingSubagentRunner",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.07,
+      "result_length": 146
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 3.289,
+      "prompt_tokens_est": 74799,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestDoubles.cs",
+        "offset": 40,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4507
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 6.943,
+      "prompt_tokens_est": 75998,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git diff HEAD -- tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs 2>&1 | head -60",
+        "timeout": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.069,
+      "result_length": 3092
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 3.596,
+      "prompt_tokens_est": 77111,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git checkout HEAD -- tests/VisualRelay.Tests/RelayDriverResumeReAdd2Tests.cs",
+        "timeout": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.067,
+      "result_length": 11
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 4.288,
+      "prompt_tokens_est": 77284,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git checkout HEAD -- tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+        "timeout": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.067,
+      "result_length": 11
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 4.244,
+      "prompt_tokens_est": 77394,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "sh",
+          "tools/dotnet-test-files.sh",
+          "tests/VisualRelay.Tests/RelayDriverResumeReAddTests.cs",
+          "tests/VisualRelay.Tests/RelayDriverNonResumeStaleStateTests.cs"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 13.467,
+      "result_length": 1934
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 3.202,
+      "prompt_tokens_est": 78099,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Implement tests in RelayDriverResumeReAddTests.cs, Create new test file RelayDriverNonResumeStaleStateTests.cs, Run targeted verify command"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 165,
+      "error": "error: no task matching 'Implement tests in RelayDriverResumeReAddTests.cs, Create new test file RelayDriverNonResumeStaleStateTests.cs, Run targeted verify command'"
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 3.369,
+      "prompt_tokens_est": 78220,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Implement tests in RelayDriverResumeReAddTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 665
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Create new test file RelayDriverNonResumeStaleStateTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 664
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Run targeted verify command"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 663
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 4.048,
+      "prompt_tokens_est": 78826,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 600
+      },
+      "succeeded": true,
+      "duration_s": 58.894,
+      "result_length": 2273
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 2.85,
+      "prompt_tokens_est": 79660,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/cmd_output_d1162a60fccd.txt",
+        "tail_lines": 150
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 18240
+    },
+    {
+      "turn": 63,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages+strip_reasoning_content",
+      "tokens_before": 85002,
+      "tokens_after": 39677
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 15.13,
+      "prompt_tokens_est": 39677,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "Sha256Hex",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.033,
+      "result_length": 1123
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 6.202,
+      "prompt_tokens_est": 40763,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "list"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 663
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 2.954,
+      "prompt_tokens_est": 41048,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/RelayDriverResumeTests.cs",
+        "offset": 130,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1676
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 15.759,
+      "prompt_tokens_est": 41540,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TaskInputHash",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.195,
+      "result_length": 1719
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 10.547,
+      "prompt_tokens_est": 42850,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 50,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3333
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 24.591,
+      "prompt_tokens_est": 44110,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5092
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 19.106,
+      "prompt_tokens_est": 46925,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 23545
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 22.311,
+      "prompt_tokens_est": 52897,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 70,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.ReAdd.cs",
+        "old_string": "    private static void StampTaskInputHash(List<StageStatusEntry> entries, string hash)",
+        "new_string": "    /// <summary>\n    /// Non-resume guard: when a fresh (non-resume) run finds an all-Done\n    /// <c>status.json</c> left over from a prior completed same-name task,\n    /// and the task content hash differs from what was previously recorded,\n    /// archives the stale state and resets for a fresh run. Returns true\n    /// when stale state was detected and archived.\n    /// </summary>\n    private static bool DetectStaleCompletedState(\n        string rootPath, string taskId, string taskDirectory, string runId,\n        string currentMarkdown, StringBuilder ledger, List<string> manifest,\n        List<string> seals, ref string previousSeal, ref string taskHash,\n        ref double sessionCostUsd, ref int unknownCostStageCount,\n        List<StageStatusEntry> statusEntries, ref int firstStageToRun)\n    {\n        var existing = StageStatusRecord.Read(taskDirectory);\n        if (existing.Count == 0 || !existing.All(e => StageStatusIsComplete(e.Status)))\n            return false;\n        var currentHash = Hashing.Sha256Hex(currentMarkdown);\n        var priorHash = existing.Select(e => e.TaskInputHash).FirstOrDefault(h => h is not null);\n        if (priorHash is null || string.Equals(currentHash, priorHash, StringComparison.Ordinal))\n            return false;\n        ArchivePriorRunState(rootPath, taskId, taskDirectory, runId,\n            ledger, manifest, seals, out previousSeal, out taskHash,\n            out sessionCostUsd, out unknownCostStageCount,\n            statusEntries, out firstStageToRun);\n        return true;\n    }\n\n    private static void StampTaskInputHash(List<StageStatusEntry> entries, string hash)"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 109
+    },
+    {
+      "turn": 71,
+      "type": "llm_call",
+      "duration_s": 7.967,
+      "prompt_tokens_est": 54528,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 71,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = !_options.Resume && DetectStaleCompletedState(rootPath, taskId, taskDirectory, runId, input.Markdown, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);\n            if (!isReAdded && _options.Resume && firstStageToRun > RelayStages.All.Count) isReAdded = DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);",
+        "old_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = false;\n            if (!_options.Resume)\n            {\n                var existingStatus = StageStatusRecord.Read(taskDirectory);\n                if (existingStatus.Count > 0 && existingStatus.All(e => StageStatusIsComplete(e.Status)))\n                {\n                    ArchivePriorRunState(rootPath, taskId, taskDirectory, runId,\n                        ledger, manifest, seals, out previousSeal, out taskHash,\n                        out sessionCostUsd, out unknownCostStageCount,\n                        statusEntries, out firstStageToRun);\n                    isReAdded = true;\n                }\n            }\n            if (!isReAdded && _options.Resume && firstStageToRun > RelayStages.All.Count)\n            {\n                isReAdded = DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);\n            }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 72,
+      "type": "llm_call",
+      "duration_s": 2.849,
+      "prompt_tokens_est": 55124,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 72,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "with open('/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs') as f:\n    lines = f.readlines()\n    print(f\"Total lines: {len(lines)}\")\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.084,
+      "result_length": 17
+    },
+    {
+      "turn": 73,
+      "type": "llm_call",
+      "duration_s": 4.713,
+      "prompt_tokens_est": 55202,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 73,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "            var sessionCostUsd = 0d; var unknownCostStageCount = 0;\n            var reviewPairHandled = false; var reviewFamilyClean = false; var fixVerifyHandled = false;",
+        "old_string": "            var sessionCostUsd = 0d; var unknownCostStageCount = 0;\n            var reviewPairHandled = false; var reviewFamilyClean = false; var fixVerifyHandled = false;\n            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 74,
+      "type": "llm_call",
+      "duration_s": 3.877,
+      "prompt_tokens_est": 55461,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 74,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "targetedTestCommand",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 541
+    },
+    {
+      "turn": 75,
+      "type": "llm_call",
+      "duration_s": 6.64,
+      "prompt_tokens_est": 55713,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 75,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "BuildStageInvocation",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.184,
+      "result_length": 293
+    },
+    {
+      "turn": 76,
+      "type": "llm_call",
+      "duration_s": 4.508,
+      "prompt_tokens_est": 56062,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 76,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "            var sessionCostUsd = 0d; var unknownCostStageCount = 0;\n            var reviewPairHandled = false; var reviewFamilyClean = false; var fixVerifyHandled = false;\n            var targetedTestCommand = BuildTargetedTestCommand(config, manifest); // updated by stage 4\n            var implementationFrontLoaded = false;",
+        "old_string": "            var sessionCostUsd = 0d; var unknownCostStageCount = 0;\n            var reviewPairHandled = false; var reviewFamilyClean = false; var fixVerifyHandled = false;\n            var implementationFrontLoaded = false;"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 77,
+      "type": "llm_call",
+      "duration_s": 2.953,
+      "prompt_tokens_est": 56354,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 77,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "with open('/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs') as f:\n    lines = f.readlines()\n    print(f\"Total lines: {len(lines)}\")\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.094,
+      "result_length": 17
+    },
+    {
+      "turn": 78,
+      "type": "llm_call",
+      "duration_s": 3.166,
+      "prompt_tokens_est": 56445,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 78,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 54,
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 3
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 893
+    },
+    {
+      "turn": 79,
+      "type": "llm_call",
+      "duration_s": 6.947,
+      "prompt_tokens_est": 56751,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 79,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 25,
+        "limit": 8
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 516
+    },
+    {
+      "turn": 80,
+      "type": "llm_call",
+      "duration_s": 4.692,
+      "prompt_tokens_est": 57172,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 80,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "        var statusEntries = SeedStatusEntries();\n        try",
+        "old_string": "        var statusEntries = SeedStatusEntries();\n        try\n        {"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 103
+    },
+    {
+      "turn": 81,
+      "type": "llm_call",
+      "duration_s": 6.843,
+      "prompt_tokens_est": 57376,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 81,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "        var statusEntries = SeedStatusEntries();\n        try\n        {",
+        "old_string": "        var statusEntries = SeedStatusEntries();\n        try"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 82,
+      "type": "llm_call",
+      "duration_s": 4.589,
+      "prompt_tokens_est": 57769,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 82,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Volumes/Tera/dev/visual-relay && git show HEAD:src/VisualRelay.Core/Execution/RelayDriver.cs | wc -l",
+        "timeout": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.068,
+      "result_length": 9
+    },
+    {
+      "turn": 83,
+      "type": "llm_call",
+      "duration_s": 3.297,
+      "prompt_tokens_est": 57968,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 83,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 80,
+        "limit": 8
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 601
+    },
+    {
+      "turn": 84,
+      "type": "llm_call",
+      "duration_s": 8.894,
+      "prompt_tokens_est": 58186,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 84,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "new_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = !_options.Resume ? DetectStaleCompletedState(rootPath, taskId, taskDirectory, runId, input.Markdown, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun) : _options.Resume && firstStageToRun > RelayStages.All.Count && DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);",
+        "old_string": "            if (await FailIfTaskInputMissingAsync(task, input, rootPath, config.TasksDir, runId, taskId, taskDirectory, statusEntries, cancellationToken) is { } emptyInputOutcome) return emptyInputOutcome;\n            var isReAdded = !_options.Resume && DetectStaleCompletedState(rootPath, taskId, taskDirectory, runId, input.Markdown, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);\n            if (!isReAdded && _options.Resume && firstStageToRun > RelayStages.All.Count) isReAdded = DetectReAddAndArchive(rootPath, taskId, taskDirectory, runId, input.Markdown, task?.MarkdownPath, ledger, manifest, seals, ref previousSeal, ref taskHash, ref sessionCostUsd, ref unknownCostStageCount, statusEntries, ref firstStageToRun);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 85,
+      "type": "llm_call",
+      "duration_s": 2.847,
+      "prompt_tokens_est": 58847,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 85,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "with open('/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs') as f:\n    lines = f.readlines()\n    print(f\"Total lines: {len(lines)}\")\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.094,
+      "result_length": 17
+    },
+    {
+      "turn": 86,
+      "type": "llm_call",
+      "duration_s": 3.197,
+      "prompt_tokens_est": 58978,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 86,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 600
+      },
+      "succeeded": true,
+      "duration_s": 77.677,
+      "result_length": 2299
+    },
+    {
+      "turn": 87,
+      "type": "llm_call",
+      "duration_s": 2.765,
+      "prompt_tokens_est": 59757,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 87,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "tail_lines": 20,
+        "file_path": "/Volumes/Tera/dev/visual-relay/.swival/cmd_output_e2c904e89cb9.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2289
+    },
+    {
+      "turn": 88,
+      "type": "llm_call",
+      "duration_s": 3.053,
+      "prompt_tokens_est": 60501,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 88,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": "Run full test suite"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 662
+    },
+    {
+      "turn": 89,
+      "type": "llm_call",
+      "duration_s": 5.206,
+      "prompt_tokens_est": 60733,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}
