@@ -8,11 +8,13 @@ set -eu
 proj="tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
 filter=""
 for f in "$@"; do
-  case "$f" in *.cs) ;; *) continue ;; esac
-  n=${f##*/}; n=${n%.cs}; n=${n%%.*}
-  case "$filter" in "") filter="FullyQualifiedName~$n" ;; *) filter="$filter|FullyQualifiedName~$n" ;; esac
+	case "$f" in *.cs) ;; *) continue ;; esac
+	n=${f##*/}
+	n=${n%.cs}
+	n=${n%%.*}
+	case "$filter" in "") filter="FullyQualifiedName~$n" ;; *) filter="$filter|FullyQualifiedName~$n" ;; esac
 done
 if [ -n "$filter" ]; then
-  exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter "$filter"
+	exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none --filter "$filter"
 fi
 exec dotnet test "$proj" -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none

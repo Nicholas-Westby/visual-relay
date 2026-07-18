@@ -2,7 +2,8 @@ using VisualRelay.Guards;
 
 // VisualRelay.Guards — the C# home for the repo's policy guards (ports of the
 // retired tools/guards/*.sh). Dispatch on the first arg:
-//   shell-size (default) — enforcing: shell scripts over the logic-line limit (exit 1)
+//   shell-size (default) — enforcing: shell scripts over the logic-line limit
+//                            AND shfmt formatting drift (exit 1)
 //   file-size            — *.cs/*.axaml under src/tests/tools over the limit
 //   source-enumeration   — stale virtio-fs/readdir cache detector (pre-build)
 //   sync-over-async      — .Result/.GetAwaiter().GetResult()/.Wait() in test methods

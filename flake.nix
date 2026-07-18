@@ -48,6 +48,7 @@
               dotnet-sdk_10
               git
               bash
+              shfmt
               icu
               imagemagick
               openssl

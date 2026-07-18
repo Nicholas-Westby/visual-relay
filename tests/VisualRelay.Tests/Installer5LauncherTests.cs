@@ -143,17 +143,23 @@ public sealed partial class Installer5LauncherTests
 
     // ── 5. Self-edit parse safety ───────────────────────────────────────
 
-    /// <summary>Launcher's last non-blank line must be <c>main "$@"; exit $?</c>
-    /// so bash parses all control flow before any subcommand executes.</summary>
+    /// <summary>The last two non-blank lines must be <c>main "$@"</c> then
+    /// <c>exit $?</c> (shfmt-split from the original one-liner). The
+    /// <c>main()</c> wrapper makes bash parse all control flow before any
+    /// subcommand executes regardless of where the invocation lands.</summary>
     [Fact]
     public void Launcher_EndsWithMainInvocation()
     {
         var lines = ReadLauncher().Split('\n');
-        var lastNonBlank = lines
+        var nonBlank = lines
             .Select(l => l.Trim())
-            .LastOrDefault(l => l.Length > 0);
-        Assert.NotNull(lastNonBlank);
-        Assert.Matches(@"^main\s+""\$@""\s*;\s*exit\s+\$\?$", lastNonBlank!);
+            .Where(l => l.Length > 0)
+            .ToArray();
+        Assert.True(nonBlank.Length >= 2, "launcher must have at least two non-blank lines");
+        var secondToLast = nonBlank[^2];
+        var lastLine = nonBlank[^1];
+        Assert.Matches(@"^main\s+""\$@""$", secondToLast);
+        Assert.Matches(@"^exit\s+\$\?$", lastLine);
     }
 
     // ── 6. User-env snapshot capture ─────────────────────────────────────

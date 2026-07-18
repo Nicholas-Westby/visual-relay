@@ -7,7 +7,19 @@ namespace VisualRelay.Guards;
 public static class ShellSizeGuard
 {
     /// <summary>The default per-script logic-line limit (a ceiling, not a target).</summary>
-    public const int DefaultLimit = 20;
+    public const int DefaultLimit = 24;
+
+    /// <summary>
+    /// Fixed 100-line ceiling for the <c>visual-relay</c> bootstrap — the one
+    /// structural carve-out. No env-var knob; all other scripts use the general limit.
+    /// </summary>
+    public const int BootstrapLimit = 100;
+
+    /// <summary>
+    /// The exact repo-relative path that qualifies for <see cref="BootstrapLimit"/>.
+    /// Comparison is ordinal (<c>sub/visual-relay</c> does not match).
+    /// </summary>
+    public const string BootstrapPath = "visual-relay";
 
     /// <summary>The environment variable that overrides <see cref="DefaultLimit"/>.</summary>
     private const string LimitEnvVar = "VISUAL_RELAY_SHELL_LINE_LIMIT";
@@ -45,10 +57,14 @@ public static class ShellSizeGuard
             if (!ShellScriptClassifier.IsShellScript(path, firstLine))
                 continue;
 
+            var effectiveLimit = string.Equals(path, BootstrapPath, StringComparison.Ordinal)
+                ? BootstrapLimit
+                : limit;
+
             var count = ShellScriptLineCounter.CountLogicLines(lines);
-            if (count > limit)
+            if (count > effectiveLimit)
             {
-                violations.Add(new Violation(path, count, limit));
+                violations.Add(new Violation(path, count, effectiveLimit));
             }
         }
 

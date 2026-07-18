@@ -39,7 +39,7 @@ public sealed class WindowsLauncherSizeGuardTests
     [Fact]
     public void LargePowerShellLauncher_ProducesNoViolation()
     {
-        // A 60-line .ps1 is well over the 20-line POSIX limit, yet must not be
+        // A 60-line .ps1 is well over the 24-line POSIX limit, yet must not be
         // flagged — it is outside the guard's scope by design.
         var lines = new string[60];
         for (var i = 0; i < lines.Length; i++)

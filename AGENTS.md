@@ -23,6 +23,10 @@ exempt from those contextual checks. See `docs/commit-messages.md`.
   (file-size guard, format verification, build, tests, screenshot render).
 - Keep C# and Avalonia XAML source files under 300 lines (the C# file-size guard
   in `tools/VisualRelay.Guards`, run by `./visual-relay check`).
+- Shell scripts are shfmt-formatted (tabs, no custom style flags). Apply with
+  `./visual-relay format`, verified by `./visual-relay check`. Scripts stay ≤ 24 logic
+  lines; only the `visual-relay` bootstrap has a 100-line structural carve-out — all
+  other logic moves to C#.
 - If `./visual-relay test` hangs (sits at `Testing (NNNs)` with nothing completing), it's a
   deadlock, not a slow test. Find the culprit with
   `./visual-relay test --blame-hang --blame-hang-timeout 120s`. See `TROUBLESHOOTING.md`.

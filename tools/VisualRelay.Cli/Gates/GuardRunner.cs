@@ -40,33 +40,48 @@ public static class GuardRunner
 
     /// <summary>
     /// Runs <see cref="ShellSizeGuard"/> over every git-tracked shell script at the
-    /// env-resolved limit (default 20). Returns 0 when every script is within the
-    /// limit, 1 otherwise (printing each over-limit script to stderr). The
-    /// authoritative gate is the <c>ShellScriptSizeGuardTests</c> guard-as-test; this
-    /// is the same check run as a fast pre-build step so <c>check</c> fails early.
+    /// env-resolved limit (default 24; the <c>visual-relay</c> bootstrap has a
+    /// fixed 100-line carve-out). Also runs <see cref="ShellFormatGuard"/> to
+    /// verify shfmt formatting. Returns 0 when every script is within its limit
+    /// AND formatting is clean, 1 otherwise (printing over-limit scripts and diffs
+    /// to stderr). The authoritative gate is the <c>ShellScriptSizeGuardTests</c>
+    /// guard-as-test; this is the same size check plus the format verification run
+    /// as a fast pre-build step so <c>check</c> fails early.
     /// </summary>
     public static async Task<int> ShellSizeAsync(RepoPaths paths)
     {
-        var (exitCode, output, timedOut) =
-            await new GitInvoker().RunAsync(paths.Root, ["ls-files"], CancellationToken.None);
-        if (exitCode != 0 || timedOut)
+        List<(string Path, string[] Lines)> tracked;
+        try
         {
-            Console.Error.WriteLine($"shell-size: git ls-files failed (exit {exitCode})");
+            tracked = await TrackedShellScripts.EnumerateAsync(paths.Root, new GitInvoker());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"shell-size: {ex.Message}");
             return 1;
         }
 
-        var files = new List<(string Path, string[] Lines)>();
-        foreach (var rel in output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(f => f.TrimEnd('\r')))
-        {
-            var full = Path.Combine(paths.Root, rel);
-            if (File.Exists(full))
-                files.Add((rel, File.ReadAllLines(full)));
-        }
-
-        var violations = ShellSizeGuard.FindViolations(files, ShellSizeGuard.ResolveLimit());
+        var violations = ShellSizeGuard.FindViolations(tracked, ShellSizeGuard.ResolveLimit());
         foreach (var v in violations)
             Console.Error.WriteLine($"shell too large: {v.Path} has {v.Count} logic lines (limit {v.Limit})");
-        return violations.Count > 0 ? 1 : 0;
+
+        var formatPaths = tracked.Select(t => t.Path).ToList();
+        var formatResult = await ShellFormatGuard.CheckAsync(paths.Root, formatPaths, CancellationToken.None);
+
+        if (!formatResult.Clean)
+        {
+            if (formatResult.Error is not null)
+            {
+                Console.Error.WriteLine($"shell-format: {formatResult.Error}");
+            }
+            else if (formatResult.Output is not null)
+            {
+                Console.Error.Write(formatResult.Output);
+                Console.Error.WriteLine("  → run ./visual-relay format");
+            }
+        }
+
+        return violations.Count > 0 || !formatResult.Clean ? 1 : 0;
     }
 
     /// <summary>

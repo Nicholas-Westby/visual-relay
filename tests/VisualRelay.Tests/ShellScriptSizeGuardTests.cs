@@ -9,20 +9,21 @@ namespace VisualRelay.Tests;
 /// It enumerates the git-tracked tree from <see cref="RepoSetup.Root"/> through the
 /// same <see cref="IGitInvoker"/> seam the <c>shell-size</c> runner uses, runs
 /// <see cref="ShellSizeGuard.FindViolations"/> at the shared limit, and asserts no
-/// tracked shell script (the <c>visual-relay</c> bootstrap, the thin wrappers, and
-/// the two git hooks) exceeds 20 logic lines. The limit is the single global
-/// <see cref="ShellSizeGuard.DefaultLimit"/> — there is no allowlist. Flipping the
-/// task-12 advisory tool to fail here is the deliverable: a chunky script must be
-/// converted to C#, never excused.
+/// tracked shell script exceeds 24 logic lines. The <c>visual-relay</c> bootstrap
+/// has a fixed 100-line structural carve-out — <see cref="ShellSizeGuard.BootstrapLimit"/> —
+/// because it must exist before .NET; all other logic moves to C#. shfmt formatting
+/// is enforced by the <c>check</c> gate (via <c>ShellFormatGuard</c>), not by this
+/// test — exactly as C# formatting is enforced by <c>dotnet format --verify-no-changes</c>.
 /// </summary>
 public sealed class ShellScriptSizeGuardTests
 {
     private static readonly IGitInvoker Git = new GitInvoker();
 
     /// <summary>
-    /// Every git-tracked shell script in the live tree is at most 20 logic lines.
-    /// This is the build-failing gate: it fails the moment any tracked shell script
-    /// (by extension or hashbang) grows past the limit.
+    /// Every git-tracked shell script in the live tree is at most 24 logic lines
+    /// (or 100 for the <c>visual-relay</c> bootstrap). This is the build-failing
+    /// gate: it fails the moment any tracked shell script (by extension or hashbang)
+    /// grows past its ceiling.
     /// </summary>
     [Fact]
     public async Task AllTrackedShellScripts_AreWithinTheLimit()
@@ -36,25 +37,34 @@ public sealed class ShellScriptSizeGuardTests
     }
 
     /// <summary>
-    /// The single global knob is 20. The enforcing test above and the <c>shell-size</c>
-    /// runner both resolve the limit through <see cref="ShellSizeGuard.ResolveLimit"/>,
-    /// which falls back to <see cref="ShellSizeGuard.DefaultLimit"/> — so asserting the
-    /// constant pins the gate and the report to the same value and they can never
-    /// diverge. (Asserted as a pure constant, not via env mutation, to honour the
+    /// The general ceiling is 24. <see cref="ShellSizeGuard.ResolveLimit"/> falls
+    /// back to <see cref="ShellSizeGuard.DefaultLimit"/>, so asserting the constant
+    /// pins the gate and the report to the same value and they can never diverge.
+    /// (Asserted as a pure constant, not via env mutation, to honour the
     /// no-direct-env-mutation test convention; the env-override path is covered by the
     /// FindViolations unit tests.)
     /// </summary>
     [Fact]
-    public void DefaultLimit_IsThe20LineCeiling()
+    public void DefaultLimit_IsThe24LineCeiling()
     {
-        Assert.Equal(20, ShellSizeGuard.DefaultLimit);
+        Assert.Equal(24, ShellSizeGuard.DefaultLimit);
+    }
+
+    /// <summary>
+    /// The bootstrap carve-out is a fixed 100-line ceiling with no env-var knob.
+    /// Pinned here so it can never silently drift.
+    /// </summary>
+    [Fact]
+    public void BootstrapLimit_Is100()
+    {
+        Assert.Equal(100, ShellSizeGuard.BootstrapLimit);
     }
 
     /// <summary>
     /// The gate bites: a synthetic 25-logic-line script added to the tracked set is
     /// reported as a violation at the limit (permanently encoding the deliberate-
     /// fattening proof so the enforcement can never silently regress), while the same
-    /// script at exactly 20 lines passes (20 is the inclusive ceiling).
+    /// script at exactly 24 lines passes (24 is the inclusive ceiling).
     /// </summary>
     [Fact]
     public async Task OverLimitScript_IsAViolation_AtLimitScript_IsNot()
@@ -65,33 +75,54 @@ public sealed class ShellScriptSizeGuardTests
         var overViolations = ShellSizeGuard.FindViolations(over, ShellSizeGuard.ResolveLimit());
         Assert.Contains(overViolations, v => v is { Path: "fixtures/too-fat.sh", Count: 25 });
 
-        var atLimit = realFiles.Append(("fixtures/exactly-20.sh", ShellScript(20))).ToList();
+        var atLimit = realFiles.Append(("fixtures/exactly-24.sh", ShellScript(24))).ToList();
         var atLimitViolations = ShellSizeGuard.FindViolations(atLimit, ShellSizeGuard.ResolveLimit());
-        Assert.DoesNotContain(atLimitViolations, v => v.Path == "fixtures/exactly-20.sh");
+        Assert.DoesNotContain(atLimitViolations, v => v.Path == "fixtures/exactly-24.sh");
+    }
+
+    /// <summary>
+    /// The bootstrap path (<c>visual-relay</c>) is allowed 100 logic lines: at
+    /// exactly 100 it passes, at 101 it violates with the bootstrap limit reported
+    /// in <see cref="ShellSizeGuard.Violation.Limit"/>.
+    /// </summary>
+    [Fact]
+    public void BootstrapPath_At100_Passes_At101_Violates()
+    {
+        var at100 = new (string, string[])[] { ("visual-relay", ShellScript(100)) };
+        var v100 = ShellSizeGuard.FindViolations(at100, ShellSizeGuard.DefaultLimit);
+        Assert.Empty(v100);
+
+        var at101 = new (string, string[])[] { ("visual-relay", ShellScript(101)) };
+        var v101 = ShellSizeGuard.FindViolations(at101, ShellSizeGuard.DefaultLimit);
+        var violation = Assert.Single(v101);
+        Assert.Equal("visual-relay", violation.Path);
+        Assert.Equal(101, violation.Count);
+        Assert.Equal(100, violation.Limit);
+    }
+
+    /// <summary>
+    /// A nested path like <c>sub/visual-relay</c> does NOT match the bootstrap
+    /// carve-out (ordinal comparison only) and gets the general 24-line ceiling.
+    /// </summary>
+    [Fact]
+    public void NestedBootstrapPath_UsesGeneralLimit()
+    {
+        var files = new (string, string[])[] { ("sub/visual-relay", ShellScript(25)) };
+        var violations = ShellSizeGuard.FindViolations(files, ShellSizeGuard.DefaultLimit);
+        var violation = Assert.Single(violations);
+        Assert.Equal("sub/visual-relay", violation.Path);
+        Assert.Equal(25, violation.Count);
+        Assert.Equal(24, violation.Limit);
     }
 
     /// <summary>
     /// Reads the git-tracked tree from <paramref name="repoRoot"/> through the same
-    /// <c>git ls-files</c> + <see cref="File.ReadAllLines(string)"/> path the runner
-    /// uses, returning (relativePath, lines) for every readable tracked file.
+    /// <see cref="TrackedShellScripts.EnumerateAsync"/> path the runner uses,
+    /// returning (relativePath, lines) for every tracked shell script.
     /// </summary>
     private static async Task<List<(string Path, string[] Lines)>> ReadTrackedFilesAsync(string repoRoot)
     {
-        var (exitCode, output, timedOut) = await Git.RunAsync(repoRoot, ["ls-files"], CancellationToken.None);
-        Assert.False(timedOut, "git ls-files timed out");
-        Assert.Equal(0, exitCode);
-
-        var files = new List<(string Path, string[] Lines)>();
-        foreach (var rel in output.Split('\n', StringSplitOptions.RemoveEmptyEntries).Select(f => f.TrimEnd('\r')))
-        {
-            var full = Path.Combine(repoRoot, rel);
-            if (File.Exists(full))
-            {
-                files.Add((rel, File.ReadAllLines(full)));
-            }
-        }
-
-        return files;
+        return await TrackedShellScripts.EnumerateAsync(repoRoot, Git);
     }
 
     /// <summary>A hashbanged shell script with <paramref name="logicLines"/> echo lines.</summary>

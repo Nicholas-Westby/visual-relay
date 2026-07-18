@@ -2,12 +2,13 @@ namespace VisualRelay.Cli.Commands;
 
 /// <summary>
 /// <c>check</c>: the full inner-loop gate, preserving the launcher's order —
-/// source-enum guard → file-size guard → shell-size guard → dead-config-field guard →
-/// <c>dotnet format --verify-no-changes</c> → build → InspectCode → watchdog'd test
-/// → screenshots. Any step failing short-circuits with its exit code. The test step
-/// uses VISUAL_RELAY_CHECK_TEST_TIMEOUT (default 300s) so a deadlocked suite is
-/// capped. The shell-size guard is also enforced authoritatively by the
-/// ShellScriptSizeGuardTests guard-as-test in the test step.
+/// source-enum guard → file-size guard → shell-size guard (size + shfmt format
+/// verification) → dead-config-field guard → <c>dotnet format --verify-no-changes</c>
+/// → build → InspectCode → watchdog'd test → screenshots. Any step failing
+/// short-circuits with its exit code. The test step uses VISUAL_RELAY_CHECK_TEST_TIMEOUT
+/// (default 300s) so a deadlocked suite is capped. The shell-size guard is also
+/// enforced authoritatively by the ShellScriptSizeGuardTests guard-as-test in the
+/// test step; shell formatting is enforced here via shfmt --diff.
 /// </summary>
 public static class CheckCommand
 {

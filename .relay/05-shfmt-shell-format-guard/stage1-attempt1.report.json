@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T21:21:31.514310+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: 05-shfmt-shell-format-guard\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Enforce shfmt formatting through the shell guard, with a bootstrap carve-out\n\nThe shell-size guard counts logic lines, so its 20-line ceiling is satisfied\nby layout, not size: `visual-relay` packs whole functions into ~300-470-char\n`;`-chained one-liners and passes at 16 logic lines. Formatted honestly it is\n68. Measured with shfmt 3.13.1 (nixpkgs) over every tracked shell script:\n`visual-relay` 16\u219268, `.githooks/command-guard` 18\u219221, `.githooks/commit-msg`\n20\u219220, `.githooks/pre-commit` 19\u219219, `me.sh` 4, `test.sh` 3,\n`tools/dotnet-test-files.sh` 12\u219214. The output is idempotent and preserves\nevery comment. The fix: make machine formatting mandatory \u2014 a crammed script\ncan no longer hide lines \u2014 raise the general ceiling from 20 to 24 so honestly\nformatted wrappers keep headroom (post-format `command-guard` is 21; a 20\nceiling survives only via hand-tuning, which is the disease this task cures),\nand give the one genuinely irreducible script (the pre-dotnet bootstrap) a\n100-line ceiling. No line-length enforcement; formatting is the anti-gaming\nmechanism.\n\n## Prescribed approach\n\nshfmt becomes a devshell tool (nix only, never a global install). The shell\nguard enforces BOTH the size limits and the formatting: `./visual-relay format`\napplies `shfmt --write`; the guard surfaces (`guards` shell-size subcommand and\nthe `check` gate) verify with `shfmt --diff` and fail on drift. The\nguard-as-test (`ShellScriptSizeGuardTests`) stays pure C# with no shfmt\ndependency \u2014 exactly as C# formatting is enforced by `check`'s\n`dotnet format --verify-no-changes`, not by a test. The general ceiling\nbecomes 24; `visual-relay` (exact root-relative path) gets a fixed\n100-logic-line ceiling.\n\n### Steps\n\n1. flake.nix: add `shfmt` to the devshell packages list.\n2. Limits, in tools/VisualRelay.Guards: raise `ShellSizeGuard.DefaultLimit`\n   from 20 to 24; add `BootstrapLimit = 100` and `BootstrapPath =\n   \"visual-relay\"` constants; `FindViolations` applies `BootstrapLimit` when a\n   file's relative path equals `BootstrapPath` (ordinal), the passed limit\n   otherwise, so `Violation.Limit` reports the ceiling that actually applied.\n   `VISUAL_RELAY_SHELL_LINE_LIMIT` and the runner's `--max` keep overriding\n   only the general limit; the bootstrap ceiling is a fixed constant with no\n   knob. Update `ShellSizeGuardRunner`'s remediation line \u2014 \"there is no\n   allowlist\" is no longer true; say the bootstrap is the single structural\n   carve-out and all other logic moves to C#.\n3. Shared enumeration: extract a `TrackedShellScripts` helper in\n   VisualRelay.Guards (git `ls-files` through `IGitInvoker`, filter through\n   `ShellScriptClassifier`, skip missing/unreadable files) and consume it from\n   `ShellSizeGuardRunner`, the Cli `GuardRunner.ShellSizeAsync` gate, and the\n   new format code. Three copies of that enumeration loop must not exist\n   afterward.\n4. Formatting check: add `ShellFormatGuard` to VisualRelay.Guards running\n   `shfmt --diff -- <files>` via `ProcessCapture.RunAsync`, with NO style or\n   dialect flags \u2014 a bare invocation keeps `.editorconfig` in charge (today no\n   section matches shell scripts, so canonical output is shfmt defaults:\n   tabs). Exit 0 \u2192 clean. Exit 1 \u2192 print the diff and\n   \"run ./visual-relay format\". Missing binary \u2192 \"shfmt not found; run through\n   ./visual-relay so the nix devshell provides it\" and fail \u2014 an enforcing\n   guard treats a missing tool as a failure, not a pass.\n5. Wire it: the `shell-size` guards subcommand and `GuardRunner.ShellSizeAsync`\n   run the size check then the format check, reporting both kinds of violation\n   before failing. Update the Program.cs dispatch comment, the `GuardRunner`\n   and `CheckCommand` doc comments. `build` stays untouched (it runs only the\n   source-enumeration guard today).\n6. Apply path: after `dotnet format` succeeds, `FormatCommand` runs\n   `shfmt --write -- <files>` over the same enumeration (the command goes\n   async). `format` stays the single apply entry point.\n7. Reformat the tree with `./visual-relay format` and commit shfmt's output\n   verbatim \u2014 zero hand edits to script code. The only script text edited by\n   hand is the bootstrap's own header comment, whose stated ceiling (\"keep\n   this file \u226420 logic lines\") becomes the new 100.\n8. Tests, in tests/VisualRelay.Tests: retarget the constant-pin test\n   (`DefaultLimit_IsThe20LineCeiling` \u2192 asserts 24, rename to match) and pin\n   `BootstrapLimit` at 100 beside it; move the at-limit synthetic in\n   `OverLimitScript_IsAViolation_AtLimitScript_IsNot` from 20 to 24 (25 stays\n   the over sample); extend the `FindViolations` unit tests \u2014 a synthetic\n   `visual-relay` at 100 logic lines passes, at 101 violates with\n   `Limit: 100`, and a nested `sub/visual-relay` still gets the general 24.\n   Rewrite the `ShellScriptSizeGuardTests` doc comment: drop \"no\n   allowlist\"/\"never excused\", state the bootstrap carve-out and that\n   formatting is enforced by the `check` gate, not this test. Refresh the\n   stale \"20-line POSIX limit\" comment in `WindowsLauncherSizeGuardTests`.\n9. AGENTS.md: extend the Build & checks section \u2014 shell scripts are\n   shfmt-formatted (apply with `./visual-relay format`, verified by `check`),\n   scripts stay \u2264 24 logic lines with the bootstrap's 100-line carve-out.\n\n### Guardrails\n\n- No shfmt in any test. Bare `dotnet test` on the tests project outside the\n  devshell must stay green; the guard-as-test remains a pure line counter.\n- No global shfmt: not brew, not a checked-in binary, no PATH fallback logic\n  beyond the devshell.\n- No style flags and no `.editorconfig` shell section. Default shfmt output\n  (tabs) is canonical, and passing printer flags would disable shfmt's native\n  EditorConfig support.\n- No line-length enforcement. Explicitly deferred; do not add a max-width\n  check anywhere.\n- Never hand-edit script code to satisfy the meter \u2014 no inlining, no\n  `;`-joining, no restructuring. A wrapper that outgrows 24 moves its logic\n  to C#. Comment edits are fine; layout belongs to shfmt.\n- Formatting `visual-relay` while it runs is safe \u2014 the `main()` wrapper makes\n  bash parse everything before any subcommand executes. Do not \"fix\" that.\n- release.yml only publishes; it never runs `check` or tests, so CI needs no\n  shfmt. Verify, do not wire it.\n\n## Done when\n\nInside the devshell: `./visual-relay check` is green end-to-end; re-running\n`./visual-relay format` is a no-op; hand-mangling the formatting of any one\nscript makes `./visual-relay guards` and `check` fail with the diff and the\nremediation hint. Outside the devshell: bare `dotnet test` on the tests\nproject is green. All seven tracked scripts are committed shfmt-formatted,\n`visual-relay` is within 100 logic lines, and every other script is within 24\nwith no hand-modified script code.\n\n## Commit-message evidence\n\nMeasure at implementation time and put in the commit body (\u2264 3 hyphen bullets,\n\u2264 20 words each, no file names or paths): per-script logic-line counts before\nvs after formatting against their ceilings, and the format-then-verify no-op\nproof.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Based on the task input and the staged artifacts I can access, here is my framing and the solution options.\n\n---\n\n## Task framing\n\n**What needs to happen**\n\nThe project's shell guard currently enforces a 20-logic-line ceiling but relies on counting logic lines, which is easily gamed by packing statements with `;`. This task cures that by making `shfmt` formatting mandatory: every tracked shell script must match canonical `shfmt` output (tabs, default dialect). The general ceiling is raised to 24 lines to give honestly formatted wrappers headroom, and the bootstrap script `visual-relay` gets a fixed 100-line carve-out (the only one). The `./visual-relay format` command applies `shfmt --write`; the `check` gate and `guards shell-size` subcommand verify with `shfmt --diff` and fail on drift. The guard-as-test (`ShellScriptSizeGuardTests`) stays pure C# with no shfmt dependency \u2014 formatting is enforced by the CLI gate, not by unit tests.\n\n**Key constraints**\n- No shfmt in any test \u2014 `dotnet test` outside the devshell must stay green.\n- No global shfmt \u2014 only via the Nix devshell (`flake.nix`).\n- No style flags and no `.editorconfig` shell section \u2014 default shfmt output (tabs) is canonical.\n- No line-length enforcement.\n- Never hand-edit script code to satisfy the meter.\n- `release.yml` publishes only \u2014 no CI shfmt wiring needed.\n- All seven tracked scripts must be committed shfmt-formatted.\n\n**Files I cannot read but the implementer will touch**\n- `flake.nix` \u2014 add `shfmt` to devshell packages\n- `tools/VisualRelay.Guards/ShellSizeGuard.cs` \u2014 raise `DefaultLimit` to 24, add `BootstrapLimit`/`BootstrapPath`\n- `tools/VisualRelay.Guards/ShellSizeGuardRunner.cs` \u2014 consume `TrackedShellScripts`, update remediation text\n- `tools/VisualRelay.Guards/ShellFormatGuard.cs` \u2014 new file running `shfmt --diff`/`--write`\n- `tools/VisualRelay.Guards/TrackedShellScripts.cs` \u2014 new shared enumeration helper\n- CLI files: `GuardRunner`, `CheckCommand`, `FormatCommand`, `Program.cs`\n- `tests/VisualRelay.Tests/ShellScriptSizeGuardTests.cs` \u2014 retarget constants, update doc comment\n- `tests/VisualRelay.Tests/WindowsLauncherSizeGuardTests.cs` \u2014 refresh stale comment\n- `AGENTS.md` \u2014 extend Build & checks section\n- All seven shell scripts \u2014 reformatted by shfmt, no hand edits\n\n**Risk areas**\n- The enumeration loop appears in three places today; extracting `TrackedShellScripts` requires touching all three callers and the `IGitInvoker` wiring.\n- `ShellFormatGuard` must treat a missing `shfmt` binary as a failure (not a silent pass) \u2014 the opposite of typical optional-tool patterns in this project.\n- Formatting `visual-relay` while it runs is safe per the task (bash parses the whole file before any subcommand executes), but the implementer must not try to \"fix\" that.\n- The bootstrap carve-out (`BootstrapLimit=100`) must not be overridable by `VISUAL_RELAY_SHELL_LINE_LIMIT` or `--max`.\n\n---\n\n## Solution options\n\n```json\n{\n  \"summary\": \"Enforce shfmt formatting through the shell guard: add shfmt to the Nix devshell, raise general logic-line ceiling from 20\u219224 with a 100-line bootstrap carve-out, extract a shared TrackedShellScripts enumeration helper, add ShellFormatGuard running shfmt --diff/--write, wire into check/format/guards commands, update tests and AGENTS.md, and commit all seven scripts reformatted by shfmt with zero hand edits to script code.\",\n  \"options\": [\n    \"1. Full prescribed approach \u2014 add shfmt to flake.nix, extract TrackedShellScripts helper, implement ShellFormatGuard in the Guards library, wire into CLI gates (check/format/guards), update tests (constants, doc comments, synthetic bootstrap coverage), reformat via ./visual-relay format, update AGENTS.md.\",\n    \"2. Simpler wire \u2014 add shfmt to flake.nix and run shfmt --diff/--write directly in the CLI layer (GuardRunner/FormatCommand) without extracting TrackedShellScripts, keeping the three enumeration loops separate. Less refactoring risk but violates the 'no duplicate enumeration' prescription and leaves the Guards library unchanged.\",\n    \"3. Keep formatting check as a separate CLI-only subcommand \u2014 add shfmt enforcement only in the `guards shell-format` subcommand (not integrated into `check`), while still raising limits and extracting TrackedShellScripts. Provides incremental adoption but doesn't satisfy the 'check fails on format drift' requirement.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 10,
+    "tool_calls_total": 13,
+    "tool_calls_succeeded": 10,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "use_skill": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 9,
+        "failed": 1
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 2
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 10,
+    "total_llm_time_s": 38.823,
+    "prompt_cache": {
+      "cached_tokens": 86912,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.008,
+    "skills_used": [
+      "nono-sandbox"
+    ],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.529,
+      "prompt_tokens_est": 5662,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "use_skill",
+      "arguments": {
+        "name": "nono-sandbox"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8088
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 1.277,
+      "prompt_tokens_est": 7840,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 144,
+      "error": "error: Path '/Users/admin/Dev/visual-relay' resolves to /Users/admin/Dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 1.455,
+      "prompt_tokens_est": 7916,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 88,
+      "error": "error: Path '/' resolves to /, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 1.581,
+      "prompt_tokens_est": 7989,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 222
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.274,
+      "prompt_tokens_est": 8079,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/stage-input-artifact-full.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4672
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/diag.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 139
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 3.15,
+      "prompt_tokens_est": 9416,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/stage-input-artifact-tests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14466
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/runasync-edit.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 104
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 2.678,
+      "prompt_tokens_est": 13316,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 116,
+      "error": "error: Path '.' resolves to /Users/admin/Dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.521,
+      "prompt_tokens_est": 13476,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 222
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 1.957,
+      "prompt_tokens_est": 13762,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/ProcessRunners.RunAsync.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 20528
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/stage-input-artifact.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 37
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": ".swival/extract_timings.py"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1093
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 17.401,
+      "prompt_tokens_est": 18315,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

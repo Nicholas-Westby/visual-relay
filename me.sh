@@ -16,4 +16,4 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec dotnet run --project \
-  "$SCRIPT_DIR/tools/VisualRelay.ClaimAuthorship/VisualRelay.ClaimAuthorship.csproj" -- "$@"
+	"$SCRIPT_DIR/tools/VisualRelay.ClaimAuthorship/VisualRelay.ClaimAuthorship.csproj" -- "$@"
