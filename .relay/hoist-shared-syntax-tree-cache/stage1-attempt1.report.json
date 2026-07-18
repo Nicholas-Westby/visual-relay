@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T06:45:55.138948+00:00",
+  "task": "# Relay stage 1: Ideate\nTask: hoist-shared-syntax-tree-cache\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Hoist shared CS-file parse results for source-scanning guard tests\n\nFive guard tests each re-parse every `.cs` file in the test project on every\nrun, repeating the same I/O and tree-walk for different code-pattern checks.\nIndividually they clock 9\u201310 s; together they are ~50 s of *serialized* PPM\n(parse-per-method) work that balloons under thread contention. Each guard test\nshares the same expensive preliminary step: glob all `.cs` files, read them,\nand feed each through a Roslyn `CSharpSyntaxTree.ParseText`. A single\nassembly-level class fixture can run that parse once and let every guard read\nthe cached tree list.\n\n## Measured cost\n\nFrom the baseline:\n- `SyncOverAsyncGuardTests.AllTestProjectCsFiles_HaveNoSyncOverAsync` \u2014 10.3 s\n- `RealBuildSubprocessGuardTests.AllTestProjectCsFiles_AreSandboxBuildSafe` \u2014 10.1 s\n- `GateAsTestSandboxGuardTests.AllTestProjectCsFiles_AreGateAsTestSandboxSafe` \u2014 10.1 s\n- `RealSleepGuardTests.AllTestProjectCsFiles_AreSleepFree` \u2014 9.3 s\n- `DeadConfigFieldGuardTests.LiveTree_HasNoDeadConfigFields` \u2014 9.6 s\n\nTotal serial parse cost: roughly 49 s (single-threaded). Under 2.0\u00d7\nparallelism these four become a long tail of ~30 s.\n\n(See `llm-tasks/completed/speed-up-automated-tests-july-17/timings-baseline.txt`.)\n\n## Prescribed approach\n\nAdd an `IClassFixture<CachedSyntaxTreesFixture>` (or `AssemblyFixture` \u2014 same\nscope) that, in its `InitializeAsync`, globs the test-project `.cs` files once,\nparses each with `CSharpSyntaxTree.ParseText(fileContent, path: filePath)`, and\nstores the `List<(string Path, SyntaxTree Tree)>`. Each guard test injects the\nfixture via its constructor and reads the pre-parsed list instead of calling\nits own private helper that re-globs and re-parses.\n\nThe fixture is read-only (immutable once constructed) \u2014 safe to share across\nall parallel test workers.\n\n### Steps\n\n1. Create `CachedSyntaxTreesFixture : IAsyncLifetime` in a new file at\n   `tests/VisualRelay.Tests/CachedSyntaxTreesFixture.cs`.\n2. In `InitializeAsync`, find the test project's `.cs` files, read each one,\n   parse with `CSharpSyntaxTree.ParseText`, and store the list.\n3. Add `: IClassFixture<CachedSyntaxTreesFixture>` to each of the five guard\n   test classes (or declare a single `[assembly: AssemblyFixture]`).\n4. Replace each guard's private parse-everything helper with a read from the\n   injected fixture.\n5. Each guard's *analysis* pass stays the same \u2014 only the parse step is shared.\n6. Run the full suite to green.\n\n### Guardrails\n- Coverage rules: no test assertion changes, no deletions, no disabled tests.\n- The fixture must use `IAsyncLifetime` or `IClassFixture` (xUnit manages\n  per-class construction; a single-instance assembly fixture is ideal).\n- The parsed `SyntaxTree` list is immutable; never mutate it.\n- If any guard mutates the tree (unlikely but check), provide a defensive copy.\n\n## Expected savings\n\nFirst-guard wall time stays ~1 s (parse cost), but the other four drop from\n9\u201310 s to sub-second (no re-parse). Wall-time savings: roughly 25\u201330 s from the\nfull-suite tail.\n\n## Commit-message evidence\n\nMeasure before and after while implementing, then put one filled-in evidence\nbullet in the commit message body, following the attached\n`commit-message-evidence.md`. Never pre-fill that bullet \u2014 numbers are measured\nat implementation time and go into the eventual commit message, nowhere else.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string, \"options\": string[] }",
+  "model": "cheap",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "none",
+    "commands": [
+      "cat",
+      "git",
+      "ls"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Task frame\n\n**What needs to happen:** Five guard-test classes (`SyncOverAsyncGuardTests`, `RealBuildSubprocessGuardTests`, `GateAsTestSandboxGuardTests`, `RealSleepGuardTests`, `DeadConfigFieldGuardTests`) each independently glob, read, and Roslyn-parse every `.cs` file in the test project \u2014 ~50 s of duplicated I/O and tree-building under serial execution. The fix is to extract that parse phase into a shared xUnit fixture (`CachedSyntaxTreesFixture`) that runs once, caches `List<(string Path, SyntaxTree Tree)>`, and lets each guard inject it and skip its private re-parse. No assertion logic changes; only the data-source plumbing is refactored.\n\n**Key design constraints (from the task + xUnit mechanics):**\n1. Fixture must be `IAsyncLifetime` (or equivalent) so `InitializeAsync` does the one-time parse.\n2. The cached list is immutable \u2014 never mutated after construction.\n3. Each guard's analysis pass stays untouched; only the \"get me all parsed trees\" helper is replaced with a fixture property read.\n4. Coverage/assertion changes are banned.\n5. If any guard *mutates* a `SyntaxTree` node (unlikely \u2014 Roslyn trees are immutable), a defensive copy must be provided.\n\n---\n\n## Solution options\n\n### Option A \u2014 `IClassFixture<T>` on each test class *(prescribed, lowest ceremony)*\n\nAdd `: IClassFixture<CachedSyntaxTreesFixture>` to each of the five guard test classes. xUnit creates one fixture instance per test class, shared across all test methods in that class. The fixture's `InitializeAsync` globs/parses once, and each guard reads `Fixture.Trees` in place of its private helper.\n\n- **Pros:** Simplest pattern; every xUnit user knows it; no extra NuGet packages; works on any xUnit version \u2265 2.0.\n- **Cons:** Five separate fixture instances \u2192 five parses if all five classes happen to run in disjoint test-execution batches (but under normal parallel test execution they share within-class, and the fixture constructor runs only once per class \u2014 which is sufficient to eliminate the 50\u21925\u00d7 saving goal).\n- **Trade-off:** Slightly more fixture construction than a true singleton, but each class still parses only once instead of once-per-test-method, which is the dominant win.\n\n### Option B \u2014 `[assembly: AssemblyFixture]` *(fully shared singleton)*\n\nPlace `[assembly: AssemblyFixture(typeof(CachedSyntaxTreesFixture))]` in `AssemblyInfo.cs` or `Usings.cs`. The fixture is created once for the entire assembly and disposed once after all tests finish. Every guard test class injects it via constructor; all five read the same pre-parsed list.\n\n- **Pros:** True single parse across all guard classes \u2014 maximal savings; matches the task's \"assembly-level class fixture\" ideal.\n- **Cons:** Requires the `Xunit.AssemblyFixture` NuGet package (or custom `AssemblyFixtureAttribute` implementation); slightly more boilerplate to wire up the assembly-level attribute; developers less familiar with the pattern may be confused.\n- **Trade-off:** Best performance but requires an extra dependency or a few lines of infrastructure code.\n\n### Option C \u2014 `ICollectionFixture<T>` on a shared test collection\n\nDefine a test collection `[CollectionDefinition(\"GuardTests\")]` in a marker class, apply `[Collection(\"GuardTests\")]` to each guard test class, and have the collection own the fixture.\n\n- **Pros:** Single fixture instance for all five classes; no assembly-level magic; works with plain xUnit.\n- **Cons:** Forces all five guard classes into the same collection, which *disables* parallel execution between them (xUnit serializes tests within a collection). That could reintroduce a serialization bottleneck \u2014 exactly what the task tries to avoid. Also requires touching every test class with a `[Collection(...)]` attribute.\n- **Trade-off:** Shared fixture at the cost of losing inter-class parallelism. Likely unacceptable unless the analysis passes are themselves extremely fast (which they seem to be \u2014 sub-second after parse is removed), but still *risks* reintroducing a tail.\n\n---\n\n**Recommendation:** **Option B (AssemblyFixture)** if adding the NuGet dependency or a small helper attribute is acceptable; otherwise **Option A (IClassFixture)** is the safe, zero-dependency default that still delivers the bulk of the savings. Avoid **Option C** because it defeats the parallel-execution benefit.\n\n```json\n{\n  \"summary\": \"Five guard-test classes redundantly glob, read, and Roslyn-parse every .cs file in the test project, costing ~50 s of serialized parse work. The fix extracts the parse phase into a shared xUnit fixture that runs once and caches the SyntaxTree list. Each guard injects the fixture and replaces its private re-parse helper with a read from the cached list, leaving all analysis logic unchanged.\",\n  \"options\": [\n    \"Option A \u2014 IClassFixture<CachedSyntaxTreesFixture> on each guard class: simplest, zero new dependencies, fixture created once per class (five parses worst-case, but each class still parses once instead of once-per-method).\",\n    \"Option B \u2014 [assembly: AssemblyFixture(typeof(CachedSyntaxTreesFixture))]: true singleton fixture shared across the whole assembly; requires Xunit.AssemblyFixture NuGet package or a small custom attribute; optimal performance with a single parse ever.\",\n    \"Option C \u2014 ICollectionFixture<T> on a shared test collection: single fixture across five classes, but serializes all guard tests into one non-parallel collection; risks reintroducing a bottleneck and is not recommended.\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 3,
+    "tool_calls_total": 4,
+    "tool_calls_succeeded": 1,
+    "tool_calls_failed": 3,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 0,
+        "failed": 1
+      },
+      "list_files": {
+        "succeeded": 0,
+        "failed": 2
+      },
+      "think": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 1,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 3,
+    "total_llm_time_s": 32.582,
+    "prompt_cache": {
+      "cached_tokens": 11136,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.0,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.413,
+      "prompt_tokens_est": 5004,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 146,
+      "error": "error: Path '/Volumes/Tera/dev/visual-relay' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/**/*Guard*"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 117,
+      "error": "error: Path '.' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/**/*Guard*.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 117,
+      "error": "error: Path '.' resolves to /Volumes/Tera/dev/visual-relay, which is outside .swival/ (filesystem access is disabled)"
+    },
+    {
+      "turn": 1,
+      "type": "guardrail",
+      "tool": "list_files",
+      "level": "nudge"
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 8.895,
+      "prompt_tokens_est": 5316,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "I cannot access the project files on disk because they are outside the `.swival/` sandbox. However, the task asks me to frame the task and list 2-3 solution options based on the detailed problem description provided in the prompt. The task description is extremely thorough \u2014 it already prescribes an approach (create CachedSyntaxTreesFixture, use IAsyncLifetime, inject via IClassFixture or AssemblyFixture, replace private helpers). So I should distill the core problem, note the constraint about not reading files, and enumerate the concrete architectural options available given the xUnit test infrastructure and the goal.\n\nLet me think about what the options truly are:\n\nOption 1: IClassFixture<CachedSyntaxTreesFixture> on each test class (prescribed approach)\n- Each guard test class declares `: IClassFixture<CachedSyntaxTreesFixture>`\n- xUnit creates one instance per test class (shared across tests within that class)\n- Simple, well-known pattern\n\nOption 2: AssemblyFixture (via [assembly: AssemblyFixture(typeof(CachedSyntaxTreesFixture))])\n- Single instance shared across all test classes in the assembly\n- Even better sharing \u2014 only one parse ever\n- Requires xUnit v2.4.2+ with the AssemblyFixture NuGet package\n- Slightly less common but ideal for this use case\n\nOption 3: CollectionFixture\n- Define a test collection and put the fixture on the collection\n- All tests in the collection share one fixture instance\n- Could be a middle ground\n\nSince the task says \"or declare a single [assembly: AssemblyFixture]\", both IClassFixture and AssemblyFixture are explicitly on the table.\n\nLet me write a clear summary and list these options."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 20.275,
+      "prompt_tokens_est": 5943,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

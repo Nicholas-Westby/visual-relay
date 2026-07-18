@@ -99,9 +99,40 @@ public static class RealSleepGuard
         return violations;
     }
 
+    /// <summary>
+    /// Returns every real-sleep violation across <paramref name="trees"/>, ordered by
+    /// path (ordinal) then line. Self-exempt files yield nothing. Uses pre-parsed
+    /// <see cref="SyntaxTree"/> objects instead of re-parsing string sources.
+    /// </summary>
+    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)
+    {
+        var violations = new List<Violation>();
+
+        foreach (var (path, tree) in trees)
+        {
+            var fileName = Path.GetFileName(path);
+            if (SelfExemptFileNames.Contains(fileName) || RealIntegrationExemptFileNames.Contains(fileName))
+                continue;
+
+            ScanTree(path, tree, violations);
+        }
+
+        violations.Sort((a, b) =>
+        {
+            var byPath = string.CompareOrdinal(a.Path, b.Path);
+            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);
+        });
+        return violations;
+    }
+
     private static void ScanSource(string path, string source, List<Violation> sink)
     {
         var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);
+        ScanTree(path, tree, sink);
+    }
+
+    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)
+    {
         var text = tree.GetText();
         var root = tree.GetRoot();
 

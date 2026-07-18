@@ -120,6 +120,53 @@ public static partial class DeadConfigFieldGuard
         foreach (var (path, source) in consumerFiles)
             Register(path, source, candidate: false, consumer: true);
 
+        return ComputeViolations(parsed);
+    }
+
+    /// <summary>
+    /// Returns every dead config field using pre-parsed <see cref="SyntaxTree"/> objects,
+    /// ordered by field name (ordinal). Candidates AND consumers are drawn from the same
+    /// <paramref name="trees"/> set.
+    /// </summary>
+    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)
+    {
+        var list = trees as IReadOnlyCollection<(string Path, SyntaxTree Tree)> ?? trees.ToList();
+        return FindViolations(list, list);
+    }
+
+    /// <summary>
+    /// Returns every dead config field using pre-parsed <see cref="SyntaxTree"/> objects,
+    /// ordered by field name (ordinal). CANDIDATES (the config record + its loader) come from
+    /// <paramref name="candidateTrees"/>; a candidate is live if ANY of
+    /// <paramref name="consumerTrees"/> reads it.
+    /// </summary>
+    public static IReadOnlyList<Violation> FindViolations(
+        IEnumerable<(string Path, SyntaxTree Tree)> candidateTrees,
+        IEnumerable<(string Path, SyntaxTree Tree)> consumerTrees)
+    {
+        var parsed = new Dictionary<string, (SyntaxNode Root, SourceText Text, bool Candidate, bool Consumer)>(
+            StringComparer.Ordinal);
+
+        void Register(string path, SyntaxTree tree, bool candidate, bool consumer)
+        {
+            if (parsed.TryGetValue(path, out var p))
+                parsed[path] = (p.Root, p.Text, p.Candidate || candidate, p.Consumer || consumer);
+            else
+                parsed[path] = (tree.GetRoot(), tree.GetText(), candidate, consumer);
+        }
+
+        foreach (var (path, tree) in candidateTrees)
+            Register(path, tree, candidate: true, consumer: false);
+        foreach (var (path, tree) in consumerTrees)
+            Register(path, tree, candidate: false, consumer: true);
+
+        return ComputeViolations(parsed);
+    }
+
+    private static IReadOnlyList<Violation> ComputeViolations(
+        Dictionary<string, (SyntaxNode Root, SourceText Text, bool Candidate, bool Consumer)> parsed)
+    {
+
         // Record properties + loader self-default candidates come from the candidate set;
         // the matched `operand.Field` nodes are recorded so the consumer pass excludes them.
         var declarations = new Dictionary<string, (string Path, int Line)>(StringComparer.Ordinal);

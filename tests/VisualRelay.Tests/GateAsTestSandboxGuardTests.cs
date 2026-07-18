@@ -25,6 +25,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class GateAsTestSandboxGuardTests
 {
+    private readonly CachedSyntaxTreesFixture _trees;
+
+    public GateAsTestSandboxGuardTests(CachedSyntaxTreesFixture trees)
+    {
+        _trees = trees;
+    }
     /// <summary>Gate bites: an unguarded <c>InspectCodeGate.Run(paths)</c> is reported.</summary>
     [Fact]
     public void UnguardedGateRun_IsReported()
@@ -246,14 +252,11 @@ public sealed class GateAsTestSandboxGuardTests
     [Fact]
     public void AllTestProjectCsFiles_AreGateAsTestSandboxSafe()
     {
-        var testsDir = Path.Combine(RepoSetup.Root, "tests", "VisualRelay.Tests");
-
-        var files = Directory.EnumerateFiles(testsDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
+        var trees = _trees.AllTrees
+            .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 
-        var violations = GateAsTestSandboxGuard.FindViolations(files);
+        var violations = GateAsTestSandboxGuard.FindViolations(trees);
 
         Assert.True(violations.Count == 0,
             "gate-as-test guard found un-skip-guarded shell-out gate-as-tests in the test suite " +
@@ -262,10 +265,4 @@ public sealed class GateAsTestSandboxGuardTests
             string.Join("\n", violations.Select(v => $"{v.Path}:{v.Line}: {v.Snippet} — {v.Reason}")));
     }
 
-    /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
-    private static bool IsBuildArtifact(string path)
-    {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(s => s is "bin" or "obj");
-    }
 }

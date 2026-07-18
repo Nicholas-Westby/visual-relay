@@ -25,6 +25,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed partial class DeadConfigFieldGuardTests
 {
+    private readonly CachedSyntaxTreesFixture _trees;
+
+    public DeadConfigFieldGuardTests(CachedSyntaxTreesFixture trees)
+    {
+        _trees = trees;
+    }
     // A minimal config record + self-default loader, mirroring RelayConfig /
     // RelayConfigLoader, with two knobs: MaxTurns (given a real consumer below) and
     // DeadKnob (consumed nowhere).
@@ -165,29 +171,19 @@ public sealed partial class DeadConfigFieldGuardTests
     public void LiveTree_HasNoDeadConfigFields()
     {
         // Candidates from src/ (the config record + loader); consumers from src/ + tools/.
-        var candidateFiles = EnumerateCs("src");
-        var consumerFiles = EnumerateCs("src", "tools");
+        var candidateTrees = _trees.AllTrees
+            .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal))
+            .ToList();
+        var consumerTrees = _trees.AllTrees
+            .Where(t => t.RelativePath.StartsWith("src/", StringComparison.Ordinal)
+                        || t.RelativePath.StartsWith("tools/", StringComparison.Ordinal))
+            .ToList();
 
-        var violations = DeadConfigFieldGuard.FindViolations(candidateFiles, consumerFiles);
+        var violations = DeadConfigFieldGuard.FindViolations(candidateTrees, consumerTrees);
 
         Assert.True(violations.Count == 0,
             "dead-config-field guard found config fields parsed by the loader but consumed " +
             "nowhere in src/ or tools/ (consume the field, or remove it from the config record + loader):\n" +
             string.Join("\n", violations.Select(v => $"{v.Path}:{v.Line}: {v.Field} — {v.Reason}")));
-    }
-
-    /// <summary>Reads every non-build-artifact <c>*.cs</c> under the given repo-relative dirs as (relPath, source) pairs.</summary>
-    private static List<(string Path, string Source)> EnumerateCs(params string[] dirs) =>
-        dirs.SelectMany(d =>
-                Directory.EnumerateFiles(Path.Combine(RepoSetup.Root, d), "*.cs", SearchOption.AllDirectories))
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
-            .ToList();
-
-    /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
-    private static bool IsBuildArtifact(string path)
-    {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(s => s is "bin" or "obj");
     }
 }

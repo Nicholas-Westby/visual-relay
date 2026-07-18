@@ -18,6 +18,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class SyncOverAsyncGuardTests
 {
+    private readonly CachedSyntaxTreesFixture _trees;
+
+    public SyncOverAsyncGuardTests(CachedSyntaxTreesFixture trees)
+    {
+        _trees = trees;
+    }
     /// <summary>
     /// A <c>.Result</c> member access on a Task-shaped receiver (an <c>…Async()</c>
     /// invocation) inside an <c>[AvaloniaFact]</c> test method body is reported as a
@@ -183,14 +189,11 @@ public sealed class SyncOverAsyncGuardTests
     [Fact]
     public void AllTestProjectCsFiles_HaveNoSyncOverAsync()
     {
-        var testsDir = Path.Combine(RepoSetup.Root, "tests", "VisualRelay.Tests");
-
-        var files = Directory.EnumerateFiles(testsDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
+        var trees = _trees.AllTrees
+            .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 
-        var violations = SyncOverAsyncGuard.FindViolations(files);
+        var violations = SyncOverAsyncGuard.FindViolations(trees);
 
         Assert.True(violations.Count == 0,
             "sync-over-async guard found deadlock patterns in the test suite (use async/await " +
@@ -198,10 +201,4 @@ public sealed class SyncOverAsyncGuardTests
             string.Join("\n", violations.Select(v => $"{v.Path}:{v.Line}: {v.Snippet} — {v.Reason}")));
     }
 
-    /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
-    private static bool IsBuildArtifact(string path)
-    {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(s => s is "bin" or "obj");
-    }
 }

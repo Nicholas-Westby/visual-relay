@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 
 [assembly: AssemblyFixture(typeof(VisualRelay.Tests.PipelineTestFixture))]
+[assembly: AssemblyFixture(typeof(VisualRelay.Tests.CachedSyntaxTreesFixture))]
 
 namespace VisualRelay.Tests;
 

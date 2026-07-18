@@ -22,6 +22,12 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class RealBuildSubprocessGuardTests
 {
+    private readonly CachedSyntaxTreesFixture _trees;
+
+    public RealBuildSubprocessGuardTests(CachedSyntaxTreesFixture trees)
+    {
+        _trees = trees;
+    }
     /// <summary>
     /// Gate bites: an unbounded <c>dotnet build</c> launched via a
     /// <c>ProcessStartInfo</c> initializer (the PackagingTool shape) is reported.
@@ -265,14 +271,11 @@ public sealed class RealBuildSubprocessGuardTests
     [Fact]
     public void AllTestProjectCsFiles_AreSandboxBuildSafe()
     {
-        var testsDir = Path.Combine(RepoSetup.Root, "tests", "VisualRelay.Tests");
-
-        var files = Directory.EnumerateFiles(testsDir, "*.cs", SearchOption.AllDirectories)
-            .Where(f => !IsBuildArtifact(f))
-            .Select(f => (Path.GetRelativePath(RepoSetup.Root, f), File.ReadAllText(f)))
+        var trees = _trees.AllTrees
+            .Where(t => t.RelativePath.StartsWith("tests/VisualRelay.Tests/", StringComparison.Ordinal))
             .ToList();
 
-        var violations = RealBuildSubprocessGuard.FindViolations(files);
+        var violations = RealBuildSubprocessGuard.FindViolations(trees);
 
         Assert.True(violations.Count == 0,
             "build-subprocess guard found unbounded real build spawns in the test suite " +
@@ -281,10 +284,4 @@ public sealed class RealBuildSubprocessGuardTests
             string.Join("\n", violations.Select(v => $"{v.Path}:{v.Line}: {v.Snippet} — {v.Reason}")));
     }
 
-    /// <summary>True when the path lives under a <c>bin</c> or <c>obj</c> build-output segment.</summary>
-    private static bool IsBuildArtifact(string path)
-    {
-        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return segments.Any(s => s is "bin" or "obj");
-    }
 }

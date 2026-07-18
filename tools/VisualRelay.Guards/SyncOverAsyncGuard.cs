@@ -89,9 +89,32 @@ public static class SyncOverAsyncGuard
         return violations;
     }
 
-    private static void ScanSource(string path, string source, List<Violation> sink)
+    /// <summary>Same as the string-based overload, but operates on pre-parsed <see cref="SyntaxTree"/> objects.</summary>
+    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)
     {
-        var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);
+        var violations = new List<Violation>();
+
+        foreach (var (path, tree) in trees)
+        {
+            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))
+                continue;
+
+            ScanTree(path, tree, violations);
+        }
+
+        violations.Sort((a, b) =>
+        {
+            var byPath = string.CompareOrdinal(a.Path, b.Path);
+            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);
+        });
+        return violations;
+    }
+
+    private static void ScanSource(string path, string source, List<Violation> sink) =>
+        ScanTree(path, CSharpSyntaxTree.ParseText(source, ParseOptions), sink);
+
+    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)
+    {
         var text = tree.GetText();
         var root = tree.GetRoot();
 
