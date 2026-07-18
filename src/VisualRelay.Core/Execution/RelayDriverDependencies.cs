@@ -17,16 +17,19 @@ public sealed record RelayDriverDependencies(
     ITestRunner TestRunner,
     IRelayEventSink EventSink,
     IGitInvoker GitInvoker,
-    IEnvironmentAccessor? EnvironmentAccessor = null)
+    IEnvironmentAccessor? EnvironmentAccessor = null,
+    TimeProvider? TimeProvider = null)
 {
     public static RelayDriverDependencies ForTests(
         ISubagentRunner subagentRunner,
         ITestRunner testRunner,
         IRelayEventSink eventSink,
         IGitInvoker? gitInvoker = null,
-        IEnvironmentAccessor? environmentAccessor = null) =>
+        IEnvironmentAccessor? environmentAccessor = null,
+        TimeProvider? timeProvider = null) =>
         new(subagentRunner, testRunner, eventSink, gitInvoker ?? new NullGitInvoker(),
-            environmentAccessor ?? new TempXdgEnvironmentAccessor());
+            environmentAccessor ?? new TempXdgEnvironmentAccessor(),
+            timeProvider);
 }
 
 /// <summary>

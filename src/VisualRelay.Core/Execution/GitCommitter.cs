@@ -249,6 +249,9 @@ internal static partial class GitCommitter
             if (isSuccess(result.ExitCode) || attempt == maxAttempts)
                 return result;
 
+            if (GitFailureClassifier.IsDeterministic(result.ExitCode, result.Output))
+                return result;
+
             lastResult = result;
             var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);
             await Task.Delay(delay, tp, cancellationToken);

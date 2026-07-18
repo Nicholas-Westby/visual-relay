@@ -21,7 +21,8 @@ public sealed class GitCommitterProbeRetryTests
         Write(repo, "src/app.cs", "updated");
 
         var shim = new TransientGitShim(sim);
-        shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: not a git repository");
+        // Use a TRANSIENT message (index.lock) — deterministic signatures fail fast.
+        shim.FailNext("rev-parse", failureCount: 2, exitCode: 128, stderr: "fatal: Unable to create '.git/index.lock': File exists.");
         var time = new ManualTimeProvider();
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
@@ -39,7 +40,7 @@ public sealed class GitCommitterProbeRetryTests
     }
 }
 
-/// <summary>Persistent rev-parse failure surfaces the git exit code and stderr.</summary>
+/// <summary>Persistent rev-parse failure: deterministic → fail-fast with exactly one invocation.</summary>
 public sealed class GitCommitterProbePersistentTests
 {
     [Fact]
@@ -52,23 +53,23 @@ public sealed class GitCommitterProbePersistentTests
         Write(repo, "src/app.cs", "updated");
 
         var shim = new TransientGitShim(sim);
+        // "not a git repository" is a deterministic signature → fail-fast, no sleep.
         shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
         var time = new ManualTimeProvider();
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
             CancellationToken.None, shim, timeProvider: time);
-        while (!task.IsCompleted)
-        {
-            time.Advance(TimeSpan.FromMilliseconds(250));
-            await Task.Yield();
-        }
+        // Deterministic failures return immediately — no time advance needed.
+        Assert.True(task.IsCompleted, "deterministic failure should complete synchronously (no delay)");
         var result = await task;
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);
         Assert.Contains("git exit 128", result.Error, StringComparison.Ordinal);
         Assert.Contains("fatal: not a git repository", result.Error, StringComparison.Ordinal);
+        // Exactly one invocation — no retries for a deterministic failure.
+        Assert.Equal(1, shim.Consumed("rev-parse"));
     }
 }
 
@@ -114,7 +115,7 @@ public sealed class GitCommitterPersistentTimingTests
         sim.Commit(repo.Root, "chore: seed");
 
         var shim = new TransientGitShim(sim);
-        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: not a git repository");
+        shim.FailNext("rev-parse", failureCount: 99, exitCode: 128, stderr: "fatal: index file open failed");
         var time = new ManualTimeProvider();
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: test"], [], [],

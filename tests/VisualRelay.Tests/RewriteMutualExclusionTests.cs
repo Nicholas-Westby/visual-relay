@@ -25,8 +25,9 @@ public sealed class RewriteMutualExclusionTests
             RootPath = repo.Root,
             ShowConfirmationAsync = null,
             // In-memory git for the rewrite worktree add/remove. Without it the real
-            // GitInvoker's `git worktree` calls fail against the non-repo test root and
-            // PlanningWorktree's 3x retry (250ms + 1s) burns ~2.5s per rewriting fact.
+            // GitInvoker's `git worktree` calls fail against the non-repo test root;
+            // deterministic failures now fail fast so the retry loop no longer burns
+            // wall-clock time, but a GitSim-backed worktree is still the right fixture.
             RewriteGitInvokerForTests = SeededSim(repo),
         };
 

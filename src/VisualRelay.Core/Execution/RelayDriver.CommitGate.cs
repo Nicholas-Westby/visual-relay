@@ -228,7 +228,7 @@ public sealed partial class RelayDriver
             await WriteStatusAsync(taskDirectory, statusEntries, cancellationToken);
             doneWritten = true;
 
-            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker, runBaseSha);
+            var commit = await GitCommitter.CommitAsync(rootPath, taskId, taskHash, chain, manifest, proofFiles, activeLockNonce, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker, runBaseSha, timeProvider: _dependencies.TimeProvider);
             if (!commit.Success)
             {
                 retirement?.Rollback?.Invoke();
@@ -242,7 +242,8 @@ public sealed partial class RelayDriver
             if (preRunUntracked is not null)
             {
                 var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
-                    rootPath, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker);
+                    rootPath, preRunUntracked, config.TasksDir, cancellationToken, _dependencies.GitInvoker,
+                    timeProvider: _dependencies.TimeProvider);
                 if (missed.Count > 0)
                 {
                     // Keep the seal: the commit landed. Do NOT rollback retirement —

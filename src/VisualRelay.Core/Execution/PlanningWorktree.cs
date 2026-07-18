@@ -218,6 +218,12 @@ public static class PlanningWorktree
                 if (result.ExitCode == 0)
                     return;
 
+                if (GitFailureClassifier.IsDeterministic(result.ExitCode, result.Output))
+                {
+                    throw new InvalidOperationException(
+                        $"git {string.Join(' ', args)} failed (exit {result.ExitCode}): {result.Output.Trim()}");
+                }
+
                 if (attempt == maxAttempts)
                 {
                     throw new InvalidOperationException(

@@ -10,7 +10,8 @@ public sealed partial class RelayDriver
         // delete the REAL node_modules/.env contents in the source repo. Remove the
         // LINKS only (never recursive on a reparse point) so nothing can follow them.
         UnlinkOverlaySymlinks(worktreePath);
-        await PlanningWorktree.RemoveAsync(sourcePath, worktreePath, cancellationToken, _dependencies.GitInvoker);
+        await PlanningWorktree.RemoveAsync(sourcePath, worktreePath, cancellationToken, _dependencies.GitInvoker,
+            timeProvider: _dependencies.TimeProvider);
         try { if (Directory.Exists(worktreePath)) Directory.Delete(worktreePath, recursive: true); }
         catch { /* PRODUCTION fallback — never reference TestFileSystem here (Defect E). */ }
     }
