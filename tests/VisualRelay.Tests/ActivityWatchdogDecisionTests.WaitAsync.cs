@@ -225,14 +225,17 @@ public sealed partial class ActivityWatchdogDecisionTests
         watchdog.Pulse("trace");
 
         // Now total silence — no more pulses of any kind.
-        // Advance virtual time in small steps with short real delays so the
-        // watchdog loop detects inactivity and fires the stall.
         var watchdogTask = watchdog.WaitAsync(CancellationToken.None);
-        for (var i = 0; i < 120 && !watchdogTask.IsCompleted; i++)
-        {
-            time.Advance(TimeSpan.FromMilliseconds(50));
+
+        // Advance virtual time well past the inactivity deadline in a single
+        // jump so the watchdog's internal poll loop sees the expired deadline.
+        // ManualTimeProvider fires timers synchronously during Advance, so the
+        // delay completes immediately.  We then give the async state machine a
+        // few real-time ticks to run the deadline-check continuation.
+        time.Advance(TimeSpan.FromMilliseconds(inactivityTimeoutMs + 200));
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
             await Task.Yield();
-        }
+
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredStall, result.Outcome);
