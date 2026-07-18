@@ -32,6 +32,19 @@ public sealed partial class BackendLifecycle
     private readonly Func<CancellationToken, Task<bool>> _healthCheck;
     private readonly Func<BackendPaths, Action<string>, BackendVenv.Result> _ensureVenv;
     private readonly IEnvironmentAccessor? _env;
+    private Func<bool>? _isRunActive;
+
+    /// <summary>
+    /// Run-active gate for the staleness check: when non-null and returning true,
+    /// the staleness check defers a restart instead of stopping the proxy mid-run.
+    /// Set post-construction by callers that track run state (e.g. the GUI VM).
+    /// Null means "no gating" (restart always allowed when idle is assumed).
+    /// </summary>
+    public Func<bool>? IsRunActive
+    {
+        get => _isRunActive;
+        set => _isRunActive = value;
+    }
 
     public BackendLifecycle(
         BackendPaths? paths = null,
@@ -39,7 +52,8 @@ public sealed partial class BackendLifecycle
         Action<string>? log = null,
         Func<CancellationToken, Task<bool>>? healthCheck = null,
         Func<BackendPaths, Action<string>, BackendVenv.Result>? ensureVenv = null,
-        IEnvironmentAccessor? env = null)
+        IEnvironmentAccessor? env = null,
+        Func<bool>? isRunActive = null)
     {
         _paths = paths ?? BackendPaths.Resolve();
         _options = options ?? BackendStartOptions.FromEnvironment();
@@ -58,6 +72,7 @@ public sealed partial class BackendLifecycle
         // the real process environment. Tests inject one so provider-key loading
         // is hermetic without mutating the process-wide HOME.
         _env = env;
+        _isRunActive = isRunActive;
     }
 
     /// <summary>

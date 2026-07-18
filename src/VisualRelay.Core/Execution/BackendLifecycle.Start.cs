@@ -23,6 +23,12 @@ public sealed partial class BackendLifecycle
 
         if (await IsHealthyAsync(cancellationToken))
         {
+            if (await TryStalenessRestartAsync(cancellationToken, tp))
+            {
+                _log($"restarted onto fresh config at {ModelBackend.BaseUrl}");
+                return BackendResult.Ok();
+            }
+
             _log($"already healthy at {ModelBackend.BaseUrl} (no-op)");
             return BackendResult.Ok();
         }
@@ -63,7 +69,7 @@ public sealed partial class BackendLifecycle
 
         var env = LoadProviderKeys();
         var config = await BackendConfigStep.ResolveAsync(
-            _paths, _options.RepoRoot, _options.GenConfigTimeout, _log, cancellationToken);
+            _paths, _options.RepoRoot, _options.GenConfigTimeout, _log, cancellationToken, env: _env);
 
         _log($"starting litellm proxy on {ModelBackend.BaseUrl} (logs: {_paths.LogFile})");
         var pid = SpawnLitellm(venv.LitellmBin!, config, env);

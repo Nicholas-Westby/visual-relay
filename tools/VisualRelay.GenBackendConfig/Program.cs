@@ -22,7 +22,15 @@ foreach (var key in new[] { "HF_TOKEN", "DEEPSEEK_API_KEY", "MOONSHOT_API_KEY", 
     if (Environment.GetEnvironmentVariable(key) is not null)
         present.Add(key);
 
-var (yaml, summary) = BackendConfigGenerator.Generate(present, templatePath);
-Console.Write(yaml);
-Console.Error.WriteLine(summary);
-return 0;
+try
+{
+    var (yaml, summary) = BackendConfigGenerator.Generate(present, templatePath);
+    Console.Write(yaml);
+    Console.Error.WriteLine(summary);
+    return 0;
+}
+catch (InvalidOperationException ex)
+{
+    Console.Error.WriteLine($"gen-backend-config: {ex.Message}");
+    return 1;
+}

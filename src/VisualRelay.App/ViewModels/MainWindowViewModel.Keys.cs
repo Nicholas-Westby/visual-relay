@@ -203,8 +203,9 @@ public partial class MainWindowViewModel
             var templatePath = LocateTemplate();
             if (templatePath is not null && File.Exists(templatePath))
             {
-                var (_, summary) = BackendConfigGenerator.Generate(presentKeys, templatePath, overrides);
-                LitTiersSummary = summary;
+                LitTiersSummary = presentKeys.Count == 0
+                    ? "backend: zero keys — using static config"
+                    : BackendConfigGenerator.Generate(presentKeys, templatePath, overrides).Summary;
             }
             else
             {

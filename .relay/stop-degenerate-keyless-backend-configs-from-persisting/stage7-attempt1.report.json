@@ -1,0 +1,858 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-17T23:54:08.878263+00:00",
+  "task": "# Relay stage 7: Review\nTask: stop-degenerate-keyless-backend-configs-from-persisting\nWorking directory: /Users/admin/Dev/visual-relay\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Stop degenerate keyless backend configs from being generated or persisting\n\nWhen the backend config generator detects ZERO provider keys, it rewrites\nevery tier alias to the `fallback` pseudo-model and collapses every\nfallback chain to `[fallback]`\n(`BackendConfigGenerator.ResolveTiers`, the `chain.Count == 0` branch).\nThat routing funnels all traffic through one HF model on one provider \u2014\nand once written, it persists indefinitely: the launch path treats a\nhealthy proxy as a fast no-op, so nothing ever compares the config the\nproxy is running against what generation would produce now.\n\nA zero-key rewrite is strictly worse than the static template. Every\n`model_list` entry (including the HF floor) resolves its key from\n`os.environ` at request time, so with truly no keys NOTHING works under\neither config \u2014 but when keys ARE present in the proxy's process env (the\nspawn path layers them from `~/.config/visual-relay/.env` via\n`BackendLifecycle.LoadProviderKeys`), the template gives full\nprovider-diversified routing while the degenerate rewrite silently\ndestroys it. Key detection at generation time\n(`BackendConfigStep.Generate`, which builds the present-set from\n`KeyEnvFile.Read()` + raw process env) and key provisioning at spawn time\ncan disagree \u2014 and did.\n\n### Evidence (verified)\n\n- Field incident: the proxy started 2026-07-15 18:38:42 ran a generated\n  config with `frontier: fallback`, `balanced: fallback`, `cheap:\n  fallback`, `fallbacks: [fallback]` for every tier and no vision/claude\n  aliases \u2014 the exact zero-keys output \u2014 while\n  `~/.config/visual-relay/.env` had held HF/DeepSeek/Moonshot keys since\n  2026-07-07 and the proxy's own env had them (all requests worked, all\n  through the single HF model). It ran that way for two days.\n- 2026-07-17 (~21:07Z): Hugging Face retired the legacy route behind that\n  single model; with zero routing diversity the whole pipeline failed\n  (three stage-1 attempts, litellm: \"no healthy deployments \u2026 Model\n  Group=frontier \u2026 Available Model Group Fallbacks=['fallback']\") even\n  though DeepSeek, Moonshot, and GLM-5.2 upstreams were all healthy and\n  the keys were valid. The diversified chains exist precisely to survive\n  this event, and the stale degenerate config defeated them.\n- Same day 21:40Z: regeneration through the app with the same `.env`\n  produced the correct config (frontier\u2192glm-5.2, balanced\u2192deepseek-v4-pro,\n  cheap\u2192deepseek-v4-flash, full chains) \u2014 proving the keyless generation\n  came from a transient environment-resolution failure at one particular\n  start, not from bad key data.\n- `BackendConfigStep.ResolveAsync` already prefers the static template on\n  generation failure/timeout (\"using static config\") \u2014 the zero-key case\n  belongs on that same path. It also discards the generator's summary\n  (`var (yaml, _) = \u2026`), so nothing durable records which keys generation\n  actually saw.\n\n### What to build\n\n1. **Zero-key guard**: when the detected present-key set is empty,\n   do not write or use a generated rewrite \u2014 launch with the static\n   template and log why (same pattern as the existing\n   generation-failure fallback). If the user-level key file exists and\n   parses to a non-empty key set while detection still sees nothing,\n   surface that loudly as an environment-resolution failure (backend\n   panel / status text), not silently.\n2. **Staleness check**: when the launch/start path finds the proxy\n   already healthy, regenerate the config in memory and compare it to the\n   generated file the proxy was started with. On drift, restart the proxy\n   with the fresh config \u2014 gated on no active run (never mid-drain; defer\n   with a status note instead). A matching config keeps today's fast\n   no-op.\n3. **Durable generation summary**: persist the generator's one-line\n   summary (tier\u2192model resolutions + detected keys) at every generation \u2014\n   e.g. into the backend scratch log \u2014 so the next incident shows what\n   generation saw, when.\n\n### Constraints\n\n- No changes to `ResolveTiers` chain contents, tier names, or the\n  template itself.\n- Keys must never be logged \u2014 key NAMES only.\n- Restart gating must use TimeProvider-friendly async patterns; no\n  real-time waits in tests; 300-line file guard.\n\n### Tests (red first)\n\n- Generation with an empty present-set: static template path chosen, no\n  generated file written \u2014 fails today (degenerate yaml is written).\n- Key file non-empty but detection empty: loud surface triggered \u2014 fails\n  today (silent).\n- Healthy proxy whose on-disk generated config differs from a fresh\n  generation: restart-with-fresh-config triggered when idle \u2014 fails today\n  (no-op).\n- Same scenario mid-run: no restart, deferred with a status note.\n- Matching config: no restart (pins the fast no-op).\n- Generation summary line lands durably on every generation, containing\n  tier resolutions and key names only.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: hand-write a degenerate generated config into scratch, start\n  the app with a healthy proxy running it and valid keys on disk: the\n  proxy restarts onto the corrected config and the summary line is in the\n  log. Then relaunch once more: fast no-op (configs match).\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\nsrc/VisualRelay.Core/Execution/BackendConfigStep.cs\nsrc/VisualRelay.Core/Execution/BackendPaths.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs\ntests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\ntests/VisualRelay.[ENCRYPTED:aws-secret-key]LIawIi9daX0phdk6OZ7Brlf/j1Hflwaqy+DVIqsA.cs\ntests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"BackendConfigGenerator emits a degenerate config (all tiers\u2192fallback, all chains\u2192[fallback]) when it sees zero provider keys, which then persists indefinitely because the launch path never compares the running config against a fresh generation. Three changes needed: (1) zero-key guard \u2014 skip generation and use static template when the key set is empty, with a loud alert if the key file exists but detection saw nothing; (2) staleness check \u2014 on healthy-proxy launch, regenerate in memory and diff against the on-disk config, restarting (gated on no active run) if they drift; (3) durable summary \u2014 persist the tier\u2192model + key-names line to the backend scratch log at every generation.\",\n  \"options\": [\n    \"Option 1 (recommended) \u2014 Early-guard + staleness check: short-circuit Generate when present-set is empty (reusing the existing generation-failure fallback pattern), diff on-disk config against a fresh regeneration on launch, and scratch-log the summary each time. Minimal changes, proven fallback pattern, easy to test.\",\n    \"Option 2 \u2014 Generation-time guard + fingerprint-based reconciliation: guard at the Generate entry point so ResolveTiers is never called with zero keys, and replace staleness regeneration with a cheaper key-set hash fingerprint stored alongside the config file.\",\n    \"Option 3 \u2014 Config provenance tracking: embed generation metadata (timestamp, key names, tier resolutions) directly into the generated YAML as comments/manifest so provenance travels with the file, enabling cheap hash-based drift detection without a separate regeneration or fingerprint file.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The zero-key degenerate config bug originates in `BackendConfigGenerator.ResolveTiers` (BackendConfigGenerator.cs, line 254): when `chain.Count == 0`, it writes `fallback` as the alias and `[fallback]` as the fallback chain for every tier. This is invoked from `BackendConfigStep.Generate` (line 82-102), which builds the present-key set from `KeyEnvFile.Read()` + process env, then passes it through. The existing fallback-to-static-template pattern in `BackendConfigStep.ResolveAsync` (lines 36-58) covers timeout/failure but not the zero-key case. The summary tuple `(yaml, _)` is discarded on line 100 of BackendConfigStep.cs (`var (yaml, _) = \u2026`), so nothing durable records what generation saw. The healthy-proxy fast no-op at `BackendLifecycle.StartAsync` line 24-28 never compares the running config against what generation would produce today. The test `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` (BackendConfigGeneratorTests.cs:163-177) currently asserts the degenerate behavior (all tiers get aliases even with zero keys). KeyEnvFile.Read() returns empty dict for both 'file missing' and 'file exists but empty', so distinguishing the 'file exists with keys but detection saw nothing' case requires separately checking `KeyEnvFile.ResolvePathForCurrentUser()` + `File.Exists()` + `KeyEnvFile.Read()` before/after the generation call. The `ManualTimeProvider` and `DictionaryEnvironmentAccessor` test doubles are the established patterns for hermetic time/env tests. The 300-line file guard is a project convention enforced by partial class splits (e.g., BackendConfigGenerator.cs at 293 lines is near the limit, so additions there would need a new partial file like BackendConfigGenerator.Guard.cs). The `BackendLifecycleStatusTests` partial class (shared with `BackendConfigStepTests.cs`) provides `Lifecycle()`, `Paths()`, `WriteStaticTemplate()` helpers already used by existing gen-config tests.\",\n  \"constraints\": [\n    \"No changes to `ResolveTiers` chain contents, tier names, or the static template (`tools/backend/litellm-config.yaml`).\",\n    \"Keys must never be logged \u2014 key NAMES only (already satisfied: `BackendConfigGenerator.Generate` summary uses key names, not values).\",\n    \"Restart gating must use `TimeProvider`-friendly async patterns (no real-time waits in tests); existing `ManualTimeProvider` is the approved pattern.\",\n    \"300-line file guard: `BackendConfigGenerator.cs` is at 293 lines; any new code there requires a new partial file like `BackendConfigGenerator.Guard.cs`.\",\n    \"The `Generate` method in `BackendConfigStep.cs` is CPU-bound but wrapped in `Task.Run` for timeout support; the zero-key guard must run before calling `BackendConfigGenerator.Generate` so it can short-circuit without invoking the generator.\",\n    \"Tests must be hermetic: use `DictionaryEnvironmentAccessor` and temp XDG homes (pattern from `BackendLifecycleStatusTests._home`) \u2014 no process-global environment mutation.\",\n    \"The 'loud alert when key file exists but detection sees nothing' must surface via the `_log` callback (Action<string>) path already used by `BackendConfigStep.ResolveAsync` \u2014 not via a new UI coupling.\",\n    \"The staleness check in the healthy-proxy path must not re-regenerate the config file on disk unless a restart is actually triggered; comparison must be in-memory (`BackendConfigGenerator.Generate` output diff against File.ReadAllText on the generated config).\",\n    \"The durable summary must go to the scratch log directory (BackendPaths.Scratch) \u2014 e.g., a new file like `generation-summary.log` \u2014 not into the YAML config itself.\",\n    \"Existing test `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` will fail after the zero-key guard is added and must be updated (the task says 'fails today' \u2014 the test itself must change to assert the new behavior).\",\n    \"BackendLifecycle.SpawnLitellm already passes `config` path to the spawned process; the staleness restart must stop the existing proxy (StopAsync) then call LaunchProxyAsync again, reusing the same readiness poll pattern.\",\n    \"The `BackendLifecycle._options.RepoRoot` may be null in tests that never reach generation; the staleness check must handle a null RepoRoot gracefully (no regeneration possible \u2192 no staleness check, today's fast no-op).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Root cause: three gaps in the backend config pipeline\\n\\n### Gap 1 \u2014 Zero-key guard missing (BackendConfigStep.Generate, lines 82-102)\\n\\n`BackendConfigStep.Generate` builds the `present` key-set from `KeyEnvFile.Read()` + process env (lines 84-89), then passes it directly to `BackendConfigGenerator.Generate` at line 100. There is no check for an empty set before that call. When `present` is empty \u2014 which happens when `KeyEnvFile.Read()` fails to find the dotenv file (returns empty dict, line 108-109) AND no relevant env vars are in the process \u2014 the generator proceeds to `ResolveTiers` where the `chain.Count == 0` branch (lines 254-259) rewrites every tier alias to `fallback` and every fallback chain to `[fallback]`. This degenerate YAML is then written to `paths.GeneratedConfig` at line 78 of `BackendConfigStep.cs`.\\n\\nThe existing fallback-to-static-template pattern in `ResolveAsync` (lines 50-58) catches `OperationCanceledException` (timeout) and generic `Exception`, but the zero-key case produces a valid YAML string \u2014 no exception \u2014 so it never triggers that fallback.\\n\\n### Gap 2 \u2014 No staleness check on healthy-proxy no-op (BackendLifecycle.StartAsync, lines 24-28)\\n\\nWhen the health check succeeds, `StartAsync` returns immediately: `_log($\\\"already healthy at {ModelBackend.BaseUrl} (no-op)\\\"); return BackendResult.Ok();`. It never reads the on-disk generated config (`paths.GeneratedConfig`) or compares it against a fresh in-memory generation. A stale degenerate config persists indefinitely once the proxy is up.\\n\\n### Gap 3 \u2014 Summary discarded (BackendConfigStep.Generate, line 100)\\n\\n`var (yaml, _) = BackendConfigGenerator.Generate(present, template, overrides);` \u2014 the `_` discards the one-line summary containing tier\u2192model resolutions and detected key names. Nothing durable records what generation saw.\\n\\n### Why detection and provisioning can disagree\\n\\n`BackendConfigStep.Generate` (lines 84-89) reads keys from `KeyEnvFile.Read()` (which resolves `~/.config/visual-relay/.env`) + five known env var names from `Environment.GetEnvironmentVariable`. `BackendLifecycle.LoadProviderKeys` (Start.cs lines 191-203) loads keys from the same user-level .env path via `KeyEnvFile.GetUnsetKeysPublic`. Both go through `KeyEnvFile.Read()` internally, but `Read()` returns an empty dict for file-missing (line 108-109) \u2014 it cannot distinguish \\\"file does not exist\\\" from \\\"file exists but empty\\\". If a transient path-resolution failure (XDG_CONFIG_HOME/HOME glitch) causes `Read()` to return empty, generation sees zero keys while the spawn path (which also resolves the same path) may succeed later \u2014 or vice versa. The result: a zero-key degenerate config written once and never corrected.\",\n  \"excerpts\": [\n    \"BackendConfigGenerator.cs:254-259 \u2014 `if (chain.Count == 0) { ... aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier; fallbacks[tier] = [FallbackTier]; continue; }` \u2014 the zero-key degenerate rewrite branch\",\n    \"BackendConfigStep.cs:82-102 \u2014 `Generate` method builds present-key set from KeyEnvFile.Read() + process env, passes to BackendConfigGenerator.Generate with no empty-set guard\",\n    \"BackendConfigStep.cs:100 \u2014 `var (yaml, _) = BackendConfigGenerator.Generate(present, template, overrides);` \u2014 summary tuple discarded\",\n    \"BackendConfigStep.cs:50-58 \u2014 existing generation-failure fallback catches timeout/exception but never the zero-key degenerate case\",\n    \"BackendLifecycle.Start.cs:24-28 \u2014 healthy proxy is a fast no-op: `if (await IsHealthyAsync(cancellationToken)) { _log($\\\"already healthy...\\\"); return BackendResult.Ok(); }` \u2014 no staleness comparison\",\n    \"BackendLifecycle.Start.cs:64-66 \u2014 config resolution path: `var config = await BackendConfigStep.ResolveAsync(_paths, _options.RepoRoot, _options.GenConfigTimeout, _log, cancellationToken);` \u2014 called once at launch, never re-evaluated for a healthy proxy\",\n    \"KeyEnvFile.cs:108-109 \u2014 `if (!File.Exists(filePath)) return new Dictionary<string, string>();` \u2014 returns empty dict for file-missing; cannot distinguish from file-exists-but-empty\",\n    \"BackendConfigGeneratorTests.cs:163-177 \u2014 `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` \u2014 asserts the degenerate behavior (all tiers have fallback aliases); will fail after zero-key guard is added\",\n    \"BackendConfigGeneratorTests.cs:116-117 \u2014 `ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback` calls `BackendConfigGeneratorTestHelpers.Generate(present)` which reads from real template via `TemplatePath`; generation writes real YAML \u2014 tests must be hermetic\",\n    \"BackendLifecycleStatusTests.cs:174-193 \u2014 `Start_AlreadyHealthy_NoOp_Exit0` \u2014 asserts the fast no-op that the staleness check must modify\",\n    \"BackendConfigGenerator.cs:293 \u2014 file is at 293 lines, dead on the 300-line guard; any additions need a new partial file\",\n    \"BackendLifecycle.Start.cs:266 \u2014 file is at 266 lines; staleness check additions fit within 300-line guard\",\n    \"BackendConfigStep.cs:103 \u2014 well within 300-line limit; zero-key guard and durable summary can go here or in a new partial\",\n    \"BackendPaths.cs:55 \u2014 `GeneratedConfig => Path.Combine(Scratch, \\\"litellm-config.generated.yaml\\\")` \u2014 the on-disk path the staleness check must compare against\",\n    \"IEnvironmentAccessor.cs \u2014 env accessor seam; `KeyEnvFile.GetEnv` / `KeyEnvFile.Read` / `KeyEnvFile.ResolvePathForCurrentUser` all accept it for hermetic tests\",\n    \"TestDoubles.cs:13-24 \u2014 `DictionaryEnvironmentAccessor` \u2014 in-memory env for hermetic tests\",\n    \"ManualTimeProvider.cs \u2014 test time provider; `BackendLifecycle.StartAsync` and `PollReadinessAsync` already accept `TimeProvider?`\",\n    \"BackendLifecycle.cs:36-61 \u2014 constructor accepts injectable `_healthCheck`, `_ensureVenv`, `_env`; new staleness gating delegate would follow this pattern\",\n    \"MainWindowViewModel.Commands.cs:61-75 \u2014 `StartBackendAsync` calls `BackendLifecycleFactory().StartAsync()` from UI; active run state is at `_activeDrainController` (Execution.cs:14), but BackendLifecycle is at a lower layer and doesn't know about it\"\n  ],\n  \"repro\": \"## Reproduction (conceptual \u2014 not executable in this sandbox)\\n\\n### Zero-key degenerate config\\n1. Create a temp XDG home with no `~/.config/visual-relay/.env`.\\n2. Clear all five provider env vars (HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY).\\n3. Call `BackendConfigStep.ResolveAsync(paths, repoRoot, timeout, log)` with a real template.\\n4. **Expected**: falls back to static template (like the timeout path).\\n5. **Actual**: writes a degenerate YAML where every tier alias is `fallback` and every fallback chain is `[fallback]`.\\n\\n### Stale config persists\\n1. Hand-write a degenerate generated config into `paths.GeneratedConfig` (all tiers\u2192fallback).\\n2. Start a fake healthy proxy (health check returns true).\\n3. Call `BackendLifecycle.StartAsync()`.\\n4. **Expected**: regenerates in memory, detects drift from on-disk file, restarts proxy with corrected config.\\n5. **Actual**: logs \\\"already healthy (no-op)\\\" and returns; degenerate config persists.\\n\\n### Summary not persisted\\n1. Call `BackendConfigStep.ResolveAsync` with valid keys.\\n2. Check `paths.Scratch` for any file containing the generation summary line.\\n3. **Expected**: `generation-summary.log` exists with tier\u2192model resolutions + key names.\\n4. **Actual**: no such file; summary is discarded in `var (yaml, _) = ...`.\\n\\n### Failing test\\nRun `BackendConfigGeneratorTests.EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias`: it passes today because it asserts the degenerate behavior (all tiers get aliases even with zero keys). After adding the zero-key guard, it must be updated to assert the static-template fallback path instead.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete implementation plan\\n\\n### Gap 1 \u2014 Zero-key guard (BackendConfigStep + BackendConfigGenerator)\\n\\n**BackendConfigGenerator.Generate** (line 158): add a zero-key guard at the top:\\n```csharp\\nif (presentKeys.Count == 0)\\n    throw new InvalidOperationException(\\n        \\\"BackendConfigGenerator.Generate called with zero provider keys. \\\" +\\n        \\\"Callers must detect this condition and fall back to the static template.\\\");\\n```\\nFile: 293\u2192297 lines, still under 300.\\n\\n**BackendConfigStep.Generate** (line 82): change return type from `string` to `(string? Yaml, string Summary)`. Accept `Action<string>? log` and `IEnvironmentAccessor? env`. Before calling `BackendConfigGenerator.Generate`, check `present.Count == 0`:\\n- If zero AND `KeyEnvFile.ResolvePathForCurrentUser()` exists AND `KeyEnvFile.Read(filePath)` is non-empty \u2192 log `WARNING: provider key file {path} contains N keys ({key names}) but detection saw zero keys \u2014 environment-resolution failure`\\n- If zero and file missing/empty \u2192 log `gen-backend-config: no provider keys detected; using static config`\\n- In both zero-key cases: return `(null, \\\"backend: zero keys \u2014 using static config\\\")`\\n- Otherwise: call `BackendConfigGenerator.Generate` as before\\n- Make method `internal static` (was `private static`)\\n- Use `env` accessor for `KeyEnvFile.Read(env)` and process env fallback\\n\\n**GenerateWithTimeoutAsync**: unpack the nullable tuple; if `yaml is null`, log the specific message and return `template` (static). After writing YAML successfully, persist summary: `File.WriteAllTextAsync(paths.GenerationSummaryLog, $\\\"[{DateTime.UtcNow:O}] {summary}\\\\n\\\", token)`.\\n\\nFile: 103\u2192~155 lines, well under 300.\\n\\n### Gap 2 \u2014 Durable summary (BackendPaths + BackendConfigStep)\\n\\n**BackendPaths**: add `public string GenerationSummaryLog => Path.Combine(Scratch, \\\"generation-summary.log\\\");` (97\u219298 lines).\\n\\n### Gap 3 \u2014 Staleness check (BackendLifecycle)\\n\\n**BackendLifecycle.cs** (156\u2192160): add `private readonly Func<bool>? _isRunActive;` field and `Func<bool>? isRunActive = null` constructor parameter.\\n\\n**BackendLifecycle.Start.cs** (266\u2192272): in `StartAsync`, after `IsHealthyAsync` check, insert staleness check before the no-op:\\n```csharp\\nif (await IsHealthyAsync(cancellationToken))\\n{\\n    if (await TryStalenessRestartAsync(cancellationToken, tp))\\n        return BackendResult.Ok();\\n    _log($\\\"already healthy at {ModelBackend.BaseUrl} (no-op)\\\");\\n    return BackendResult.Ok();\\n}\\n```\\n\\n**+BackendLifecycle.Start.StalenessCheck.cs** (new partial, ~65 lines): `TryStalenessRestartAsync` method:\\n1. Guard: `_options.RepoRoot` null \u2192 return false\\n2. Guard: template file missing \u2192 return false\\n3. Guard: `_paths.GeneratedConfig` file missing \u2192 return false (proxy started with static template)\\n4. Guard: `_isRunActive?.Invoke() == true` \u2192 log \\\"stale config detected but a run is active; restart deferred\\\" \u2192 return false\\n5. Read on-disk YAML via `File.ReadAllTextAsync`, IOException\u2192false\\n6. Call `BackendConfigStep.Generate(template, repoRoot, _env)` in-memory\\n7. Guard: `freshYaml is null` (zero-key in fresh generation) \u2192 return false\\n8. Compare: `freshYaml == onDisk` \u2192 return false (match, fast no-op)\\n9. Drift: log, `await StopAsync(cancellationToken, tp)`, `await LaunchProxyAsync`, `await PollReadinessAsync`\\n\\n### Test changes\\n\\n**BackendConfigGeneratorTests.cs**: update `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` \u2014 now asserts `Generate` throws `InvalidOperationException` when called with empty key set.\\n\\n**+BackendConfigStepZeroKeyGuardTests.cs** (new partial of `BackendLifecycleStatusTests`, ~80 lines):\\n- `GenConfig_ZeroKeys_FallsBackToStaticTemplate_NoGeneratedFileWritten` \u2014 empty present-set via empty `DictionaryEnvironmentAccessor`, asserts `ResolveAsync` returns template path, no generated file on disk\\n- `GenConfig_KeyFileExistsButDetectionEmpty_SurfacesAlert` \u2014 write keys to user-level .env but provide an accessor that hides them; assert log contains the WARNING with key-file path\\n- `GenConfig_SummaryLinePersistedToGenerationSummaryLog` \u2014 valid keys, assert `generation-summary.log` created with timestamped summary containing tier\u2192model resolutions\\n\\n**+BackendLifecycleStalenessCheckTests.cs** (new partial of `BackendLifecycleStatusTests`, ~100 lines):\\n- `Start_Healthy_StaleConfigOnDisk_RestartsWithFreshConfig` \u2014 write degenerate config to disk, set up keys in env accessor, inject healthy healthCheck; assert restart was triggered (spawn happened), disk config overwritten with correct config\\n- `Start_Healthy_MatchingConfig_NoRestart_FastNoOp` \u2014 write correct config to disk matching fresh generation; assert no spawn, log contains \\\"already healthy\\\"\\n- `Start_Healthy_StaleConfig_MidRun_DefersWithStatusNote` \u2014 isRunActive returns true; assert no restart, log contains \\\"run is active; restart deferred\\\"\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\",\n    \"src/VisualRelay.Core/Execution/BackendConfigStep.cs\",\n    \"src/VisualRelay.Core/Execution/BackendPaths.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\",\n    \"+src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs\",\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\",\n    \"+tests/VisualRelay.[ENCRYPTED:aws-secret-key]LIawIi9daX0phdk6OZ7Brlf/j1Hflwaqy+DVIqsA.cs\",\n    \"+tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 4, untracked deleted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\",\n    \"tests/VisualRelay.[ENCRYPTED:aws-secret-key]LIawIi9daX0phdk6OZ7Brlf/j1Hflwaqy+DVIqsA.cs\",\n    \"tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\"\n  ],\n  \"rationale\": \"Six tests for new behavior (zero-key guard, staleness check, durable summary) all fail against current code \u2014 the zero-key degenerate config is still written, the healthy-proxy path is still a fast no-op with no staleness comparison, and no summary log is persisted. One preservation test (matching configs \u2192 no restart) passes today and must keep passing after implementation. Scaffolding (method signatures, fields, stub) compiles but introduces no behavioral changes \u2014 the existing production path is untouched.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented three changes to stop degenerate keyless backend configs:\\n\\n1. **Zero-key guard** (`BackendConfigGenerator.Generate`): throws `InvalidOperationException` when `presentKeys.Count == 0` (line 163-166). `BackendConfigStep.Generate` detects empty present-set before calling the generator, distinguishes \\\"key file exists but detection empty\\\" via second-chance resolution, surfaces WARNING with key-file path and key names, and returns `(null, summary)` so `ResolveAsync` falls back to the static template \u2014 same pattern as the existing timeout/failure fallback.\\n\\n2. **Staleness check** (`BackendLifecycle.Start.StalenessCheck.cs`, 83 lines): `TryStalenessRestartAsync` regenerates in-memory and compares against on-disk generated config. On drift: restarts proxy (guarded by `_isRunActive` \u2014 defers with status note mid-run). Matching config returns false (fast no-op preserved). Guards: null RepoRoot, missing template, no generated file on disk, I/O errors, zero-key fresh generation.\\n\\n3. **Durable summary** (`BackendPaths.GenerationSummaryLog`): persisted with ISO-8601 timestamp on every successful generation via `File.AppendAllTextAsync` in `GenerateWithTimeoutAsync`, plus on staleness-check restarts.\\n\\nTest updates: `EmptyKeySet_ThrowsInvalidOperationException` (renamed, asserts throw), `VisionTier_AbsentWhenNoHfToken` (empty-set case now asserts throw), `GenConfig_Success_WritesGeneratedConfigToScratch` (provides keys so generation succeeds). New test files: `BackendConfigStepZeroKeyGuardTests.cs` (3 tests), `BackendLifecycleStalenessCheckTests.cs` (3 tests) \u2014 all 37 pass.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{ \"verdict\": \"changes\", \"issues\": [\"The mid-drain restart safety gate is implemented and unit-tested but is NOT wired in any production caller, so the task's explicit requirement 'gated on no active run (never mid-drain; defer with a status note instead)' is not actually enforced in production. BackendLifecycle now accepts `Func<bool>? isRunActive` (BackendLifecycle.cs:35,44,66) and TryStalenessRestartAsync checks `if (_isRunActive?.Invoke() == true)` (StalenessCheck.cs:33) \u2014 but both production construction sites pass no argument, leaving `_isRunActive` null: (1) the GUI one-click recovery `BackendLifecycleFactory` (MainWindowViewModel.Commands.cs:51-58) builds `new BackendLifecycle(options, log)` with no `isRunActive` even though the VM has run-state available (`_runningTaskIds`/`_activeDrainController`/`IsBusy`); (2) the `VisualRelay.Backend` CLI (tools/VisualRelay.Backend/Program.cs:12) uses `new BackendLifecycle()`. With `_isRunActive` null the guard always evaluates false, so a staleness-triggered proxy restart can fire mid-drain. The staleness path IS reachable in production (the Backend CLI `start` has no CanExecute gating, and the GUI path can hit it in the stale-status race window where cached IsBackendReachable=false while the proxy is actually healthy). Tests pass only because they inject `isRunActive` explicitly. The GUI factory (the caller that can know about active runs) should wire `isRunActive: () => IsBusy` (or `_runningTaskIds.Count > 0`).\", \"Secondary (lower severity, possibly out of manifest scope): making the public `BackendConfigGenerator.Generate` throw InvalidOperationException on an empty key set (BackendConfigGenerator.cs:163) breaks an unmodified caller \u2014 `tools/VisualRelay.GenBackendConfig/Program.cs:25` has no try/catch, so on zero keys it now throws an unhandled exception (stack trace to stderr, non-zero exit, no config written) instead of the previous degenerate output. The other public caller, `MainWindowViewModel.Keys.cs:206`, is safely wrapped in try/catch (\u2192 '(unavailable)'). The GenBackendConfig tool should catch the exception and emit a clear zero-key message with a non-zero exit (mirroring the task's 'log why' principle) rather than crashing; note this file is outside the task manifest and its prior zero-key behavior was the degenerate-config bug being fixed, so this may be deemed acceptable.\", \"Minor: on a staleness-check restart the config is generated and the summary line is appended twice \u2014 once in TryStalenessRestartAsync (StalenessCheck.cs:51,66,69) and again inside LaunchProxyAsync\u2192BackendConfigStep.ResolveAsync\u2192GenerateWithTimeoutAsync (Start.cs:71; BackendConfigStep.cs:94,98). The double generation is idempotent (same env/template) so not a correctness bug, but it produces a redundant summary-log entry per restart. Consider having the staleness path skip its own disk-write/summary-append and rely on LaunchProxyAsync's generation, or vice versa.\"] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 32,
+    "tool_calls_total": 34,
+    "tool_calls_succeeded": 33,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_multiple_files": {
+        "succeeded": 8,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 3,
+        "failed": 1
+      },
+      "run_shell_command": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 32,
+    "total_llm_time_s": 601.136,
+    "prompt_cache": {
+      "cached_tokens": 1565056,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 15.675,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 1,
+      "cancels": 0,
+      "blocked": 1,
+      "force_restores": 1,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 9.806,
+      "prompt_tokens_est": 10823,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendConfigStep.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendPaths.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendLifecycle.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.[ENCRYPTED:aws-secret-key]LIawIi9daX0phdk6OZ7Brlf/j1Hflwaqy+DVIqsA.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 48858
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.937,
+      "prompt_tokens_est": 23287,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.[ENCRYPTED:aws-secret-key]LIawIi9daX0phdk6OZ7Brlf/j1Hflwaqy+DVIqsA.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 31205
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 6.499,
+      "prompt_tokens_est": 31035,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorTestHelpers.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 21385
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 6.458,
+      "prompt_tokens_est": 36447,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.Core/Configuration/KeyEnvFile.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/TestDoubles.cs"
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/ManualTimeProvider.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 28444
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 7.992,
+      "prompt_tokens_est": 43492,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GenConfig_Success_WritesGeneratedConfigToScratch|VisionTier_AbsentWhenNoHfToken|EmptyKeySet",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.334,
+      "result_length": 2095
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 6.825,
+      "prompt_tokens_est": 44211,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigStepTests.cs",
+            "offset": 1,
+            "limit": 80
+          },
+          {
+            "file_path": "tests/VisualRelay.Tests/BackendConfigGeneratorVisionTierTests.cs",
+            "offset": 105,
+            "limit": 60
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5646
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 79.12,
+      "prompt_tokens_est": 45712,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "BackendConfigGenerator\\.Generate|BackendConfigStep\\.Generate|GenBackendConfig",
+        "path": ".",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.334,
+      "result_length": 3883
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "InternalsVisibleTo",
+        "path": "src",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 1016
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 7.061,
+      "prompt_tokens_est": 53497,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "tools/VisualRelay.GenBackendConfig/Program.cs"
+          },
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs",
+            "offset": 170,
+            "limit": 70
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4387
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 17.965,
+      "prompt_tokens_est": 54637,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Keys.cs",
+            "limit": 50,
+            "offset": 240
+          },
+          {
+            "file_path": "tools/VisualRelay.Cli/Commands/PassthroughCommand.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4164
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 42.81,
+      "prompt_tokens_est": 56574,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me analyze the two other callers of the now-guarded `BackendConfigGenerator.Generate`:\n\n1. **`MainWindowViewModel.RefreshLitTiersAsync`** (line 206): wraps the call in try/catch (lines 183-253). On throw it sets `LitTiersSummary = \"(unavailable)\"` and clears rows. Previously with zero keys it showed a degenerate summary (all tiers\u2192fallback). Now shows \"(unavailable)\". This is a behavior change but arguably MORE correct \u2014 but wait, is it? Previously the UI panel showed the degenerate config when no keys were detected. Now it shows \"(unavailable)\". For a user who genuinely has no keys set in the UI key manager, the panel will show \"(unavailable)\" instead of the all-fallback view. That's a minor UX regression but not a correctness bug \u2014 and arguably \"(unavailable)\" is clearer than showing a misleading all-fallback config. Acceptable.\n\n2. **`VisualRelay.GenBackendConfig` CLI tool** (`tools/VisualRelay.GenBackendConfig/Program.cs`, line 25): NO try/catch. Previously: with zero keys, wrote a degenerate config to stdout and exited 0. Now: throws `InvalidOperationException` (uncaught \u2192 unhandled exception \u2192 non-zero exit, stack trace to stderr, no config written).\n\nIs this a problem? The task says the manifest is focused on the launch path (BackendConfigStep/BackendLifecycle). The GenBackendConfig tool is a separate developer/CLI tool. The task's \"What to build\" item 1 says: \"when the detected present-key set is empty, do not write or use a generated rewrite \u2014 launch with the static template and log why (same pattern as the existing generation-failure fallback).\"\n\nThe CLI tool's contract is to write the generated config to stdout. With zero keys, what SHOULD it do? Throwing an unhandled exception is ugly (stack trace, confusing exit). The more correct behavior aligned with the task would be to either (a) write nothing and exit non-zero with a clear message, or (b) write the static template. But the task manifest does NOT include `tools/VisualRelay.GenBackendConfig/Program.cs` in the files to modify.\n\nHowever \u2014 the GenBackendConfig tool was NOT modified, so it's not in the diff. The question for review is: does this diff introduce a regression in the unmodified CLI tool? \n\nLet me reconsider. Before this change, `BackendConfigGenerator.Generate` with zero keys returned a degenerate (yaml, summary) tuple. After, it throws. This is a behavior change to a PUBLIC method that breaks the CLI tool's zero-key path: it now crashes with an unhandled exception instead of producing output.\n\nThis is a real concern worth flagging. The CLI tool will crash on zero keys. Is that \"strictly worse\"? Previously it wrote a degenerate config (bad). Now it crashes (also arguably bad \u2014 unhandled exception, non-zero exit, no clear message). \n\nBut wait \u2014 is the CLI tool even reachable in a zero-key scenario that matters? It's a manual developer tool. And the task's whole premise is that the degenerate zero-key config is \"strictly worse than the static template.\" Crashing is at least not writing a degenerate config. But the cleanest fix would be for the CLI tool to handle the exception. Since the CLI tool isn't in scope, this is a \"changes\" verdict candidate IF I think it's a real issue.\n\nActually, let me reconsider the severity. The task explicitly narrowed scope to the launch path. The CLI tool's behavior change is a side effect of making the public Generate method throw. The plan (stage 4) explicitly says the guard throws InvalidOperationException from Generate, and BackendConfigStep.Generate catches it before calling. But the plan did NOT address the GenBackendConfig CLI tool or the UI caller. The UI caller is safely wrapped in try/catch. The CLI caller is not.\n\nLet me verify whether this is actually a regression that would be caught by tests or by `visual-relay check`. There may be a test for the GenBackendConfig tool. Let me check.\n\nActually, this is the review stage. My job is to classify issues in the diff. The diff does not include the CLI tool. The question is whether the diff (as written) is correct and complete. The CLI tool regression is a real consequence of the diff's design choice (making public Generate throw). \n\nLet me weigh: Is this a blocking \"changes\" issue or a minor acceptable side effect? \n\nArguments it's blocking:\n- An unmodified public-API consumer now crashes with an unhandled exception on a previously-valid input (empty key set).\n- The GenBackendConfig tool is a shipped, published tool (there's a test `Workflow_PublishesGenBackendConfig`).\n- A user running `visual-relay gen-backend-config` with no keys now gets a stack trace instead of either a clear error or a config.\n\nArguments it's acceptable:\n- The degenerate output it previously produced was the exact bug being fixed.\n- Crashing (non-zero exit, no config written) is arguably better than writing a degenerate config that persists.\n- The task scope explicitly excludes the CLI tool.\n\nI think this is worth flagging as a real issue. The cleanest resolution that matches the task's own principle (\"do not write or use a generated rewrite \u2014 ... log why\") would be to either handle the exception in the CLI tool, OR \u2014 better \u2014 not make the public method throw but instead have only the internal call path guarded. But the task plan explicitly chose \"throw from Generate.\"\n\nHmm, but actually, let me reconsider. Let me check if there's a test covering the GenBackendConfig zero-key behavior that would now fail. If such a test exists and passes, then either the behavior is fine or the test was updated. Let me check.\n\nLet me also reconsider the bigger design: is making the PUBLIC Generate throw the right call, vs. the plan's stated alternative of guarding only in BackendConfigStep? The task constraints say \"No changes to ResolveTiers chain contents, tier names, or the template itself.\" It doesn't forbid changing Generate's contract. But throwing from a public method that two other callers use, without updating those callers, is a latent bug.\n\nLet me verify whether the GenBackendConfig tool actually has a zero-key path that's exercised, and whether there's any test. I'll also double-check the staleness restart test's correctness concerns.\n\nLet me focus my remaining verification on:\n(a) Is there a test for GenBackendConfig zero-keys that's now broken or that masks this?\n(b) The staleness check: `LaunchProxyAsync` calls `BackendConfigStep.ResolveAsync` which REGENERATES and writes the config anyway. So in the staleness restart path, the code writes freshYaml to disk (line 66), then calls LaunchProxyAsync (line 76) which calls ResolveAsync (Start.cs:71) which regenerates AGAIN and writes again. That's redundant but not incorrect \u2014 the second generation produces the same output. Actually wait, is it guaranteed the same? Yes, same env, same template. So it's just a double-write/double-generate. Minor inefficiency, not a bug. But the summary gets logged twice (once in staleness check line 69-72, once in GenerateWithTimeoutAsync line 98). That's a minor duplicate-log issue.\n\n(c) Potential issue: in the staleness restart, after StopAsync + LaunchProxyAsync + PollReadinessAsync, the test injects `ensureVenv` returning `BackendVenv.Result(null)` (no toolchain), so LaunchProxyAsync returns `BackendResult.Down(...)` (early return, line 77-78), and TryStalenessRestartAsync returns false. The test asserts `spawned == true` which is set in ensureVenv. So the test passes. But the \"restart\" doesn't actually result in a healthy proxy \u2014 it results in a failed launch. The test comment acknowledges this (\"Even though the restart fails... the important thing is it tried\"). This is acceptable for a hermetic test.\n\n(d) Concern: `Start_HealthyMatchingConfig_NoRestart_FastNoOp` \u2014 it computes freshYaml via `BackendConfigStep.Generate(...)` with `env` accessor that has HOME set, then writes that to disk, then calls `lifecycle.StartAsync()` (no timeProvider). In StartAsync, IsHealthyAsync returns true (injected), then TryStalenessRestartAsync regenerates with `_env` (the same env) and compares. Should match. Good. But note: StartAsync is called WITHOUT a timeProvider, so tp = TimeProvider.System. That's fine since no polling happens (configs match \u2192 returns false immediately). Good.\n\n(e) The mid-run deferral test: stale config on disk, isRunActive returns true. TryStalenessRestartAsync checks `_isRunActive?.Invoke() == true` BEFORE reading disk or regenerating (line 33). So it defers immediately. Good \u2014 logs \"stale backend config detected but a run is active; restart deferred\". Test asserts log contains \"run\" && \"active\" && \"defer\". The message contains \"run is active; restart deferred\" \u2713. Good.\n\nWait \u2014 but the deferral check is at line 33, AFTER the guards for repoRoot, template, generated config existence (lines 20-30). For the mid-run test, generated config exists (\"stale: true\\n\"). So it reaches line 33, isRunActive true \u2192 defers. Good. No regeneration, no spawn. Test asserts spawned==false \u2713.\n\nNow, the ordering question: should the run-active check come BEFORE reading the disk config / regenerating? Yes, and it does (line 33 is before line 43 read and line 51 regenerate). Good \u2014 avoids unnecessary work mid-run. Actually wait, let me re-read the order in the file:\n\nLine 20: repoRoot guard\nLine 23-25: template guard  \nLine 29-30: generated config existence guard\nLine 33-37: isRunActive guard (defer)\nLine 43: read onDisk\nLine 51: regenerate\n\nSo isRunActive is checked before regeneration. \n\nNow back to the main concern (a) \u2014 the GenBackendConfig CLI tool. Let me verify there's no test that would catch this and check if it's a genuine regression. This is the most significant potential issue I've found.\n\nLet me also double check: does `BackendConfigGenerator.GetTierRows` (used by UI at line 216) call Generate? No \u2014 GetTierRows calls ResolveTiers directly (line 103), not Generate. So GetTierRows with empty keys still works (produces degenerate rows for display). Only the summary line (via Generate at line 206) throws \u2192 caught \u2192 \"(unavailable)\". So the UI still shows tier rows via GetTierRows but the summary shows \"(unavailable)\". Minor inconsistency but handled.\n\nSo my main finding is the GenBackendConfig CLI tool. Let me verify it's not tested for zero-keys and confirm it's a real unhandled-exception regression.",
+        "next_thought_needed": true,
+        "thought_number": 1,
+        "total_thoughts": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 7.786,
+      "prompt_tokens_est": 59182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "tests",
+        "pattern": "GenBackendConfig|gen-backend-config"
+      },
+      "succeeded": true,
+      "duration_s": 0.115,
+      "result_length": 1693
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RunAllModesTests.CommandDispatch.cs",
+        "offset": 95,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1542
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 80.942,
+      "prompt_tokens_est": 60016,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src",
+        "pattern": "ResolveConfigDir"
+      },
+      "succeeded": true,
+      "duration_s": 0.055,
+      "result_length": 1284
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 6.089,
+      "prompt_tokens_est": 66017,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Configuration/XdgConfig.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2398
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 61.404,
+      "prompt_tokens_est": 66627,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src",
+        "pattern": "new BackendLifecycle|BackendLifecycleFactory|isRunActive|_activeDrainController"
+      },
+      "succeeded": true,
+      "duration_s": 0.071,
+      "result_length": 1297
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 7.344,
+      "prompt_tokens_est": 71023,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 90,
+        "offset": 45
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3828
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 9.349,
+      "prompt_tokens_est": 72022,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.App",
+        "pattern": "bool IsBusy|IsBusy =>|_activeDrainController !=|_runningTaskId"
+      },
+      "succeeded": true,
+      "duration_s": 0.019,
+      "result_length": 4376
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 22.869,
+      "prompt_tokens_est": 73379,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "src/VisualRelay.App",
+        "pattern": "StartAsync|StartBackend|Autostart|autostart|OnLoaded|InitializeAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.026,
+      "result_length": 1055
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 6.443,
+      "prompt_tokens_est": 74829,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 265,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1527
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 28.162,
+      "prompt_tokens_est": 75227,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "src/VisualRelay.App/Services/ControlApi.cs",
+            "limit": 60
+          },
+          {
+            "file_path": "src/VisualRelay.App/App.axaml.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13629
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 17.453,
+      "prompt_tokens_est": 79859,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "review-findings",
+        "summary": "Reviewing task stop-degenerate-keyless-backend-configs. Read all 9 manifest files + KeyEnvFile/XdgConfig/callers.\n\nIMPLEMENTATION:\n1. Zero-key guard: BackendConfigGenerator.Generate (line 163) throws InvalidOperationException on empty presentKeys. BackendConfigStep.Generate (line 140) detects empty present-set BEFORE calling generator, distinguishes \"key file exists but detection empty\" via second-chance KeyEnvFile.ResolvePathForCurrentUser re-probe, logs WARNING with path+key-names, returns (null, summary). ResolveAsync falls back to static template. ResolveTiers chain contents NOT changed (constraint satisfied). Key values never logged (constraint satisfied).\n2. Staleness check: BackendLifecycle.Start.StalenessCheck.cs (83 lines). TryStalenessRestartAsync called from StartAsync after IsHealthyAsync. Guards: null RepoRoot, missing template, missing GeneratedConfig, IOException. Then _isRunActive guard (defer). Reads onDisk, regenerates in-memory via BackendConfigStep.Generate, compares. On drift: writes freshYaml to disk, appends summary, StopAsync + LaunchProxyAsync + PollReadinessAsync. Returns true if restart triggered.\n3. Durable summary: BackendPaths.GenerationSummaryLog = Scratch/generation-summary.log. Written in GenerateWithTimeoutAsync (line 98) and staleness restart (line 69) via File.AppendAllTextAsync with ISO timestamp.\n\nFINDINGS:\n- FINDING A (likely real): production BackendLifecycleFactory (MainWindowViewModel.Commands.cs:51-58) does NOT pass isRunActive. So _isRunActive is null in production \u2192 staleness run-active guard `if (_isRunActive?.Invoke() == true)` always false \u2192 restart NEVER gated on active run. This violates the task's explicit requirement \"gated on no active run (never mid-drain; defer with a status note instead)\". StartBackendAsync is invocable via ControlApi \"start-backend\" command AND the app has auto-resume (App.axaml.cs TryAutoResumeFromHandoff) that can be mid-drain. Mid-drain restart could kill the proxy. Tests pass because they inject isRunActive explicitly. This is the most significant concern.\n- FINDING B (real but lower severity): BackendConfigGenerator.Generate is PUBLIC and now throws on empty keys. Two other unmodified callers: (1) tools/VisualRelay.GenBackendConfig/Program.cs:25 \u2014 NO try/catch, previously wrote degenerate config on zero keys, now throws UNHANDLED exception (stack trace, non-zero exit, no config). (2) MainWindowViewModel.Keys.cs:206 RefreshLitTiersAsync \u2014 wrapped in try/catch (line 249) \u2192 shows \"(unavailable)\" instead of degenerate summary. Minor UX change, acceptable. The GenBackendConfig CLI tool regression is a latent consequence but the task scope/manifest excludes that file; previously it produced the exact degenerate bug being fixed.\n\nTESTS: All 3 test files read. BackendConfigGeneratorTests.EmptyKeySet_ThrowsInvalidOperationException (renamed from _DoesNotCrash_). VisionTier_AbsentWhenNoHfToken updated to assert throw. BackendConfigStepTests.GenConfig_Success_WritesGeneratedConfigToScratch now provides keys. Staleness tests: Start_HealthyStaleConfigOnDisk_RestartsWithFreshConfig (spawned=true via ensureVenv stub), Start_HealthyMatchingConfig_NoRestart_FastNoOp, Start_HealthyStaleConfig_MidRun_DefersWithStatusNote. Tests use ManualTimeProvider + DictionaryEnvironmentAccessor (hermetic). TwoFaceHomeAccessor test double for env-resolution-failure scenario.\n\n300-line guard: BackendConfigGenerator.cs=298, BackendConfigStep.cs=185, BackendLifecycle.Start.cs=272, StalenessCheck.cs=83, BackendPaths.cs=98. All under 300. \u2713\n\nNeed to: run targeted tests to confirm green."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 74
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 7.159,
+      "prompt_tokens_est": 80860,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj --filter \"FullyQualifiedName~BackendConfigGeneratorTests|FullyQualifiedName~BackendConfigStepZeroKeyGuard|FullyQualifiedName~BackendLifecycleStalenessCheck|FullyQualifiedName~BackendConfigStepTests|FullyQualifiedName~BackendLifecycleStatusTests\" --no-build 2>&1 | tail -40",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 3.735,
+      "result_length": 542
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 7.729,
+      "prompt_tokens_est": 81118,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build VisualRelay.sln 2>&1 | tail -20",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 0.198,
+      "result_length": 78
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 7.279,
+      "prompt_tokens_est": 81237,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "ls *.sln 2>/dev/null; find . -maxdepth 2 -name \"*.sln\" 2>/dev/null | head",
+        "timeout": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.07,
+      "result_length": 11
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 7.159,
+      "prompt_tokens_est": 81290,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet build src/VisualRelay.Core/VisualRelay.Core.csproj 2>&1 | tail -8 && echo \"---GENBACKENDCONFIG---\" && dotnet build tools/VisualRelay.GenBackendConfig/VisualRelay.GenBackendConfig.csproj 2>&1 | tail -8 && echo \"---APP---\" && dotnet build src/VisualRelay.App/VisualRelay.App.csproj 2>&1 | tail -8",
+        "timeout": 240
+      },
+      "succeeded": true,
+      "duration_s": 6.997,
+      "result_length": 974
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 13.909,
+      "prompt_tokens_est": 81710,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "summary": "Reviewing task stop-degenerate-keyless-backend-configs. All 9 manifest files + KeyEnvFile/XdgConfig/callers read. Targeted tests: 27 passed, 1 skipped (unrelated slow-integration). Full build (Core + GenBackendConfig + App): 0 warnings, 0 errors.\n\nIMPLEMENTATION (3 changes, all constraints satisfied \u2014 ResolveTiers chain contents unchanged, key values never logged, 300-line guard respected: Generator=298, ConfigStep=185, Start.cs=272, StalenessCheck=83, Paths=98):\n1. Zero-key guard: BackendConfigGenerator.Generate throws InvalidOperationException on empty presentKeys (line 163). BackendConfigStep.Generate detects empty present-set before calling generator, second-chance re-probes key file, logs WARNING with path+key-names when key file exists but detection empty, returns (null, summary). ResolveAsync falls back to static template.\n2. Staleness check: BackendLifecycle.Start.StalenessCheck.cs (83 lines). Called from StartAsync after IsHealthyAsync. Guards null RepoRoot/missing template/missing GeneratedConfig/IOException, then _isRunActive guard (defer), reads onDisk, regenerates in-memory, compares; on drift writes freshYaml + summary then StopAsync+LaunchProxyAsync+PollReadinessAsync.\n3. Durable summary: BackendPaths.GenerationSummaryLog=Scratch/generation-summary.log, appended on every generation + staleness restart with ISO timestamp.\n\nFINDINGS:\n- FINDING A (REAL, significant): production BackendLifecycleFactory (MainWindowViewModel.Commands.cs:51-58) does NOT pass isRunActive \u2192 _isRunActive null in production \u2192 staleness run-active guard always false \u2192 restart NEVER gated on active run. Violates task's explicit requirement \"gated on no active run (never mid-drain; defer with a status note instead)\". StartBackendAsync is reachable via ControlApi \"start-backend\" and app has auto-resume mid-drain (App.axaml.cs TryAutoResumeFromHandoff). Tests pass only because they inject isRunActive. The constructor seam exists but is not wired in the one production caller.\n- FINDING B (REAL, lower severity): public BackendConfigGenerator.Generate now throws on empty keys. Unmodified caller tools/VisualRelay.GenBackendConfig/Program.cs:25 has NO try/catch \u2192 previously wrote degenerate config on zero keys, now throws unhandled exception (stack trace, non-zero exit). The other caller MainWindowViewModel.Keys.cs:206 is safely wrapped in try/catch (\u2192 \"(unavailable)\"). The task manifest excludes the GenBackendConfig tool; its previous zero-key output was the exact degenerate bug being fixed, so crashing is arguably better than persisting degenerate config \u2014 but an unhandled exception is an unpolished regression for a shipped CLI tool.\n\nVERDICT CONSIDERATION: Finding A is the deciding factor \u2014 the mid-run restart safety gate, a core explicit requirement of the task, is implemented and unit-tested but NOT wired in the production launch path, so it provides no actual protection in production. This is a real functional gap requiring changes."
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 128,
+      "error": "error: scope is dirty (run_shell_command). Call `snapshot restore force=true` to override, or `snapshot cancel` to keep context."
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 11.064,
+      "prompt_tokens_est": 82431,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "restore",
+        "force": true,
+        "summary": "Reviewing task stop-degenerate-keyless-backend-configs. All 9 manifest files + KeyEnvFile/XdgConfig/callers read. Targeted tests: 27 passed, 1 skipped (unrelated slow-integration). Full build (Core + GenBackendConfig + App): 0 warnings, 0 errors.\n\nIMPLEMENTATION (3 changes, constraints satisfied \u2014 ResolveTiers chain contents unchanged, key values never logged, 300-line guard respected: Generator=298, ConfigStep=185, Start.cs=272, StalenessCheck=83, Paths=98):\n1. Zero-key guard: BackendConfigGenerator.Generate throws InvalidOperationException on empty presentKeys (line 163). BackendConfigStep.Generate detects empty present-set before calling generator, second-chance re-probes key file, logs WARNING with path+key-names when key file exists but detection empty, returns (null, summary). ResolveAsync falls back to static template.\n2. Staleness check: BackendLifecycle.Start.StalenessCheck.cs (83 lines). Called from StartAsync after IsHealthyAsync. Guards null RepoRoot/missing template/missing GeneratedConfig/IOException, then _isRunActive guard (defer), reads onDisk, regenerates in-memory, compares; on drift writes freshYaml + summary then StopAsync+LaunchProxyAsync+PollReadinessAsync.\n3. Durable summary: BackendPaths.GenerationSummaryLog=Scratch/generation-summary.log, appended on every generation + staleness restart with ISO timestamp.\n\nFINDINGS:\n- FINDING A (REAL, significant): production BackendLifecycleFactory (MainWindowViewModel.Commands.cs:51-58) does NOT pass isRunActive \u2192 _isRunActive null in production \u2192 staleness run-active guard `if (_isRunActive?.Invoke() == true)` always false \u2192 restart NEVER gated on active run. Violates task's explicit requirement \"gated on no active run (never mid-drain; defer with a status note instead)\". StartBackendAsync is reachable via ControlApi \"start-backend\" and app has auto-resume mid-drain (App.axaml.cs TryAutoResumeFromHandoff). Tests pass only because they inject isRunActive explicitly. The constructor seam exists but is not wired in the one production caller. This is the deciding factor \u2014 the mid-run safety gate is implemented and unit-tested but provides no actual protection in production.\n- FINDING B (REAL, lower severity): public BackendConfigGenerator.Generate now throws on empty keys. Unmodified caller tools/VisualRelay.GenBackendConfig/Program.cs:25 has NO try/catch \u2192 previously wrote degenerate config on zero keys, now throws unhandled exception (stack trace, non-zero exit). The other caller MainWindowViewModel.Keys.cs:206 is safely wrapped in try/catch (\u2192 \"(unavailable)\"). Task manifest excludes the GenBackendConfig tool; its previous zero-key output was the exact degenerate bug being fixed.\n\nVERDICT: changes \u2014 Finding A is a real functional gap: the mid-run restart safety gate (an explicit core requirement) is not wired in the production launch path, so it provides no protection in production."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 86
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 8.914,
+      "prompt_tokens_est": 82515,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "dotnet test tests/VisualRelay.Tests --no-build --filter \"FullyQualifiedName~BackendConfigGeneratorTests|FullyQualifiedName~BackendConfigStepZeroKeyGuardTests|FullyQualifiedName~BackendLifecycleStalenessCheckTests|FullyQualifiedName~BackendConfigStepTests|FullyQualifiedName~BackendConfigGeneratorVisionTierTests|FullyQualifiedName~BackendLifecycleStatusTests\" 2>&1 | tail -40",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 3.423,
+      "result_length": 542
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 26.668,
+      "prompt_tokens_est": 82806,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "tools",
+        "pattern": "StartAsync|new BackendLifecycle|BackendLifecycle"
+      },
+      "succeeded": true,
+      "duration_s": 0.051,
+      "result_length": 253
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tools/VisualRelay.Backend/**/*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.185,
+      "result_length": 290
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 6.563,
+      "prompt_tokens_est": 84445,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Backend/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1194
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 43.001,
+      "prompt_tokens_est": 84799,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Now I've confirmed the full picture. There are THREE production entry points to `StartAsync` that invoke the staleness check:\n\n1. `VisualRelay.Backend` CLI tool (`tools/VisualRelay.Backend/Program.cs:12`) \u2014 `new BackendLifecycle()` with NO args, so `isRunActive` is null. This is a standalone CLI invoked by an operator or the launcher. In this context the CLI has no knowledge of whether the GUI app is mid-drain. So null is arguably acceptable here \u2014 the CLI can't know about runs.\n\n2. `MainWindowViewModel.BackendLifecycleFactory` (Commands.cs:51-58) \u2014 the GUI one-click recovery. `new BackendLifecycle(options, log)` \u2014 does NOT pass isRunActive. The GUI VM DOES know about active runs (`_runningTaskIds`, `_activeDrainController`, `IsBusy`). So this caller COULD wire isRunActive but doesn't.\n\n3. `ControlApi` exposes \"start-backend\" \u2192 `StartBackendCommand` \u2192 `StartBackendAsync` \u2192 `BackendLifecycleFactory().StartAsync()`. So an operator can trigger backend start via curl mid-drain.\n\nNow, is Finding A actually a blocking defect for THIS task's diff? Let me reconsider carefully.\n\nThe task's \"What to build\" item 2 says: \"On drift, restart the proxy with the fresh config \u2014 gated on no active run (never mid-drain; defer with a status note instead).\"\n\nThe implementation provides the gating mechanism (`_isRunActive` field + constructor param + the check in TryStalenessRestartAsync). It's tested. But the ONE production caller that has access to run-state (the GUI factory) doesn't wire it. So in the GUI/ControlApi path \u2014 the most likely path where a mid-drain restart could happen \u2014 the gate is inactive.\n\nIs this in-scope for this diff? The manifest does NOT include MainWindowViewModel.Commands.cs. The task is focused on the Core layer (BackendConfigGenerator, BackendConfigStep, BackendPaths, BackendLifecycle). The wiring of isRunActive into the GUI factory is arguably an integration concern. But the task EXPLICITLY requires \"gated on no active run (never mid-drain)\". If the gate isn't wired in production, the requirement is only partially met \u2014 it's met at the unit-test level but not in the actual app.\n\nLet me weigh this against the bar for \"changes\" vs \"pass\":\n- The core mechanism is correctly implemented and tested.\n- The constraint \"Restart gating must use TimeProvider-friendly async patterns\" is met.\n- But \"never mid-drain\" is a SAFETY requirement, and it's not enforced in production because the GUI factory doesn't supply the gate.\n\nI think this is a legitimate \"changes\" finding. The whole point of the gate is to prevent mid-drain proxy restarts, which would kill in-flight requests. Shipping a gate that's wired only in tests means the production app can still restart the proxy mid-drain via the one-click recovery or the \"start-backend\" control API. That's exactly the \"never mid-drain\" scenario the task says to prevent.\n\nHowever, I should consider: is it reasonable for the implementer to have left GUI wiring out of scope? The manifest is Core-only. The plan (stage 4) says: \"BackendLifecycle.cs (156\u2192160): add private readonly Func<bool>? _isRunActive; field and Func<bool>? isRunActive = null constructor parameter.\" It does NOT mention wiring it in MainWindowViewModel. So the plan itself stopped at the Core seam. The implementer followed the plan.\n\nBut the task requirements (the authoritative spec) say \"never mid-drain; defer with a status note instead\" \u2014 and \"Verification\" includes a manual scenario. If the gate isn't wired, the manual verification \"start the app with a healthy proxy... the proxy restarts\" could fire mid-drain.\n\nGiven the explicit safety requirement and that the production wiring is missing, I'll classify this as \"changes\" with Finding A as the primary issue. This is a real functional gap, not a nitpick: a safety gate that only works in tests provides false confidence.\n\nLet me also reconsider Finding B severity. The GenBackendConfig CLI tool now crashes on zero keys. Is that acceptable? The task says zero-key should \"not write or use a generated rewrite \u2014 launch with the static template and log why.\" The CLI tool doesn't launch anything \u2014 it just generates config to stdout. Crashing with an unhandled exception is poor UX but it does prevent writing the degenerate config. However, a cleaner behavior would be a clear error message + non-zero exit. Since the manifest excludes this file and it's a developer tool, and its previous behavior was the bug being fixed, I'll include it as a secondary issue but note it's lower severity / possibly out of scope.\n\nActually, let me reconsider whether Finding B is even worth flagging as blocking. The GenBackendConfig tool with zero keys: before = writes degenerate config (the bug). after = unhandled exception. Neither is good, but the task is specifically about STOPPING the degenerate config. The crash does stop it. And no test covers the zero-key path of this tool. I think Finding B is worth mentioning as a secondary issue (the tool should handle the exception gracefully with a clear message), but it's not as strong as Finding A.\n\nLet me also double-check one more potential issue: in the staleness restart path, after writing freshYaml to disk (StalenessCheck.cs:66), it calls LaunchProxyAsync (line 76). LaunchProxyAsync calls BackendConfigStep.ResolveAsync (Start.cs:71) which REGENERATES the config and writes it again (and appends another summary line). So:\n- The summary log gets TWO entries per staleness restart (one from StalenessCheck line 69, one from GenerateWithTimeoutAsync line 98).\n- The config is generated twice (once in StalenessCheck, once in LaunchProxyAsync).\n\nIs the double-generation a correctness problem? The two generations use the same env/template, so they produce identical YAML. The double-write is idempotent. The double summary log entry is a minor noise issue (two timestamped lines for one restart). Not a correctness bug, but slightly redundant. I'll note it as minor.\n\nActually, there's a subtle concern: between the StalenessCheck generation and the LaunchProxyAsync generation, could the env change? No \u2014 same process, same _env accessor. So identical. Not a bug.\n\nAnother subtle concern: StalenessCheck writes freshYaml to disk (line 66) THEN calls StopAsync (line 74) which stops the proxy. But the proxy was running the OLD on-disk config. Writing the new config to disk before stopping is fine \u2014 the running proxy has already loaded its config into memory. Then LaunchProxyAsync regenerates (same result) and spawns with the new config. OK.\n\nWait \u2014 actually there's a more interesting subtlety. The staleness check compares freshYaml (in-memory) to onDisk (the file the proxy was started with). If they differ, it restarts. But what if the proxy was started with the STATIC template (no generated file)? Then `!File.Exists(_paths.GeneratedConfig)` \u2192 return false (line 30). So staleness only triggers when there's a generated config on disk. Good \u2014 matches the task (\"the generated file the proxy was started with\").\n\nBut here's a gap: what if the proxy was started with a generated config, but then the .env keys changed such that fresh generation now produces zero keys (freshYaml is null)? Line 54: `if (freshYaml is null) return false;` \u2014 so it does NOT restart and does NOT fall back to static. The proxy keeps running the old (possibly stale) generated config. Is that correct? The task says \"don't destabilise a working proxy\" \u2014 the comment says exactly that. So keeping the working proxy on its current config when fresh generation would produce zero keys is a deliberate, defensible choice. Not a bug.\n\nOK. So my final assessment:\n- Finding A: REAL and significant \u2014 the production mid-run safety gate is not wired in the GUI launch path (BackendLifecycleFactory). This means the \"never mid-drain\" requirement is not actually enforced in the app. Verdict: changes.\n- Finding B: REAL but lower severity / arguably out of manifest scope \u2014 GenBackendConfig CLI crashes on zero keys instead of handling gracefully.\n- Minor: double summary-log entry + double generation on staleness restart (cosmetic).\n\nI'm confident in \"changes\" driven primarily by Finding A. Let me write the verdict.\n\nActually, let me reconsider Finding A one more time to be fair. Is it possible the implementer's intent was that the CLI/standalone paths (VisualRelay.Backend) legitimately can't know about runs, and the GUI path's StartBackendAsync is gated by `CanStartBackend() => !IsBackendReachable`? Let me check: CanStartBackend returns !IsBackendReachable \u2014 i.e., the Start button is only enabled when the backend is NOT reachable. So if the proxy is healthy (reachable), the StartBackendCommand is DISABLED in the GUI, meaning StartBackendAsync can't be invoked from the GUI button when the proxy is already healthy!\n\nWait, that's important. The staleness check only runs when the proxy IS healthy (IsHealthyAsync returns true). But CanStartBackend disables the start command when the backend IS reachable. So in the GUI, you can't click \"start\" when the proxy is healthy \u2014 which is exactly when the staleness check would run. So the GUI button path can NEVER trigger the staleness check (because the button is disabled when healthy).\n\nBut the ControlApi path: ControlApi resolves \"start-backend\" \u2192 StartBackendCommand, and per the ControlApi docstring \"command invocations consult each ICommand.CanExecute(object) exactly as the bound button would, refusing (HTTP 409) when the command is disabled.\" So the ControlApi ALSO respects CanStartBackend \u2192 refuses when healthy. So the control API can't trigger staleness restart either!\n\nSo... is the staleness check reachable in production at all via the GUI/control-API path? It seems NOT, because StartBackendAsync is gated on !IsBackendReachable, and staleness only runs when healthy (reachable). \n\nHmm, but wait \u2014 there's a race: IsBackendReachable is a cached property updated by RefreshBackendStatusAsync. CanStartBackend uses the cached value. But StartAsync does a fresh IsHealthyAsync check. Could IsBackendReachable be false (enabling the command) while the proxy is actually healthy (triggering staleness)? Yes \u2014 if the cached status is stale (backend was down, came up, status not yet refreshed). The 15-second monitor refreshes status. So there's a window where CanStartBackend=true (cached unreachable) but StartAsync finds it healthy \u2192 staleness runs. In that window, a drain could be active.\n\nBut more fundamentally: the staleness check is ALSO reachable via the `VisualRelay.Backend start` CLI (Program.cs:18), which has NO CanStartBackend gating and NO isRunActive. An operator running `visual-relay backend start` (or the launcher running it) while the GUI is mid-drain would hit the staleness check with isRunActive=null \u2192 could restart mid-drain. The CLI can't know about GUI runs, so null is defensible there... but the launcher might invoke it.\n\nGiven the complexity, let me reconsider whether Finding A is truly blocking. The staleness check IS reachable in production (via the Backend CLI, and via the GUI in a stale-status race window). When reachable, the run-active gate is null (not wired) in both the CLI and GUI factory. So mid-drain restart is possible. The task explicitly requires \"never mid-drain; defer with a status note instead.\"\n\nI think Finding A stands as a real issue, but I should frame it accurately: the gate mechanism exists and is tested, but it's not wired in the production callers (GUI factory + Backend CLI both construct BackendLifecycle without isRunActive), so the \"never mid-drain\" guarantee doesn't hold in production. The GUI factory is the caller that COULD wire it (it has IsBusy/_runningTaskIds); the Backend CLI genuinely cannot know.\n\nGiven the manifest is Core-only and the GUI wiring is out of the manifest, is it fair to flag? The task requirements are the authority, and they explicitly require the mid-drain safety. The implementation delivers a tested mechanism but not production enforcement. I'll flag it as a real issue requiring changes, while acknowledging the mechanism is correct. This is the honest classification.\n\nFinal verdict: changes, with Finding A (unwired production gate) as primary and Finding B (GenBackendConfig crash) as secondary.",
+        "next_thought_needed": false,
+        "thought_number": 2,
+        "total_thoughts": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 109
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 8.153,
+      "prompt_tokens_est": 87623,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "cancel"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 94
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 14.226,
+      "prompt_tokens_est": 87973,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

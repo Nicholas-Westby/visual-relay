@@ -46,7 +46,6 @@ public partial class MainWindowViewModel
         // Manual Refresh also re-probes so the top-bar status dot stays current.
         await RefreshBackendStatusAsync();
     }
-
     /// <summary>Backend lifecycle for the one-click recovery; overridable so tests drive the wiring hermetically. Production runs the shared <see cref="BackendLifecycle"/> with diagnostics routed to Trace.</summary>
     internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>
         new BackendLifecycle(
@@ -60,10 +59,12 @@ public partial class MainWindowViewModel
     [RelayCommand(CanExecute = nameof(CanStartBackend))]
     private async Task StartBackendAsync()
     {
-        // Best-effort one-click recovery: run the SHARED C# backend lifecycle off the UI thread (same code VisualRelay.Backend + the launcher use), never throw, then re-probe so the dot reflects the result.
+        // Best-effort one-click recovery: run the shared C# backend lifecycle off the UI thread, never throw. Wires the run-active gate so the staleness check never restarts the proxy mid-drain.
         try
         {
-            await BackendLifecycleFactory().StartAsync();
+            var lifecycle = BackendLifecycleFactory();
+            lifecycle.IsRunActive = () => IsBusy;
+            await lifecycle.StartAsync();
         }
         catch (Exception ex)
         {

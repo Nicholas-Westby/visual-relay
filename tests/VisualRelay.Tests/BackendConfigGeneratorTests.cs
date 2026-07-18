@@ -161,19 +161,19 @@ public sealed class BackendConfigGeneratorTests
 
     // ── 7. Degenerate: no keys at all ────────────────────────────────────
     [Fact]
-    public void EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias()
+    public void EmptyKeySet_ThrowsInvalidOperationException()
     {
+        // After zero-key guard: BackendConfigGenerator.Generate must refuse to
+        // produce a degenerate config when the present-key set is empty.
+        // Callers (BackendConfigStep.Generate) detect this up front and fall
+        // back to the static template instead — the same pattern used for
+        // generation timeout/failure.
         var present = new HashSet<string>();
-        var (yaml, _) = BackendConfigGeneratorTestHelpers.Generate(present);
-        var aliases = BackendConfigGeneratorTestHelpers.ParseAliases(yaml);
-
-        foreach (var tier in new[] { "cheap", "balanced", "frontier" })
-            Assert.True(aliases.ContainsKey(tier),
-                $"tier '{tier}' must have an alias even with no keys");
-        // Vision: skipped when no vision-capable model is available (no
-        // HF_TOKEN) — must never silently fall back to a text model.
-        Assert.False(aliases.ContainsKey("vision"));
-        Assert.False(aliases.ContainsKey("claude"));
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => BackendConfigGenerator.Generate(
+                present, BackendConfigGeneratorTestHelpers.TemplatePath));
+        Assert.Contains("zero", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("provider keys", ex.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── 8. Tier rows ─────────────────────────────────────────────────────

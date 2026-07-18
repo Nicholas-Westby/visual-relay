@@ -160,6 +160,11 @@ public static partial class BackendConfigGenerator
         string templatePath,
         IReadOnlyDictionary<string, string>? overrides = null)
     {
+        if (presentKeys.Count == 0)
+            throw new InvalidOperationException(
+                "BackendConfigGenerator.Generate called with zero provider keys. " +
+                "Callers must detect this condition and fall back to the static template.");
+
         var lines = File.ReadAllLines(templatePath);
 
         // Locate the boundary markers in the template.

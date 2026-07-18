@@ -1,0 +1,1535 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T00:05:53.027746+00:00",
+  "task": "# Relay stage 9: Fix\nTask: stop-degenerate-keyless-backend-configs-from-persisting\nWorking directory: /Users/admin/Dev/visual-relay\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n## Task: Stop degenerate keyless backend configs from being generated or persisting\n\nWhen the backend config generator detects ZERO provider keys, it rewrites\nevery tier alias to the `fallback` pseudo-model and collapses every\nfallback chain to `[fallback]`\n(`BackendConfigGenerator.ResolveTiers`, the `chain.Count == 0` branch).\nThat routing funnels all traffic through one HF model on one provider \u2014\nand once written, it persists indefinitely: the launch path treats a\nhealthy proxy as a fast no-op, so nothing ever compares the config the\nproxy is running against what generation would produce now.\n\nA zero-key rewrite is strictly worse than the static template. Every\n`model_list` entry (including the HF floor) resolves its key from\n`os.environ` at request time, so with truly no keys NOTHING works under\neither config \u2014 but when keys ARE present in the proxy's process env (the\nspawn path layers them from `~/.config/visual-relay/.env` via\n`BackendLifecycle.LoadProviderKeys`), the template gives full\nprovider-diversified routing while the degenerate rewrite silently\ndestroys it. Key detection at generation time\n(`BackendConfigStep.Generate`, which builds the present-set from\n`KeyEnvFile.Read()` + raw process env) and key provisioning at spawn time\ncan disagree \u2014 and did.\n\n### Evidence (verified)\n\n- Field incident: the proxy started 2026-07-15 18:38:42 ran a generated\n  config with `frontier: fallback`, `balanced: fallback`, `cheap:\n  fallback`, `fallbacks: [fallback]` for every tier and no vision/claude\n  aliases \u2014 the exact zero-keys output \u2014 while\n  `~/.config/visual-relay/.env` had held HF/DeepSeek/Moonshot keys since\n  2026-07-07 and the proxy's own env had them (all requests worked, all\n  through the single HF model). It ran that way for two days.\n- 2026-07-17 (~21:07Z): Hugging Face retired the legacy route behind that\n  single model; with zero routing diversity the whole pipeline failed\n  (three stage-1 attempts, litellm: \"no healthy deployments \u2026 Model\n  Group=frontier \u2026 Available Model Group Fallbacks=['fallback']\") even\n  though DeepSeek, Moonshot, and GLM-5.2 upstreams were all healthy and\n  the keys were valid. The diversified chains exist precisely to survive\n  this event, and the stale degenerate config defeated them.\n- Same day 21:40Z: regeneration through the app with the same `.env`\n  produced the correct config (frontier\u2192glm-5.2, balanced\u2192deepseek-v4-pro,\n  cheap\u2192deepseek-v4-flash, full chains) \u2014 proving the keyless generation\n  came from a transient environment-resolution failure at one particular\n  start, not from bad key data.\n- `BackendConfigStep.ResolveAsync` already prefers the static template on\n  generation failure/timeout (\"using static config\") \u2014 the zero-key case\n  belongs on that same path. It also discards the generator's summary\n  (`var (yaml, _) = \u2026`), so nothing durable records which keys generation\n  actually saw.\n\n### What to build\n\n1. **Zero-key guard**: when the detected present-key set is empty,\n   do not write or use a generated rewrite \u2014 launch with the static\n   template and log why (same pattern as the existing\n   generation-failure fallback). If the user-level key file exists and\n   parses to a non-empty key set while detection still sees nothing,\n   surface that loudly as an environment-resolution failure (backend\n   panel / status text), not silently.\n2. **Staleness check**: when the launch/start path finds the proxy\n   already healthy, regenerate the config in memory and compare it to the\n   generated file the proxy was started with. On drift, restart the proxy\n   with the fresh config \u2014 gated on no active run (never mid-drain; defer\n   with a status note instead). A matching config keeps today's fast\n   no-op.\n3. **Durable generation summary**: persist the generator's one-line\n   summary (tier\u2192model resolutions + detected keys) at every generation \u2014\n   e.g. into the backend scratch log \u2014 so the next incident shows what\n   generation saw, when.\n\n### Constraints\n\n- No changes to `ResolveTiers` chain contents, tier names, or the\n  template itself.\n- Keys must never be logged \u2014 key NAMES only.\n- Restart gating must use TimeProvider-friendly async patterns; no\n  real-time waits in tests; 300-line file guard.\n\n### Tests (red first)\n\n- Generation with an empty present-set: static template path chosen, no\n  generated file written \u2014 fails today (degenerate yaml is written).\n- Key file non-empty but detection empty: loud surface triggered \u2014 fails\n  today (silent).\n- Healthy proxy whose on-disk generated config differs from a fresh\n  generation: restart-with-fresh-config triggered when idle \u2014 fails today\n  (no-op).\n- Same scenario mid-run: no restart, deferred with a status note.\n- Matching config: no restart (pins the fast no-op).\n- Generation summary line lands durably on every generation, containing\n  tier resolutions and key names only.\n\n### Verification\n\n- `./visual-relay check` fully green including the new tests.\n- Manual: hand-write a degenerate generated config into scratch, start\n  the app with a healthy proxy running it and valid keys on disk: the\n  proxy restarts onto the corrected config and the summary line is in the\n  log. Then relaunch once more: fast no-op (configs match).\n\n\n## Manifest\nsrc/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\nsrc/VisualRelay.Core/Execution/BackendConfigStep.cs\nsrc/VisualRelay.Core/Execution/BackendPaths.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\nsrc/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs\ntests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\ntests/VisualRelay.[ENCRYPTED:aws-secret-key]caOoxr8BTzNvZPugIt+63M72AFjVf4MF7sZcn6pA.cs\ntests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"BackendConfigGenerator emits a degenerate config (all tiers\u2192fallback, all chains\u2192[fallback]) when it sees zero provider keys, which then persists indefinitely because the launch path never compares the running config against a fresh generation. Three changes needed: (1) zero-key guard \u2014 skip generation and use static template when the key set is empty, with a loud alert if the key file exists but detection saw nothing; (2) staleness check \u2014 on healthy-proxy launch, regenerate in memory and diff against the on-disk config, restarting (gated on no active run) if they drift; (3) durable summary \u2014 persist the tier\u2192model + key-names line to the backend scratch log at every generation.\",\n  \"options\": [\n    \"Option 1 (recommended) \u2014 Early-guard + staleness check: short-circuit Generate when present-set is empty (reusing the existing generation-failure fallback pattern), diff on-disk config against a fresh regeneration on launch, and scratch-log the summary each time. Minimal changes, proven fallback pattern, easy to test.\",\n    \"Option 2 \u2014 Generation-time guard + fingerprint-based reconciliation: guard at the Generate entry point so ResolveTiers is never called with zero keys, and replace staleness regeneration with a cheaper key-set hash fingerprint stored alongside the config file.\",\n    \"Option 3 \u2014 Config provenance tracking: embed generation metadata (timestamp, key names, tier resolutions) directly into the generated YAML as comments/manifest so provenance travels with the file, enabling cheap hash-based drift detection without a separate regeneration or fingerprint file.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The zero-key degenerate config bug originates in `BackendConfigGenerator.ResolveTiers` (BackendConfigGenerator.cs, line 254): when `chain.Count == 0`, it writes `fallback` as the alias and `[fallback]` as the fallback chain for every tier. This is invoked from `BackendConfigStep.Generate` (line 82-102), which builds the present-key set from `KeyEnvFile.Read()` + process env, then passes it through. The existing fallback-to-static-template pattern in `BackendConfigStep.ResolveAsync` (lines 36-58) covers timeout/failure but not the zero-key case. The summary tuple `(yaml, _)` is discarded on line 100 of BackendConfigStep.cs (`var (yaml, _) = \u2026`), so nothing durable records what generation saw. The healthy-proxy fast no-op at `BackendLifecycle.StartAsync` line 24-28 never compares the running config against what generation would produce today. The test `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` (BackendConfigGeneratorTests.cs:163-177) currently asserts the degenerate behavior (all tiers get aliases even with zero keys). KeyEnvFile.Read() returns empty dict for both 'file missing' and 'file exists but empty', so distinguishing the 'file exists with keys but detection saw nothing' case requires separately checking `KeyEnvFile.ResolvePathForCurrentUser()` + `File.Exists()` + `KeyEnvFile.Read()` before/after the generation call. The `ManualTimeProvider` and `DictionaryEnvironmentAccessor` test doubles are the established patterns for hermetic time/env tests. The 300-line file guard is a project convention enforced by partial class splits (e.g., BackendConfigGenerator.cs at 293 lines is near the limit, so additions there would need a new partial file like BackendConfigGenerator.Guard.cs). The `BackendLifecycleStatusTests` partial class (shared with `BackendConfigStepTests.cs`) provides `Lifecycle()`, `Paths()`, `WriteStaticTemplate()` helpers already used by existing gen-config tests.\",\n  \"constraints\": [\n    \"No changes to `ResolveTiers` chain contents, tier names, or the static template (`tools/backend/litellm-config.yaml`).\",\n    \"Keys must never be logged \u2014 key NAMES only (already satisfied: `BackendConfigGenerator.Generate` summary uses key names, not values).\",\n    \"Restart gating must use `TimeProvider`-friendly async patterns (no real-time waits in tests); existing `ManualTimeProvider` is the approved pattern.\",\n    \"300-line file guard: `BackendConfigGenerator.cs` is at 293 lines; any new code there requires a new partial file like `BackendConfigGenerator.Guard.cs`.\",\n    \"The `Generate` method in `BackendConfigStep.cs` is CPU-bound but wrapped in `Task.Run` for timeout support; the zero-key guard must run before calling `BackendConfigGenerator.Generate` so it can short-circuit without invoking the generator.\",\n    \"Tests must be hermetic: use `DictionaryEnvironmentAccessor` and temp XDG homes (pattern from `BackendLifecycleStatusTests._home`) \u2014 no process-global environment mutation.\",\n    \"The 'loud alert when key file exists but detection sees nothing' must surface via the `_log` callback (Action<string>) path already used by `BackendConfigStep.ResolveAsync` \u2014 not via a new UI coupling.\",\n    \"The staleness check in the healthy-proxy path must not re-regenerate the config file on disk unless a restart is actually triggered; comparison must be in-memory (`BackendConfigGenerator.Generate` output diff against File.ReadAllText on the generated config).\",\n    \"The durable summary must go to the scratch log directory (BackendPaths.Scratch) \u2014 e.g., a new file like `generation-summary.log` \u2014 not into the YAML config itself.\",\n    \"Existing test `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` will fail after the zero-key guard is added and must be updated (the task says 'fails today' \u2014 the test itself must change to assert the new behavior).\",\n    \"BackendLifecycle.SpawnLitellm already passes `config` path to the spawned process; the staleness restart must stop the existing proxy (StopAsync) then call LaunchProxyAsync again, reusing the same readiness poll pattern.\",\n    \"The `BackendLifecycle._options.RepoRoot` may be null in tests that never reach generation; the staleness check must handle a null RepoRoot gracefully (no regeneration possible \u2192 no staleness check, today's fast no-op).\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Root cause: three gaps in the backend config pipeline\\n\\n### Gap 1 \u2014 Zero-key guard missing (BackendConfigStep.Generate, lines 82-102)\\n\\n`BackendConfigStep.Generate` builds the `present` key-set from `KeyEnvFile.Read()` + process env (lines 84-89), then passes it directly to `BackendConfigGenerator.Generate` at line 100. There is no check for an empty set before that call. When `present` is empty \u2014 which happens when `KeyEnvFile.Read()` fails to find the dotenv file (returns empty dict, line 108-109) AND no relevant env vars are in the process \u2014 the generator proceeds to `ResolveTiers` where the `chain.Count == 0` branch (lines 254-259) rewrites every tier alias to `fallback` and every fallback chain to `[fallback]`. This degenerate YAML is then written to `paths.GeneratedConfig` at line 78 of `BackendConfigStep.cs`.\\n\\nThe existing fallback-to-static-template pattern in `ResolveAsync` (lines 50-58) catches `OperationCanceledException` (timeout) and generic `Exception`, but the zero-key case produces a valid YAML string \u2014 no exception \u2014 so it never triggers that fallback.\\n\\n### Gap 2 \u2014 No staleness check on healthy-proxy no-op (BackendLifecycle.StartAsync, lines 24-28)\\n\\nWhen the health check succeeds, `StartAsync` returns immediately: `_log($\\\"already healthy at {ModelBackend.BaseUrl} (no-op)\\\"); return BackendResult.Ok();`. It never reads the on-disk generated config (`paths.GeneratedConfig`) or compares it against a fresh in-memory generation. A stale degenerate config persists indefinitely once the proxy is up.\\n\\n### Gap 3 \u2014 Summary discarded (BackendConfigStep.Generate, line 100)\\n\\n`var (yaml, _) = BackendConfigGenerator.Generate(present, template, overrides);` \u2014 the `_` discards the one-line summary containing tier\u2192model resolutions and detected key names. Nothing durable records what generation saw.\\n\\n### Why detection and provisioning can disagree\\n\\n`BackendConfigStep.Generate` (lines 84-89) reads keys from `KeyEnvFile.Read()` (which resolves `~/.config/visual-relay/.env`) + five known env var names from `Environment.GetEnvironmentVariable`. `BackendLifecycle.LoadProviderKeys` (Start.cs lines 191-203) loads keys from the same user-level .env path via `KeyEnvFile.GetUnsetKeysPublic`. Both go through `KeyEnvFile.Read()` internally, but `Read()` returns an empty dict for file-missing (line 108-109) \u2014 it cannot distinguish \\\"file does not exist\\\" from \\\"file exists but empty\\\". If a transient path-resolution failure (XDG_CONFIG_HOME/HOME glitch) causes `Read()` to return empty, generation sees zero keys while the spawn path (which also resolves the same path) may succeed later \u2014 or vice versa. The result: a zero-key degenerate config written once and never corrected.\",\n  \"excerpts\": [\n    \"BackendConfigGenerator.cs:254-259 \u2014 `if (chain.Count == 0) { ... aliases[tier] = tier == FallbackTier ? FallbackFloorModel : FallbackTier; fallbacks[tier] = [FallbackTier]; continue; }` \u2014 the zero-key degenerate rewrite branch\",\n    \"BackendConfigStep.cs:82-102 \u2014 `Generate` method builds present-key set from KeyEnvFile.Read() + process env, passes to BackendConfigGenerator.Generate with no empty-set guard\",\n    \"BackendConfigStep.cs:100 \u2014 `var (yaml, _) = BackendConfigGenerator.Generate(present, template, overrides);` \u2014 summary tuple discarded\",\n    \"BackendConfigStep.cs:50-58 \u2014 existing generation-failure fallback catches timeout/exception but never the zero-key degenerate case\",\n    \"BackendLifecycle.Start.cs:24-28 \u2014 healthy proxy is a fast no-op: `if (await IsHealthyAsync(cancellationToken)) { _log($\\\"already healthy...\\\"); return BackendResult.Ok(); }` \u2014 no staleness comparison\",\n    \"BackendLifecycle.Start.cs:64-66 \u2014 config resolution path: `var config = await BackendConfigStep.ResolveAsync(_paths, _options.RepoRoot, _options.GenConfigTimeout, _log, cancellationToken);` \u2014 called once at launch, never re-evaluated for a healthy proxy\",\n    \"KeyEnvFile.cs:108-109 \u2014 `if (!File.Exists(filePath)) return new Dictionary<string, string>();` \u2014 returns empty dict for file-missing; cannot distinguish from file-exists-but-empty\",\n    \"BackendConfigGeneratorTests.cs:163-177 \u2014 `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` \u2014 asserts the degenerate behavior (all tiers have fallback aliases); will fail after zero-key guard is added\",\n    \"BackendConfigGeneratorTests.cs:116-117 \u2014 `ShapeGuard_ParsesAndEveryTierHasNonEmptyChainEndingInFallback` calls `BackendConfigGeneratorTestHelpers.Generate(present)` which reads from real template via `TemplatePath`; generation writes real YAML \u2014 tests must be hermetic\",\n    \"BackendLifecycleStatusTests.cs:174-193 \u2014 `Start_AlreadyHealthy_NoOp_Exit0` \u2014 asserts the fast no-op that the staleness check must modify\",\n    \"BackendConfigGenerator.cs:293 \u2014 file is at 293 lines, dead on the 300-line guard; any additions need a new partial file\",\n    \"BackendLifecycle.Start.cs:266 \u2014 file is at 266 lines; staleness check additions fit within 300-line guard\",\n    \"BackendConfigStep.cs:103 \u2014 well within 300-line limit; zero-key guard and durable summary can go here or in a new partial\",\n    \"BackendPaths.cs:55 \u2014 `GeneratedConfig => Path.Combine(Scratch, \\\"litellm-config.generated.yaml\\\")` \u2014 the on-disk path the staleness check must compare against\",\n    \"IEnvironmentAccessor.cs \u2014 env accessor seam; `KeyEnvFile.GetEnv` / `KeyEnvFile.Read` / `KeyEnvFile.ResolvePathForCurrentUser` all accept it for hermetic tests\",\n    \"TestDoubles.cs:13-24 \u2014 `DictionaryEnvironmentAccessor` \u2014 in-memory env for hermetic tests\",\n    \"ManualTimeProvider.cs \u2014 test time provider; `BackendLifecycle.StartAsync` and `PollReadinessAsync` already accept `TimeProvider?`\",\n    \"BackendLifecycle.cs:36-61 \u2014 constructor accepts injectable `_healthCheck`, `_ensureVenv`, `_env`; new staleness gating delegate would follow this pattern\",\n    \"MainWindowViewModel.Commands.cs:61-75 \u2014 `StartBackendAsync` calls `BackendLifecycleFactory().StartAsync()` from UI; active run state is at `_activeDrainController` (Execution.cs:14), but BackendLifecycle is at a lower layer and doesn't know about it\"\n  ],\n  \"repro\": \"## Reproduction (conceptual \u2014 not executable in this sandbox)\\n\\n### Zero-key degenerate config\\n1. Create a temp XDG home with no `~/.config/visual-relay/.env`.\\n2. Clear all five provider env vars (HF_TOKEN, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY).\\n3. Call `BackendConfigStep.ResolveAsync(paths, repoRoot, timeout, log)` with a real template.\\n4. **Expected**: falls back to static template (like the timeout path).\\n5. **Actual**: writes a degenerate YAML where every tier alias is `fallback` and every fallback chain is `[fallback]`.\\n\\n### Stale config persists\\n1. Hand-write a degenerate generated config into `paths.GeneratedConfig` (all tiers\u2192fallback).\\n2. Start a fake healthy proxy (health check returns true).\\n3. Call `BackendLifecycle.StartAsync()`.\\n4. **Expected**: regenerates in memory, detects drift from on-disk file, restarts proxy with corrected config.\\n5. **Actual**: logs \\\"already healthy (no-op)\\\" and returns; degenerate config persists.\\n\\n### Summary not persisted\\n1. Call `BackendConfigStep.ResolveAsync` with valid keys.\\n2. Check `paths.Scratch` for any file containing the generation summary line.\\n3. **Expected**: `generation-summary.log` exists with tier\u2192model resolutions + key names.\\n4. **Actual**: no such file; summary is discarded in `var (yaml, _) = ...`.\\n\\n### Failing test\\nRun `BackendConfigGeneratorTests.EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias`: it passes today because it asserts the degenerate behavior (all tiers get aliases even with zero keys). After adding the zero-key guard, it must be updated to assert the static-template fallback path instead.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Concrete implementation plan\\n\\n### Gap 1 \u2014 Zero-key guard (BackendConfigStep + BackendConfigGenerator)\\n\\n**BackendConfigGenerator.Generate** (line 158): add a zero-key guard at the top:\\n```csharp\\nif (presentKeys.Count == 0)\\n    throw new InvalidOperationException(\\n        \\\"BackendConfigGenerator.Generate called with zero provider keys. \\\" +\\n        \\\"Callers must detect this condition and fall back to the static template.\\\");\\n```\\nFile: 293\u2192297 lines, still under 300.\\n\\n**BackendConfigStep.Generate** (line 82): change return type from `string` to `(string? Yaml, string Summary)`. Accept `Action<string>? log` and `IEnvironmentAccessor? env`. Before calling `BackendConfigGenerator.Generate`, check `present.Count == 0`:\\n- If zero AND `KeyEnvFile.ResolvePathForCurrentUser()` exists AND `KeyEnvFile.Read(filePath)` is non-empty \u2192 log `WARNING: provider key file {path} contains N keys ({key names}) but detection saw zero keys \u2014 environment-resolution failure`\\n- If zero and file missing/empty \u2192 log `gen-backend-config: no provider keys detected; using static config`\\n- In both zero-key cases: return `(null, \\\"backend: zero keys \u2014 using static config\\\")`\\n- Otherwise: call `BackendConfigGenerator.Generate` as before\\n- Make method `internal static` (was `private static`)\\n- Use `env` accessor for `KeyEnvFile.Read(env)` and process env fallback\\n\\n**GenerateWithTimeoutAsync**: unpack the nullable tuple; if `yaml is null`, log the specific message and return `template` (static). After writing YAML successfully, persist summary: `File.WriteAllTextAsync(paths.GenerationSummaryLog, $\\\"[{DateTime.UtcNow:O}] {summary}\\\\n\\\", token)`.\\n\\nFile: 103\u2192~155 lines, well under 300.\\n\\n### Gap 2 \u2014 Durable summary (BackendPaths + BackendConfigStep)\\n\\n**BackendPaths**: add `public string GenerationSummaryLog => Path.Combine(Scratch, \\\"generation-summary.log\\\");` (97\u219298 lines).\\n\\n### Gap 3 \u2014 Staleness check (BackendLifecycle)\\n\\n**BackendLifecycle.cs** (156\u2192160): add `private readonly Func<bool>? _isRunActive;` field and `Func<bool>? isRunActive = null` constructor parameter.\\n\\n**BackendLifecycle.Start.cs** (266\u2192272): in `StartAsync`, after `IsHealthyAsync` check, insert staleness check before the no-op:\\n```csharp\\nif (await IsHealthyAsync(cancellationToken))\\n{\\n    if (await TryStalenessRestartAsync(cancellationToken, tp))\\n        return BackendResult.Ok();\\n    _log($\\\"already healthy at {ModelBackend.BaseUrl} (no-op)\\\");\\n    return BackendResult.Ok();\\n}\\n```\\n\\n**+BackendLifecycle.Start.StalenessCheck.cs** (new partial, ~65 lines): `TryStalenessRestartAsync` method:\\n1. Guard: `_options.RepoRoot` null \u2192 return false\\n2. Guard: template file missing \u2192 return false\\n3. Guard: `_paths.GeneratedConfig` file missing \u2192 return false (proxy started with static template)\\n4. Guard: `_isRunActive?.Invoke() == true` \u2192 log \\\"stale config detected but a run is active; restart deferred\\\" \u2192 return false\\n5. Read on-disk YAML via `File.ReadAllTextAsync`, IOException\u2192false\\n6. Call `BackendConfigStep.Generate(template, repoRoot, _env)` in-memory\\n7. Guard: `freshYaml is null` (zero-key in fresh generation) \u2192 return false\\n8. Compare: `freshYaml == onDisk` \u2192 return false (match, fast no-op)\\n9. Drift: log, `await StopAsync(cancellationToken, tp)`, `await LaunchProxyAsync`, `await PollReadinessAsync`\\n\\n### Test changes\\n\\n**BackendConfigGeneratorTests.cs**: update `EmptyKeySet_DoesNotCrash_AndEveryTierHasAlias` \u2014 now asserts `Generate` throws `InvalidOperationException` when called with empty key set.\\n\\n**+BackendConfigStepZeroKeyGuardTests.cs** (new partial of `BackendLifecycleStatusTests`, ~80 lines):\\n- `GenConfig_ZeroKeys_FallsBackToStaticTemplate_NoGeneratedFileWritten` \u2014 empty present-set via empty `DictionaryEnvironmentAccessor`, asserts `ResolveAsync` returns template path, no generated file on disk\\n- `GenConfig_KeyFileExistsButDetectionEmpty_SurfacesAlert` \u2014 write keys to user-level .env but provide an accessor that hides them; assert log contains the WARNING with key-file path\\n- `GenConfig_SummaryLinePersistedToGenerationSummaryLog` \u2014 valid keys, assert `generation-summary.log` created with timestamped summary containing tier\u2192model resolutions\\n\\n**+BackendLifecycleStalenessCheckTests.cs** (new partial of `BackendLifecycleStatusTests`, ~100 lines):\\n- `Start_Healthy_StaleConfigOnDisk_RestartsWithFreshConfig` \u2014 write degenerate config to disk, set up keys in env accessor, inject healthy healthCheck; assert restart was triggered (spawn happened), disk config overwritten with correct config\\n- `Start_Healthy_MatchingConfig_NoRestart_FastNoOp` \u2014 write correct config to disk matching fresh generation; assert no spawn, log contains \\\"already healthy\\\"\\n- `Start_Healthy_StaleConfig_MidRun_DefersWithStatusNote` \u2014 isRunActive returns true; assert no restart, log contains \\\"run is active; restart deferred\\\"\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs\",\n    \"src/VisualRelay.Core/Execution/BackendConfigStep.cs\",\n    \"src/VisualRelay.Core/Execution/BackendPaths.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.cs\",\n    \"src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs\",\n    \"+src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs\",\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\",\n    \"+tests/VisualRelay.[ENCRYPTED:aws-secret-key]caOoxr8BTzNvZPugIt+63M72AFjVf4MF7sZcn6pA.cs\",\n    \"+tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 4, untracked deleted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs\",\n    \"tests/VisualRelay.[ENCRYPTED:aws-secret-key]caOoxr8BTzNvZPugIt+63M72AFjVf4MF7sZcn6pA.cs\",\n    \"tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs\"\n  ],\n  \"rationale\": \"Six tests for new behavior (zero-key guard, staleness check, durable summary) all fail against current code \u2014 the zero-key degenerate config is still written, the healthy-proxy path is still a fast no-op with no staleness comparison, and no summary log is persisted. One preservation test (matching configs \u2192 no restart) passes today and must keep passing after implementation. Scaffolding (method signatures, fields, stub) compiles but introduces no behavioral changes \u2014 the existing production path is untouched.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented three changes to stop degenerate keyless backend configs:\\n\\n1. **Zero-key guard** (`BackendConfigGenerator.Generate`): throws `InvalidOperationException` when `presentKeys.Count == 0` (line 163-166). `BackendConfigStep.Generate` detects empty present-set before calling the generator, distinguishes \\\"key file exists but detection empty\\\" via second-chance resolution, surfaces WARNING with key-file path and key names, and returns `(null, summary)` so `ResolveAsync` falls back to the static template \u2014 same pattern as the existing timeout/failure fallback.\\n\\n2. **Staleness check** (`BackendLifecycle.Start.StalenessCheck.cs`, 83 lines): `TryStalenessRestartAsync` regenerates in-memory and compares against on-disk generated config. On drift: restarts proxy (guarded by `_isRunActive` \u2014 defers with status note mid-run). Matching config returns false (fast no-op preserved). Guards: null RepoRoot, missing template, no generated file on disk, I/O errors, zero-key fresh generation.\\n\\n3. **Durable summary** (`BackendPaths.GenerationSummaryLog`): persisted with ISO-8601 timestamp on every successful generation via `File.AppendAllTextAsync` in `GenerateWithTimeoutAsync`, plus on staleness-check restarts.\\n\\nTest updates: `EmptyKeySet_ThrowsInvalidOperationException` (renamed, asserts throw), `VisionTier_AbsentWhenNoHfToken` (empty-set case now asserts throw), `GenConfig_Success_WritesGeneratedConfigToScratch` (provides keys so generation succeeds). New test files: `BackendConfigStepZeroKeyGuardTests.cs` (3 tests), `BackendLifecycleStalenessCheckTests.cs` (3 tests) \u2014 all 37 pass.\"\n}\n\n## Stage 7 - Review\n\n{ \"verdict\": \"changes\", \"issues\": [\"The mid-drain restart safety gate is implemented and unit-tested but is NOT wired in any production caller, so the task's explicit requirement 'gated on no active run (never mid-drain; defer with a status note instead)' is not actually enforced in production. BackendLifecycle now accepts `Func<bool>? isRunActive` (BackendLifecycle.cs:35,44,66) and TryStalenessRestartAsync checks `if (_isRunActive?.Invoke() == true)` (StalenessCheck.cs:33) \u2014 but both production construction sites pass no argument, leaving `_isRunActive` null: (1) the GUI one-click recovery `BackendLifecycleFactory` (MainWindowViewModel.Commands.cs:51-58) builds `new BackendLifecycle(options, log)` with no `isRunActive` even though the VM has run-state available (`_runningTaskIds`/`_activeDrainController`/`IsBusy`); (2) the `VisualRelay.Backend` CLI (tools/VisualRelay.Backend/Program.cs:12) uses `new BackendLifecycle()`. With `_isRunActive` null the guard always evaluates false, so a staleness-triggered proxy restart can fire mid-drain. The staleness path IS reachable in production (the Backend CLI `start` has no CanExecute gating, and the GUI path can hit it in the stale-status race window where cached IsBackendReachable=false while the proxy is actually healthy). Tests pass only because they inject `isRunActive` explicitly. The GUI factory (the caller that can know about active runs) should wire `isRunActive: () => IsBusy` (or `_runningTaskIds.Count > 0`).\", \"Secondary (lower severity, possibly out of manifest scope): making the public `BackendConfigGenerator.Generate` throw InvalidOperationException on an empty key set (BackendConfigGenerator.cs:163) breaks an unmodified caller \u2014 `tools/VisualRelay.GenBackendConfig/Program.cs:25` has no try/catch, so on zero keys it now throws an unhandled exception (stack trace to stderr, non-zero exit, no config written) instead of the previous degenerate output. The other public caller, `MainWindowViewModel.Keys.cs:206`, is safely wrapped in try/catch (\u2192 '(unavailable)'). The GenBackendConfig tool should catch the exception and emit a clear zero-key message with a non-zero exit (mirroring the task's 'log why' principle) rather than crashing; note this file is outside the task manifest and its prior zero-key behavior was the degenerate-config bug being fixed, so this may be deemed acceptable.\", \"Minor: on a staleness-check restart the config is generated and the summary line is appended twice \u2014 once in TryStalenessRestartAsync (StalenessCheck.cs:51,66,69) and again inside LaunchProxyAsync\u2192BackendConfigStep.ResolveAsync\u2192GenerateWithTimeoutAsync (Start.cs:71; BackendConfigStep.cs:94,98). The double generation is idempotent (same env/template) so not a correctness bug, but it produces a redundant summary-log entry per restart. Consider having the staleness path skip its own disk-write/summary-append and rely on LaunchProxyAsync's generation, or vice versa.\"] }\n\n## Stage 8 - Visual-review\n\n_Skipped: Pure backend C# changes \u2014 configuration generation guard, staleness check, and durable logging. No UI markup, styles, layout, web frontends, terminal UI, images, charts, or rendered documents involved._\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"summary\": string }\n\n## Verify command\nRun this exact command to reproduce and confirm the fix:\ndotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "All resolved. Results: **3186 passed** (up from 3185 \u2014 SplitGuard now passes), **114 skipped**, **3 pre-existing failures** (`SettingsPanelUiTests.*` \u2014 unrelated UI timing tests, not in this task's diff).\n\n```json\n{\n  \"summary\": \"Resolved all three review issues: (1) Wired the production run-active gate by setting `lifecycle.IsRunActive = () => IsBusy` in `StartBackendAsync` (Commands.cs), since the property initializer can't capture `this`. Made `_isRunActive` non-readonly with a public `IsRunActive` setter on `BackendLifecycle`. (2) Added try/catch around `BackendConfigGenerator.Generate` in `VisualRelay.GenBackendConfig/Program.cs` so the zero-key exception produces a clean message + exit 1 instead of an unhandled crash. (3) Removed the duplicate config file write and summary-log append from `TryStalenessRestartAsync` \u2014 the restart path delegates to `LaunchProxyAsync` \u2192 `ResolveAsync` which handles both. Also fixed a 300-line guard violation on Commands.cs (was 301, now 300). All 57 targeted backend/staleness/zero-key tests pass.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 62,
+    "tool_calls_total": 72,
+    "tool_calls_succeeded": 71,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 34,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 9,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 4,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 62,
+    "total_llm_time_s": 372.289,
+    "prompt_cache": {
+      "cached_tokens": 3392128,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 325.401,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 3.603,
+      "prompt_tokens_est": 11684,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Configuration/BackendConfigGenerator.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13577
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendConfigStep.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8447
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendPaths.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5036
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.36,
+      "prompt_tokens_est": 18554,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7961
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13052
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3506
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.8,
+      "prompt_tokens_est": 24735,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 80
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 118,
+      "error": "error: path does not exist: \"/Users/admin/Dev/visual-relay/src/VisualRelay/ViewModels/MainWindowViewModel.Commands.cs\""
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Backend/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1194
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.GenBackendConfig/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1028
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 2.314,
+      "prompt_tokens_est": 25632,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "BackendLifecycleFactory|new BackendLifecycle",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.272,
+      "result_length": 1130
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 2.224,
+      "prompt_tokens_est": 25945,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "offset": 45,
+        "limit": 35
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1743
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 8.782,
+      "prompt_tokens_est": 26444,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "IsBusy|_runningTaskIds|_activeDrainController",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 5025
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 19.848,
+      "prompt_tokens_est": 28265,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/BackendConfigGeneratorTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12091
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.[ENCRYPTED:aws-secret-key]caOoxr8BTzNvZPugIt+63M72AFjVf4MF7sZcn6pA.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6732
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/BackendLifecycleStalenessCheckTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8242
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.565,
+      "prompt_tokens_est": 36431,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/BackendLifecycleStatusTests.cs",
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3057
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/StartBackendAsyncTests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2431
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.358,
+      "prompt_tokens_est": 37887,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "VisionTier_AbsentWhenNoHfToken",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.232,
+      "result_length": 295
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.497,
+      "prompt_tokens_est": 38048,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/BackendConfigGeneratorVisionTierTests.cs",
+        "offset": 110,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1570
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 9.925,
+      "prompt_tokens_est": 38495,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "partial.*bool IsBusy|\\[ObservableProperty\\].*IsBusy|bool _isBusy",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 107
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 27.482,
+      "prompt_tokens_est": 39164,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "old_string": "    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>\n        new BackendLifecycle(\n            options: BackendStartOptions.FromEnvironment() with\n            {\n                RepoRoot = Environment.GetEnvironmentVariable(\"VISUAL_RELAY_SCRIPT_DIR\")\n                    ?? Environment.CurrentDirectory,\n            },\n            log: line => Trace.WriteLine($\"backend: {line}\"));",
+        "new_string": "    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>\n        new BackendLifecycle(\n            options: BackendStartOptions.FromEnvironment() with\n            {\n                RepoRoot = Environment.GetEnvironmentVariable(\"VISUAL_RELAY_SCRIPT_DIR\")\n                    ?? Environment.CurrentDirectory,\n            },\n            log: line => Trace.WriteLine($\"backend: {line}\"),\n            isRunActive: () => IsBusy);"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 119
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 4.538,
+      "prompt_tokens_est": 41397,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.GenBackendConfig/Program.cs",
+        "old_string": "var (yaml, summary) = BackendConfigGenerator.Generate(present, templatePath);\nConsole.Write(yaml);\nConsole.Error.WriteLine(summary);\nreturn 0;",
+        "new_string": "try\n{\n    var (yaml, summary) = BackendConfigGenerator.Generate(present, templatePath);\n    Console.Write(yaml);\n    Console.Error.WriteLine(summary);\n    return 0;\n}\ncatch (InvalidOperationException ex)\n{\n    Console.Error.WriteLine($\"gen-backend-config: {ex.Message}\");\n    return 1;\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 102
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 15.794,
+      "prompt_tokens_est": 41625,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs",
+        "old_string": "        // Drift detected: restart the proxy with the fresh config.\n        _log(\"stale backend config detected; restarting proxy with fresh config\");\n\n        // Write the fresh config to disk so the restart picks it up.\n        Directory.CreateDirectory(_paths.Scratch);\n        await File.WriteAllTextAsync(_paths.GeneratedConfig, freshYaml, cancellationToken);\n\n        // Persist the summary line.\n        await File.AppendAllTextAsync(\n            _paths.GenerationSummaryLog,\n            $\"[{DateTime.UtcNow:O}] {summary} (via staleness-check restart){Environment.NewLine}\",\n            cancellationToken);\n\n        await StopAsync(cancellationToken, timeProvider);",
+        "new_string": "        // Drift detected: restart the proxy with the fresh config.\n        // LaunchProxyAsync \u2192 ResolveAsync will write the config + summary;\n        // we only need to stop the existing proxy and hand off.\n        _log(\"stale backend config detected; restarting proxy with fresh config\");\n\n        await StopAsync(cancellationToken, timeProvider);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 128
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 9.789,
+      "prompt_tokens_est": 42848,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs",
+        "old_string": "        var (freshYaml, summary) = BackendConfigStep.Generate(template, repoRoot, env: _env);",
+        "new_string": "        var (freshYaml, _) = BackendConfigStep.Generate(template, repoRoot, env: _env);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 128
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.666,
+      "prompt_tokens_est": 43513,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.Start.StalenessCheck.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3146
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.GenBackendConfig/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1205
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.691,
+      "prompt_tokens_est": 44735,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class BackendVenv|struct BackendVenv|record BackendVenv|public partial.*Result"
+      },
+      "succeeded": true,
+      "duration_s": 0.268,
+      "result_length": 258
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 2.472,
+      "prompt_tokens_est": 44973,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "record Result",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 17
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 2.15,
+      "prompt_tokens_est": 45028,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendVenv.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4843
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 12.868,
+      "prompt_tokens_est": 46344,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 7.904,
+      "result_length": 1600
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 5.306,
+      "prompt_tokens_est": 47726,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "limit": 50,
+        "offset": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2846
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 2.538,
+      "prompt_tokens_est": 48698,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 49,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2780
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "IsBusy",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 17
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 2.722,
+      "prompt_tokens_est": 49437,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "_isBusy|IsBusy",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Properties.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 188
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.611,
+      "prompt_tokens_est": 49564,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "_isBusy",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 107
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 14.919,
+      "prompt_tokens_est": 49657,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "new_string": "    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>\n        new BackendLifecycle(\n            options: BackendStartOptions.FromEnvironment() with\n            {\n                RepoRoot = Environment.GetEnvironmentVariable(\"VISUAL_RELAY_SCRIPT_DIR\")\n                    ?? Environment.CurrentDirectory,\n            },\n            log: line => Trace.WriteLine($\"backend: {line}\"));",
+        "old_string": "    internal Func<BackendLifecycle> BackendLifecycleFactory { get; set; } = () =>\n        new BackendLifecycle(\n            options: BackendStartOptions.FromEnvironment() with\n            {\n                RepoRoot = Environment.GetEnvironmentVariable(\"VISUAL_RELAY_SCRIPT_DIR\")\n                    ?? Environment.CurrentDirectory,\n            },\n            log: line => Trace.WriteLine($\"backend: {line}\"),\n            isRunActive: () => IsBusy);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.164,
+      "prompt_tokens_est": 50839,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 49,
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1401
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 4.504,
+      "prompt_tokens_est": 51259,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n\n        // Wire the run-active gate so the staleness check never restarts the\n        // proxy mid-drain. The factory initializer can't capture `this`, so we\n        // reassign here after the property initializer has run.\n        var baseFactory = BackendLifecycleFactory;\n        BackendLifecycleFactory = () =>\n        {\n            var lifecycle = baseFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            return lifecycle;\n        };\n    }",
+        "old_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 110
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 11.536,
+      "prompt_tokens_est": 51584,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n    }",
+        "old_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n\n        // Wire the run-active gate so the staleness check never restarts the\n        // proxy mid-drain. The factory initializer can't capture `this`, so we\n        // reassign here after the property initializer has run.\n        var baseFactory = BackendLifecycleFactory;\n        BackendLifecycleFactory = () =>\n        {\n            var lifecycle = baseFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            return lifecycle;\n        };\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 110
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 6.505,
+      "prompt_tokens_est": 52507,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs",
+        "new_string": "    private readonly Func<bool>? _isRunActive;\n\n    /// <summary>\n    /// Run-active gate for the staleness check: when non-null and returning true,\n    /// the staleness check defers a restart instead of stopping the proxy mid-run.\n    /// Set post-construction by callers that track run state (e.g. the GUI VM).\n    /// Null means \"no gating\" (restart always allowed when idle is assumed).\n    /// </summary>\n    public Func<bool>? IsRunActive\n    {\n        get => _isRunActive;\n        set => _isRunActive = value;\n    }",
+        "old_string": "    private readonly Func<bool>? _isRunActive;"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 107
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 3.026,
+      "prompt_tokens_est": 53001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs",
+        "offset": 55,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1982
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 4.689,
+      "prompt_tokens_est": 53581,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n\n        // Wire the run-active gate so the staleness check never restarts the\n        // proxy mid-drain. The factory property initializer can't capture\n        // `this`, so we reassign here after construction is complete.\n        var baseFactory = BackendLifecycleFactory;\n        BackendLifecycleFactory = () =>\n        {\n            var lifecycle = baseFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            return lifecycle;\n        };\n    }",
+        "old_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 110
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 2.767,
+      "prompt_tokens_est": 53930,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 4.204,
+      "result_length": 752
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 2.901,
+      "prompt_tokens_est": 54232,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs",
+        "offset": 33,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 952
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 3.313,
+      "prompt_tokens_est": 54581,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs",
+        "old_string": "    private readonly Func<bool>? _isRunActive;",
+        "new_string": "    private Func<bool>? _isRunActive;"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 107
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 3.213,
+      "prompt_tokens_est": 54748,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/BackendLifecycle.cs",
+        "new_string": "        _env = env;\n        _isRunActive = isRunActive;",
+        "old_string": "        _env = env;\n        // Run-active gate: when non-null and returning true, the staleness check\n        // defers a restart instead of stopping the proxy mid-run. Null means\n        // \"no gating\" (restart always allowed when idle is assumed).\n        _isRunActive = isRunActive;"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 107
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 2.538,
+      "prompt_tokens_est": 54953,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 102.684,
+      "result_length": 2335
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 2.567,
+      "prompt_tokens_est": 55746,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_35172bcb3fb0.txt",
+        "offset": 22,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 8782
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 2.734,
+      "prompt_tokens_est": 58530,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_35172bcb3fb0.txt",
+        "offset": 102,
+        "limit": 200
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 21331
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 20.999,
+      "prompt_tokens_est": 64831,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.183,
+      "result_length": 93
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 7.824,
+      "prompt_tokens_est": 66586,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 55,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1062
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 6.038,
+      "prompt_tokens_est": 67318,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 67,
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 734
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 9.499,
+      "prompt_tokens_est": 67902,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "offset": 1,
+        "limit": 78
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4150
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 20.143,
+      "prompt_tokens_est": 69510,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.cs",
+        "new_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n    }",
+        "old_string": "        foreach (var stage in RelayStages.All)\n        {\n            Stages.Add(new StageRowViewModel(stage, SelectStageCommand));\n        }\n\n        // Wire the run-active gate so the staleness check never restarts the\n        // proxy mid-drain. The factory property initializer can't capture\n        // `this`, so we reassign here after construction is complete.\n        var baseFactory = BackendLifecycleFactory;\n        BackendLifecycleFactory = () =>\n        {\n            var lifecycle = baseFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            return lifecycle;\n        };\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 110
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 3.25,
+      "prompt_tokens_est": 71130,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 20,
+        "offset": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 922
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 2.898,
+      "prompt_tokens_est": 71452,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "new_string": "        try\n        {\n            var lifecycle = BackendLifecycleFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            await lifecycle.StartAsync();\n        }",
+        "old_string": "        try\n        {\n            await BackendLifecycleFactory().StartAsync();\n        }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 119
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 4.622,
+      "prompt_tokens_est": 71592,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none",
+          "--filter",
+          "FullyQualifiedName~SplitGuard|FullyQualifiedName~Staleness|FullyQualifiedName~ZeroKey|FullyQualifiedName~BackendConfig"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 17.068,
+      "result_length": 2681
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 3.799,
+      "prompt_tokens_est": 72548,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.172,
+      "result_length": 102
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 2.412,
+      "prompt_tokens_est": 72703,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 15,
+        "offset": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 831
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 4.426,
+      "prompt_tokens_est": 72979,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "new_string": "        // Best-effort one-click recovery: run the shared C# backend lifecycle off the UI thread, never throw. Wires the run-active gate so the staleness check never restarts the proxy mid-drain.\n        try\n        {\n            var lifecycle = BackendLifecycleFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            await lifecycle.StartAsync();",
+        "old_string": "        // Best-effort one-click recovery: run the SHARED C# backend lifecycle off the UI thread (same code VisualRelay.Backend + the launcher use), never throw, then re-probe so the dot reflects the result.\n        try\n        {\n            var lifecycle = BackendLifecycleFactory();\n            lifecycle.IsRunActive = () => IsBusy;\n            await lifecycle.StartAsync();"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 119
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 8.349,
+      "prompt_tokens_est": 73267,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "limit": 10,
+        "offset": 42
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 634
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 3.555,
+      "prompt_tokens_est": 73969,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs",
+        "new_string": "    }\n    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests drive the wiring hermetically. Production runs the shared <see cref=\"BackendLifecycle\"/> with diagnostics routed to Trace.</summary>",
+        "old_string": "    }\n\n    /// <summary>Backend lifecycle for the one-click recovery; overridable so tests drive the wiring hermetically. Production runs the shared <see cref=\"BackendLifecycle\"/> with diagnostics routed to Trace.</summary>"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 2.218,
+      "prompt_tokens_est": 74173,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Commands.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.051,
+      "result_length": 102
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 3.309,
+      "prompt_tokens_est": 74248,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none",
+          "--filter",
+          "FullyQualifiedName~SplitGuard|FullyQualifiedName~Staleness|FullyQualifiedName~ZeroKey|FullyQualifiedName~BackendConfig|FullyQualifiedName~StartBackend"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 16.751,
+      "result_length": 1925
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 3.07,
+      "prompt_tokens_est": 74970,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--blame-hang",
+          "--blame-hang-timeout",
+          "120s",
+          "--blame-hang-dump-type",
+          "none"
+        ],
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 84.333,
+      "result_length": 2303
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 2.709,
+      "prompt_tokens_est": 75776,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_c2cd1b66c61f.txt",
+        "offset": 250,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2531
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 5.803,
+      "prompt_tokens_est": 76552,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1581
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 3.34,
+      "prompt_tokens_est": 77325,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/SettingsPanelUiTests.TierModelOverrides.cs",
+        "offset": 55,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2110
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 3.464,
+      "prompt_tokens_est": 77966,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && git diff --name-only"
+      },
+      "succeeded": true,
+      "duration_s": 0.107,
+      "result_length": 547
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 3.246,
+      "prompt_tokens_est": 78182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && git diff --name-only --diff-filter=A HEAD && echo \"---\" && git ls-files --others --exclude-standard"
+      },
+      "succeeded": true,
+      "duration_s": 0.097,
+      "result_length": 201
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 8.778,
+      "prompt_tokens_est": 78353,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && git status --short"
+      },
+      "succeeded": true,
+      "duration_s": 0.099,
+      "result_length": 783
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 5.81,
+      "prompt_tokens_est": 79108,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet test tests/VisualRelay.Tests/VisualRelay.Tests.csproj -m:1 -p:UseSharedCompilation=false --blame-hang --blame-hang-timeout 120s --blame-hang-dump-type none 2>&1 | tail -20",
+        "timeout": 180
+      },
+      "succeeded": true,
+      "duration_s": 90.899,
+      "result_length": 1623
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 6.451,
+      "prompt_tokens_est": 79919,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

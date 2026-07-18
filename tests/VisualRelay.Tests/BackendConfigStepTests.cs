@@ -20,8 +20,14 @@ public sealed partial class BackendLifecycleStatusTests
         var paths = Paths();
         Directory.CreateDirectory(paths.Scratch);
 
+        // Set up a user-level .env with a provider key so generation succeeds.
+        var configDir = Path.Combine(_home, ".config", "visual-relay");
+        Directory.CreateDirectory(configDir);
+        await File.WriteAllTextAsync(Path.Combine(configDir, ".env"), "HF_TOKEN=hf_test\n");
+
+        var env = new DictionaryEnvironmentAccessor { ["HOME"] = _home };
         var config = await BackendConfigStep.ResolveAsync(
-            paths, repoRoot, TimeSpan.FromSeconds(10), _ => { });
+            paths, repoRoot, TimeSpan.FromSeconds(10), _ => { }, env: env);
 
         Assert.Equal(paths.GeneratedConfig, config);
         Assert.True(File.Exists(paths.GeneratedConfig));

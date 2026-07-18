@@ -53,6 +53,7 @@ public sealed class BackendPaths
     public string PidFile => Path.Combine(Scratch, "litellm.pid");
     public string LogFile => Path.Combine(Scratch, "litellm.log");
     public string GeneratedConfig => Path.Combine(Scratch, "litellm-config.generated.yaml");
+    public string GenerationSummaryLog => Path.Combine(Scratch, "generation-summary.log");
 
     /// <summary>
     /// Resolves the data home from <c>XDG_DATA_HOME</c> (falling back to

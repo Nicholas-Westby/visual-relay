@@ -121,9 +121,11 @@ public sealed class BackendConfigGeneratorVisionTierTests
         // No HF_TOKEN → both VL models unavailable → vision tier skipped
         // entirely, so a vision request produces a "model not found" error
         // instead of a silent text-model answer.
+        // An empty key set now throws (zero-key guard in BackendConfigGenerator)
+        // because callers must fall back to the static template instead.
         var noKeys = new HashSet<string>();
-        var noKeysAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(noKeys);
-        Assert.False(noKeysAliases.ContainsKey("vision"));
+        Assert.Throws<InvalidOperationException>(
+            () => BackendConfigGeneratorTestHelpers.GeneratedAliases(noKeys));
 
         var dsOnly = new HashSet<string> { "DEEPSEEK_API_KEY" };
         var dsAliases = BackendConfigGeneratorTestHelpers.GeneratedAliases(dsOnly);
