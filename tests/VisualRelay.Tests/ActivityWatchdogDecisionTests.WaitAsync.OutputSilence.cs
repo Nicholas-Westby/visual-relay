@@ -32,8 +32,9 @@ public sealed partial class ActivityWatchdogDecisionTests
         {
             watchdog.Pulse("cpu");
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredOutputSilence, result.Outcome);
@@ -68,9 +69,10 @@ public sealed partial class ActivityWatchdogDecisionTests
         {
             watchdog.Pulse("trace"); // real output — resets real-output clock
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
         await stopCts.CancelAsync();
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.Disarmed, result.Outcome);

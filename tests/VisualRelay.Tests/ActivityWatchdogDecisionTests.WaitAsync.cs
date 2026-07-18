@@ -48,8 +48,9 @@ public sealed partial class ActivityWatchdogDecisionTests
             watchdog.Pulse("cpu");
             watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: true, BackendSocketEstablished: true));
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredSocketWedge, result.Outcome);
@@ -96,9 +97,10 @@ public sealed partial class ActivityWatchdogDecisionTests
             watchdog.Pulse("cpu");
             watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: false, BackendSocketEstablished: true));
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
         await stopCts.CancelAsync();
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.Disarmed, result.Outcome);
@@ -143,9 +145,10 @@ public sealed partial class ActivityWatchdogDecisionTests
             watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(
                 SubtreeIdle: i % 3 != 0, BackendSocketEstablished: true));
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
         await stopCts.CancelAsync();
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.Disarmed, result.Outcome);
@@ -182,8 +185,9 @@ public sealed partial class ActivityWatchdogDecisionTests
             watchdog.Pulse("cpu");
             watchdog.RecordWedgeSample(new ActivityWatchdog.WedgeSample(SubtreeIdle: true, BackendSocketEstablished: true));
             time.Advance(TimeSpan.FromMilliseconds(step));
-            await Task.Yield();
         }
+        for (var i = 0; i < 5 && !watchdogTask.IsCompleted; i++)
+            await Task.Yield();
         var result = await watchdogTask;
 
         Assert.Equal(ActivityWatchdog.Outcome.FiredSocketWedge, result.Outcome);
