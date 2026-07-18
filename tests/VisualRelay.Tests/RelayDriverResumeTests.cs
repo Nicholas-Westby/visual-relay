@@ -139,11 +139,13 @@ public sealed class RelayDriverResumeTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("rerun-clean", "# Rerun clean\n");
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete a full run.
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "rerun-clean");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "rerun-clean");
 
         // Run 2: another full run WITHOUT resume.
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "rerun-clean");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "rerun-clean");
 
         var taskDir = Path.Combine(repo.Root, ".relay", "rerun-clean");
 
@@ -176,7 +178,7 @@ public sealed class RelayDriverResumeTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("capture-baseline", "# Capture baseline task\n");
-        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         // Create a pre-existing untracked file — this must appear in the snapshot.
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "scratch.log"), "pre-existing");
@@ -216,7 +218,7 @@ public sealed class RelayDriverResumeTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("reuse-baseline", "# Reuse baseline task\n");
-        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         // Run 1: flag at stage 9 to create pre-run-untracked.txt in the task dir.
         var flagRunner = new FlagAtStageSubagentRunner(

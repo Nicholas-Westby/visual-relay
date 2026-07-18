@@ -11,7 +11,7 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-driver", "# Resume driver\n");
-        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         // Run 1: flag at stage 6 (Implement). Use CreateGitCommit so the
         // run-base SHA is persisted — needed for the flagged-work bundle.
@@ -48,7 +48,7 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-adv", "# Advanced base\n");
-        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         // Run 1: flag at stage 6.
         var flagRunner = new FlagAtStageSubagentRunner(flagAtStage: 6);
@@ -84,7 +84,7 @@ public sealed class RelayDriverResumeFlaggedWork2Tests
         using var repo = TestRepository.Create();
         repo.WriteConfig("exit 0", [], enableFixVerify: false);
         repo.WriteTask("resume-s3", "# Stage 3 resume\n");
-        var sim = RelayDriverResumeTestHelpers.InitTestRepo(repo);
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
         var flagRunner = new FlagAtStageSubagentRunner(flagAtStage: 3);
         var driver1 = new RelayDriver(

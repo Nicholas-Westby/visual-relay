@@ -77,8 +77,10 @@ public sealed class RelayDriverResumeReAdd2Tests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("multi-add", "# v1 — first incarnation\n");
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete happy-path
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "multi-add");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "multi-add");
 
         // Re-add 1: v2
         repo.WriteTask("multi-add", "# v2 — second incarnation\n\nNew work v2.\n");

@@ -11,10 +11,11 @@ public sealed class RelayDriverRerunTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("re-run", "# Re-run\n");
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
 
-        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
-        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
-        await RelayDriverTestHelpers.RunHappyPath(repo, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "re-run");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "re-run");
 
         var taskDirectory = Path.Combine(repo.Root, ".relay", "re-run");
         Assert.True(File.Exists(Path.Combine(taskDirectory, "stage1-attempt1.report.json")));

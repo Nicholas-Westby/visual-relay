@@ -24,9 +24,11 @@ public sealed class RelayDriverNonResumeStaleStateTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("same-name", "# First incarnation\n\nOriginal content.\n");
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete happy-path (creates all-Done state under .relay/same-name/).
         // The .relay/<taskId>/ directory survives completion (no cleanup).
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "same-name");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "same-name");
 
         var taskDir = Path.Combine(repo.Root, ".relay", "same-name");
         Assert.True(File.Exists(Path.Combine(taskDir, "status.json")));
@@ -87,8 +89,10 @@ public sealed class RelayDriverNonResumeStaleStateTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("fresh-after-done", "# First run\n\nOriginal.\n");
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete happy-path. .relay/fresh-after-done/ survives.
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "fresh-after-done");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "fresh-after-done");
 
         var relayDir = Path.Combine(repo.Root, ".relay");
         var taskDir = Path.Combine(relayDir, "fresh-after-done");

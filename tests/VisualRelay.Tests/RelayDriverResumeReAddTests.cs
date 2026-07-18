@@ -14,8 +14,10 @@ public sealed class RelayDriverResumeReAddTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("re-added", "# Original task — first generation\n");
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete happy-path (creates all-Done state)
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "re-added");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "re-added");
 
         var taskDir = Path.Combine(repo.Root, ".relay", "re-added");
         Assert.True(File.Exists(Path.Combine(taskDir, "status.json")));
@@ -82,8 +84,10 @@ public sealed class RelayDriverResumeReAddTests
         const string taskMd = "# Stable task — not re-added\n\nSame content.\n";
         repo.WriteTask("stable-task", taskMd);
 
+        var sim = RelayDriverTestHelpers.InitTestRepo(repo);
+
         // Run 1: complete happy-path
-        await RelayDriverResumeTestHelpers.RunHappyPath(repo, "stable-task");
+        await RelayDriverTestHelpers.RunHappyPath(repo, sim, "stable-task");
 
         var taskDir = Path.Combine(repo.Root, ".relay", "stable-task");
         Assert.True(File.Exists(Path.Combine(taskDir, "status.json")));

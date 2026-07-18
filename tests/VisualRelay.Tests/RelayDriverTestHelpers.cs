@@ -48,12 +48,24 @@ internal static class RelayDriverTestHelpers
     public static void AssertHappyPathStatuses(IReadOnlyList<StageStatusEntry> entries) =>
         Assert.All(entries, e => Assert.Equal(e.Stage is 9 or 11 ? "Skipped" : "Done", e.Status));
 
-    public static async Task RunHappyPath(TestRepository repo, string taskId)
+    /// <summary>
+    /// GitSim-backed replacement for the former real-git <c>InitTestRepo(string)</c>.
+    /// Returns the sim so callers inject it into <c>RelayDriverDependencies.ForTests</c>.
+    /// </summary>
+    public static GitSimEngine InitTestRepo(TestRepository repo)
+    {
+        var sim = InitSim(repo);
+        sim.Seed(repo.Root, ".gitignore", ".relay/*\n");
+        sim.Commit(repo.Root, "initial");
+        return sim;
+    }
+
+    public static async Task RunHappyPath(TestRepository repo, GitSimEngine sim, string taskId)
     {
         var runner = new ArtifactWritingSubagentRunner();
         runner.SeedHappyPath("src/status.cs", "tests/status.tests.cs");
         var driver = new RelayDriver(
-            DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), sim),
             RelayDriverOptions.NoGitCommit);
         Assert.Equal(RelayTaskOutcomeStatus.Committed, (await driver.RunTaskAsync(repo.Root, taskId)).Status);
     }
