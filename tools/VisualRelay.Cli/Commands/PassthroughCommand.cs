@@ -26,6 +26,9 @@ public static class PassthroughCommand
     public static int Guards(RepoPaths paths, IReadOnlyList<string> args) =>
         ForwardToTool(paths, "VisualRelay.Guards", args);
 
+    public static int Audit(RepoPaths paths, IReadOnlyList<string> args) =>
+        ForwardToTool(paths, "VisualRelay.Audit", args);
+
     private static int ForwardToTool(RepoPaths paths, string tool, IReadOnlyList<string> args)
     {
         var runArgs = new List<string> { "run", "--project", paths.ToolProject(tool), "--" };

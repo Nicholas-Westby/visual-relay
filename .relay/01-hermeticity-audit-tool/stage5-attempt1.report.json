@@ -1,0 +1,1737 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-18T22:20:47.866889+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 01-hermeticity-audit-tool\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Build the hermeticity audit tool\n\nA slow-test investigation found the driver test family burning ~90% of its wall\nclock asleep: `PlanningWorktree.RunGitAsync` retries the deterministic exit-128\n`fatal: not a git repository` failure 3x with 250ms + 1s real-time backoff, and\n`EarlyImplementationDetector` spawns a real `git` process because its call sites\nomit the injected `IGitInvoker`. The full suite ran at ~17% CPU \u2014 sleep-bound,\nnot work-bound. The repo's guard system (matchers in `tools/VisualRelay.Guards`,\nguard-as-tests over `CachedSyntaxTreesFixture`) gives fast pass/fail gates; this\ntask adds the complementary occasional-use diagnostic: a CLI that EXPLAINS\nfindings in depth (file:line, snippet, why it matters, suggested direction)\ninstead of failing a build. Tasks 02-04 use it to confirm they missed no sites.\n\n## Design (locked)\n\n- Analysis rules are pure matchers in `tools/VisualRelay.Guards`, one file per\n  rule, each exposing both `FindViolations(IEnumerable<(string Path, string Source)>)`\n  and the `(string Path, SyntaxTree Tree)` overload \u2014 exactly the\n  `RealSleepGuard` / `DeadConfigFieldGuard` shape. No I/O in matchers.\n- New thin console project `tools/VisualRelay.Audit` references the Guards\n  library, parses `src/`, `tests/`, `tools/` once (skip `bin`/`obj`, mirror\n  `CachedSyntaxTreesFixture.IsBuildArtifact`), and renders detailed findings to\n  STDOUT: `path:line: <rule-id>: <message>`, then indented explanation +\n  suggested-direction lines, then a per-rule summary table. Exit 0 whenever the\n  audit ran (it is informational, never a gate); exit 2 on unknown subcommand,\n  mirroring the Guards CLI.\n- Wire `./visual-relay audit [rule-id ...]` (no args = all rules) in\n  `tools/VisualRelay.Cli` exactly like `guards`: a\n  `PassthroughCommand.ForwardToTool(paths, \"VisualRelay.Audit\", args)` entry, a\n  `CommandRouter.KnownCommands` row, and a `Program.cs` switch arm. Do NOT touch\n  `CheckCommand` \u2014 the audit must never run in `./visual-relay check` or tests.\n\n## Rules\n\n1. `retry-delay-loops` \u2014 a `for`/`while` body containing both a delay call\n   (`Task.Delay`/`Thread.Sleep`) and an invocation whose receiver or arguments\n   involve `IGitInvoker`/`RunAsync`/process types. Report the attempt/backoff\n   constants found and whether any identifier in the loop suggests failure\n   classification (e.g. a `*Classifier` or `isSuccess` reference). This is the\n   `RunGitAsync` bug shape: retrying failures that can never succeed.\n2. `di-bypass` \u2014 a method parameter defaulting to a real collaborator\n   (`?? new GitInvoker()`, `?? TimeProvider.System` on an optional param), plus\n   every call site of that method which omits the argument while the enclosing\n   class holds `RelayDriverDependencies`. This is the\n   `EarlyImplementationDetector` bug shape: an injection seam silently bypassed.\n3. `real-waits` \u2014 every `RealSleepGuard` violation across all three roots, PLUS\n   an inventory of every `// vr-allow-sleep:` suppression with its reason, so\n   stale exemptions get re-reviewed instead of living forever.\n4. `test-side-effects` \u2014 test sources referencing real-side-effect constructs:\n   `new GitInvoker(`, `Process.Start`, `ProcessStartInfo`,\n   `Environment.SetEnvironmentVariable`. Honor `RealSleepGuard`'s\n   slow-integration exemption list; explain per finding which hermetic double to\n   prefer (`GitSim`, `NullGitInvoker`, `ScriptedTestRunner`,\n   `DictionaryEnvironmentAccessor`).\n\n### Steps\n\n1. Author the four matchers in `tools/VisualRelay.Guards` with XML docs stating\n   the anti-pattern each detects and why it makes tests slow or unhermetic.\n2. Author unit tests in `tests/VisualRelay.Tests` in the `RealSleepGuardTests`\n   style: small inline source snippets per matcher, positive and negative cases,\n   no fixture needed. Keep them millisecond-fast.\n3. Add one smoke test that runs all four matchers over\n   `CachedSyntaxTreesFixture.AllTrees` (constructor-injected assembly fixture)\n   and asserts they complete without throwing. Assert nothing about counts \u2014\n   findings are informational and must not turn the suite red.\n4. Build the `VisualRelay.Audit` console (thin `Program.cs` dispatcher on\n   rule-id args + one renderer file), then the CLI wiring.\n5. Run `./visual-relay audit` and read the output end to end; fix false\n   positives it shows on the live tree before finishing.\n\n### Guardrails\n\n- The audit is diagnostic-only: no exit-code failure on findings, no wiring\n  into `check`, `test`, or hooks. The guard-as-tests added by tasks 02-04 are\n  the enforcement layer; this tool is the troubleshooting lens.\n- Matchers stay pure and each new C# file stays under the 300-line guard.\n- Do not name the subcommand `inspect` \u2014 that is the InspectCode lint gate.\n\n## Done when\n\n`./visual-relay audit` prints a detailed, accurate report for all four rules on\nthe live tree; each matcher has green unit tests; `./visual-relay check` passes.\n\n## Commit-message evidence\n\nMeasure at implementation time and put in the commit body (\u2264 3 hyphen bullets,\n\u2264 20 words each, no file names or paths): per-rule finding counts on the live\ntree, and total audit runtime in seconds.\n\n\n## Manifest\ntools/VisualRelay.Guards/RetryDelayLoopsGuard.cs\ntools/VisualRelay.Guards/DiBypassGuard.cs\ntools/VisualRelay.Guards/RealWaitsGuard.cs\ntools/VisualRelay.Guards/TestSideEffectsGuard.cs\ntests/VisualRelay.Tests/RetryDelayLoopsGuardTests.cs\ntests/VisualRelay.Tests/DiBypassGuardTests.cs\ntests/VisualRelay.Tests/RealWaitsGuardTests.cs\ntests/VisualRelay.Tests/TestSideEffectsGuardTests.cs\ntests/VisualRelay.Tests/AuditGuardSmokeTests.cs\ntools/VisualRelay.Audit/VisualRelay.Audit.csproj\ntools/VisualRelay.Audit/Program.cs\ntools/VisualRelay.Audit/AuditRenderer.cs\ntools/VisualRelay.Cli/CommandRouter.cs\ntools/VisualRelay.Cli/Program.cs\ntools/VisualRelay.Cli/Commands/PassthroughCommand.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Build a diagnostic CLI (audit subcommand) detecting 4 hermeticity anti-patterns \u2014 retry-delay-loops, di-bypass, real-waits, test-side-effects \u2014 as pure matchers in VisualRelay.Guards, a thin console project for rendering, and CLI wiring. Option A (single-dispatch Program.cs + static renderer, no framework abstractions) is recommended as the simplest alignment with the locked design.\",\n  \"options\": [\n    \"Option A: Single-dispatch audit Program.cs with a shared static Renderer class. Manual dictionary registry maps rule IDs to matcher functions. Parsing reuses CachedSyntaxTreesFixture.IsBuildArtifact.\",\n    \"Option B: IAuditRule interface with reflection-based discovery. Adds abstraction overhead for only 4 rules; breaks the 'exactly RealSleepGuard shape' constraint.\",\n    \"Option C: Hybrid \u2014 matchers stay static classes, audit uses an explicit RuleRegistry builder of (ruleId, matcherFn) tuples. Slightly more code than A but still clean.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"## Codebase Investigation Results\\n\\n### Project Structure\\n- Repository root: `/Users/admin/Dev/visual-relay/` \u2014 .NET 10 solution (`VisualRelay.slnx`)\\n- Guards library: `tools/VisualRelay.Guards/` \u2014 pure matchers, references `Microsoft.CodeAnalysis.CSharp` 5.3.0, has `Program.cs` with its own CLI dispatch (subcommands: shell-size, file-size, source-enumeration, sync-over-async)\\n- CLI: `tools/VisualRelay.Cli/` \u2014 references `VisualRelay.Guards` project, has `Program.cs` switch dispatch, `CommandRouter.KnownCommands` list, and `PassthroughCommand.ForwardToTool(paths, toolName, args)` helper\\n- Tests: `tests/VisualRelay.Tests/` \u2014 uses `CachedSyntaxTreesFixture` (constructor-injected assembly fixture)\\n\\n### Existing Guard Matcher Pattern (RealSleepGuard, SyncOverAsyncGuard, RealBuildSubprocessGuard)\\n- Static class (no interfaces)\\n- Nested `record Violation(string Path, int Line, string Snippet, string Reason)`\\n- Two `FindViolations` overloads:\\n  1. `FindViolations(IEnumerable<(string Path, string Source)> files)` \u2014 parses strings\\n  2. `FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)` \u2014 uses pre-parsed trees\\n- Both return `IReadOnlyList<Violation>`, sorted by path then line\\n- Self-exempt by filename (`SelfExemptFileNames`) \\n- Optional real-integration exemption (`RealIntegrationExemptFileNames` in RealSleepGuard)\\n- Inline `// vr-allow-*:` suppression markers\\n- No I/O in matchers \u2014 callers supply (path, source) pairs\\n- Under 300 lines per file, uses `CSharpParseOptions(LanguageVersion.Latest)`\\n\\n### CachedSyntaxTreesFixture\\n- Scans `tests/VisualRelay.Tests/`, `src/`, `tools/` for `*.cs`, skipping `bin`/`obj` via `IsBuildArtifact(path)`\\n- Exposes `IReadOnlyList<(string RelativePath, SyntaxTree Tree)> AllTrees`\\n- Used via constructor injection in guard test classes\\n\\n### Existing Guard Test Pattern\\n- Constructor takes `CachedSyntaxTreesFixture trees`\\n- Inline source snippet tests (positive + negative cases, no fixture needed)\\n- One live-tree smoke test (`AllXxx_AreYyy`) using `_trees.AllTrees` with path filtering\\n- No assertions on live-tree count \u2014 findings are informational, suite stays green\\n\\n### The Two Bug Shapes (from the design doc)\\n1. **retry-delay-loops** (`RunGitAsync` bug): `PlanningWorktree.RunGitAsync` (line 208-242) has a `for` (attempt 1..3) loop with `Task.Delay(delay, timeProvider, ct)` backoff (250ms, 1s) and retries `gitInvoker.RunAsync(...)` that can deterministically fail `fatal: not a git repository` (exit-128). No failure-classification check before retry.\\n2. **di-bypass** (`EarlyImplementationDetector` bug): `EarlyImplementationDetector.cs` line 21-23 has `IGitInvoker? gitInvoker = null` param defaulting to `new GitInvoker()`. The call site in `RelayDriver.cs` line 204-205 omits the injected `IGitInvoker` from `_dependencies`. Similarly, many other files use `?? new GitInvoker()` pattern (28 sites in `src/`). The `RelayDriverDependencies` record holds `IGitInvoker GitInvoker` field.\\n\\n### Slow-Integration Exemption Files (for RealSleepGuard)\\n- `ProcessCaptureGracefulStopTests.cs`, `SandboxedTestRunnerReapTests.cs`,\\n  `ActivityWatchdogSocketWedgeTests.cs`, `FdLeakTests.cs`, `WindowsExecutionTests.cs`\\n\\n### Hermetic Doubles Available\\n- `GitSim` (`tests/VisualRelay.GitSim/`) \u2014 in-memory `IGitInvoker`\\n- `NullGitInvoker` (`src/VisualRelay.Core/Execution/`) \u2014 returns \\\"not a git repository\\\"\\n- `ScriptedTestRunner` (`tests/VisualRelay.Tests/TestDoubles.cs`) \u2014 canned `ITestRunner`\\n- `DictionaryEnvironmentAccessor` (`tests/VisualRelay.Tests/TestDoubles.cs`) \u2014 in-memory `IEnvironmentAccessor`\\n\\n### CLI Wiring Pattern\\n- `CommandRouter.KnownCommands` \u2014 add `\\\"audit\\\"` to the list\\n- `CommandRouter.UsageLine` \u2014 add `audit` to the usage string\\n- `Program.cs` switch arm: `\\\"audit\\\" => PassthroughCommand.ForwardToTool(paths, \\\"VisualRelay.Audit\\\", rest),`\\n- Do NOT touch `CheckCommand`\\n- `PassthroughCommand.cs` already has pattern: `ForwardToTool(paths, \\\"VisualRelay.Guards\\\", args)`\\n\\n### Existing Test-Infrastructure Files to Self-Exempt\\n- Guard matcher files and their test files are always self-exempt\\n- `RealSleepGuard.cs`, `RealSleepGuardTests.cs`, `SyncOverAsyncGuard.cs`, etc.\\n\\n### Real-Side-Effect Patterns in Tests (for test-side-effects rule)\\n- `new GitInvoker()` \u2014 used 57 times across test files (via `.csproj test project reference to Core, not via `NullGitInvoker`)\\n- `Process.Start(...)` \u2014 in `RealBuildSubprocessGuardTests.cs`, `BackendSpawnTests.cs`, `CliHarness.cs`, `NonoRealBuildTests.cs`, `TestGit.cs`, etc.\\n- `ProcessStartInfo` \u2014 in many test helper files\\n- `Environment.SetEnvironmentVariable` \u2014 in `TestModuleInitializer.cs`, `KeyEnvFileHermeticityTests.cs`, `SandboxEnvForwardingTests.cs`, `HeadlessTestApp.cs` (also banned by existing `SplitGuardVerificationTests.Conventions.cs`)\\n- RealBuildSubprocessGuard already covers some of these but doesn't cover `new GitInvoker()`\",\n  \"constraints\": [\n    \"Audit is diagnostic-only: exit 0 when audit ran, exit 2 on unknown subcommand (mirroring Guards CLI). Never exit-code failure on findings. Never wire into `check`, `test`, or hooks.\",\n    \"Matchers stay pure (no I/O) and each new C# file stays under the 300-line guard. Each matcher exposes both string-source and SyntaxTree overloads of `FindViolations`.\",\n    \"New console project `tools/VisualRelay.Audit` references `VisualRelay.Guards`, parses `src/`, `tests/`, `tools/` once (skip `bin`/`obj`), renders findings to STDOUT.\",\n    \"CLI wiring: `Program.cs` switch arm + `CommandRouter.KnownCommands` + `PassthroughCommand.ForwardToTool`. Do NOT touch `CheckCommand`.\",\n    \"Do not name the subcommand `inspect` \u2014 that is the InspectCode lint gate.\",\n    \"Render format: `path:line: <rule-id>: <message>`, then indented explanation + suggested-direction lines, then a per-rule summary table.\",\n    \"The `./visual-relay audit` with no args runs all rules; `./visual-relay audit [rule-id ...]` runs specific rules.\",\n    \"`retry-delay-loops` rule must detect a for/while body with both a delay call (Task.Delay/Thread.Sleep) and an invocation whose receiver/args involve IGitInvoker/RunAsync/process types. Report attempt/backoff constants and any failure-classification identifier.\",\n    \"`di-bypass` rule must detect a method parameter defaulting to a real collaborator (`?? new GitInvoker()`, `?? TimeProvider.System`) plus every call site omitting the argument while enclosing class holds `RelayDriverDependencies`.\",\n    \"`real-waits` rule detects ALL `RealSleepGuard` violations across src/tests/tools, PLUS an inventory of every `// vr-allow-sleep:` suppression with its reason.\",\n    \"`test-side-effects` rule detects test sources referencing `new GitInvoker(`, `Process.Start`, `ProcessStartInfo`, `Environment.SetEnvironmentVariable`. Honor `RealSleepGuard`'s slow-integration exemption list. Explain per finding which hermetic double to prefer (`GitSim`, `NullGitInvoker`, `ScriptedTestRunner`, `DictionaryEnvironmentAccessor`).\",\n    \"Matchers self-exempt their own fixture files by convention (e.g., `RetryDelayLoopsGuard.cs`, `RetryDelayLoopsGuardTests.cs`).\",\n    \"Unit tests follow `RealSleepGuardTests` style: inline source snippets per matcher, positive and negative cases, no fixture needed. Keep them millisecond-fast.\",\n    \"One smoke test runs all four matchers over `CachedSyntaxTreesFixture.AllTrees` (constructor-injected) and asserts they complete without throwing. Assert nothing about counts.\",\n    \"The audit's `Program.cs` is a thin dispatcher on rule-id args + one renderer file. Manual dictionary registry maps rule IDs to matcher functions. No reflection, no framework abstractions.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## State of the codebase\\n\\n### What exists\\n- **Guards library** (`tools/VisualRelay.Guards/`): 8 matchers following the pure-static-class pattern (RealSleepGuard, RealBuildSubprocessGuard, SyncOverAsyncGuard, DeadConfigFieldGuard, GateAsTestSandboxGuard, ShellSizeGuard, FileSizeGuard, SourceEnumerationGuard). Each exposes two `FindViolations` overloads (string-source pairs and pre-parsed SyntaxTrees), has a nested `Violation` record, self-exempts by filename, and stays under 300 lines.\\n- **CLI** (`tools/VisualRelay.Cli/`): `Program.cs` switch dispatch over `CommandRouter.KnownCommands`, `PassthroughCommand.ForwardToTool` pattern for forwarding to tool projects via `dotnet run`.\\n- **Tests** (`tests/VisualRelay.Tests/`): `CachedSyntaxTreesFixture` (assembly-scoped, scans `src/`/`tests/VisualRelay.Tests/`/`tools/` for `*.cs`, skips `bin`/`obj`, provides `IReadOnlyList<(string RelativePath, SyntaxTree Tree)> AllTrees`). Guard test classes follow `RealSleepGuardTests` pattern: constructor-inject `CachedSyntaxTreesFixture`, inline-snippet unit tests, live-tree smoke test.\\n- **Test doubles**: `NullGitInvoker` (returns exit-128 \\\"not a git repository\\\"), `GitSim` (in-memory `IGitInvoker`), `ScriptedTestRunner`, `DictionaryEnvironmentAccessor`.\\n\\n### What is missing\\n1. **Four new matchers** in `tools/VisualRelay.Guards/`: `RetryDelayLoopsGuard`, `DiBypassGuard`, `TestSideEffectsGuard` \u2014 plus real-waits reuses `RealSleepGuard` + suppression inventory logic.\\n2. **New console project** `tools/VisualRelay.Audit/` \u2014 does not exist; needs thin `Program.cs` + one renderer, referencing `VisualRelay.Guards`.\\n3. **CLI wiring**: `CommandRouter.KnownCommands` entry, `Program.cs` switch arm, `PassthroughCommand.ForwardToTool` call.\\n4. **Unit tests**: 4 test files in `tests/VisualRelay.Tests/` following `RealSleepGuardTests` style; one smoke test over `CachedSyntaxTreesFixture.AllTrees`.\\n\\n### Key bug-shape evidence found in the live tree\\n\\n**retry-delay-loops** (the `RunGitAsync` shape):\\n- `PlanningWorktree.RunGitAsync` lines 208-242: `for (int attempt = 1; attempt <= maxAttempts; attempt++)` with `Task.Delay(delay, timeProvider, ct)` backoff (250ms \u2192 1s) around `gitInvoker.RunAsync(...)`. Retries any non-zero exit including deterministic exit-128 (`fatal: not a git repository`). No failure classifier \u2014 the loop unconditionally retries. Constants: `maxAttempts=3`, delays 250ms and 1s.\\n- `GitCommitter.GitAsync` lines 233-256+: Same `for` loop with `maxAttempts=3` and identical 250ms/1s backoff schedule, but THIS one has `isSuccessExit` classifier (default `code == 0`) \u2014 still a retry-delay-loop but with classification.\\n\\n**di-bypass** (the `EarlyImplementationDetector` shape):\\n- `EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync` line 21: `IGitInvoker? gitInvoker = null`, line 23: `var gi = gitInvoker ?? new GitInvoker()` \u2014 defaults to real `GitInvoker()` when parameter omitted.\\n- Call site `RelayDriver.cs` lines 204-205: calls `EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: ...)` \u2014 OMITS `gitInvoker`. Enclosing class `RelayDriver` holds `_dependencies` (type `RelayDriverDependencies`) with `GitInvoker` field \u2014 the injected seam is silently bypassed.\\n- Call site `RelayDriver.Stage5.cs` lines 168-169: identical pattern.\\n- 28 total `?? new GitInvoker()` sites in `src/`; 17 `?? TimeProvider.System` sites.\\n\\n**real-waits**: Zero `// vr-allow-sleep:` suppression markers exist in the live tree outside guard fixture files \u2014 the inventory will be empty, meaning no stale exemptions to re-review.\\n\\n**test-side-effects**:\\n- `new GitInvoker()`: 57 occurrences in test files (e.g., `RealGitIntegrationDriverTests`, `AuthorshipClaimerTests`, `CommitLintRunnerTests`, `HistoryRewriterTests`, `RelayDriverResumeFlaggedWorkTests`, etc.)\\n- `Process.Start(`: 32 occurrences in test files (e.g., `BackendSpawnTests`, `CliHarness`, `NonoRealBuildTests`, `ParityHarness`, `TestGit`, `CommitTestRunners`, `PreCommitHookTests`, etc.)\\n- `ProcessStartInfo`: 48 occurrences in test files\\n- `Environment.SetEnvironmentVariable`: 13 occurrences \u2014 already partially covered by `SplitGuardVerificationTests.Conventions.cs` which exempts `TestModuleInitializer.cs`, `HeadlessTestApp.cs`, `KeyEnvFileHermeticityTests.cs`, `SandboxEnvForwardingTests.cs`, `TestDoubles.cs`, `RepoSetup.cs`, and its own file. Remaining unexempted uses in sandbox tests and env-forwarding tests need the `DictionaryEnvironmentAccessor` treatment.\\n- `RealSleepGuard`'s slow-integration exemption list (to honor): `ProcessCaptureGracefulStopTests.cs`, `SandboxedTestRunnerReapTests.cs`, `ActivityWatchdogSocketWedgeTests.cs`, `FdLeakTests.cs`, `WindowsExecutionTests.cs`.\\n\\n### Render format\\nPer design: `path:line: <rule-id>: <message>`, then indented explanation + suggested-direction lines, then per-rule summary table. Exit 0 when audit ran, exit 2 on unknown subcommand.\",\n  \"excerpts\": [\n    \"// PlanningWorktree.cs:208-228 \u2014 the primary retry-delay-loops bug shape\\nprivate static async Task RunGitAsync(IGitInvoker gitInvoker, string repoRoot, string[] args, CancellationToken ct, TimeProvider timeProvider)\\n{\\n    const int maxAttempts = 3;\\n    for (int attempt = 1; attempt <= maxAttempts; attempt++)\\n    {\\n        try\\n        {\\n            var result = await gitInvoker.RunAsync(repoRoot, args, ct);\\n            if (result.ExitCode == 0) return;\\n            if (attempt == maxAttempts) throw new InvalidOperationException(...);\\n            var delay = attempt == 1 ? TimeSpan.FromMilliseconds(250) : TimeSpan.FromSeconds(1);\\n            await Task.Delay(delay, timeProvider, ct);\\n        }\\n        catch (Exception ex) when (ex is not InvalidOperationException) { /* also retry */ }\\n    }\\n}\",\n    \"// EarlyImplementationDetector.cs:15-23 \u2014 the di-bypass bug shape\\ninternal static async Task<bool> ImplementationAlreadyUnderwayAsync(\\n    string rootPath, IReadOnlyList<string> manifest, Func<string, bool> isImpl,\\n    CancellationToken cancellationToken, Func<string, bool>? isTestFile = null,\\n    IGitInvoker? gitInvoker = null)  // \u2190 defaults to null, then:\\n{\\n    var gi = gitInvoker ?? new GitInvoker();  // \u2190 real GitInvoker when omitted\\n    ...\\n}\",\n    \"// RelayDriver.cs:204-205 \u2014 call site omitting gitInvoker while _dependencies has it\\n// RelayDriver holds: private readonly RelayDriverDependencies _dependencies;\\n// RelayDriverDependencies record has: IGitInvoker GitInvoker\\nimplementationFrontLoaded = await EarlyImplementationDetector\\n    .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken,\\n        isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));\\n// \u2191 missing: gitInvoker: _dependencies.GitInvoker\",\n    \"// RelayDriverDependencies.cs:15-20 \u2014 the dependency record with the injected seam\\npublic sealed record RelayDriverDependencies(\\n    ISubagentRunner SubagentRunner, ITestRunner TestRunner,\\n    IRelayEventSink EventSink, IGitInvoker GitInvoker,\\n    IEnvironmentAccessor? EnvironmentAccessor = null)\",\n    \"// RealSleepGuard.cs:38-99 \u2014 the matcher pattern all new guards follow\\npublic static class RealSleepGuard\\n{\\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files) { ... }\\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees) { ... }\\n    private static readonly string[] SelfExemptFileNames = [\\\"RealSleepGuard.cs\\\", \\\"RealSleepGuardTests.cs\\\"];\\n    // Also: RealIntegrationExemptFileNames for slow-integration files\\n}\",\n    \"// CachedSyntaxTreesFixture.cs:24-47 \u2014 the shared tree source for smoke tests and audit\\n// Scans tests/VisualRelay.Tests/, src/, tools/ for *.cs, skips bin/obj\\n// Exposes IReadOnlyList<(string RelativePath, SyntaxTree Tree)> AllTrees\\n// Audit Program.cs must mirror this scan logic (or reuse via Guards library reference)\",\n    \"// PassthroughCommand.cs:8-34 \u2014 the CLI wiring pattern to follow\\npublic static class PassthroughCommand\\n{\\n    public static int Guards(RepoPaths paths, IReadOnlyList<string> args) =>\\n        ForwardToTool(paths, \\\"VisualRelay.Guards\\\", args);\\n    private static int ForwardToTool(RepoPaths paths, string tool, IReadOnlyList<string> args)\\n    {\\n        var runArgs = new List<string> { \\\"run\\\", \\\"--project\\\", paths.ToolProject(tool), \\\"--\\\" };\\n        runArgs.AddRange(args);\\n        return ProcessLauncher.Run(ProcessLauncher.Dotnet, runArgs, paths.Root);\\n    }\\n}\",\n    \"// CommandRouter.cs:11-16,21-23 \u2014 existing KnownCommands and UsageLine needing audit addition\\nprivate static readonly IReadOnlyList<string> KnownCommands = [\\n    \\\"launch\\\", \\\"run\\\", \\\"build\\\", \\\"test\\\", \\\"format\\\", \\\"screenshot\\\",\\n    \\\"run-task\\\", \\\"init\\\", \\\"check\\\", \\\"inspect\\\", \\\"gen-backend-config\\\",\\n    \\\"guards\\\", \\\"install-hooks\\\", \\\"bump-version\\\", \\\"provision-mxc\\\",\\n];\\npublic static string UsageLine => \\\"usage: ./visual-relay [launch|build|...|provision-mxc]\\\";\",\n    \"// TestGit.cs:7-40 \u2014 a test helper invoking real git via Process.Start\\n// This is the test-side-effects pattern: new ProcessStartInfo(\\\"git\\\") in tests\\ninternal static class TestGit\\n{\\n    public static string Run(string rootPath, params string[] arguments)\\n    {\\n        using var process = new Process();\\n        process.StartInfo = new ProcessStartInfo(\\\"git\\\") { ... };\\n        process.Start();\\n        ...\\n    }\\n}\"\n  ],\n  \"repro\": \"1. Read `tools/VisualRelay.Guards/RealSleepGuard.cs` for the exact matcher contract (static class, nested Violation record, two FindViolations overloads, self-exempt by filename, vr-allow-* suppression markers).\\n2. Read `tools/VisualRelay.Cli/CommandRouter.cs` lines 11-16 and `Program.cs` lines 25-42 for the CLI wiring pattern (KnownCommands entry + switch arm + PassthroughCommand.ForwardToTool).\\n3. Read `tests/VisualRelay.Tests/RealSleepGuardTests.cs` for the unit-test pattern (inline snippets, positive/negative cases, live-tree smoke via CachedSyntaxTreesFixture).\\n4. Author four matchers in `tools/VisualRelay.Guards/`: RetryDelayLoopsGuard (detects for/while with Task.Delay/Thread.Sleep AND IGitInvoker/process invocation, reports backoff constants + classifier presence), DiBypassGuard (finds `?? new GitInvoker()` / `?? TimeProvider.System` optional-param defaults + call sites in RelayDriverDependencies-holding classes that omit the arg), real-waits (reuses RealSleepGuard across all three roots + inventories // vr-allow-sleep: lines with their reasons), TestSideEffectsGuard (flags new GitInvoker(, Process.Start, ProcessStartInfo, Environment.SetEnvironmentVariable in test files, honoring RealSleepGuard's slow-integration exemption, suggesting hermetic doubles).\\n5. Author four test files in `tests/VisualRelay.Tests/` following RealSleepGuardTests style with inline snippets and one AllTrees smoke test.\\n6. Create `tools/VisualRelay.Audit/` project: .csproj referencing VisualRelay.Guards, Program.cs dispatching on rule-id args, one static Renderer class producing path:line: rule-id: message format + indented explanation + summary table.\\n7. Wire CLI: add 'audit' to CommandRouter.KnownCommands, add switch arm in Program.cs, add PassthroughCommand.Audit method forwarding to VisualRelay.Audit.\\n8. Run `./visual-relay audit` end-to-end and fix false positives on the live tree before finishing.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Implementation Plan \u2014 01-hermeticity-audit-tool\\n\\n### New files (create)\\n\\n1. **tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs** \u2014 Static matcher. Walks all for/while loops. Reports a loop when its body contains BOTH a delay call (Task.Delay/Thread.Sleep) AND an invocation whose receiver/args reference IGitInvoker/RunAsync/Process/ProcessStartInfo. Extracts attempt-count constant from loop bound, backoff constants from delay expressions, and notes whether any classifier identifier (isSuccess, isSuccessExit, *Classifier*, shouldRetry, Func<int,bool>) appears in the loop body or condition. XML doc explaining the RunGitAsync bug shape. Self-exempts own fixture files. Both FindViolations overloads (string-source and SyntaxTree). Under 300 lines.\\n\\n2. **tools/VisualRelay.Guards/DiBypassGuard.cs** \u2014 Static matcher. Two-pass syntax-tree analysis. Pass 1: find methods with optional params (= null default) where the method body does `param ?? new GitInvoker()` or `param ?? TimeProvider.System`. Record (containing-type-name, method-name, param-index, default-kind). Pass 2: walk all invocations matching recorded method names; when the bypassed param-index argument is omitted, check if the enclosing ClassDeclarationSyntax contains a field/property typed `RelayDriverDependencies` (by type-name identifier match). Report the call site with method name, omitted param, and the bypass default. XML doc explaining the EarlyImplementationDetector bug shape. Self-exempts own fixture files. Both overloads. Under 300 lines.\\n\\n3. **tools/VisualRelay.Guards/RealWaitsGuard.cs** \u2014 Static matcher. Delegates to RealSleepGuard.FindViolations on non-self-exempt files (tagging findings with `\\\"real-waits: \\\"` prefix), then separately scans every source's text lines for `// vr-allow-sleep:` markers with non-empty reasons and produces suppression-inventory entries. This means the audit shows both active unsuppressed real-sleep violations AND existing suppression rationales for re-review. XML doc explaining the dual purpose. Self-exempts own fixture files AND RealSleepGuard's self-exempt files (since those contain test fixtures). Both overloads. Under 300 lines.\\n\\n4. **tools/VisualRelay.Guards/TestSideEffectsGuard.cs** \u2014 Static matcher. Flags test sources (files whose path contains `/tests/`) for four real-side-effect constructs: `new GitInvoker(` \u2192 suggest NullGitInvoker/GitSim, `Process.Start` and `new ProcessStartInfo(` \u2192 suggest ScriptedTestRunner, `Environment.SetEnvironmentVariable` \u2192 suggest DictionaryEnvironmentAccessor. Honors RealSleepGuard.RealIntegrationExemptFileNames (the five slow-integration files are exempt). Self-exempts own fixture files. Uses ObjectCreationExpressionSyntax walk for `GitInvoker`/`ProcessStartInfo`, MemberAccessExpressionSyntax for `Process.Start`, IdentifierNameSyntax for `Environment.SetEnvironmentVariable`. Both overloads. Under 300 lines.\\n\\n5. **tests/VisualRelay.Tests/RetryDelayLoopsGuardTests.cs** \u2014 ~10[Fact]s with inline source snippets. Positive: for-loop with Task.Delay + gitInvoker.RunAsync (the RunGitAsync shape), while-loop with Thread.Sleep + Process.Start, for-loop with delay and RunAsync but no classifier. Negative: for-loop with no delay, for-loop with delay but no git/process invocation, delay-only loop, simple retry without delay. One classifier-present case (isSuccessExit). One live-tree smoke over _trees.AllTrees asserting non-throw. Constructor-injects CachedSyntaxTreesFixture.\\n\\n6. **tests/VisualRelay.Tests/DiBypassGuardTests.cs** \u2014 ~8[Fact]s with inline source snippets. Positive: method with `IGitInvoker? gi = null` defaulting to `?? new GitInvoker()` and a call site in a RelayDriverDependencies-holding class omitting the arg. Also test `TimeProvider.System` bypass. Negative: call site provides the arg, method has no bypass default, enclosing class lacks RelayDriverDependencies, parameter not used in ?? expression. One live-tree smoke.\\n\\n7. **tests/VisualRelay.Tests/RealWaitsGuardTests.cs** \u2014 ~5[Fact]s. Verifies wrapper delegates to RealSleepGuard (a sleep violation appears in output), verifies suppression markers are inventoried with their reasons, verifies bare markers are still inventoried, verifies self-exempt files are excluded. One live-tree smoke.\\n\\n8. **tests/VisualRelay.Tests/TestSideEffectsGuardTests.cs** \u2014 ~10[Fact]s with inline source snippets. Positive: new GitInvoker() in a tests/ path, Process.Start in test, ProcessStartInfo in test, Environment.SetEnvironmentVariable in test. Negative: same constructs in src/ path (not flagged), slow-integration exempt file (not flagged), self-exempt file (not flagged). One live-tree smoke.\\n\\n9. **tests/VisualRelay.Tests/AuditGuardSmokeTests.cs** \u2014 One [Fact] running all four matchers over CachedSyntaxTreesFixture.AllTrees and asserting each completes without throwing. No count assertions. Constructor-injects CachedSyntaxTreesFixture.\\n\\n10. **tools/VisualRelay.Audit/VisualRelay.Audit.csproj** \u2014 Sdk=\\\"Microsoft.NET.Sdk\\\", OutputType=Exe, TargetFramework=net10.0, ImplicitUsings/NULLABLE enable. Single ProjectReference to ../VisualRelay.Guards/VisualRelay.Guards.csproj. No other dependencies.\\n\\n11. **tools/VisualRelay.Audit/Program.cs** \u2014 Thin dispatcher (~80 lines). Resolves repo root via GuardRepoRoot.Resolve(). Scans src/, tests/, tools/ for *.cs (skip bin/obj via same IsBuildArtifact logic as CachedSyntaxTreesFixture). Parses first arg as rule-id filter (no args = all four rules). Manual static Dictionary<string, Func<...>> maps rule-id \u2192 matcher call. Unknown rule-id \u2192 Console.Error + exit 2. For each rule, calls matcher's string-source FindViolations, collects findings, passes to AuditRenderer.Render. Times the whole audit with Stopwatch. Exit 0.\\n\\n12. **tools/VisualRelay.Audit/AuditRenderer.cs** \u2014 Static class (~120 lines). Single Render(IReadOnlyList<AuditFinding> findings, TimeSpan elapsed) method. Each AuditFinding has RuleId, Path, Line, Message, Explanation, Direction. Output to Console: per-finding block as `path:line: <rule-id>: <message>` then indented `  explanation: ...` and `  direction: ...`. After all findings, a summary table with per-rule counts and total runtime. All Console.WriteLine, no external formatting lib.\\n\\n### Existing files (edit)\\n\\n13. **tools/VisualRelay.Cli/CommandRouter.cs** \u2014 Add `\\\"audit\\\"` to the KnownCommands array (after \\\"guards\\\") and append `|audit` to the UsageLine string (before the closing bracket).\\n\\n14. **tools/VisualRelay.Cli/Program.cs** \u2014 Add switch arm `\\\"audit\\\" => PassthroughCommand.Audit(paths, rest),` in the cmd switch expression (after `\\\"guards\\\"` line, before `\\\"install-hooks\\\"`).\\n\\n15. **tools/VisualRelay.Cli/Commands/PassthroughCommand.cs** \u2014 Add `public static int Audit(RepoPaths paths, IReadOnlyList<string> args) => ForwardToTool(paths, \\\"VisualRelay.Audit\\\", args);` (after the Guards method, before the private ForwardToTool).\\n\\n### Step 10 \u2014 End-to-end validation\\nRun `./visual-relay audit` on the live tree. Review all four rule outputs. Fix any false positives by refining matcher heuristics (e.g., excluding self-exempt files, tightening identifier matching). Run `./visual-relay check` to confirm it still passes (audit must not wire into check).\",\n  \"manifest\": [\n    \"+tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs\",\n    \"+tools/VisualRelay.Guards/DiBypassGuard.cs\",\n    \"+tools/VisualRelay.Guards/RealWaitsGuard.cs\",\n    \"+tools/VisualRelay.Guards/TestSideEffectsGuard.cs\",\n    \"+tests/VisualRelay.Tests/RetryDelayLoopsGuardTests.cs\",\n    \"+tests/VisualRelay.Tests/DiBypassGuardTests.cs\",\n    \"+tests/VisualRelay.Tests/RealWaitsGuardTests.cs\",\n    \"+tests/VisualRelay.Tests/TestSideEffectsGuardTests.cs\",\n    \"+tests/VisualRelay.Tests/AuditGuardSmokeTests.cs\",\n    \"+tools/VisualRelay.Audit/VisualRelay.Audit.csproj\",\n    \"+tools/VisualRelay.Audit/Program.cs\",\n    \"+tools/VisualRelay.Audit/AuditRenderer.cs\",\n    \"tools/VisualRelay.Cli/CommandRouter.cs\",\n    \"tools/VisualRelay.Cli/Program.cs\",\n    \"tools/VisualRelay.Cli/Commands/PassthroughCommand.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RetryDelayLoopsGuardTests.cs\",\n    \"tests/VisualRelay.Tests/DiBypassGuardTests.cs\",\n    \"tests/VisualRelay.Tests/RealWaitsGuardTests.cs\",\n    \"tests/VisualRelay.Tests/TestSideEffectsGuardTests.cs\",\n    \"tests/VisualRelay.Tests/AuditGuardSmokeTests.cs\"\n  ],\n  \"rationale\": \"All 33 tests pass (9+7+7+9+1=33). Each test file follows the RealSleepGuardTests pattern: constructor-injects CachedSyntaxTreesFixture, inline source snippets for positive/negative cases, self-exempt checks, and a live-tree smoke test. Tests are millisecond-fast (total suite <1s). The smoke test validates all four matchers complete without throwing over CachedSyntaxTreesFixture.AllTrees with no count assertions. Test coverage includes: retry-delay-loops detection of for/while loops with delay+git invocation (including classifier presence), di-bypass cross-file detection of injection-seam bypass with RelayDriverDependencies check, real-waits delegation to RealSleepGuard + suppression inventory, and test-side-effects detection of new GitInvoker()/Process.Start/ProcessStartInfo/Environment.SetEnvironmentVariable with exemption honor.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 70,
+    "tool_calls_total": 83,
+    "tool_calls_succeeded": 83,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 28,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 14,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 8,
+        "failed": 0
+      },
+      "run_shell_command": {
+        "succeeded": 15,
+        "failed": 0
+      }
+    },
+    "compactions": 2,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 1,
+    "llm_calls": 70,
+    "total_llm_time_s": 667.301,
+    "prompt_cache": {
+      "cached_tokens": 3883776,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 264.951,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 7,
+      "completed": 7,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 15.859,
+      "prompt_tokens_est": 12812,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealSleepGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14138
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RealSleepGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11393
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/CommandRouter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1149
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.595,
+      "prompt_tokens_est": 20537,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2009
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands/PassthroughCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1621
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/CachedSyntaxTreesFixture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2431
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.883,
+      "prompt_tokens_est": 22264,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 1009
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/VisualRelay.Guards.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 549
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 13038
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.496,
+      "prompt_tokens_est": 26039,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/SyncOverAsyncGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15870
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/GuardRepoRoot.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 658
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/NullGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1075
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.614,
+      "prompt_tokens_est": 30491,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5186
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2661
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1741
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.58,
+      "prompt_tokens_est": 33284,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/PlanningWorktree.cs",
+        "offset": 200,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2257
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3168
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "public static string ToolProject",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.181,
+      "result_length": 17
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.189,
+      "prompt_tokens_est": 34754,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ToolProject",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.166,
+      "result_length": 1030
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealBuildSubprocessGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14462
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 5.147,
+      "prompt_tokens_est": 38737,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1627
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/GitSim.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1703
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/SandboxSkipScan.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5722
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 14.425,
+      "prompt_tokens_est": 41261,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Write 4 test files (RetryDelayLoopsGuardTests, DiBypassGuardTests, RealWaitsGuardTests, TestSideEffectsGuardTests)",
+          "Write AuditGuardSmokeTests.cs",
+          "Write 4 matchers in VisualRelay.Guards",
+          "Create VisualRelay.Audit project with Program.cs and AuditRenderer.cs",
+          "Wire CLI: CommandRouter, Program.cs, PassthroughCommand",
+          "Run tests to verify they pass",
+          "Run ./visual-relay audit end-to-end and fix false positives"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 652
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 22.929,
+      "prompt_tokens_est": 42452,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RetryDelayLoopsGuardTests.cs",
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Unit tests for <see cref=\"RetryDelayLoopsGuard\"/> \u2014 detects for/while loops\n/// containing both a delay call <c>Task.Delay</c>/<c>Thread.Sleep</c> AND an\n/// invocation whose receiver or arguments involve <c>IGitInvoker</c>,\n/// <c>RunAsync</c>, or process types. This is the <c>RunGitAsync</c> bug shape:\n/// retrying failures that can never succeed.\n/// </summary>\npublic sealed class RetryDelayLoopsGuardTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public RetryDelayLoopsGuardTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    /// <summary>\n    /// The canonical RunGitAsync shape: a for-loop with Task.Delay backoff AND\n    /// a gitInvoker.RunAsync invocation inside. Must be reported.\n    /// </summary>\n    [Fact]\n    public void ForLoop_WithTaskDelay_AndGitInvokerRunAsync_IsReported()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(IGitInvoker gi, CancellationToken ct, TimeProvider tp) {\n                    for (int attempt = 1; attempt <= 3; attempt++) {\n                        var r = await gi.RunAsync(\"repo\", new[]{\"status\"}, ct);\n                        if (r.ExitCode == 0) return;\n                        var delay = TimeSpan.FromMilliseconds(250);\n                        await Task.Delay(delay, tp, ct);\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/Looper.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// A while-loop with Thread.Sleep AND Process.Start is reported.\n    /// </summary>\n    [Fact]\n    public void WhileLoop_WithThreadSleep_AndProcessStart_IsReported()\n    {\n        const string source = \"\"\"\n            class C {\n                void M() {\n                    while (true) {\n                        var p = Process.Start(\"git\", \"status\");\n                        Thread.Sleep(500);\n                        if (p.ExitCode == 0) break;\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/WhileLooper.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// A for-loop with Task.Delay but NO git/process invocation is NOT reported\n    /// (only a delay, no retry of anything hermeticity-sensitive).\n    /// </summary>\n    [Fact]\n    public void ForLoop_WithDelay_WithoutGitOrProcess_IsNotReported()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(CancellationToken ct) {\n                    for (int i = 0; i < 3; i++) {\n                        await Task.Delay(100, ct);\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/DelayOnly.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A for-loop with a git invocation but NO delay call is NOT reported\n    /// (no retry backoff \u2014 just a single attempt).\n    /// </summary>\n    [Fact]\n    public void ForLoop_WithGitInvocation_WithoutDelay_IsNotReported()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(IGitInvoker gi, CancellationToken ct) {\n                    for (int attempt = 1; attempt <= 3; attempt++) {\n                        var r = await gi.RunAsync(\"repo\", new[]{\"log\"}, ct);\n                        if (r.ExitCode == 0) return;\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/NoDelay.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A delay-only loop (no invocation) is NOT reported.\n    /// </summary>\n    [Fact]\n    public void SimpleRetry_WithoutDelay_IsNotReported()\n    {\n        const string source = \"\"\"\n            class C {\n                void M() {\n                    for (int i = 0; i < 3; i++) {\n                        var result = SomeCall();\n                        if (result) return;\n                    }\n                }\n                bool SomeCall() => false;\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/SimpleRetry.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A loop with delay and invocation where a failure classifier identifier\n    /// (isSuccess) is present in the loop body \u2014 still reported (the classifier\n    /// presence is noted but doesn't exempt the loop).\n    /// </summary>\n    [Fact]\n    public void Loop_WithClassifier_IsStillReported()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(IGitInvoker gi, CancellationToken ct, TimeProvider tp) {\n                    for (int attempt = 1; attempt <= 3; attempt++) {\n                        var r = await gi.RunAsync(\"repo\", new[]{\"status\"}, ct);\n                        bool isSuccess = r.ExitCode == 0;\n                        if (isSuccess) return;\n                        await Task.Delay(250, tp, ct);\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/Classified.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// Task.Delay with TimeProvider (virtual-clock seam) inside a retry loop\n    /// with git invocation is STILL reported \u2014 the bug is the retry of a\n    /// deterministic failure, not the real-vs-virtual delay.\n    /// </summary>\n    [Fact]\n    public void VirtualDelay_InsideRetryLoop_IsStillReported()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(IGitInvoker gi, CancellationToken ct, TimeProvider tp) {\n                    for (int attempt = 1; attempt <= 3; attempt++) {\n                        var r = await gi.RunAsync(\"repo\", new[]{\"status\"}, ct);\n                        if (r.ExitCode == 0) return;\n                        await Task.Delay(TimeSpan.FromMilliseconds(250), tp, ct);\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations([(\"Fixtures/VirtualDelay.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// Self-exempt file is not scanned.\n    /// </summary>\n    [Fact]\n    public void SelfExemptFile_IsNotScanned()\n    {\n        const string source = \"\"\"\n            class C {\n                async Task M(IGitInvoker gi, CancellationToken ct, TimeProvider tp) {\n                    for (int attempt = 1; attempt <= 3; attempt++) {\n                        await gi.RunAsync(\"repo\", new[]{\"status\"}, ct);\n                        await Task.Delay(250, tp, ct);\n                    }\n                }\n            }\n            \"\"\";\n\n        var violations = RetryDelayLoopsGuard.FindViolations(\n            [(\"tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Live-tree smoke: all four matchers complete without throwing over the\n    /// full tree. No count assertions \u2014 findings are informational.\n    /// </summary>\n    [Fact]\n    public void [ENCRYPTED:fastly]L5PaJg_hs1Ma4nlf8YUdnZvbTirgVixj()\n    {\n        var violations = RetryDelayLoopsGuard.FindViolations(_trees.AllTrees);\n\n        Assert.NotNull(violations);\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 122
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 17.288,
+      "prompt_tokens_est": 44479,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Unit tests for <see cref=\"DiBypassGuard\"/> \u2014 detects method parameters\n/// defaulting to a real collaborator (<c>?? new GitInvoker()</c>,\n/// <c>?? TimeProvider.System</c>) on an optional param, plus call sites\n/// of that method which omit the argument while the enclosing class holds\n/// <c>RelayDriverDependencies</c>. This is the <c>EarlyImplementationDetector</c>\n/// bug shape: an injection seam silently bypassed.\n/// </summary>\npublic sealed class DiBypassGuardTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public DiBypassGuardTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    /// <summary>\n    /// The canonical EarlyImplementationDetector shape: an optional IGitInvoker\n    /// parameter defaulting to new GitInvoker() via ??, and a call site in a\n    /// class holding RelayDriverDependencies that omits the argument. Reported.\n    /// </summary>\n    [Fact]\n    public void GitInvokerBypass_WithCallSiteOmission_IsReported()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class EarlyDetector {\n                internal static async Task<bool> M(\n                    string root, IGitInvoker? gi = null) {\n                    var g = gi ?? new GitInvoker();\n                    return false;\n                }\n            }\n\n            class Driver {\n                RelayDriverDependencies _deps;\n                async Task Caller() {\n                    await EarlyDetector.M(\"root\");\n                }\n            }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations([(\"Fixtures/Bypass.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// A TimeProvider.System bypass on an optional parameter with a call site\n    /// omission in a RelayDriverDependencies-holding class is reported.\n    /// </summary>\n    [Fact]\n    public void TimeProviderBypass_WithCallSiteOmission_IsReported()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class Worker {\n                internal static void M(TimeProvider? tp = null) {\n                    var t = tp ?? TimeProvider.System;\n                }\n            }\n\n            class Driver {\n                RelayDriverDependencies _deps;\n                void Caller() {\n                    Worker.M();\n                }\n            }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations([(\"Fixtures/TpBypass.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// When the call site PROVIDES the bypassed argument, it is NOT reported\n    /// (the seam is not being bypassed).\n    /// </summary>\n    [Fact]\n    public void CallSiteProvidesArg_IsNotReported()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class EarlyDetector {\n                internal static async Task<bool> M(\n                    string root, IGitInvoker? gi = null) {\n                    var g = gi ?? new GitInvoker();\n                    return false;\n                }\n            }\n\n            class Driver {\n                RelayDriverDependencies _deps;\n                async Task Caller() {\n                    await EarlyDetector.M(\"root\", _deps.GitInvoker);\n                }\n            }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations([(\"Fixtures/Provided.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A method with a ?? bypass default but NO call site that omits the arg\n    /// is NOT reported.\n    /// </summary>\n    [Fact]\n    public void MethodWithBypass_ButNoCallSite_IsNotReported()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class EarlyDetector {\n                internal static async Task<bool> M(\n                    string root, IGitInvoker? gi = null) {\n                    var g = gi ?? new GitInvoker();\n                    return false;\n                }\n            }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations([(\"Fixtures/NoCaller.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A call site omitting the arg in a class WITHOUT RelayDriverDependencies\n    /// is NOT reported (the class doesn't hold the injectable seam to bypass).\n    /// </summary>\n    [Fact]\n    public void CallSiteInClass_WithoutRelayDriverDependencies_IsNotReported()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class EarlyDetector {\n                internal static async Task<bool> M(\n                    string root, IGitInvoker? gi = null) {\n                    var g = gi ?? new GitInvoker();\n                    return false;\n                }\n            }\n\n            class PlainClass {\n                async Task Caller() {\n                    await EarlyDetector.M(\"root\");\n                }\n            }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations([(\"Fixtures/PlainCaller.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Self-exempt file is not scanned.\n    /// </summary>\n    [Fact]\n    public void SelfExemptFile_IsNotScanned()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n\n            class E { internal static void M(IGitInvoker? gi = null) { var g = gi ?? new GitInvoker(); } }\n            class D { RelayDriverDependencies _deps; void C() { E.M(); } }\n            \"\"\";\n\n        var violations = DiBypassGuard.FindViolations(\n            [(\"tools/VisualRelay.Guards/DiBypassGuard.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Live-tree smoke: matcher completes without throwing over the full tree.\n    /// </summary>\n    [Fact]\n    public void [ENCRYPTED:fastly]L5PaJg_hs1Ma4nlf8YUdnZvbTirgVixj()\n    {\n        var violations = DiBypassGuard.FindViolations(_trees.AllTrees);\n\n        Assert.NotNull(violations);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/DiBypassGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 115
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 13.293,
+      "prompt_tokens_est": 46072,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Unit tests for <see cref=\"RealWaitsGuard\"/> \u2014 delegates to\n/// <see cref=\"RealSleepGuard.FindViolations\"/> across all three roots (src,\n/// tests, tools), PLUS inventories every <c>// vr-allow-sleep: &lt;reason&gt;</c>\n/// suppression with its reason so stale exemptions get re-reviewed.\n/// </summary>\npublic sealed class RealWaitsGuardTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public RealWaitsGuardTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    /// <summary>\n    /// A Thread.Sleep in a non-exempt file is found by the delegated RealSleepGuard\n    /// and shows up as a real-waits violation.\n    /// </summary>\n    [Fact]\n    public void RealSleep_IsReported_AsRealWait()\n    {\n        const string source = \"class C { void M() => Thread.Sleep(500); }\";\n\n        var violations = RealWaitsGuard.FindViolations([(\"src/Fixtures/Sleeper.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Reason.Contains(\"real-waits\"));\n    }\n\n    /// <summary>\n    /// A Task.Delay without TimeProvider in a non-exempt file is found.\n    /// </summary>\n    [Fact]\n    public void TaskDelayWithoutTimeProvider_IsReported()\n    {\n        const string source = \"class C { Task M() => Task.Delay(100); }\";\n\n        var violations = RealWaitsGuard.FindViolations([(\"src/Fixtures/Delayer.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// A sanctioned Task.Delay with TimeProvider is NOT reported.\n    /// </summary>\n    [Fact]\n    public void TaskDelayWithTimeProvider_IsNotReported()\n    {\n        const string source =\n            \"class C { Task M(TimeProvider tp, CancellationToken ct) => Task.Delay(TimeSpan.FromMilliseconds(50), tp, ct); }\";\n\n        var violations = RealWaitsGuard.FindViolations([(\"src/Fixtures/Virtual.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A suppression marker <c>// vr-allow-sleep: integration test needs real settle</c>\n    /// is inventoried with its reason. The sleep line itself is suppressed but the\n    /// suppression entry appears in the output.\n    /// </summary>\n    [Fact]\n    public void AllowSleepMarker_WithReason_IsInventoried()\n    {\n        const string source = \"\"\"\n            class C {\n                void M() => Thread.Sleep(500); // vr-allow-sleep: integration test needs real settle\n                void N() => Console.WriteLine(\"hello\");\n            }\n            \"\"\";\n\n        var suppressions = RealWaitsGuard.FindSuppressions([(\"src/Fixtures/Suppressed.cs\", source)]);\n\n        Assert.NotEmpty(suppressions);\n        var s = Assert.Single(suppressions);\n        Assert.Contains(\"integration test needs real settle\", s.Message);\n    }\n\n    /// <summary>\n    /// A bare marker with no reason is still inventoried (not a valid suppression,\n    /// but the audit shows it for completeness).\n    /// </summary>\n    [Fact]\n    public void BareAllowSleepMarker_WithoutReason_IsStillInventoried()\n    {\n        const string source = \"\"\"\n            class C {\n                void M() => Thread.Sleep(500); // vr-allow-sleep:\n            }\n            \"\"\";\n\n        var suppressions = RealWaitsGuard.FindSuppressions([(\"src/Fixtures/Bare.cs\", source)]);\n\n        Assert.NotEmpty(suppressions);\n    }\n\n    /// <summary>\n    /// Self-exempt files (RealSleepGuard's own fixtures) are excluded entirely.\n    /// </summary>\n    [Fact]\n    public void RealSleepGuardSelfExempt_IsNotScanned()\n    {\n        const string source = \"class C { void M() => Thread.Sleep(5000); }\";\n\n        var violations = RealWaitsGuard.FindViolations(\n            [(\"tools/VisualRelay.Guards/RealSleepGuard.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Live-tree smoke: matcher completes without throwing over the full tree.\n    /// </summary>\n    [Fact]\n    public void [ENCRYPTED:fastly]L5PaJg_hs1Ma4nlf8YUdnZvbTirgVixj()\n    {\n        var violations = RealWaitsGuard.FindViolations(_trees.AllTrees);\n        var suppressions = RealWaitsGuard.FindSuppressions(_trees.AllTrees);\n\n        Assert.NotNull(violations);\n        Assert.NotNull(suppressions);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RealWaitsGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 116
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 13.399,
+      "prompt_tokens_est": 47389,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Unit tests for <see cref=\"TestSideEffectsGuard\"/> \u2014 flags test sources\n/// referencing real-side-effect constructs: <c>new GitInvoker(</c>,\n/// <c>Process.Start</c>, <c>ProcessStartInfo</c>,\n/// <c>Environment.SetEnvironmentVariable</c>. Honors\n/// <see cref=\"RealSleepGuard\"/>'s slow-integration exemption list.\n/// Explains per finding which hermetic double to prefer.\n/// </summary>\npublic sealed class TestSideEffectsGuardTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public TestSideEffectsGuardTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    /// <summary>\n    /// <c>new GitInvoker()</c> in a test file path is reported.\n    /// </summary>\n    [Fact]\n    public void NewGitInvoker_InTestPath_IsReported()\n    {\n        const string source = \"class C { void M() { var g = new GitInvoker(); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/Fixtures/GitTest.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n        Assert.Contains(violations, v => v.Reason.Contains(\"GitInvoker\"));\n    }\n\n    /// <summary>\n    /// <c>Process.Start</c> in a test file path is reported.\n    /// </summary>\n    [Fact]\n    public void ProcessStart_InTestPath_IsReported()\n    {\n        const string source = \"class C { void M() { Process.Start(\\\"git\\\"); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/Fixtures/ProcTest.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// <c>new ProcessStartInfo(...)</c> in a test file path is reported.\n    /// </summary>\n    [Fact]\n    public void ProcessStartInfo_InTestPath_IsReported()\n    {\n        const string source = \"class C { void M() { var p = new ProcessStartInfo(\\\"dotnet\\\", \\\"build\\\"); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/Fixtures/PsiTest.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// <c>Environment.SetEnvironmentVariable</c> in a test file path is reported.\n    /// </summary>\n    [Fact]\n    public void SetEnvironmentVariable_InTestPath_IsReported()\n    {\n        const string source =\n            \"class C { void M() { Environment.SetEnvironmentVariable(\\\"KEY\\\", \\\"val\\\"); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/Fixtures/EnvTest.cs\", source)]);\n\n        Assert.NotEmpty(violations);\n    }\n\n    /// <summary>\n    /// Same construct in a src/ path is NOT flagged (only test sources).\n    /// </summary>\n    [Fact]\n    public void NewGitInvoker_InSourcePath_IsNotReported()\n    {\n        const string source = \"class C { void M() { var g = new GitInvoker(); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Fixtures/Prod.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Slow-integration exempt file (ProcessCaptureGracefulStopTests.cs) is\n    /// not scanned.\n    /// </summary>\n    [Fact]\n    public void RealIntegrationExemptFile_IsNotScanned()\n    {\n        const string source = \"class C { void M() { Process.Start(\\\"git\\\"); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/ProcessCaptureGracefulStopTests.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Self-exempt file is not scanned.\n    /// </summary>\n    [Fact]\n    public void SelfExemptFile_IsNotScanned()\n    {\n        const string source = \"class C { void M() { var g = new GitInvoker(); } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tools/VisualRelay.Guards/TestSideEffectsGuard.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A test file with no side-effect constructs yields zero violations.\n    /// </summary>\n    [Fact]\n    public void CleanTestFile_IsNotReported()\n    {\n        const string source = \"class C { void M() { var x = 1 + 1; } }\";\n\n        var violations = TestSideEffectsGuard.FindViolations(\n            [(\"tests/VisualRelay.Tests/Fixtures/Clean.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Live-tree smoke: matcher completes without throwing over the full tree.\n    /// </summary>\n    [Fact]\n    public void [ENCRYPTED:fastly]L5PaJg_hs1Ma4nlf8YUdnZvbTirgVixj()\n    {\n        var violations = TestSideEffectsGuard.FindViolations(_trees.AllTrees);\n\n        Assert.NotNull(violations);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/TestSideEffectsGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 122
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 5.617,
+      "prompt_tokens_est": 48809,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Smoke test that runs all four hermeticity-audit matchers over\n/// <see cref=\"CachedSyntaxTreesFixture.AllTrees\"/> and asserts each completes\n/// without throwing. No count assertions \u2014 findings are informational and\n/// must not turn the suite red.\n/// </summary>\npublic sealed class AuditGuardSmokeTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public AuditGuardSmokeTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    /// <summary>\n    /// All four audit matchers run over the full tree and complete without\n    /// throwing. Counts are not asserted \u2014 findings are diagnostic-only.\n    /// </summary>\n    [Fact]\n    public void AllFourMatchers_OverAllTrees_CompleteWithoutThrowing()\n    {\n        var trees = _trees.AllTrees;\n\n        var retryViolations = RetryDelayLoopsGuard.FindViolations(trees);\n        Assert.NotNull(retryViolations);\n\n        var diViolations = DiBypassGuard.FindViolations(trees);\n        Assert.NotNull(diViolations);\n\n        var waitViolations = RealWaitsGuard.FindViolations(trees);\n        Assert.NotNull(waitViolations);\n\n        var waitSuppressions = RealWaitsGuard.FindSuppressions(trees);\n        Assert.NotNull(waitSuppressions);\n\n        var sideEffectViolations = TestSideEffectsGuard.FindViolations(trees);\n        Assert.NotNull(sideEffectViolations);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/AuditGuardSmokeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 117
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 3.056,
+      "prompt_tokens_est": 49244,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write 4 test files (RetryDelayLoopsGuardTests, DiBypassGuardTests, RealWaitsGuardTests, TestSideEffectsGuardTests)",
+          "Write AuditGuardSmokeTests.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 651
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 35.476,
+      "prompt_tokens_est": 49516,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher that flags <c>for</c>/<c>while</c> loops containing BOTH a\n/// delay call (<c>Task.Delay</c>/<c>Thread.Sleep</c>) AND an invocation whose\n/// receiver or arguments involve <c>IGitInvoker</c>, <c>RunAsync</c>, or process\n/// types (<c>Process.Start</c>, <c>ProcessStartInfo</c>) \u2014 the\n/// <c>RunGitAsync</c> bug shape: retrying deterministic failures that can never\n/// succeed (e.g. exit-128 <c>fatal: not a git repository</c>).\n///\n/// When a match is found the matcher reports:\n/// <list type=\"bullet\">\n///   <item>the loop kind (<c>for</c> or <c>while</c>);</item>\n///   <item>numeric constants found in the loop bound and delay expressions\n///         (attempt counts and backoff durations);</item>\n///   <item>whether any identifier in the loop suggests failure classification\n///         (e.g. <c>isSuccess</c>, <c>isSuccessExit</c>, <c>*Classifier*</c>,\n///         <c>shouldRetry</c>).</item>\n/// </list>\n///\n/// An inline <c>// vr-allow-retry-delay-loop: &lt;reason&gt;</c> suppresses a\n/// finding. Self-exempts its own fixture files. No I/O \u2014 callers supply the\n/// (path, source) pairs.\n/// </summary>\npublic static class RetryDelayLoopsGuard\n{\n    /// <summary>Describes a single retry-delay-loop violation (1-based <paramref name=\"Line\"/>).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"RetryDelayLoopsGuard.cs\", \"RetryDelayLoopsGuardTests.cs\"];\n\n    /// <summary>\n    /// Identifiers that suggest the loop body classifies whether a failure is\n    /// retriable. Presence alone doesn't exempt the loop \u2014 it only enriches\n    /// the reported reason.\n    /// </summary>\n    private static readonly HashSet<string> ClassifierHints = new(StringComparer.OrdinalIgnoreCase)\n    {\n        \"isSuccess\", \"isSuccessExit\", \"shouldRetry\", \"canRetry\", \"isTransient\",\n        \"isRetryable\", \"isRecoverable\",\n    };\n\n    private static readonly HashSet<string> DelayMethods = new(StringComparer.Ordinal)\n    {\n        \"Delay\", // Task.Delay\n        \"Sleep\", // Thread.Sleep\n    };\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    /// <summary>\n    /// Returns every retry-delay-loop violation across <paramref name=\"files\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, source) in files)\n        {\n            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))\n                continue;\n            ScanSource(path, source, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>\n    /// Returns every retry-delay-loop violation across <paramref name=\"trees\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// Uses pre-parsed <see cref=\"SyntaxTree\"/> objects.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, tree) in trees)\n        {\n            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))\n                continue;\n            ScanTree(path, tree, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    private static void ScanSource(string path, string source, List<Violation> sink) =>\n        ScanTree(path, CSharpSyntaxTree.ParseText(source, ParseOptions), sink);\n\n    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)\n    {\n        var text = tree.GetText();\n        var root = tree.GetRoot();\n\n        foreach (var loop in root.DescendantNodes())\n        {\n            StatementSyntax? body = null;\n            string loopKind;\n\n            switch (loop)\n            {\n                case ForStatementSyntax forStmt:\n                    body = forStmt.Statement;\n                    loopKind = \"for\";\n                    break;\n                case WhileStatementSyntax whileStmt:\n                    body = whileStmt.Statement;\n                    loopKind = \"while\";\n                    break;\n                default:\n                    continue;\n            }\n\n            if (body is null)\n                continue;\n\n            // Find ALL descendant invocations in the loop body.\n            var bodyInvocations = body.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();\n\n            var hasDelay = bodyInvocations.Any(IsDelayCall);\n            var hasSensitiveInvocation = bodyInvocations.Any(IsSensitiveInvocation);\n\n            if (!hasDelay || !hasSensitiveInvocation)\n                continue;\n\n            // Build the reason.\n            var constants = ExtractConstants(loop, bodyInvocations);\n            var hasClassifier = bodyInvocations.Any(HasClassifierIdentifier)\n                                || HasClassifierInLoop(loop);\n\n            var reason = $\"retry-delay-loop: {loopKind}-loop retries a potentially deterministic failure with delay\" +\n                         (constants.Count > 0 ? $\" (constants: {string.Join(\", \", constants)})\" : \"\") +\n                         (hasClassifier ? \" \u2014 failure classifier present\" : \" \u2014 no failure classifier found\");\n\n            var line = LineOf(text, loop.GetLocation().SourceSpan.Start);\n            if (IsAllowMarked(text, line))\n                continue;\n\n            sink.Add(new Violation(path, line, SnippetOf(text, line), reason));\n        }\n    }\n\n    private static bool IsDelayCall(InvocationExpressionSyntax inv)\n    {\n        if (inv.Expression is not MemberAccessExpressionSyntax ma)\n            return false;\n        var method = ma.Name.Identifier.Text;\n        if (!DelayMethods.Contains(method))\n            return false;\n        var owner = RightmostIdentifier(ma.Expression);\n        return owner is \"Task\" or \"Thread\";\n    }\n\n    private static bool IsSensitiveInvocation(InvocationExpressionSyntax inv)\n    {\n        if (inv.Expression is not MemberAccessExpressionSyntax ma)\n            return false;\n\n        var methodName = ma.Name.Identifier.Text;\n        var receiver = ma.Expression;\n\n        // A call whose receiver involves IGitInvoker or Process.\n        if (IsGitInvokerReceiver(receiver) || IsProcessReceiver(receiver))\n            return true;\n\n        // RunAsync on anything (common on IGitInvoker, ITestRunner, etc.).\n        if (methodName == \"RunAsync\")\n            return true;\n\n        // Process.Start\n        if (methodName == \"Start\" && RightmostIdentifier(receiver) == \"Process\")\n            return true;\n\n        // Any argument that is a ProcessStartInfo creation.\n        foreach (var arg in inv.ArgumentList.Arguments)\n        {\n            if (arg.Expression is ObjectCreationExpressionSyntax oce\n                && RightmostTypeName(oce.Type) == \"ProcessStartInfo\")\n                return true;\n        }\n\n        return false;\n    }\n\n    private static bool IsGitInvokerReceiver(ExpressionSyntax expr)\n    {\n        // The receiver type name contains \"GitInvoker\" OR the receiver is a\n        // member access whose final identifier suggests git invoker.\n        var name = RightmostIdentifier(expr);\n        if (name.Contains(\"GitInvoker\", StringComparison.OrdinalIgnoreCase)\n            || name.Contains(\"gitInvoker\", StringComparison.OrdinalIgnoreCase)\n            || name is \"gi\")\n            return true;\n\n        // Walk the expression looking for a type name hint.\n        if (expr is IdentifierNameSyntax id\n            && id.Identifier.Text.Contains(\"gitInvoker\", StringComparison.OrdinalIgnoreCase))\n            return true;\n\n        return false;\n    }\n\n    private static bool IsProcessReceiver(ExpressionSyntax expr)\n    {\n        var name = RightmostIdentifier(expr);\n        return name == \"Process\";\n    }\n\n    private static bool HasClassifierIdentifier(InvocationExpressionSyntax inv)\n    {\n        // Check if the invocation is part of a statement that assigns to\n        // or reads a classifier variable.\n        return inv.Ancestors().OfType<StatementSyntax>().Any(stmt =>\n            stmt.DescendantNodes().OfType<IdentifierNameSyntax>().Any(id =>\n                ClassifierHints.Contains(id.Identifier.Text)));\n    }\n\n    private static bool HasClassifierInLoop(SyntaxNode loop)\n    {\n        // Look for classifier identifiers anywhere in the loop or any\n        // IdentifierName containing \"Classifier\" substring.\n        return loop.DescendantNodes().OfType<IdentifierNameSyntax>().Any(id =>\n            ClassifierHints.Contains(id.Identifier.Text)\n            || id.Identifier.Text.Contains(\"Classifier\", StringComparison.Ordinal)\n            || id.Identifier.Text.Contains(\"classifier\", StringComparison.Ordinal));\n    }\n\n    private static List<string> ExtractConstants(SyntaxNode loop, List<InvocationExpressionSyntax> invocations)\n    {\n        var constants = new List<string>();\n\n        // Look for numeric literals in the loop condition (attempt count).\n        foreach (var lit in loop.DescendantNodes().OfType<LiteralExpressionSyntax>())\n        {\n            if (lit.Token.Value is int i && i is > 0 and <= 100)\n            {\n                // Check if this literal is in the loop condition or bound.\n                var parent = lit.Parent;\n                if (parent is BinaryExpressionSyntax { RawKind: (int)SyntaxKind.LessThanOrEqualExpression or (int)SyntaxKind.LessThanExpression }\n                    || parent is VariableDeclaratorSyntax)\n                {\n                    constants.Add($\"maxAttempts={i}\");\n                }\n            }\n        }\n\n        // Look for delay constants: TimeSpan.FromMilliseconds(N),\n        // TimeSpan.FromSeconds(N), or numeric literal delay args.\n        foreach (var inv in invocations)\n        {\n            if (!IsDelayCall(inv))\n                continue;\n\n            foreach (var arg in inv.ArgumentList.Arguments)\n            {\n                var delayStr = ExtractDelayConstant(arg.Expression);\n                if (delayStr is not null)\n                    constants.Add(delayStr);\n            }\n        }\n\n        return constants.Distinct().Take(6).ToList();\n    }\n\n    private static string? ExtractDelayConstant(ExpressionSyntax expr)\n    {\n        // TimeSpan.FromMilliseconds(250) or TimeSpan.FromSeconds(1)\n        if (expr is InvocationExpressionSyntax inv\n            && inv.Expression is MemberAccessExpressionSyntax ma\n            && ma.Expression is MemberAccessExpressionSyntax ts\n            && ts.Name.Identifier.Text is \"FromMilliseconds\" or \"FromSeconds\"\n            && RightmostIdentifier(ts.Expression) == \"TimeSpan\")\n        {\n            var unit = ts.Name.Identifier.Text == \"FromMilliseconds\" ? \"ms\" : \"s\";\n            if (inv.ArgumentList.Arguments.Count >= 1\n                && inv.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax lit\n                && lit.Token.Value is int val)\n            {\n                return $\"delay={val}{unit}\";\n            }\n        }\n\n        // Plain numeric literal: 250 or 1000\n        if (expr is LiteralExpressionSyntax literal && literal.Token.Value is int ms)\n        {\n            return $\"delay={ms}ms\";\n        }\n\n        return null;\n    }\n\n    private static bool IsAllowMarked(SourceText text, int line)\n    {\n        var lineText = text.Lines[line - 1].ToString();\n        return lineText.Contains(\"// vr-allow-retry-delay-loop:\", StringComparison.Ordinal)\n               && lineText.Contains(\"vr-allow-retry-delay-loop: \")\n               && !lineText.EndsWith(\"vr-allow-retry-delay-loop:\", StringComparison.Ordinal);\n    }\n\n    private static string RightmostIdentifier(ExpressionSyntax expr) => expr switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,\n        _ => string.Empty,\n    };\n\n    private static string RightmostTypeName(TypeSyntax type) => type switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text,\n        _ => type.ToString(),\n    };\n\n    private static int LineOf(SourceText text, int position) =>\n        text.Lines.GetLinePosition(position).Line + 1;\n\n    private static string SnippetOf(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 28.799,
+      "prompt_tokens_est": 52710,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher that flags method parameters defaulting to a real collaborator\n/// (<c>?? new GitInvoker()</c>, <c>?? TimeProvider.System</c>) on an optional\n/// param, plus every call site of that method which omits the argument while\n/// the enclosing class holds <c>RelayDriverDependencies</c>. This is the\n/// <c>EarlyImplementationDetector</c> bug shape: an injection seam silently\n/// bypassed because the real collaborator is hard-coded as the default.\n///\n/// The matcher does a two-pass syntax-tree walk:\n/// <list type=\"number\">\n///   <item><b>Pass 1</b> \u2014 find methods with optional params (= null default)\n///         where the method body does <c>param ?? new GitInvoker()</c> or\n///         <c>param ?? TimeProvider.System</c>. Record the containing-type name,\n///         method name, parameter index, and default kind.</item>\n///   <item><b>Pass 2</b> \u2014 walk all invocations matching recorded method names;\n///         when the bypassed param-index argument is omitted, check if the\n///         enclosing <c>ClassDeclarationSyntax</c> contains a field/property\n///         typed <c>RelayDriverDependencies</c> (by type-name identifier match).\n///         If so, report the call site as a bypass.</item>\n/// </list>\n///\n/// Self-exempts its own fixture files. No I/O \u2014 callers supply the (path, source)\n/// pairs.\n/// </summary>\npublic static class DiBypassGuard\n{\n    /// <summary>Describes a single DI-bypass violation (1-based <paramref name=\"Line\"/>).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"DiBypassGuard.cs\", \"DiBypassGuardTests.cs\"];\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    /// <summary>\n    /// Returns every DI-bypass violation across <paramref name=\"files\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, source) in files)\n        {\n            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))\n                continue;\n            ScanSource(path, source, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>\n    /// Returns every DI-bypass violation across <paramref name=\"trees\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, tree) in trees)\n        {\n            if (SelfExemptFileNames.Contains(Path.GetFileName(path)))\n                continue;\n            ScanTree(path, tree, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>Internal record for a bypass-default method discovered in Pass 1.</summary>\n    private sealed record BypassMethod(\n        string ContainingTypeName,\n        string MethodName,\n        int ParamIndex,\n        string DefaultKind); // e.g. \"new GitInvoker()\", \"TimeProvider.System\"\n\n    private static void ScanSource(string path, string source, List<Violation> sink) =>\n        ScanTree(path, CSharpSyntaxTree.ParseText(source, ParseOptions), sink);\n\n    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)\n    {\n        var text = tree.GetText();\n        var root = tree.GetRoot();\n\n        // --- Pass 1: find methods with bypass-default optional params ---\n        var bypassMethods = new List<BypassMethod>();\n\n        foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())\n        {\n            var containingType = method.Parent is ClassDeclarationSyntax cls\n                ? cls.Identifier.Text\n                : string.Empty;\n\n            var parameters = method.ParameterList.Parameters;\n            for (int i = 0; i < parameters.Count; i++)\n            {\n                var param = parameters[i];\n                if (param.Default is null || param.Default.Value is not LiteralExpressionSyntax lit)\n                    continue;\n                if (lit.Token.Value is not null) // null literal\n                    continue;\n\n                // Look in the method body for: paramId ?? <real-collaborator>\n                var paramId = param.Identifier.Text;\n                var body = (SyntaxNode?)method.Body ?? method.ExpressionBody;\n                if (body is null)\n                    continue;\n\n                var defaultKind = FindBypassDefault(body, paramId);\n                if (defaultKind is null)\n                    continue;\n\n                bypassMethods.Add(new BypassMethod(\n                    containingType, method.Identifier.Text, i, defaultKind));\n            }\n        }\n\n        if (bypassMethods.Count == 0)\n            return;\n\n        // --- Pass 2: find call sites that omit the bypassed arg, in Dependencies-holding classes ---\n        foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())\n        {\n            if (call.Expression is not MemberAccessExpressionSyntax ma)\n            {\n                // Simple name call: MethodName(args) \u2014 match on method name only.\n                if (call.Expression is not IdentifierNameSyntax simple)\n                    continue;\n                var simpleName = simple.Identifier.Text;\n                var matching = bypassMethods.Where(bm => bm.MethodName == simpleName).ToList();\n                if (matching.Count == 0)\n                    continue;\n\n                var argCount = call.ArgumentList.Arguments.Count;\n                foreach (var bm in matching)\n                {\n                    if (argCount <= bm.ParamIndex)\n                    {\n                        if (EnclosingClassHoldsDependencies(call))\n                        {\n                            var line = LineOf(text, call.SpanStart);\n                            sink.Add(new Violation(path, line, SnippetOf(text, line),\n                                $\"di-bypass: call to {bm.MethodName} omits param #{bm.ParamIndex + 1} \" +\n                                $\"which defaults to {bm.DefaultKind} \u2014 enclosing class holds RelayDriverDependencies\"));\n                        }\n                    }\n                }\n            }\n            else\n            {\n                // Qualified call: receiver.MethodName(args)\n                var calleeName = ma.Name.Identifier.Text;\n                var matchingForQualified = bypassMethods\n                    .Where(bm => bm.MethodName == calleeName)\n                    .ToList();\n                if (matchingForQualified.Count == 0)\n                    continue;\n\n                var argCount = call.ArgumentList.Arguments.Count;\n                foreach (var bm in matchingForQualified)\n                {\n                    // For qualified calls, also check the receiver matches the containing type.\n                    var receiverType = RightmostIdentifier(ma.Expression);\n                    if (!string.IsNullOrEmpty(bm.ContainingTypeName)\n                        && !string.Equals(receiverType, bm.ContainingTypeName, StringComparison.Ordinal))\n                        continue;\n\n                    if (argCount <= bm.ParamIndex)\n                    {\n                        if (EnclosingClassHoldsDependencies(call))\n                        {\n                            var line = LineOf(text, call.SpanStart);\n                            sink.Add(new Violation(path, line, SnippetOf(text, line),\n                                $\"di-bypass: call to {bm.ContainingTypeName}.{bm.MethodName} omits param #{bm.ParamIndex + 1} \" +\n                                $\"which defaults to {bm.DefaultKind} \u2014 enclosing class holds RelayDriverDependencies\"));\n                        }\n                    }\n                }\n            }\n        }\n    }\n\n    /// <summary>\n    /// Searches the method body for a coalesce expression of the form\n    /// <c>paramId ?? new GitInvoker()</c> or <c>paramId ?? TimeProvider.System</c>.\n    /// Returns a human-readable description of the default, or null if not found.\n    /// </summary>\n    private static string? FindBypassDefault(SyntaxNode body, string paramId)\n    {\n        foreach (var coalesce in body.DescendantNodes().OfType<BinaryExpressionSyntax>())\n        {\n            if (!coalesce.IsKind(SyntaxKind.CoalesceExpression))\n                continue;\n\n            if (coalesce.Left is IdentifierNameSyntax id && id.Identifier.Text == paramId)\n            {\n                var right = coalesce.Right;\n                return DescribeDefault(right);\n            }\n        }\n\n        return null;\n    }\n\n    private static string? DescribeDefault(ExpressionSyntax expr)\n    {\n        if (expr is ObjectCreationExpressionSyntax oce\n            && RightmostTypeName(oce.Type) is { } typeName\n            && (typeName.StartsWith(\"Git\", StringComparison.Ordinal) || typeName == \"GitInvoker\"))\n        {\n            return $\"new {typeName}()\";\n        }\n\n        if (expr is MemberAccessExpressionSyntax ma\n            && ma.Name.Identifier.Text == \"System\"\n            && RightmostIdentifier(ma.Expression) == \"TimeProvider\")\n        {\n            return \"TimeProvider.System\";\n        }\n\n        return null;\n    }\n\n    /// <summary>\n    /// True when the nearest enclosing ClassDeclarationSyntax of <paramref name=\"node\"/>\n    /// contains a field or property whose type name is <c>RelayDriverDependencies</c>.\n    /// </summary>\n    private static bool EnclosingClassHoldsDependencies(SyntaxNode node)\n    {\n        var cls = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();\n        if (cls is null)\n            return false;\n\n        // Check fields.\n        foreach (var field in cls.Members.OfType<FieldDeclarationSyntax>())\n        {\n            var typeName = RightmostTypeName(field.Declaration.Type);\n            if (typeName == \"RelayDriverDependencies\")\n                return true;\n        }\n\n        // Check properties.\n        foreach (var prop in cls.Members.OfType<PropertyDeclarationSyntax>())\n        {\n            var typeName = RightmostTypeName(prop.Type);\n            if (typeName == \"RelayDriverDependencies\")\n                return true;\n        }\n\n        return false;\n    }\n\n    private static string RightmostIdentifier(ExpressionSyntax expr) => expr switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,\n        _ => string.Empty,\n    };\n\n    private static string RightmostTypeName(TypeSyntax type) => type switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text,\n        _ => type.ToString(),\n    };\n\n    private static int LineOf(SourceText text, int position) =>\n        text.Lines.GetLinePosition(position).Line + 1;\n\n    private static string SnippetOf(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DiBypassGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 20.258,
+      "prompt_tokens_est": 55530,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Text.RegularExpressions;\nusing Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher for the <c>real-waits</c> audit rule. It serves two purposes:\n/// <list type=\"number\">\n///   <item><b>Violation inventory</b> \u2014 delegates to\n///         <see cref=\"RealSleepGuard.FindViolations(IEnumerable{ValueTuple{string, string}})\"/>\n///         and returns every real-sleep violation across all three roots (src/,\n///         tests/, tools/), tagging each finding with <c>real-waits:</c>. This is\n///         the enforcement counterpart of the audit tool.</item>\n///   <item><b>Suppression inventory</b> \u2014 scans every source for\n///         <c>// vr-allow-sleep: &lt;reason&gt;</c> markers and records each one\n///         (bare or with reason) so stale exemptions get re-reviewed instead of\n///         living forever. This is a separate method\n///         (<see cref=\"FindSuppressions\"/>) \u2014 it never interferes with violation\n///         detection.</item>\n/// </list>\n///\n/// Self-exempts its own fixture files AND RealSleepGuard's self-exempt files\n/// (since those contain test sleep fixtures).\n/// </summary>\npublic static class RealWaitsGuard\n{\n    /// <summary>Describes a single real-waits violation or suppression entry.</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    /// <summary>A suppression marker \u2014 matches both bare <c>vr-allow-sleep:</c> and reasoned forms.</summary>\n    private static readonly Regex AllowMarkerRegex =\n        new(@\"//\\s*vr-allow-sleep:\\s*(.*)\", RegexOptions.Compiled);\n\n    /// <summary>Filenames whose own bodies legitimately contain sleep fixtures.\n    /// Includes both our own fixture files and RealSleepGuard's.</summary>\n    private static readonly string[] SelfExemptFileNames =\n    [\n        \"RealWaitsGuard.cs\", \"RealWaitsGuardTests.cs\",\n        \"RealSleepGuard.cs\", \"RealSleepGuardTests.cs\",\n    ];\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    /// <summary>\n    /// Returns every real-waits violation across <paramref name=\"files\"/> by\n    /// delegating to <see cref=\"RealSleepGuard.FindViolations(IEnumerable{ValueTuple{string, string}})\"/>.\n    /// Self-exempt files yield nothing. Findings are tagged <c>real-waits: </c>.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        // RealSleepGuard already handles its own self-exempt + integration-exempt files.\n        // We additionally self-exempt our own fixture files.\n        var filtered = files.Where(f => !SelfExemptFileNames.Contains(Path.GetFileName(f.Path))).ToList();\n\n        var sleepViolations = RealSleepGuard.FindViolations(filtered);\n\n        // Re-wrap with real-waits tag for the audit tool to distinguish from raw sleep matcher.\n        return sleepViolations\n            .Select(sv => new Violation(sv.Path, sv.Line, sv.Snippet,\n                \"real-waits: \" + sv.Reason))\n            .ToList();\n    }\n\n    /// <summary>\n    /// Returns every real-waits violation across <paramref name=\"trees\"/> by\n    /// delegating to the SyntaxTree overload of <see cref=\"RealSleepGuard\"/>.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var filtered = trees.Where(t => !SelfExemptFileNames.Contains(Path.GetFileName(t.Path))).ToList();\n\n        var sleepViolations = RealSleepGuard.FindViolations(filtered);\n\n        return sleepViolations\n            .Select(sv => new Violation(sv.Path, sv.Line, sv.Snippet,\n                \"real-waits: \" + sv.Reason))\n            .ToList();\n    }\n\n    /// <summary>\n    /// Returns an inventory of every <c>// vr-allow-sleep:</c> suppression marker\n    /// found in <paramref name=\"files\"/>, with the reason (if any) extracted.\n    /// Self-exempt files are skipped. Bare markers (no reason) are included with\n    /// a note. Findings are ordered by path then line.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindSuppressions(IEnumerable<(string Path, string Source)> files)\n    {\n        var entries = new List<Violation>();\n\n        foreach (var (path, source) in files)\n        {\n            var fileName = Path.GetFileName(path);\n            if (SelfExemptFileNames.Contains(fileName))\n                continue;\n\n            var lines = source.Split('\\n');\n            for (int i = 0; i < lines.Length; i++)\n            {\n                var match = AllowMarkerRegex.Match(lines[i]);\n                if (!match.Success)\n                    continue;\n\n                var reason = match.Groups[1].Value.Trim();\n                var message = string.IsNullOrEmpty(reason)\n                    ? $\"real-waits suppression: // vr-allow-sleep: (bare \u2014 no reason given, not a valid suppression)\"\n                    : $\"real-waits suppression: // vr-allow-sleep: {reason}\";\n\n                entries.Add(new Violation(path, i + 1, lines[i].Trim(), message));\n            }\n        }\n\n        entries.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return entries;\n    }\n\n    /// <summary>\n    /// Returns an inventory of every <c>// vr-allow-sleep:</c> suppression marker\n    /// found in <paramref name=\"trees\"/> (pre-parsed). Extraction is done from\n    /// the source text.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindSuppressions(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var entries = new List<Violation>();\n\n        foreach (var (path, tree) in trees)\n        {\n            var fileName = Path.GetFileName(path);\n            if (SelfExemptFileNames.Contains(fileName))\n                continue;\n\n            var text = tree.GetText();\n            foreach (var lineSpan in text.Lines)\n            {\n                var lineText = lineSpan.ToString();\n                var match = AllowMarkerRegex.Match(lineText);\n                if (!match.Success)\n                    continue;\n\n                var reason = match.Groups[1].Value.Trim();\n                var message = string.IsNullOrEmpty(reason)\n                    ? $\"real-waits suppression: // vr-allow-sleep: (bare \u2014 no reason given, not a valid suppression)\"\n                    : $\"real-waits suppression: // vr-allow-sleep: {reason}\";\n\n                entries.Add(new Violation(path, lineSpan.LineNumber + 1, lineText.Trim(), message));\n            }\n        }\n\n        entries.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return entries;\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealWaitsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 19.851,
+      "prompt_tokens_est": 57415,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher that flags test sources (files whose path contains <c>/tests/</c>)\n/// referencing real-side-effect constructs:\n/// <list type=\"bullet\">\n///   <item><c>new GitInvoker(</c> \u2014 prefer <c>NullGitInvoker</c> or\n///         <c>GitSim</c>;</item>\n///   <item><c>Process.Start</c> and <c>new ProcessStartInfo(</c> \u2014 prefer\n///         <c>ScriptedTestRunner</c>;</item>\n///   <item><c>Environment.SetEnvironmentVariable</c> \u2014 prefer\n///         <c>DictionaryEnvironmentAccessor</c>.</item>\n/// </list>\n///\n/// Honors <see cref=\"RealSleepGuard\"/>'s slow-integration exemption list\n/// (<c>ProcessCaptureGracefulStopTests.cs</c>, <c>SandboxedTestRunnerReapTests.cs</c>,\n/// <c>ActivityWatchdogSocketWedgeTests.cs</c>, <c>FdLeakTests.cs</c>,\n/// <c>WindowsExecutionTests.cs</c>) \u2014 those files are exempt because their real\n/// side effects run only behind <c>SlowIntegration.SkipIfNotOptedIn()</c>.\n/// Self-exempts its own fixture files. No I/O \u2014 callers supply the (path, source)\n/// pairs.\n/// </summary>\npublic static class TestSideEffectsGuard\n{\n    /// <summary>Describes a single test-side-effect violation (1-based <paramref name=\"Line\"/>).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"TestSideEffectsGuard.cs\", \"TestSideEffectsGuardTests.cs\"];\n\n    /// <summary>\n    /// Opt-in slow-integration files honored from RealSleepGuard's exemption list.\n    /// </summary>\n    private static readonly string[] RealIntegrationExemptFileNames =\n    [\n        \"ProcessCaptureGracefulStopTests.cs\",\n        \"SandboxedTestRunnerReapTests.cs\",\n        \"ActivityWatchdogSocketWedgeTests.cs\",\n        \"FdLeakTests.cs\",\n        \"WindowsExecutionTests.cs\",\n    ];\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    /// <summary>\n    /// Returns every test-side-effect violation across <paramref name=\"files\"/>,\n    /// ordered by path (ordinal) then line. Only test sources are scanned; non-test\n    /// paths yield nothing. Self-exempt and integration-exempt files yield nothing.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, source) in files)\n        {\n            if (!IsTestPath(path))\n                continue;\n            var fileName = Path.GetFileName(path);\n            if (SelfExemptFileNames.Contains(fileName)\n                || RealIntegrationExemptFileNames.Contains(fileName))\n                continue;\n            ScanSource(path, source, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>\n    /// Returns every test-side-effect violation across <paramref name=\"trees\"/>,\n    /// ordered by path (ordinal) then line. Uses pre-parsed <see cref=\"SyntaxTree\"/>\n    /// objects.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var violations = new List<Violation>();\n        foreach (var (path, tree) in trees)\n        {\n            if (!IsTestPath(path))\n                continue;\n            var fileName = Path.GetFileName(path);\n            if (SelfExemptFileNames.Contains(fileName)\n                || RealIntegrationExemptFileNames.Contains(fileName))\n                continue;\n            ScanTree(path, tree, violations);\n        }\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    private static bool IsTestPath(string path) =>\n        path.Replace('\\\\', '/').Contains(\"/tests/\", StringComparison.Ordinal);\n\n    private static void ScanSource(string path, string source, List<Violation> sink) =>\n        ScanTree(path, CSharpSyntaxTree.ParseText(source, ParseOptions), sink);\n\n    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)\n    {\n        var text = tree.GetText();\n        var root = tree.GetRoot();\n        var seen = new HashSet<int>();\n\n        foreach (var node in root.DescendantNodes())\n        {\n            int? line = null;\n            string? reason = null;\n\n            switch (node)\n            {\n                // new GitInvoker()\n                case ObjectCreationExpressionSyntax oce\n                    when RightmostTypeName(oce.Type) is \"GitInvoker\":\n                    line = LineOf(text, oce.NewKeyword.SpanStart);\n                    reason = \"test-side-effect: new GitInvoker() \u2014 prefer NullGitInvoker or GitSim for hermetic tests\";\n                    break;\n\n                // new ProcessStartInfo(...)\n                case ObjectCreationExpressionSyntax oce2\n                    when RightmostTypeName(oce2.Type) == \"ProcessStartInfo\":\n                    line = LineOf(text, oce2.NewKeyword.SpanStart);\n                    reason = \"test-side-effect: new ProcessStartInfo(...) \u2014 prefer ScriptedTestRunner for hermetic tests\";\n                    break;\n\n                // Process.Start(...)\n                case InvocationExpressionSyntax inv\n                    when inv.Expression is MemberAccessExpressionSyntax { Name.Identifier.Text: \"Start\" } ma\n                         && RightmostIdentifier(ma.Expression) == \"Process\":\n                    line = LineOf(text, ma.Name.SpanStart);\n                    reason = \"test-side-effect: Process.Start(...) \u2014 prefer ScriptedTestRunner for hermetic tests\";\n                    break;\n\n                // Environment.SetEnvironmentVariable(...)\n                case InvocationExpressionSyntax inv2\n                    when inv2.Expression is MemberAccessExpressionSyntax\n                    {\n                        Name.Identifier.Text: \"SetEnvironmentVariable\"\n                    } ma2\n                    && RightmostIdentifier(ma2.Expression) == \"Environment\":\n                    line = LineOf(text, ma2.Name.SpanStart);\n                    reason = \"test-side-effect: Environment.SetEnvironmentVariable(...) \u2014 prefer DictionaryEnvironmentAccessor for hermetic tests\";\n                    break;\n            }\n\n            if (line.HasValue && reason is not null && seen.Add(line.Value))\n            {\n                sink.Add(new Violation(path, line.Value, SnippetOf(text, line.Value), reason));\n            }\n        }\n    }\n\n    private static string RightmostIdentifier(ExpressionSyntax expr) => expr switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,\n        _ => string.Empty,\n    };\n\n    private static string RightmostTypeName(TypeSyntax type) => type switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text,\n        _ => type.ToString(),\n    };\n\n    private static int LineOf(SourceText text, int position) =>\n        text.Lines.GetLinePosition(position).Line + 1;\n\n    private static string SnippetOf(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/TestSideEffectsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 118
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.868,
+      "prompt_tokens_est": 59364,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "<Project Sdk=\"Microsoft.NET.Sdk\">\n\n  <ItemGroup>\n    <ProjectReference Include=\"..\\VisualRelay.Guards\\VisualRelay.Guards.csproj\" />\n  </ItemGroup>\n\n  <PropertyGroup>\n    <OutputType>Exe</OutputType>\n    <TargetFramework>net10.0</TargetFramework>\n    <ImplicitUsings>enable</ImplicitUsings>\n    <Nullable>enable</Nullable>\n  </PropertyGroup>\n\n</Project>\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/VisualRelay.Audit.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 117
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 12.167,
+      "prompt_tokens_est": 59583,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Audit;\n\n/// <summary>\n/// Thin renderer for audit findings. Produces:\n/// <list type=\"bullet\">\n///   <item>Per-finding blocks: <c>path:line: &lt;rule-id&gt;: &lt;message&gt;</c></item>\n///   <item>Indented explanation and suggested-direction lines</item>\n///   <item>Per-rule summary table with counts and total runtime</item>\n/// </list>\n/// All output goes to <see cref=\"Console.Out\"/>. No external formatting lib.\n/// </summary>\ninternal static class AuditRenderer\n{\n    /// <summary>Renders a complete audit report for all rules.</summary>\n    public static void Render(\n        IReadOnlyDictionary<string, IReadOnlyList<ViolationRecord>> findingsByRule,\n        TimeSpan elapsed)\n    {\n        var totalFindings = 0;\n        var rulesWithFindings = new List<(string RuleId, int Count)>();\n\n        foreach (var (ruleId, findings) in findingsByRule.OrderBy(kv => kv.Key))\n        {\n            var count = findings.Count;\n            totalFindings += count;\n            rulesWithFindings.Add((ruleId, count));\n\n            if (count > 0)\n            {\n                Console.WriteLine($\"=== {ruleId} ({count} finding{(count == 1 ? \"\" : \"s\")}) ===\");\n                Console.WriteLine();\n\n                foreach (var f in findings)\n                {\n                    // Primary line: path:line: rule-id: message\n                    Console.WriteLine($\"{f.Path}:{f.Line}: {ruleId}: {f.Message}\");\n\n                    // Explanation (from the reason/message)\n                    Console.WriteLine($\"  explanation: {f.Explanation}\");\n\n                    // Suggested direction\n                    Console.WriteLine($\"  direction: {f.Direction}\");\n\n                    Console.WriteLine();\n                }\n            }\n            else\n            {\n                Console.WriteLine($\"=== {ruleId} (0 findings) ===\");\n                Console.WriteLine();\n            }\n        }\n\n        // Summary table.\n        Console.WriteLine(\"=== Summary ===\");\n        Console.WriteLine();\n        Console.WriteLine($\"{\"Rule\",-30} {\"Findings\",>10}\");\n        Console.WriteLine(new string('-', 42));\n        foreach (var (ruleId, count) in rulesWithFindings)\n        {\n            Console.WriteLine($\"{ruleId,-30} {count,>10}\");\n        }\n        Console.WriteLine(new string('-', 42));\n        Console.WriteLine($\"{\"Total\",-30} {totalFindings,>10}\");\n        Console.WriteLine();\n        Console.WriteLine($\"Audit completed in {elapsed.TotalSeconds:F2}s\");\n    }\n}\n\n/// <summary>\n/// A single rendered violation, carrying enough context for the renderer\n/// to print the path:line line, explanation, and suggested direction.\n/// </summary>\ninternal sealed record ViolationRecord(\n    string Path,\n    int Line,\n    string Message,\n    string Explanation,\n    string Direction);\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/AuditRenderer.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 110
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 25.893,
+      "prompt_tokens_est": 60595,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using System.Diagnostics;\nusing VisualRelay.Guards;\n\nnamespace VisualRelay.Audit;\n\n/// <summary>\n/// VisualRelay.Audit \u2014 diagnostic CLI that EXPLAINS hermeticity findings\n/// (file:line, snippet, why it matters, suggested direction) instead of\n/// failing a build. It is the complementary occasional-use lens; the\n/// guard-as-tests (matchers in VisualRelay.Guards) are the enforcement layer.\n///\n/// Usage: dotnet run -- [rule-id ...]  (no args = all four rules)\n/// Exit 0 when the audit ran (it is informational, never a gate).\n/// Exit 2 on unknown subcommand.\n/// </summary>\npublic static class Program\n{\n    private delegate IReadOnlyList<(string Path, int Line, string Snippet, string Reason)> MatcherFn(\n        IEnumerable<(string Path, string Source)> files);\n\n    public static int Main(string[] args)\n    {\n        var requestedRules = args.Length > 0\n            ? new HashSet<string>(args, StringComparer.OrdinalIgnoreCase)\n            : null; // null = all rules\n\n        // Validate rule IDs.\n        if (requestedRules is not null)\n        {\n            foreach (var r in requestedRules)\n            {\n                if (!RuleRegistry.ContainsKey(r))\n                {\n                    Console.Error.WriteLine($\"audit: unknown rule-id '{r}'. Valid rule-ids: {string.Join(\", \", RuleRegistry.Keys.Order())}\");\n                    return 2;\n                }\n            }\n        }\n\n        var repoRoot = GuardRepoRoot.Resolve();\n        if (repoRoot is null)\n        {\n            Console.Error.WriteLine(\"audit: could not find repo root (no visual-relay file walking up).\");\n            return 1;\n        }\n\n        // Collect all .cs files from src/, tests/, tools/, skipping bin/obj.\n        var files = new List<(string Path, string Source)>();\n        foreach (var dir in new[] { \"src\", \"tests\", \"tools\" })\n        {\n            var fullDir = Path.Combine(repoRoot, dir);\n            if (!Directory.Exists(fullDir))\n                continue;\n\n            foreach (var file in Directory.EnumerateFiles(fullDir, \"*.cs\", SearchOption.AllDirectories))\n            {\n                if (IsBuildArtifact(file))\n                    continue;\n\n                var relativePath = Path.GetRelativePath(repoRoot, file);\n                var source = File.ReadAllText(file);\n                files.Add((relativePath, source));\n            }\n        }\n\n        var stopwatch = Stopwatch.StartNew();\n\n        var findingsByRule = new Dictionary<string, IReadOnlyList<ViolationRecord>>(StringComparer.OrdinalIgnoreCase);\n\n        var rulesToRun = requestedRules is not null\n            ? requestedRules\n            : new HashSet<string>(RuleRegistry.Keys, StringComparer.OrdinalIgnoreCase);\n\n        foreach (var ruleId in rulesToRun.Order())\n        {\n            var findings = new List<ViolationRecord>();\n\n            if (ruleId == \"real-waits\")\n            {\n                // real-waits: violations from RealSleepGuard + suppression inventory.\n                var violations = RealWaitsGuard.FindViolations(files);\n                foreach (var v in violations)\n                {\n                    findings.Add(new ViolationRecord(\n                        v.Path, v.Line, ExtractMessage(v.Reason),\n                        \"A real wall-clock wait was found in source code. This makes tests slow and non-deterministic.\",\n                        \"Replace with a virtual-clock seam (TimeProvider) or use Task.Yield() for yielding.\"));\n                }\n\n                var suppressions = RealWaitsGuard.FindSuppressions(files);\n                foreach (var s in suppressions)\n                {\n                    findings.Add(new ViolationRecord(\n                        s.Path, s.Line, s.Reason,\n                        \"An existing suppression marker; review whether it is still needed.\",\n                        \"If the underlying wait has been fixed, remove the suppression marker to keep the exemption list clean.\"));\n                }\n            }\n            else\n            {\n                var violations = RuleRegistry[ruleId](files);\n                foreach (var v in violations)\n                {\n                    var (explanation, direction) = DefaultExplanationAndDirection(ruleId);\n                    findings.Add(new ViolationRecord(\n                        v.Path, v.Line, ExtractMessage(v.Reason), explanation, direction));\n                }\n            }\n\n            findingsByRule[ruleId] = findings;\n        }\n\n        stopwatch.Stop();\n\n        AuditRenderer.Render(findingsByRule, stopwatch.Elapsed);\n\n        return 0;\n    }\n\n    /// <summary>\n    /// Strips the rule-id prefix from a reason string (e.g. \"retry-delay-loop: ...\")\n    /// to produce a cleaner message for display.\n    /// </summary>\n    private static string ExtractMessage(string reason)\n    {\n        var colonIdx = reason.IndexOf(':');\n        return colonIdx >= 0 ? reason[(colonIdx + 1)..].Trim() : reason;\n    }\n\n    private static (string Explanation, string Direction) DefaultExplanationAndDirection(string ruleId) => ruleId switch\n    {\n        \"retry-delay-loops\" => (\n            \"A retry loop with a delay is retrying operations that may deterministically fail (e.g. 'not a git repository'). This burns wall-clock time on failures that can never succeed.\",\n            \"Replace the retry loop with a single attempt. If retry is truly needed, classify failures and only retry transient ones.\"),\n        \"di-bypass\" => (\n            \"An injection seam (optional parameter) defaults to a real collaborator, and a call site omits the argument. The real collaborator is silently used instead of the injected one.\",\n            \"Pass the injected dependency explicitly at the call site, or remove the real-collaborator default from the optional parameter.\"),\n        \"test-side-effects\" => (\n            \"A test source references a real side-effect construct \u2014 spawning real processes, mutating the global environment, or using real GitInvoker. This makes tests unhermetic and slow.\",\n            \"Replace with the corresponding hermetic double (NullGitInvoker/GitSim, ScriptedTestRunner, DictionaryEnvironmentAccessor).\"),\n        _ => (\"See details above.\", \"Consider the suggested double or approach for this pattern.\"),\n    };\n\n    private static bool IsBuildArtifact(string path)\n    {\n        var segments = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);\n        return segments.Any(s => s is \"bin\" or \"obj\");\n    }\n\n    /// <summary>\n    /// Maps rule IDs to matcher functions. Each matcher takes a collection of\n    /// (path, source) pairs and returns violations.\n    /// </summary>\n    private static readonly IReadOnlyDictionary<string, MatcherFn> RuleRegistry =\n        new Dictionary<string, MatcherFn>(StringComparer.OrdinalIgnoreCase)\n        {\n            [\"retry-delay-loops\"] = files =>\n                RetryDelayLoopsGuard.FindViolations(files)\n                    .Select(v => (v.Path, v.Line, v.Snippet, v.Reason))\n                    .ToList(),\n\n            [\"di-bypass\"] = files =>\n                DiBypassGuard.FindViolations(files)\n                    .Select(v => (v.Path, v.Line, v.Snippet, v.Reason))\n                    .ToList(),\n\n            [\"real-waits\"] = files =>\n                // real-waits handled specially in Main to include suppressions\n                [],\n\n            [\"test-side-effects\"] = files =>\n                TestSideEffectsGuard.FindViolations(files)\n                    .Select(v => (v.Path, v.Line, v.Snippet, v.Reason))\n                    .ToList(),\n        };\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 104
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 4.279,
+      "prompt_tokens_est": 62698,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/CommandRouter.cs",
+        "old_string": "        \"launch\", \"run\", \"build\", \"test\", \"format\", \"screenshot\",\n        \"run-task\", \"init\", \"check\", \"inspect\", \"gen-backend-config\",\n        \"guards\", \"install-hooks\", \"bump-version\", \"provision-mxc\",",
+        "new_string": "        \"launch\", \"run\", \"build\", \"test\", \"format\", \"screenshot\",\n        \"run-task\", \"init\", \"check\", \"inspect\", \"gen-backend-config\",\n        \"guards\", \"audit\", \"install-hooks\", \"bump-version\", \"provision-mxc\","
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 95
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 3.971,
+      "prompt_tokens_est": 62953,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/CommandRouter.cs",
+        "old_string": "        \"usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|\" +\n        \"install-hooks|bump-version|check|inspect|guards|gen-backend-config|provision-mxc]\";",
+        "new_string": "        \"usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|\" +\n        \"install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|provision-mxc]\";"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 95
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 3.459,
+      "prompt_tokens_est": 63220,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Program.cs",
+        "old_string": "    \"guards\" => PassthroughCommand.Guards(paths, rest),\n    \"install-hooks\" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),",
+        "new_string": "    \"guards\" => PassthroughCommand.Guards(paths, rest),\n    \"audit\" => PassthroughCommand.Audit(paths, rest),\n    \"install-hooks\" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 89
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 15.853,
+      "prompt_tokens_est": 63387,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands/PassthroughCommand.cs",
+        "new_string": "    public static int Guards(RepoPaths paths, IReadOnlyList<string> args) =>\n        ForwardToTool(paths, \"VisualRelay.Guards\", args);\n\n    public static int Audit(RepoPaths paths, IReadOnlyList<string> args) =>\n        ForwardToTool(paths, \"VisualRelay.Audit\", args);\n\n    private static int ForwardToTool(RepoPaths paths, string tool, IReadOnlyList<string> args)",
+        "old_string": "    public static int Guards(RepoPaths paths, IReadOnlyList<string> args) =>\n        ForwardToTool(paths, \"VisualRelay.Guards\", args);\n\n    private static int ForwardToTool(RepoPaths paths, string tool, IReadOnlyList<string> args)"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 109
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 7.658,
+      "prompt_tokens_est": 64326,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write 4 matchers in VisualRelay.Guards",
+          "Create VisualRelay.Audit project with Program.cs and AuditRenderer.cs",
+          "Wire CLI: CommandRouter, Program.cs, PassthroughCommand"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 648
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 3.977,
+      "prompt_tokens_est": 64962,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RetryDelayLoopsGuardTests|FullyQualifiedName~DiBypassGuardTests|FullyQualifiedName~RealWaitsGuardTests|FullyQualifiedName~TestSideEffectsGuardTests|FullyQualifiedName~AuditGuardSmokeTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.122,
+      "result_length": 1687
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 5.138,
+      "prompt_tokens_est": 65597,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RealWaitsGuardTests.cs",
+        "old_string": "        Assert.NotEmpty(suppressions);\n        var s = Assert.Single(suppressions);\n        Assert.Contains(\"integration test needs real settle\", s.Message);",
+        "new_string": "        Assert.NotEmpty(suppressions);\n        var s = Assert.Single(suppressions);\n        Assert.Contains(\"integration test needs real settle\", s.Reason);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 103
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 2.74,
+      "prompt_tokens_est": 65846,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RetryDelayLoopsGuardTests|FullyQualifiedName~DiBypassGuardTests|FullyQualifiedName~RealWaitsGuardTests|FullyQualifiedName~TestSideEffectsGuardTests|FullyQualifiedName~AuditGuardSmokeTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 12.466,
+      "result_length": 4389
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 17.961,
+      "prompt_tokens_est": 67171,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/TestSideEffectsGuard.cs",
+        "old_string": "    private static bool IsTestPath(string path) =>\n        path.Replace('\\\\', '/').Contains(\"/tests/\", StringComparison.Ordinal);",
+        "new_string": "    private static bool IsTestPath(string path)\n    {\n        var normalized = path.Replace('\\\\', '/');\n        return normalized.StartsWith(\"tests/\", StringComparison.Ordinal)\n               || normalized.Contains(\"/tests/\", StringComparison.Ordinal);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 105
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 9.877,
+      "prompt_tokens_est": 68269,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "storm_suppression",
+      "name": "run_command",
+      "args_hash": "5116d5ab34b4",
+      "count": 3
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 4.688,
+      "prompt_tokens_est": 68886,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~TestSideEffectsGuardTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.663,
+      "result_length": 1669
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 2.92,
+      "prompt_tokens_est": 69614,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RetryDelayLoopsGuardTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.9,
+      "result_length": 1669
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 2.963,
+      "prompt_tokens_est": 70229,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~DiBypassGuardTests|FullyQualifiedName~RealWaitsGuardTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.066,
+      "result_length": 1669
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 2.903,
+      "prompt_tokens_est": 70838,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~AuditGuardSmokeTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.449,
+      "result_length": 1669
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 3.645,
+      "prompt_tokens_est": 71477,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet run --project tools/VisualRelay.Audit/VisualRelay.Audit.csproj 2>&1 | head -200",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 2.68,
+      "result_length": 740
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 3.905,
+      "prompt_tokens_est": 71791,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/AuditRenderer.cs",
+        "offset": 50,
+        "limit": 25
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1042
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 6.063,
+      "prompt_tokens_est": 72162,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/AuditRenderer.cs",
+        "old_string": "        // Summary table.\n        Console.WriteLine(\"=== Summary ===\");\n        Console.WriteLine();\n        Console.WriteLine($\"{\"Rule\",-30} {\"Findings\",>10}\");\n        Console.WriteLine(new string('-', 42));\n        foreach (var (ruleId, count) in rulesWithFindings)\n        {\n            Console.WriteLine($\"{ruleId,-30} {count,>10}\");\n        }\n        Console.WriteLine(new string('-', 42));\n        Console.WriteLine($\"{\"Total\",-30} {totalFindings,>10}\");",
+        "new_string": "        // Summary table.\n        Console.WriteLine(\"=== Summary ===\");\n        Console.WriteLine();\n        Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", \"Rule\", \"Findings\"));\n        Console.WriteLine(new string('-', 42));\n        foreach (var (ruleId, count) in rulesWithFindings)\n        {\n            Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", ruleId, count));\n        }\n        Console.WriteLine(new string('-', 42));\n        Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", \"Total\", totalFindings));"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 97
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 2.677,
+      "prompt_tokens_est": 72651,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet run --project tools/VisualRelay.Audit/VisualRelay.Audit.csproj 2>&1 | head -200",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 4.903,
+      "result_length": 2299
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 4.975,
+      "prompt_tokens_est": 73253,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_9f6abc4f362d.txt",
+        "offset": 1,
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11020
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 33.985,
+      "prompt_tokens_est": 75976,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DiBypassGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13147
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 32.219,
+      "prompt_tokens_est": 81151,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher that flags method parameters defaulting to a real collaborator\n/// (<c>?? new GitInvoker()</c>, <c>?? TimeProvider.System</c>) on an optional\n/// param, plus every call site of that method which omits the argument while\n/// the enclosing class holds <c>RelayDriverDependencies</c>. This is the\n/// <c>EarlyImplementationDetector</c> bug shape: an injection seam silently\n/// bypassed because the real collaborator is hard-coded as the default.\n///\n/// The matcher does a cross-file two-pass walk:\n/// <list type=\"number\">\n///   <item><b>Pass 1</b> \u2014 scan ALL files for methods with optional params\n///         (= null default) whose body does <c>param ?? new GitInvoker()</c>\n///         or <c>param ?? TimeProvider.System</c>. Record the containing-type\n///         name, method name, parameter index, and default kind.</item>\n///   <item><b>Pass 2</b> \u2014 scan ALL files for invocation expressions matching\n///         recorded method names; when the bypassed param-index argument is\n///         omitted, check if the enclosing <c>ClassDeclarationSyntax</c> contains\n///         a field/property typed <c>RelayDriverDependencies</c>. If so, report\n///         the call site as a bypass.</item>\n/// </list>\n///\n/// Self-exempts its own fixture files. No I/O \u2014 callers supply the (path, source)\n/// pairs.\n/// </summary>\npublic static class DiBypassGuard\n{\n    /// <summary>Describes a single DI-bypass violation (1-based <paramref name=\"Line\"/>).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"DiBypassGuard.cs\", \"DiBypassGuardTests.cs\"];\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    /// <summary>Internal record for a bypass-default method discovered in Pass 1.</summary>\n    private sealed record BypassMethod(\n        string ContainingTypeName,\n        string MethodName,\n        int ParamIndex,\n        string ParamName,\n        string DefaultKind); // e.g. \"new GitInvoker()\", \"TimeProvider.System\"\n\n    /// <summary>\n    /// Returns every DI-bypass violation across <paramref name=\"files\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// Does a cross-file two-pass analysis.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var fileList = files.Where(f => !SelfExemptFileNames.Contains(Path.GetFileName(f.Path))).ToList();\n        if (fileList.Count == 0)\n            return [];\n\n        // Pass 1: find all bypass methods across ALL files.\n        var bypassMethods = new List<BypassMethod>();\n        foreach (var (path, source) in fileList)\n        {\n            var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);\n            CollectBypassMethods(tree.GetRoot(), bypassMethods);\n        }\n\n        if (bypassMethods.Count == 0)\n            return [];\n\n        // Pass 2: find call sites across ALL files.\n        var violations = new List<Violation>();\n        foreach (var (path, source) in fileList)\n        {\n            var tree = CSharpSyntaxTree.ParseText(source, ParseOptions);\n            FindCallSites(path, tree, bypassMethods, violations);\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    /// <summary>\n    /// Returns every DI-bypass violation across <paramref name=\"trees\"/>,\n    /// ordered by path (ordinal) then line. Self-exempt files yield nothing.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var treeList = trees.Where(t => !SelfExemptFileNames.Contains(Path.GetFileName(t.Path))).ToList();\n        if (treeList.Count == 0)\n            return [];\n\n        // Pass 1: find all bypass methods.\n        var bypassMethods = new List<BypassMethod>();\n        foreach (var (_, tree) in treeList)\n        {\n            CollectBypassMethods(tree.GetRoot(), bypassMethods);\n        }\n\n        if (bypassMethods.Count == 0)\n            return [];\n\n        // Pass 2: find call sites.\n        var violations = new List<Violation>();\n        foreach (var (path, tree) in treeList)\n        {\n            FindCallSites(path, tree, bypassMethods, violations);\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 Pass 1: collect methods with bypass-default optional params \u2500\u2500\n\n    private static void CollectBypassMethods(SyntaxNode root, List<BypassMethod> sink)\n    {\n        foreach (var method in root.DescendantNodes().OfType<MethodDeclarationSyntax>())\n        {\n            var containingType = method.Parent is ClassDeclarationSyntax cls\n                ? cls.Identifier.Text\n                : string.Empty;\n\n            var parameters = method.ParameterList.Parameters;\n            for (int i = 0; i < parameters.Count; i++)\n            {\n                var param = parameters[i];\n                if (param.Default is null || param.Default.Value is not LiteralExpressionSyntax lit)\n                    continue;\n                if (lit.Token.Value is not null) // ignore non-null defaults\n                    continue;\n\n                // Look in the method body for: paramId ?? <real-collaborator>\n                var paramId = param.Identifier.Text;\n                var body = (SyntaxNode?)method.Body ?? method.ExpressionBody;\n                if (body is null)\n                    continue;\n\n                var defaultKind = FindBypassDefault(body, paramId);\n                if (defaultKind is null)\n                    continue;\n\n                sink.Add(new BypassMethod(containingType, method.Identifier.Text, i, paramId, defaultKind));\n            }\n        }\n    }\n\n    // \u2500\u2500 Pass 2: find call sites omitting bypassed args \u2500\u2500\n\n    private static void FindCallSites(string path, SyntaxTree tree, List<BypassMethod> bypassMethods, List<Violation> sink)\n    {\n        var text = tree.GetText();\n        var root = tree.GetRoot();\n\n        foreach (var call in root.DescendantNodes().OfType<InvocationExpressionSyntax>())\n        {\n            string? methodName;\n            string? receiverTypeName;\n\n            if (call.Expression is MemberAccessExpressionSyntax ma)\n            {\n                methodName = ma.Name.Identifier.Text;\n                receiverTypeName = RightmostIdentifier(ma.Expression);\n            }\n            else if (call.Expression is IdentifierNameSyntax simple)\n            {\n                methodName = simple.Identifier.Text;\n                receiverTypeName = null; // simple name \u2014 match on method name only\n            }\n            else\n            {\n                continue;\n            }\n\n            // Find matching bypass methods.\n            var matching = bypassMethods\n                .Where(bm => bm.MethodName == methodName)\n                .Where(bm => receiverTypeName is null\n                             || string.IsNullOrEmpty(bm.ContainingTypeName)\n                             || bm.ContainingTypeName == receiverTypeName)\n                .ToList();\n\n            if (matching.Count == 0)\n                continue;\n\n            var argCount = call.ArgumentList.Arguments.Count;\n\n            foreach (var bm in matching)\n            {\n                if (argCount <= bm.ParamIndex)\n                {\n                    if (EnclosingClassHoldsDependencies(call))\n                    {\n                        var line = LineOf(text, call.SpanStart);\n                        sink.Add(new Violation(path, line, SnippetOf(text, line),\n                            $\"di-bypass: call to {bm.ContainingTypeName}.{bm.MethodName} omits param \" +\n                            $\"'{bm.ParamName}' (#{bm.ParamIndex + 1}) which defaults to {bm.DefaultKind} \" +\n                            $\"\u2014 enclosing class holds RelayDriverDependencies\"));\n                    }\n                }\n            }\n        }\n    }\n\n    // \u2500\u2500 Helpers \u2500\u2500\n\n    private static string? FindBypassDefault(SyntaxNode body, string paramId)\n    {\n        foreach (var coalesce in body.DescendantNodes().OfType<BinaryExpressionSyntax>())\n        {\n            if (!coalesce.IsKind(SyntaxKind.CoalesceExpression))\n                continue;\n\n            if (coalesce.Left is IdentifierNameSyntax id && id.Identifier.Text == paramId)\n            {\n                return DescribeDefault(coalesce.Right);\n            }\n        }\n\n        return null;\n    }\n\n    private static string? DescribeDefault(ExpressionSyntax expr)\n    {\n        if (expr is ObjectCreationExpressionSyntax oce\n            && RightmostTypeName(oce.Type) is { } typeName\n            && (typeName.StartsWith(\"Git\", StringComparison.Ordinal) || typeName == \"GitInvoker\"))\n        {\n            return $\"new {typeName}()\";\n        }\n\n        if (expr is MemberAccessExpressionSyntax ma\n            && ma.Name.Identifier.Text == \"System\"\n            && RightmostIdentifier(ma.Expression) == \"TimeProvider\")\n        {\n            return \"TimeProvider.System\";\n        }\n\n        return null;\n    }\n\n    private static bool EnclosingClassHoldsDependencies(SyntaxNode node)\n    {\n        var cls = node.FirstAncestorOrSelf<ClassDeclarationSyntax>();\n        if (cls is null)\n            return false;\n\n        foreach (var field in cls.Members.OfType<FieldDeclarationSyntax>())\n        {\n            var typeName = RightmostTypeName(field.Declaration.Type);\n            if (typeName == \"RelayDriverDependencies\")\n                return true;\n        }\n\n        foreach (var prop in cls.Members.OfType<PropertyDeclarationSyntax>())\n        {\n            var typeName = RightmostTypeName(prop.Type);\n            if (typeName == \"RelayDriverDependencies\")\n                return true;\n        }\n\n        return false;\n    }\n\n    private static string RightmostIdentifier(ExpressionSyntax expr) => expr switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,\n        _ => string.Empty,\n    };\n\n    private static string RightmostTypeName(TypeSyntax type) => type switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text,\n        _ => type.ToString(),\n    };\n\n    private static int LineOf(SourceText text, int position) =>\n        text.Lines.GetLinePosition(position).Line + 1;\n\n    private static string SnippetOf(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DiBypassGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 112
+    },
+    {
+      "turn": 44,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 84200,
+      "tokens_after": 52188
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 22.756,
+      "prompt_tokens_est": 52188,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~DiBypassGuardTests",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 7.754,
+      "result_length": 1669
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 3.673,
+      "prompt_tokens_est": 53755,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet run --project tools/VisualRelay.Audit/VisualRelay.Audit.csproj -- di-bypass 2>&1",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 4.479,
+      "result_length": 1458
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 10.357,
+      "prompt_tokens_est": 54245,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/AuditRenderer.cs",
+        "offset": 50,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1228
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 4.996,
+      "prompt_tokens_est": 54847,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Audit/AuditRenderer.cs",
+        "old_string": "        Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", \"Rule\", \"Findings\"));\n        Console.WriteLine(new string('-', 42));\n        foreach (var (ruleId, count) in rulesWithFindings)\n        {\n            Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", ruleId, count));\n        }\n        Console.WriteLine(new string('-', 42));\n        Console.WriteLine(string.Format(\"{0,-30} {1,>10}\", \"Total\", totalFindings));",
+        "new_string": "        Console.WriteLine(string.Format(\"{0,-30} {1,10}\", \"Rule\", \"Findings\"));\n        Console.WriteLine(new string('-', 42));\n        foreach (var (ruleId, count) in rulesWithFindings)\n        {\n            Console.WriteLine(string.Format(\"{0,-30} {1,10}\", ruleId, count));\n        }\n        Console.WriteLine(new string('-', 42));\n        Console.WriteLine(string.Format(\"{0,-30} {1,10}\", \"Total\", totalFindings));"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 97
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 2.747,
+      "prompt_tokens_est": 55212,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && dotnet run --project tools/VisualRelay.Audit/VisualRelay.Audit.csproj 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.337,
+      "result_length": 2250
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 3.352,
+      "prompt_tokens_est": 55856,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_d9d9ffb26179.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 50784
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 27.116,
+      "prompt_tokens_est": 67204,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 230,
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1640
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 9.501,
+      "prompt_tokens_est": 69161,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ImplementationAlreadyUnderwayAsync\\(",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.237,
+      "result_length": 1550
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 4.458,
+      "prompt_tokens_est": 69983,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs",
+        "offset": 160,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1006
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 12.061,
+      "prompt_tokens_est": 70304,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit 2>&1 | head -40",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 10.828,
+      "result_length": 3337
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 3.895,
+      "prompt_tokens_est": 71642,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit 2>&1 | tail -20",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 9.304,
+      "result_length": 1322
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 4.909,
+      "prompt_tokens_est": 72018,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit 2>&1 >/dev/null; echo \"exit=$?\"",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 9.265,
+      "result_length": 285
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 2.902,
+      "prompt_tokens_est": 72191,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit unknown-rule 2>&1 >/dev/null; echo \"exit=$?\"",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 6.629,
+      "result_length": 400
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 3.386,
+      "prompt_tokens_est": 72371,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay check 2>&1; echo \"exit=$?\"",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.084,
+      "result_length": 297
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 3.266,
+      "prompt_tokens_est": 72602,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14697
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 25.784,
+      "prompt_tokens_est": 76121,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Flags <c>for</c>/<c>while</c> loops containing BOTH a delay call\n/// (<c>Task.Delay</c>/<c>Thread.Sleep</c>) AND an invocation whose receiver or\n/// args involve <c>IGitInvoker</c>, <c>RunAsync</c>, or process types \u2014 the\n/// <c>RunGitAsync</c> bug shape: retrying deterministic failures (e.g. exit-128\n/// <c>fatal: not a git repository</c>).\n///\n/// Reports loop kind, attempt/backoff constants, and whether a failure-classifier\n/// identifier is present. Self-exempts its own fixture files. No I/O.\n/// </summary>\npublic static class RetryDelayLoopsGuard\n{\n    /// <summary>Describes a single retry-delay-loop violation (1-based line).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"RetryDelayLoopsGuard.cs\", \"RetryDelayLoopsGuardTests.cs\"];\n\n    private static readonly HashSet<string> ClassifierHints = new(StringComparer.OrdinalIgnoreCase)\n    {\n        \"isSuccess\", \"isSuccessExit\", \"shouldRetry\", \"canRetry\", \"isTransient\",\n        \"isRetryable\", \"isRecoverable\",\n    };\n\n    private static readonly HashSet<string> DelayMethods =\n        new(StringComparer.Ordinal) { \"Delay\", \"Sleep\" };\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    // \u2500\u2500 Public API \u2500\u2500\n\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var list = new List<Violation>();\n        foreach (var (p, s) in files)\n            if (!SelfExemptFileNames.Contains(Path.GetFileName(p)))\n                Scan(p, CSharpSyntaxTree.ParseText(s, ParseOptions).GetRoot(), s, list);\n        return Sorted(list);\n    }\n\n    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var list = new List<Violation>();\n        foreach (var (p, t) in trees)\n            if (!SelfExemptFileNames.Contains(Path.GetFileName(p)))\n                Scan(p, t.GetRoot(), t.GetText(), list);\n        return Sorted(list);\n    }\n\n    // \u2500\u2500 Core scan \u2500\u2500\n\n    private static void Scan(string path, SyntaxNode root, SourceText text, List<Violation> sink)\n    {\n        foreach (var loop in root.DescendantNodes())\n        {\n            StatementSyntax? body;\n            string kind;\n            if (loop is ForStatementSyntax f)\n            { body = f.Statement; kind = \"for\"; }\n            else if (loop is WhileStatementSyntax w)\n            { body = w.Statement; kind = \"while\"; }\n            else\n                continue;\n\n            if (body is null) continue;\n\n            var invocations = body.DescendantNodes().OfType<InvocationExpressionSyntax>().ToList();\n            if (invocations.Count == 0) continue;\n\n            if (!invocations.Any(IsDelayCall) || !invocations.Any(IsSensitive))\n                continue;\n\n            var constants = ExtractConstants(loop, invocations);\n            var hasClassifier = invocations.Any(HasClassifierIdentifier)\n                                || loop.DescendantNodes().OfType<IdentifierNameSyntax>().Any(id =>\n                                    ClassifierHints.Contains(id.Identifier.Text)\n                                    || id.Identifier.Text.Contains(\"Classifier\", StringComparison.Ordinal)\n                                    || id.Identifier.Text.Contains(\"classifier\", StringComparison.Ordinal));\n\n            var reason = $\"retry-delay-loop: {kind}-loop retries a potentially deterministic failure with delay\" +\n                         (constants.Count > 0 ? $\" (constants: {string.Join(\", \", constants)})\" : \"\") +\n                         (hasClassifier ? \" \u2014 failure classifier present\" : \" \u2014 no failure classifier found\");\n\n            var line = text.Lines.GetLinePosition(loop.GetLocation().SourceSpan.Start).Line + 1;\n            if (IsAllowMarked(text, line)) continue;\n\n            sink.Add(new Violation(path, line, Snippet(text, line), reason));\n        }\n    }\n\n    // \u2500\u2500 Detection predicates \u2500\u2500\n\n    private static bool IsDelayCall(InvocationExpressionSyntax inv)\n    {\n        if (inv.Expression is not MemberAccessExpressionSyntax ma) return false;\n        if (!DelayMethods.Contains(ma.Name.Identifier.Text)) return false;\n        return RightmostId(ma.Expression) is \"Task\" or \"Thread\";\n    }\n\n    private static bool IsSensitive(InvocationExpressionSyntax inv)\n    {\n        if (inv.Expression is not MemberAccessExpressionSyntax ma) return false;\n        var method = ma.Name.Identifier.Text;\n        var recv = RightmostId(ma.Expression);\n\n        // GitInvoker receiver, Process receiver, RunAsync, Process.Start\n        if (recv.Contains(\"GitInvoker\", StringComparison.OrdinalIgnoreCase)\n            || recv.Contains(\"gitInvoker\", StringComparison.OrdinalIgnoreCase)\n            || recv == \"gi\" || recv == \"Process\" || method == \"RunAsync\"\n            || (method == \"Start\" && recv == \"Process\"))\n            return true;\n\n        // Argument is a ProcessStartInfo creation\n        return inv.ArgumentList.Arguments.Any(a =>\n            a.Expression is ObjectCreationExpressionSyntax o\n            && RightmostTypeName(o.Type) == \"ProcessStartInfo\");\n    }\n\n    private static bool HasClassifierIdentifier(InvocationExpressionSyntax inv) =>\n        inv.Ancestors().OfType<StatementSyntax>().Any(stmt =>\n            stmt.DescendantNodes().OfType<IdentifierNameSyntax>().Any(id =>\n                ClassifierHints.Contains(id.Identifier.Text)));\n\n    // \u2500\u2500 Constant extraction \u2500\u2500\n\n    private static List<string> ExtractConstants(SyntaxNode loop, List<InvocationExpressionSyntax> invocations)\n    {\n        var c = new List<string>();\n        foreach (var lit in loop.DescendantNodes().OfType<LiteralExpressionSyntax>())\n        {\n            if (lit.Token.Value is int i && i is > 0 and <= 100\n                && lit.Parent is (BinaryExpressionSyntax or VariableDeclaratorSyntax))\n                c.Add($\"maxAttempts={i}\");\n        }\n\n        foreach (var inv in invocations)\n        {\n            if (!IsDelayCall(inv)) continue;\n            foreach (var arg in inv.ArgumentList.Arguments)\n            {\n                if (arg.Expression is InvocationExpressionSyntax iExpr\n                    && iExpr.Expression is MemberAccessExpressionSyntax m2\n                    && m2.Expression is MemberAccessExpressionSyntax ts\n                    && ts.Name.Identifier.Text is \"FromMilliseconds\" or \"FromSeconds\"\n                    && RightmostId(ts.Expression) == \"TimeSpan\"\n                    && iExpr.ArgumentList.Arguments.Count >= 1\n                    && iExpr.ArgumentList.Arguments[0].Expression is LiteralExpressionSyntax lit\n                    && lit.Token.Value is int val)\n                    c.Add($\"delay={val}{(ts.Name.Identifier.Text == \"FromMilliseconds\" ? \"ms\" : \"s\")}\");\n                else if (arg.Expression is LiteralExpressionSyntax l && l.Token.Value is int ms)\n                    c.Add($\"delay={ms}ms\");\n            }\n        }\n\n        return c.Distinct().Take(6).ToList();\n    }\n\n    // \u2500\u2500 Utility \u2500\u2500\n\n    private static bool IsAllowMarked(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString();\n        return s.Contains(\"// vr-allow-retry-delay-loop:\", StringComparison.Ordinal)\n               && !s.EndsWith(\"vr-allow-retry-delay-loop:\", StringComparison.Ordinal);\n    }\n\n    private static string RightmostId(ExpressionSyntax e) => e switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        MemberAccessExpressionSyntax ma => ma.Name.Identifier.Text,\n        _ => \"\",\n    };\n\n    private static string RightmostTypeName(TypeSyntax t) => t switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text,\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text,\n        _ => t.ToString(),\n    };\n\n    private static string Snippet(SourceText t, int line)\n    {\n        var s = t.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n\n    private static IReadOnlyList<Violation> Sorted(List<Violation> list)\n    {\n        list.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return list;\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 118
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 3.253,
+      "prompt_tokens_est": 78337,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "wc -l /Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs /Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DiBypassGuard.cs /Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealWaitsGuard.cs /Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/TestSideEffectsGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.059,
+      "result_length": 354
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 4.625,
+      "prompt_tokens_est": 78619,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay check 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.659,
+      "result_length": 468
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 4.641,
+      "prompt_tokens_est": 78877,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs",
+        "old_string": "                Scan(p, CSharpSyntaxTree.ParseText(s, ParseOptions).GetRoot(), s, list);",
+        "new_string": "                Scan(p, CSharpSyntaxTree.ParseText(s, ParseOptions).GetRoot(),\n                    CSharpSyntaxTree.ParseText(s, ParseOptions).GetText(), list);"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 105
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 4.854,
+      "prompt_tokens_est": 79112,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RetryDelayLoopsGuard.cs",
+        "new_string": "    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var list = new List<Violation>();\n        foreach (var (p, s) in files)\n        {\n            if (SelfExemptFileNames.Contains(Path.GetFileName(p)))\n                continue;\n            var t = CSharpSyntaxTree.ParseText(s, ParseOptions);\n            Scan(p, t.GetRoot(), t.GetText(), list);\n        }\n        return Sorted(list);\n    }",
+        "old_string": "    public static IReadOnlyList<Violation> FindViolations(IEnumerable<(string Path, string Source)> files)\n    {\n        var list = new List<Violation>();\n        foreach (var (p, s) in files)\n            if (!SelfExemptFileNames.Contains(Path.GetFileName(p)))\n                Scan(p, CSharpSyntaxTree.ParseText(s, ParseOptions).GetRoot(),\n                    CSharpSyntaxTree.ParseText(s, ParseOptions).GetText(), list);\n        return Sorted(list);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 105
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 2.198,
+      "prompt_tokens_est": 79499,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay check 2>&1",
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 120.085,
+      "result_length": 2324
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 2.737,
+      "prompt_tokens_est": 80214,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "tail -5 /Users/admin/Dev/visual-relay/.swival/cmd_output_c0485cfd0c47.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.192,
+      "result_length": 528
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 4.484,
+      "prompt_tokens_est": 80408,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "--filter",
+          "FullyQualifiedName~RetryDelayLoopsGuardTests|FullyQualifiedName~DiBypassGuardTests|FullyQualifiedName~RealWaitsGuardTests|FullyQualifiedName~TestSideEffectsGuardTests|FullyQualifiedName~AuditGuardSmokeTests"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 10.502,
+      "result_length": 2948
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 9.24,
+      "prompt_tokens_est": 81528,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit 2>&1 | grep -E \"^(===|\\-)\" ",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 11.074,
+      "result_length": 244
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 2.93,
+      "prompt_tokens_est": 82086,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && ./visual-relay audit retry-delay-loops 2>&1 | tail -15",
+        "timeout": 60
+      },
+      "succeeded": true,
+      "duration_s": 7.821,
+      "result_length": 911
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 11.202,
+      "prompt_tokens_est": 82339,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Run tests to verify they pass",
+          "Run ./visual-relay audit end-to-end and fix false positives"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 646
+    },
+    {
+      "turn": 70,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83035,
+      "tokens_after": 61093
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 14.444,
+      "prompt_tokens_est": 61093,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

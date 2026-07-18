@@ -129,6 +129,10 @@ public sealed partial class SplitGuardVerificationTests
             // sets/clears a unique process env marker in try/finally to prove that
             // envRemove actually strips keys from the spawned child environment.
             if (Path.GetFileName(file) == "SandboxEnvForwardingTests.cs") continue;
+            // TestSideEffectsGuardTests.cs contains inline source snippets as string
+            // constants that include Environment.SetEnvironmentVariable — these are
+            // test-data strings, not actual env-mutating calls.
+            if (Path.GetFileName(file) == "TestSideEffectsGuardTests.cs") continue;
 
             var content = File.ReadAllText(file);
             if (content.Contains("Environment.SetEnvironmentVariable", StringComparison.Ordinal))

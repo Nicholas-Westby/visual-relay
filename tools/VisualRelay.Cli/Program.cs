@@ -35,6 +35,7 @@ return cmd switch
     "inspect" => InspectCommand.Run(paths),
     "gen-backend-config" => PassthroughCommand.GenBackendConfig(paths, rest),
     "guards" => PassthroughCommand.Guards(paths, rest),
+    "audit" => PassthroughCommand.Audit(paths, rest),
     "install-hooks" => await InstallHooksCommand.RunAsync(paths, new GitInvoker()),
     "bump-version" => BumpVersionCommand.Run(paths),
     "provision-mxc" => ProvisionMxcCommand.Run(),
