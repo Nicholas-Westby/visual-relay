@@ -51,12 +51,12 @@ public sealed class RealGitIntegrationDriverTests
 
         var executeOptions = new RelayDriverOptions(CreateGitCommit: true, Resume: true);
         var driverA = new RelayDriver(
-            RelayDriverDependencies.ForTests(runnerA, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runnerA, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()),
             executeOptions);
         Assert.Equal(RelayTaskOutcomeStatus.Committed, (await driverA.RunTaskAsync(repo.Root, "task-a")).Status);
 
         var driverB = new RelayDriver(
-            RelayDriverDependencies.ForTests(runnerB, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runnerB, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()),
             executeOptions);
         Assert.Equal(RelayTaskOutcomeStatus.Committed, (await driverB.RunTaskAsync(repo.Root, "task-b")).Status);
 
@@ -83,7 +83,7 @@ public sealed class RealGitIntegrationDriverTests
         var root = Path.Combine(Path.GetTempPath(), "vr-realgit-vw-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = new RelayDriver(RelayDriverDependencies.ForTests(
-            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()));
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()));
         string? worktree = null;
         try
         {

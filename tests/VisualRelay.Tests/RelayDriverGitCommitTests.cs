@@ -95,7 +95,7 @@ public sealed class RelayDriverGitCommitTests
 
         var runner = new MidRunCommittingSubagentRunner(repo.Root);
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()),
             RelayDriverOptions.Default);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "ship-status");

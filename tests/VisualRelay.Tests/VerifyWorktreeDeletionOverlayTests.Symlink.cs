@@ -11,7 +11,7 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-del-dangling-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var driver = new RelayDriver(RelayDriverDependencies.ForTests(
-            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink()));
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()));
         string? worktree = null;
         try
         {
