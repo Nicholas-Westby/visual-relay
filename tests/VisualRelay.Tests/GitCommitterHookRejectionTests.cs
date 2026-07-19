@@ -32,7 +32,7 @@ public sealed class GitCommitterHookRejectsFirstTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, sim, timeProvider: time);
+            sim, CancellationToken.None, timeProvider: time);
         while (!task.IsCompleted)
         {
             time.Advance(TimeSpan.FromMilliseconds(250));
@@ -64,7 +64,7 @@ public sealed class GitCommitterHookRejectsAllTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, sim, timeProvider: time);
+            sim, CancellationToken.None, timeProvider: time);
         while (!task.IsCompleted)
         {
             time.Advance(TimeSpan.FromMilliseconds(250));

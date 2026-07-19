@@ -25,7 +25,7 @@ public sealed class RelayDriverProfileIsolationTests
         var realConfigDir = XdgConfig.ResolveConfigDir(realEnv);
 
         var deps = RelayDriverDependencies.ForTests(
-            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink());
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), new NullGitInvoker());
         var isolated = NonoProfileEnsurer.ResolveProfilePath(deps.EnvironmentAccessor);
 
         // Lands under the process temp dir, in a visual-relay/vr-guard.json leaf …
@@ -92,6 +92,7 @@ public sealed class RelayDriverProfileIsolationTests
                     runner,
                     new ScriptedTestRunner(new TestRunResult(1, "red"), new TestRunResult(0, "green")),
                     new InMemoryRelayEventSink(),
+                    new NullGitInvoker(),
                     environmentAccessor: env),
                 RelayDriverOptions.NoGitCommit);
 

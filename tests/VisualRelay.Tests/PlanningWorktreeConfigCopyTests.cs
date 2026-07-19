@@ -65,7 +65,7 @@ public sealed class PlanningWorktreeConfigCopyTests
             await CommitAll(root, "seed"); // commits .gitignore + tracked.txt only; .relay ignored
 
             // Sanity: the clean checkout does NOT contain the git-ignored config.
-            worktree = await PlanningWorktree.CreateAsync(root, "cfg-task", "run-cfg", CancellationToken.None, new GitSimEngine());
+            worktree = await PlanningWorktree.CreateAsync(root, "cfg-task", "run-cfg", new GitSimEngine(), CancellationToken.None);
             Assert.False(File.Exists(Path.Combine(worktree, ".relay", "config.json")),
                 "pre-condition: the detached checkout must lack the git-ignored config");
 
@@ -85,7 +85,7 @@ public sealed class PlanningWorktreeConfigCopyTests
         finally
         {
             if (worktree is not null)
-                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None, new GitSimEngine());
+                await PlanningWorktree.RemoveAsync(root, worktree, new GitSimEngine(), CancellationToken.None);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -109,7 +109,7 @@ public sealed class PlanningWorktreeConfigCopyTests
             await File.WriteAllTextAsync(Path.Combine(root, "tracked.txt"), "tracked");
             await CommitAll(root, "seed"); // no .relay/config.json anywhere
 
-            worktree = await PlanningWorktree.CreateAsync(root, "nocfg-task", "run-nocfg", CancellationToken.None, new GitSimEngine());
+            worktree = await PlanningWorktree.CreateAsync(root, "nocfg-task", "run-nocfg", new GitSimEngine(), CancellationToken.None);
 
             // Best-effort copy must not throw when the source has no config.
             var ex = Record.Exception(() => PlanningWorktree.CopyConfigIntoWorktree(root, worktree));
@@ -127,7 +127,7 @@ public sealed class PlanningWorktreeConfigCopyTests
         finally
         {
             if (worktree is not null)
-                await PlanningWorktree.RemoveAsync(root, worktree, CancellationToken.None, new GitSimEngine());
+                await PlanningWorktree.RemoveAsync(root, worktree, new GitSimEngine(), CancellationToken.None);
             TestFileSystem.DeleteDirectoryResilient(root);
         }
     }
@@ -168,12 +168,7 @@ public sealed class PlanningWorktreeConfigCopyTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root,
-            tasks: [("ignored-cfg", runner)],
-            config: config,
-            testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("ignored-cfg", runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);

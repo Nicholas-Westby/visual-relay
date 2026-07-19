@@ -46,7 +46,7 @@ public sealed class WorktreeResetterTests
         // Modify the tracked file.
         await File.WriteAllTextAsync(filePath, "modified");
 
-        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         var actual = await File.ReadAllTextAsync(filePath);
         Assert.Equal("original", actual);
@@ -68,7 +68,7 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(untrackedPath)!);
         await File.WriteAllTextAsync(untrackedPath, "new file");
 
-        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.False(result.SnapshotMissing);
         Assert.False(File.Exists(untrackedPath), "authored untracked file should be deleted");
@@ -89,7 +89,7 @@ public sealed class WorktreeResetterTests
         // The snapshot lists it as pre-run.
         await WritePreRunSnapshot(repo.Root, "test-task", "pre-existing.log");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(preExistingPath), "pre-existing untracked file should be preserved");
     }
@@ -112,7 +112,7 @@ public sealed class WorktreeResetterTests
         var needsReviewPath = Path.Combine(artifactDir, "NEEDS-REVIEW");
         await File.WriteAllTextAsync(needsReviewPath, "needs review reason");
 
-        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.False(result.SnapshotMissing);
         Assert.True(File.Exists(needsReviewPath), ".relay/ artifact should be preserved");
@@ -134,7 +134,7 @@ public sealed class WorktreeResetterTests
         await File.WriteAllTextAsync(tasksFilePath, "# task");
 
         await WritePreRunSnapshot(repo.Root, "test-task");
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
+        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(tasksFilePath), "tasks-dir file should be preserved");
     }
@@ -154,7 +154,7 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(untrackedPath)!);
         await File.WriteAllTextAsync(untrackedPath, "untracked");
 
-        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         // SnapshotMissing = true: resetter refused to act on unknown baseline.
         Assert.True(result.SnapshotMissing, "should report snapshot missing");
@@ -175,7 +175,7 @@ public sealed class WorktreeResetterTests
         // No git init — just a plain temp directory.
 
         var exception = await Record.ExceptionAsync(
-            () => WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine()));
+            () => WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None));
 
         Assert.Null(exception);
     }
@@ -191,7 +191,7 @@ public sealed class WorktreeResetterTests
         var filePath = await InitRepoWithTrackedFile(repo.Root, "src/foo.cs", "original");
         // Tree is already clean (no modifications, no untracked).
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         // The tracked file is untouched.
         var actual = await File.ReadAllTextAsync(filePath);
@@ -213,7 +213,7 @@ public sealed class WorktreeResetterTests
         var sim = new GitSimEngine();
         await sim.Git(repo.Root, "add", "src/foo.cs");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, sim);
+        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, sim, CancellationToken.None);
 
         // Working tree must be back to HEAD.
         var actual = await File.ReadAllTextAsync(filePath);
@@ -248,7 +248,7 @@ public sealed class WorktreeResetterTests
         await File.WriteAllTextAsync(preExistingPath, "pre-existing");
         await WritePreRunSnapshot(repo.Root, "test-task", "scratch.log");
 
-        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, CancellationToken.None, new GitSimEngine());
+        _ = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         // Tracked reverted.
         Assert.Equal("original", await File.ReadAllTextAsync(Path.Combine(repo.Root, "src", "foo.cs")));
@@ -279,7 +279,7 @@ public sealed class WorktreeResetterTests
         Directory.CreateDirectory(Path.GetDirectoryName(tasksDirPath)!);
         await File.WriteAllTextAsync(tasksDirPath, "# pending");
 
-        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
+        var result = await WorktreeResetter.ResetAsync(repo.Root, "test-task", tasksDir: tasksDir, new GitSimEngine(), CancellationToken.None);
 
         Assert.False(result.SnapshotMissing);
 

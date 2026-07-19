@@ -79,7 +79,7 @@ public sealed class RelayDriverGitCommitGitignoredBackstopTests
             """);
         var sink = new InMemoryRelayEventSink();
         var config = ManifestExistenceRetryConfig();
-        var runner = new SwivalSubagentRunner(config, script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var stage4 = RelayStages.All[3]; // stage 4 Plan

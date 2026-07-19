@@ -94,7 +94,7 @@ public sealed class SandboxDiagnosticsToggleTests
     public void SwivalLaunch_QuietByDefault_IncludesSilent()
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
-        var runner = new SwivalSubagentRunner(TestConfig(), backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (_, args) = runner.BuildLaunchTarget(swivalArgs);
@@ -107,7 +107,7 @@ public sealed class SandboxDiagnosticsToggleTests
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var runner = new SwivalSubagentRunner(
-            TestConfig(), backendProbe: SwivalTestHelpers.AlwaysReady, verboseDiagnostics: true);
+            TestConfig(), new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady, verboseDiagnostics: true);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (_, args) = runner.BuildLaunchTarget(swivalArgs);

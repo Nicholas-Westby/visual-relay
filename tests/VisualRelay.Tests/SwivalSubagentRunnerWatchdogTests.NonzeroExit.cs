@@ -50,7 +50,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStageFailures = 3
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -129,7 +129,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 30_000,
             MaxStageFailures = 2  // two escalation attempts before flagging
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -203,7 +203,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             },
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));

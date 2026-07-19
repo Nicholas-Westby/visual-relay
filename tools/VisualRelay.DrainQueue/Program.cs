@@ -35,7 +35,7 @@ var planTestRunner = new SandboxedTestRunner(
     new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics);
 
 ISubagentRunner PlanSubagentFactory(string taskId) =>
-    new SwivalSubagentRunner(config, eventSink: new ConsoleRelayEventSink(taskId), verboseDiagnostics: verboseDiagnostics);
+    new SwivalSubagentRunner(config, new GitInvoker(), eventSink: new ConsoleRelayEventSink(taskId), verboseDiagnostics: verboseDiagnostics);
 
 // PlanPhaseRunner internally creates FileRelayEventSink for each planning task.
 // The ConsoleRelayEventSink gives attributable interleaved console output.

@@ -102,7 +102,7 @@ public sealed class SwivalSubagentRunnerToolPreflightTests
         // A swival binary name guaranteed not to resolve against any PATH dir.
         var absent = "swival-" + Guid.NewGuid().ToString("N");
         var runner = new SwivalSubagentRunner(
-            SandboxOnConfig(), absent, backendProbe: SwivalTestHelpers.AlwaysReady);
+            SandboxOnConfig(), new NullGitInvoker(), absent, backendProbe: SwivalTestHelpers.AlwaysReady);
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
 

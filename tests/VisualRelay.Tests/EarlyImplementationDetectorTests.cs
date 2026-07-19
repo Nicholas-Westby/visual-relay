@@ -49,7 +49,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.True(result);
     }
@@ -67,7 +67,7 @@ public sealed class EarlyImplementationDetectorTests
         // Manifest uses '+' prefix for new files.
         var manifest = new[] { "+src/new.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.True(result);
     }
@@ -81,7 +81,7 @@ public sealed class EarlyImplementationDetectorTests
         // Leave the committed file unchanged.
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.False(result);
     }
@@ -99,7 +99,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "docs/README.md" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.False(result);
     }
@@ -118,7 +118,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "tests/x.tests.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None, isTestFile: IsTestFile);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None, isTestFile: IsTestFile);
 
         Assert.False(result);
     }
@@ -137,7 +137,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None, isTestFile: IsTestFile);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None, isTestFile: IsTestFile);
 
         Assert.True(result);
     }
@@ -151,7 +151,7 @@ public sealed class EarlyImplementationDetectorTests
         // Manifest contains only a non-code file.
         var manifest = new[] { "docs/README.md" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.False(result);
     }
@@ -168,7 +168,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, CancellationToken.None);
+            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
 
         // Must return false: no HEAD baseline available → safe-off.
         Assert.False(result);
@@ -181,7 +181,7 @@ public sealed class EarlyImplementationDetectorTests
         InitGitRepo(repo.Root);
 
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, [], IsImpl, CancellationToken.None);
+            repo.Root, [], IsImpl, new GitInvoker(), CancellationToken.None);
 
         Assert.False(result);
     }

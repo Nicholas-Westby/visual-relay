@@ -29,7 +29,7 @@ public sealed class ConsoleTaskRunner(
         var fileSink = new FileRelayEventSink(
             Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(consoleSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics);
+        var subagentRunner = new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: verboseDiagnostics);
         var deps = new RelayDriverDependencies(
             subagentRunner, testRunner, sink, new GitInvoker(), environmentAccessor);
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));

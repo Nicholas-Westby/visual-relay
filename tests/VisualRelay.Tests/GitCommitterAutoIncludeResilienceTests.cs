@@ -25,7 +25,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Create a real authored file AND a sibling whose path we will
@@ -68,7 +68,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Real git needs core.quotePath=false to emit non-ASCII paths verbatim
@@ -89,7 +89,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -108,7 +108,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // (No core.quotePath setup needed — see comment above; GitSim always
@@ -127,7 +127,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -141,7 +141,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.DoesNotContain(relTaskPath, missed);
     }
 
@@ -163,7 +163,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         Write(repo, unicodeName, "log");
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
 
         Assert.Contains(unicodeName, snapshot);
     }
@@ -190,7 +190,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
         var quotedInvoker = new QuotedPathGitInvoker(sim, quotedName);
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, quotedInvoker);
+            repo.Root, quotedInvoker, CancellationToken.None);
 
         // The snapshot must contain the DECODED (real) path, not the C-quoted form.
         Assert.Contains(realName, snapshot);

@@ -14,7 +14,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         sim.Commit(repo.Root, "chore: seed");
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
 
         Assert.NotNull(snapshot);
         Assert.Empty(snapshot);
@@ -33,7 +33,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         Write(repo, "debug.log", "ignored");
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
 
         Assert.NotNull(snapshot);
         Assert.DoesNotContain("debug.log", snapshot);
@@ -51,7 +51,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         Write(repo, "scratch/notes.txt", "notes");
 
         var snapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
 
         Assert.NotNull(snapshot);
         Assert.Contains("scratch/notes.txt", snapshot);
@@ -70,7 +70,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Author a new file and commit it (simulating a correct commit).
@@ -82,14 +82,14 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: no authored file should remain untracked.
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.Empty(missed);
     }
 
@@ -104,7 +104,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Author a new file but do NOT commit it.
@@ -117,14 +117,14 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: the authored test file is still untracked.
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.Contains("tests/new-test.cs", missed);
     }
 
@@ -139,7 +139,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Create an internal artifact that the run produced.
@@ -153,13 +153,13 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         // The new test file IS missed (authored but not committed).
         Assert.Contains("tests/new-test.py", missed);
         // The internal artifact is NOT reported as missed.
@@ -185,7 +185,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
         Write(repo, "logs/debug.log", "debug");
 
         var first = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.NotEmpty(first);
 
         // Write snapshot to file (mimics pre-run-untracked.txt persistence).
@@ -205,7 +205,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
 
         // Capture again — nothing changed on disk.
         var second = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
 
         // The two snapshots must be identical.
         Assert.Equal(first.Count, second.Count);

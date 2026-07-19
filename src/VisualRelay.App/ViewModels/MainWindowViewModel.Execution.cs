@@ -83,7 +83,7 @@ public partial class MainWindowViewModel
                 new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
 
             ISubagentRunner PlanSubagentFactory(string _) =>
-                new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
+                new SwivalSubagentRunner(config, new GitInvoker(), eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
             var planTestRunner = new SandboxedTestRunner(
                 new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, VerboseSandboxDiagnostics);
 

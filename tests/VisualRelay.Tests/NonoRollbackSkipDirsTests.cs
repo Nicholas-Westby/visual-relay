@@ -173,7 +173,7 @@ public sealed class NonoRollbackSkipDirsTests
     }
 
     [Fact]
-    public async Task ComputeAsync_NullGitInvoker_DefaultsToRealGit_AndStillSizeGatesIgnoredDirs()
+    public async Task ComputeAsync_RealGitInvoker_SizeGatesIgnoredDirs()
     {
         // Regression guard for the production wiring gap: SwivalSubagentRunner was
         // constructed WITHOUT a gitInvoker at every production site, which silently
@@ -191,13 +191,12 @@ public sealed class NonoRollbackSkipDirsTests
             File.WriteAllText(Path.Combine(root, "big", "blob.bin"), new string('z', 8_000));
             TestGit.Run(root, "add", ".gitignore", "tracked.txt");
 
-            // gitInvoker: null → must fall back to a REAL GitInvoker (not the
-            // always-list only), so the ignored "big" dir is still size-gated in.
+            // gitInvoker: new GitInvoker() — the ignored "big" dir is size-gated in.
             var result = await NonoRollbackSkipDirs.ComputeAsync(
-                root, gitInvoker: null, CancellationToken.None, thresholdBytes: 1_000);
+                root, gitInvoker: new GitInvoker(), CancellationToken.None, thresholdBytes: 1_000);
 
             Assert.Contains(".git", result);
-            Assert.Contains("big", result); // proves real git ran despite the null invoker
+            Assert.Contains("big", result); // proves real git ran
         }
         finally
         {

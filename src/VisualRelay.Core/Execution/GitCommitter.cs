@@ -12,12 +12,12 @@ internal static partial class GitCommitter
         string? commitToken,
         IReadOnlySet<string>? preRunUntracked,
         string? tasksDir,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null,
         string? runBaseSha = null,
         TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         var inside = await GitAsync(gi, rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken, timeProvider: tp);
         if (inside.ExitCode != 0)
@@ -134,7 +134,7 @@ internal static partial class GitCommitter
         // outside src/tests/tools must not be silently dropped either.
         if (preRunUntracked is not null)
         {
-            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi, timeProvider: tp);
+            var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, gi, cancellationToken, timeProvider: tp);
             var newAuthored = new List<string>();
             foreach (var path in currentUntracked)
             {

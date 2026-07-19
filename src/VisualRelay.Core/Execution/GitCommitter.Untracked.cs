@@ -15,11 +15,11 @@ internal static partial class GitCommitter
     /// </summary>
     public static async Task<IReadOnlySet<string>> CaptureUntrackedSnapshotAsync(
         string rootPath,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null,
         TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         var result = await GitAsync(gi, rootPath, ["-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard"], cancellationToken, timeProvider: tp);
         if (result.ExitCode != 0)
@@ -72,12 +72,12 @@ internal static partial class GitCommitter
         string rootPath,
         IReadOnlySet<string> preRunUntracked,
         string? tasksDir,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null,
         TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
-        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, gi, timeProvider);
+        var gi = gitInvoker;
+        var currentUntracked = await CaptureUntrackedSnapshotAsync(rootPath, gi, cancellationToken, timeProvider);
         var missed = new List<string>();
         foreach (var path in currentUntracked)
         {

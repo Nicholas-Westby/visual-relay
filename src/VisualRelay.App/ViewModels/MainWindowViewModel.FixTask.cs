@@ -60,7 +60,7 @@ public partial class MainWindowViewModel
 
         var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var runner = FixTaskRunnerFactory?.Invoke(config)
-            ?? new SwivalSubagentRunner(config,
+            ?? new SwivalSubagentRunner(config, new GitInvoker(),
                 eventSink: new ObservableRelayEventSink(HandleRelayEvent),
                 verboseDiagnostics: VerboseSandboxDiagnostics);
 

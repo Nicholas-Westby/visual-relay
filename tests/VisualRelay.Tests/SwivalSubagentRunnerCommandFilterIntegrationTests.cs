@@ -31,7 +31,7 @@ public sealed class SwivalSubagentRunnerCommandFilterIntegrationTests
             printf '```json\n{"findings":"ran with filtered commands","constraints":[]}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(SwivalTestHelpers.TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(SwivalTestHelpers.TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var stage = new RelayStageDefinition(
             2, "Research", "cheap", "llm", "some",
@@ -75,7 +75,7 @@ public sealed class SwivalSubagentRunnerCommandFilterIntegrationTests
             exit 0
             """);
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(SwivalTestHelpers.TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(SwivalTestHelpers.TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var stage = new RelayStageDefinition(
             2, "Research", "cheap", "llm", "some",

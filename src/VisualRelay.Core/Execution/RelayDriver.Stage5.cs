@@ -43,7 +43,7 @@ public sealed partial class RelayDriver
         // (compile failures count as red), and restores them. Stage 6
         // starts with a clean base: only test edits present.
         var filterResult = await WorktreeFilter.DiscardNonTestEditsAsync(
-            rootPath, testFiles, config.TasksDir, cancellationToken, _dependencies.GitInvoker);
+            rootPath, testFiles, config.TasksDir, _dependencies.GitInvoker, cancellationToken);
 
         // Record the ledger note BEFORE the error check so the discarded
         // inventory is captured even when an Error causes a flag.
@@ -166,7 +166,7 @@ public sealed partial class RelayDriver
         if (!config.DownshiftOnEarlyImplementation)
             return currentValue;
         return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            rootPath, manifest, IsImpl, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
+            rootPath, manifest, IsImpl, _dependencies.GitInvoker, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
     }
 
     /// <summary>

@@ -40,7 +40,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 8_000,  // backstop (first-output window 3s + ~5s)
             MaxStageFailures = 2
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(
@@ -77,7 +77,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             SubagentTimeoutMilliseconds = 7_000,  // backstop (first-output window 2s + ~5s)
             MaxStageFailures = 2
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var sw = System.Diagnostics.Stopwatch.StartNew();

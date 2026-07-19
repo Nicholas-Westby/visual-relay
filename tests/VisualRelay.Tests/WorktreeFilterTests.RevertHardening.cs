@@ -63,7 +63,7 @@ public sealed partial class WorktreeFilterTests
             _ => Task.FromResult((0, "R100\0b.txt\0c.txt\0", false)));
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["b.txt"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, ["b.txt"], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         // ── CRITICAL assertion ──────────────────────────────────
         // The rename destination c.txt must survive — it holds the
@@ -136,7 +136,7 @@ public sealed partial class WorktreeFilterTests
             _ => Task.FromResult((0, "R100\0prod.cs\0my.Tests.cs\0", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["my.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, ["my.Tests.cs"], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.Null(result.Error);
 
@@ -196,7 +196,7 @@ public sealed partial class WorktreeFilterTests
         await sim.Git(repo.Root, "add", "-A");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new HeadCheckoutAwareGitInvoker(sim));
+            repo.Root, [], tasksDir: null, new HeadCheckoutAwareGitInvoker(sim), CancellationToken.None);
 
         Assert.Null(result.Error);
 
@@ -239,7 +239,7 @@ public sealed partial class WorktreeFilterTests
             _ => Task.FromResult((1, "simulated transient checkout failure", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, [], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         // ── CRITICAL assertion ──────────────────────────────
         // The production file must still exist — it was in HEAD

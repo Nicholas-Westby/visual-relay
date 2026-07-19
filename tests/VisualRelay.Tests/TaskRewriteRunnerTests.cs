@@ -81,7 +81,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
             Assert.True(outcome.Changed);
@@ -113,7 +113,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
@@ -136,7 +136,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = OriginalSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed, "unchanged spec must report Changed=false");
             Assert.Equal(OriginalSpec, ReadSpec(root, task.Id));
@@ -164,7 +164,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -196,7 +196,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteDiagnosticFailureRunner();
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -244,7 +244,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: env);
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: env);
 
             Assert.True(outcome.Changed);
             Assert.True(File.Exists(profilePath),
@@ -279,7 +279,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, "task-a"));

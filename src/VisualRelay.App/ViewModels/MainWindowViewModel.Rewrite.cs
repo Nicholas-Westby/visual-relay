@@ -59,7 +59,7 @@ public partial class MainWindowViewModel
 
         var config = await RelayConfigLoader.LoadAsync(RootPath, ct);
         var runner = RewriteRunnerFactory?.Invoke(config)
-            ?? new SwivalSubagentRunner(config, eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
+            ?? new SwivalSubagentRunner(config, new GitInvoker(), eventSink: new ObservableRelayEventSink(HandleRelayEvent), verboseDiagnostics: VerboseSandboxDiagnostics);
 
         // Run the rewrite on a background task — do NOT block the UI thread.
         var rewriteTask = Task.Run(async () =>
@@ -67,8 +67,9 @@ public partial class MainWindowViewModel
             RewriteOutcome outcome;
             try
             {
+                var rewriteGitInvoker = RewriteGitInvokerForTests ?? new GitInvoker();
                 outcome = await TaskRewriteRunner.RunAsync(
-                    RootPath, task, config, runner, ct, git: RewriteGitInvokerForTests, environment: EnvironmentAccessor);
+                    RootPath, task, config, runner, rewriteGitInvoker, ct, environment: EnvironmentAccessor);
             }
             catch (Exception ex)
             {

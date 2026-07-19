@@ -27,7 +27,7 @@ public sealed class GitCommitterProbeRetryTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim, timeProvider: time);
+            shim, CancellationToken.None, timeProvider: time);
         while (!task.IsCompleted)
         {
             time.Advance(TimeSpan.FromMilliseconds(250));
@@ -59,7 +59,7 @@ public sealed class GitCommitterProbePersistentTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim, timeProvider: time);
+            shim, CancellationToken.None, timeProvider: time);
         // Deterministic failures return immediately — no time advance needed.
         Assert.True(task.IsCompleted, "deterministic failure should complete synchronously (no delay)");
         var result = await task;
@@ -91,7 +91,7 @@ public sealed class GitCommitterAddRetryTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim, timeProvider: time);
+            shim, CancellationToken.None, timeProvider: time);
         while (!task.IsCompleted)
         {
             time.Advance(TimeSpan.FromMilliseconds(250));
@@ -120,7 +120,7 @@ public sealed class GitCommitterPersistentTimingTests
         var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: test"], [], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, shim, timeProvider: time);
+            shim, CancellationToken.None, timeProvider: time);
         while (!task.IsCompleted)
         {
             time.Advance(TimeSpan.FromMilliseconds(250));

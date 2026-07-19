@@ -13,8 +13,7 @@ public sealed partial class SwivalSubagentRunnerGuardTests
         // runner would try to spawn it and throw, so reaching a clean failure
         // result proves swival was never spawned.
         var runner = new SwivalSubagentRunner(
-            TestConfig(),
-            swivalBinary: "/nonexistent/swival",
+            TestConfig(), new NullGitInvoker(), swivalBinary: "/nonexistent/swival",
             backendProbe: _ => Task.FromResult(new BackendReadiness(false, "backend down at http://127.0.0.1:4000")));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -39,8 +38,7 @@ public sealed partial class SwivalSubagentRunnerGuardTests
             "#!/bin/bash\necho '{\"summary\":\"ok\"}'\n");
         var callCount = 0;
         var runner = new SwivalSubagentRunner(
-            TestConfig(),
-            swivalBinary: script,
+            TestConfig(), new NullGitInvoker(), swivalBinary: script,
             backendProbe: _ =>
             {
                 Interlocked.Increment(ref callCount);

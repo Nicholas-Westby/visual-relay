@@ -1,0 +1,2208 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-19T00:25:35.733988+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 04-required-git-invoker-threading\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Make git invoker threading compiler-enforced in the execution layer\n\n`EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync` defaults its\noptional parameter to `gitInvoker ?? new GitInvoker()`, and BOTH driver call\nsites omit the argument (the stage-4 site in RelayDriver.cs and the stage-5\nrecheck in RelayDriver.Stage5.cs). Result: every driver run spawns a real\n`git rev-parse` process twice (~50-60ms each in the test VM) even in tests that\nare nominally git-free \u2014 the exact hole the earlier \"NullGitInvoker by default\"\nhermeticity commit tried to close. The root cause is the pattern, not the one\nmethod: an optional parameter defaulting to a real process invoker makes\nomission invisible. Remove the option; let the compiler enforce threading.\n\n## Prescribed approach\n\nWithin src/VisualRelay.Core/Execution the `IGitInvoker` parameter becomes\nREQUIRED everywhere. Composition boundaries outside the execution layer\n(src/VisualRelay.Core/Init, the CLI, the App) keep constructing the real\n`GitInvoker` and passing it down \u2014 production behavior is unchanged.\n\n### Steps\n\n1. Fix the bug: pass `_dependencies.GitInvoker` at both\n   `EarlyImplementationDetector` call sites (RelayDriver.cs stage-4 block,\n   `RecheckEarlyImplementationAsync` in RelayDriver.Stage5.cs).\n2. Make the parameter required (drop `? = null` and the `?? new GitInvoker()`\n   fallback) across the execution layer: `EarlyImplementationDetector`\n   (reorder it before the optional `isTestFile`), `RedGate` (all overloads),\n   `AuthorTestGate.RunAsync`, `WorktreeFilter.DiscardNonTestEditsAsync`,\n   `GitCommitter` public entry points, and\n   `PlanningWorktree.CreateAsync/RemoveAsync/PruneLeftoversAsync/PruneTaskLeftoversAsync`.\n   Follow the compiler errors: driver-internal callers already pass\n   `_dependencies.GitInvoker`; any caller outside the execution layer that\n   relied on a default now constructs `new GitInvoker()` explicitly at its\n   composition boundary and threads it through.\n3. Add the guard: `RealGitFallbackGuard` matcher in tools/VisualRelay.Guards\n   (both `(Path, Source)` and `(Path, SyntaxTree)` overloads) flagging, for\n   files under src/VisualRelay.Core/Execution: any `new GitInvoker(` object\n   creation, and any `IGitInvoker` parameter that declares a default value.\n   Allowlist: empty \u2014 after step 2 there must be zero of either. Add\n   `RealGitFallbackGuardTests`: inline-snippet unit tests for the matcher plus\n   a live-tree test consuming the constructor-injected\n   `CachedSyntaxTreesFixture` filtered to `src/`, in the exact\n   `DeadConfigFieldGuardTests` shape (one parse for the whole assembly \u2014 keep\n   the meta-test millisecond-fast).\n4. Add the behavioral regression test: introduce a small `RecordingGitInvoker`\n   test double (wraps an inner `IGitInvoker`, records argument vectors) if none\n   exists, wrap a `GitSimEngine`, inject via\n   `RelayDriverDependencies.ForTests(..., gitInvoker: recorder)`, drive one\n   happy-path run, and assert the recorded calls include\n   `rev-parse --is-inside-work-tree` \u2014 proving the stage-4 early-implementation\n   probe flows through the INJECTED invoker rather than a private real one.\n5. Confirm with `./visual-relay audit di-bypass` (task 01): the execution layer\n   must report zero optional-collaborator defaults afterward.\n\n### Guardrails\n\n- Do NOT touch src/VisualRelay.Core/Init \u2014 its `gitInvoker ?? new GitInvoker()`\n  defaults are genuine composition-boundary conveniences for CLI-driven\n  bootstrap, out of this task's scope and excluded from the guard.\n- Production wiring must not change: the App/CLI still use the real invoker;\n  this task only makes the threading explicit.\n- The guard stays a guard-as-test; do not add it to the `check` gate or the\n  standalone guards CLI subcommand list.\n\n## Done when\n\nBoth call sites thread the injected invoker; the execution layer compiles with\nrequired `IGitInvoker` parameters everywhere; `RealGitFallbackGuard` is green\nwith an empty allowlist; the recording-invoker test passes; full suite green.\n\n## Commit-message evidence\n\nMeasure at implementation time and put in the commit body (\u2264 3 hyphen bullets,\n\u2264 20 words each, no file names or paths): real git process spawns per driver\nhappy-path run before vs after (count via the recording test or dtrace), and\nthe guard's violation count on the pre-fix tree.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/EarlyImplementationDetector.cs\nsrc/VisualRelay.Core/Execution/RedGate.cs\nsrc/VisualRelay.Core/Execution/WorktreeFilter.cs\nsrc/VisualRelay.Core/Execution/GitCommitter.cs\nsrc/VisualRelay.Core/Execution/GitCommitter.Untracked.cs\nsrc/VisualRelay.Core/Execution/PlanningWorktree.cs\nsrc/VisualRelay.Core/Execution/WorktreeResetter.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.ManifestValidation.cs\nsrc/VisualRelay.Core/Execution/NonoRollbackSkipDirs.cs\nsrc/VisualRelay.Core/Execution/PlanPhaseRunner.cs\nsrc/VisualRelay.Core/Execution/TaskRewriteRunner.cs\nsrc/VisualRelay.Core/Execution/ProcessRunners.cs\nsrc/VisualRelay.Core/Execution/RelayDriverDependencies.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.Stage5.cs\nsrc/VisualRelay.Core/Queue/RelayQueueController.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs\nsrc/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs\nsrc/VisualRelay.App/ViewModels/GuiTaskRunner.cs\ntools/VisualRelay.DrainQueue/ConsoleTaskRunner.cs\ntools/VisualRelay.DrainQueue/Program.cs\ntools/VisualRelay.RunTask/Program.cs\ntests/VisualRelay.Tests/TargetedTestCommandTests.cs\ntests/VisualRelay.Tests/WatchdogCeilingOverflowTests.cs\ntests/VisualRelay.Tests/VerifyAgentCommandTests.cs\ntests/VisualRelay.Tests/TestDurationTests.cs\ntests/VisualRelay.Tests/SwivalProfileSessionPinningTests.EndToEnd.cs\ntests/VisualRelay.[ENCRYPTED:aws-secret-key]nJ60k1ai1E+pGWTnRVDbU57R7GzqJASPYUool6jf.cs\ntests/VisualRelay.Tests/RelayDriverPlanCompletenessTests.cs\ntests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\ntests/VisualRelay.Tests/TaskCompletionArchiveNoBatchTests.cs\ntests/VisualRelay.Tests/RedGateApplicabilityTests.cs\ntests/VisualRelay.Tests/RelayDriverManifestScopeTests.cs\ntests/VisualRelay.Tests/RelayDriverResumeTests.cs\ntests/VisualRelay.Tests/NoCommitContaminationTests.cs\ntests/VisualRelay.Tests/RelayDriverResumeCommitGateTests.cs\ntests/VisualRelay.Tests/RelayDriverGitCommitResumeCommitTests.cs\ntests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerEscalationTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerTests.Timeout.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerToolPreflightTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.CpuPulse.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.NonzeroExit.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.cs\ntests/VisualRelay.Tests/ProcessCaptureGracefulStopTests.cs\ntests/VisualRelay.Tests/RelayDriverGitCommitGitignoredBackstopTests.cs\ntests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\ntests/VisualRelay.Tests/StageInputArtifactIntegrationTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerCommandFilterIntegrationTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerContractRetryTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerCommandFilterTests.cs\ntests/VisualRelay.Tests/SwivalSubagentRunnerGuardTests.cs\ntools/VisualRelay.Guards/RealGitFallbackGuard.cs\ntests/VisualRelay.Tests/RealGitFallbackGuardTests.cs\ntests/VisualRelay.Tests/RecordingGitInvoker.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Make `IGitInvoker` a compiler-enforced required parameter throughout `src/VisualRelay.Core/Execution` to eliminate the latent real-git-process hole in `EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync` (and sibling methods) that defaults to `new GitInvoker()` when omitted. The two driver call sites (RelayDriver.cs stage-4, RelayDriver.Stage5.cs `RecheckEarlyImplementationAsync`) omit the optional argument, spawning real `git rev-parse` processes (~50-60ms each) even in nominally git-free test runs. The fix: (1) thread `_dependencies.GitInvoker` at both call sites, (2) drop the `? = null` / `?? new GitInvoker()` fallback across the execution layer \u2014 `EarlyImplementationDetector`, `RedGate`, `AuthorTestGate.RunAsync`, `WorktreeFilter.DiscardNonTestEditsAsync`, `GitCommitter` public entries, and `PlanningWorktree` static methods \u2014 forcing every consumer to pass the dependency explicitly, (3) add a `RealGitFallbackGuard` matcher in tools/VisualRelay.Guards that flags `new GitInvoker(` and optional `IGitInvoker` parameters under `src/VisualRelay.Core/Execution` with an empty allowlist, (4) introduce a `RecordingGitInvoker` test double and a behavioral regression test that wraps `GitSimEngine`, drives one happy-path run, and asserts the recorded calls include `rev-parse --is-inside-work-tree` proving the probe flows through the injected invoker, (5) confirm zero optional-collaborator defaults via `./visual-relay audit di-bypass`. The guard stays a guard-as-test, excluded from the `check` gate and the standalone CLI. `src/VisualRelay.Core/Init` (composition boundary) is out of scope and excluded from the guard.\",\n  \"options\": [\n    \"**Minimal bug-fix + signature hardening** \u2014 Fix only the two call sites that omit the argument and harden only `EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync`'s signature (drop the optional default). Leave `RedGate`, `AuthorTestGate`, `WorktreeFilter`, `GitCommitter`, and `PlanningWorktree` untouched since their call sites already pass `_dependencies.GitInvoker`. Fastest path to closing the specific hole, but leaves the same pattern latent in sibling classes. Risk: a future refactor of those other classes could reintroduce the same class of bug. Does not meet the prescribed scope (steps 2\u20135) and would fail the guard's empty-allowlist assertion.\",\n    \"**Full prescribed sweep \u2014 compiler-enforced threading everywhere** \u2014 Follow all five prescribed steps exactly: fix the two call sites, drop every optional `IGitInvoker` default across the execution layer (all classes listed), add the `RealGitFallbackGuard` with an empty allowlist, add the `RecordingGitInvoker` + behavioral regression test, and confirm via `audit di-bypass`. This closes the hole permanently at the type-system level \u2014 no future caller can accidentally omit the dependency. The guard double-checks both `new GitInvoker(` and optional-default patterns under `src/VisualRelay.Core/Execution`, so any regression is caught at build time. The main cost is touching ~10+ method signatures and fixing any external callers (outside the execution layer + outside Init) that relied on defaults \u2014 those get explicit `new GitInvoker()` at their composition boundary.\",\n    \"**Audit-driven approach (guard-first, TDD-style)** \u2014 Write and validate `RealGitFallbackGuard` first against the current (broken) tree, counting violations on both patterns (`new GitInvoker(` and optional defaults under Execution). Capture that count as the pre-fix baseline in the commit body. Then apply the full prescribed sweep (step 2), re-run the guard to confirm zero, and finally add the behavioral regression test (step 4). Provides concrete before/after metrics for the commit message (e.g. 'guard: N\u21920 violations'). Slightly more iteration but produces the precise evidence the task asks for in 'Commit-message evidence' and gives the reviewer confidence that no residual pattern was missed.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The Execution layer contains 13 files with `IGitInvoker?` optional parameters that default to `null` and fall back to `new GitInvoker()` at runtime \u2014 a real-git-invocation hole similar to what DeadConfigFieldGuard addresses. The files are: EarlyImplementationDetector.cs (line 21), RedGate.cs (lines 27,68,93,114 \u2014 4 methods), WorktreeFilter.cs (line 48), GitCommitter.cs (line 16), GitCommitter.Untracked.cs (lines 19,76 \u2014 2 methods), PlanningWorktree.cs (lines 47,119,144,180 \u2014 4 methods), WorktreeResetter.cs (line 35), ProcessRunners.ManifestValidation.cs (line 17), NonoRollbackSkipDirs.cs (line 46), PlanPhaseRunner.cs (line 53), TaskRewriteRunner.cs (line 31), ProcessRunners.cs SwivalSubagentRunner (line 47), and RelayDriverDependencies.cs ForTests (line 27, defaults to NullGitInvoker). Each must have the `?? new GitInvoker()` fallback removed and the parameter made required (non-optional, non-nullable). Additionally, call sites that pass these parameters must be updated to pass the dependency explicitly. Within Execution layer, RelayDriver.Stage5.cs (line 168-169) and the stage-4 block (line 204-206) need `_dependencies.GitInvoker` added; other RelayDriver call sites already pass it. PlanPhaseRunner internal chain (RunPlanPhaseAsync \u2192 PlanOneAsync \u2192 PlanOneTaskAsync) passes gitInvoker through but PlanOneTaskAsync line 130 still has the `??` fallback. TaskRewriteRunner passes its `git` parameter to PlanningWorktree methods but it can be null. ProcessRunners SwivalSubagentRunner stores `_gitInvoker` and passes it to NonoRollbackSkipDirs.ComputeAsync \u2014 it can also be null. At external composition boundaries, tools/VisualRelay.DrainQueue/Program.cs creates RelayQueueController without gitInvoker, and both tools/VisualRelay.DrainQueue/ConsoleTaskRunner.cs and tools/VisualRelay.RunTask/Program.cs create SwivalSubagentRunner without gitInvoker. RelayQueueController.cs itself has `IGitInvoker? gitInvoker = null` at line 38. The Init folder (GitBootstrapper, ProjectBootstrapper, SetupCommitHelper, HookInstaller) is explicitly out of scope. AuthorTestGate.cs already has a required, non-nullable `IGitInvoker gitInvoker` parameter and needs no change. The guard should be modeled on DeadConfigFieldGuard: two overloads taking (Path, Source) and (Path, SyntaxTree), scanning `src/VisualRelay.Core/Execution` for `new GitInvoker(` object creation and for `IGitInvoker` parameter with default value, with an empty allowlist. Tests should include inline-snippet unit tests and a live-tree test consuming CachedSyntaxTreesFixture filtered to `src/`. A RecordingGitInvoker test double wrapping an inner IGitInvoker to record argument vectors should be used with GitSimEngine to prove probe flow through the injected invoker.\",\n  \"constraints\": [\n    \"Guard scans only src/VisualRelay.Core/Execution \u2014 Init folder is out of scope\",\n    \"Guard has two overloads: (Path, Source) and (Path, SyntaxTree), following DeadConfigFieldGuard pattern\",\n    \"Guard detects two patterns: `new GitInvoker(` object creation and `IGitInvoker` parameter with a default value\",\n    \"Allowlist is empty\",\n    \"Tests use inline-snippet unit tests and a live-tree test consuming CachedSyntaxTreesFixture filtered to src/\",\n    \"RecordingGitInvoker test double wraps an inner IGitInvoker and records argument vectors, used with GitSimEngine\",\n    \"Each patched method must drop the `?? new GitInvoker()` fallback and make the parameter required (non-optional, non-nullable)\",\n    \"Call sites must pass the dependency explicitly; external composition boundaries must pass `new GitInvoker()`\",\n    \"AuthorTestGate.cs already conforms (required IGitInvoker) and is not modified\",\n    \"RelayDriverDependencies.ForTests defaults to NullGitInvoker but is still flagged because IGitInvoker parameter has a default\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The pattern is confirmed across 17 method signatures in 11 files under src/VisualRelay.Core/Execution. Every one declares `IGitInvoker?` as optional (default `null`) and coalesces to `new GitInvoker()` in the body. The two EarlyImplementationDetector call sites in RelayDriver.cs (lines 203-206, stage 4 block) and RelayDriver.Stage5.cs (lines 168-169, RecheckEarlyImplementationAsync) both omit the gitInvoker argument despite `_dependencies.GitInvoker` being in scope. The result: every RelayDriver.RunTaskAsync invocation spawns two real `git rev-parse --is-inside-work-tree` processes (one per call site) even when `RelayDriverDependencies.ForTests` injects a NullGitInvoker for all other operations. The DiBypassGuard (tools/VisualRelay.Guards/DiBypassGuard.cs) already detects `?? new GitInvoker()` coalesce patterns and can serve as the pre-fix violation counter. AuthorTestGate.RunAsync already has a required `IGitInvoker gitInvoker` parameter \u2014 proof the pattern compiles and works.\",\n  \"excerpts\": [\n    \"EarlyImplementationDetector.cs:21 \u2014 `IGitInvoker? gitInvoker = null` parameter \u2192 line 23 `var gi = gitInvoker ?? new GitInvoker();`\",\n    \"RelayDriver.cs:204-206 \u2014 stage 4 call: `implementationFrontLoaded = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: ...);` \u2014 gitInvoker omitted\",\n    \"RelayDriver.Stage5.cs:168-169 \u2014 RecheckEarlyImplementationAsync: `return await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: ...);` \u2014 gitInvoker omitted\",\n    \"RedGate.cs: lines 27,68,93,114 \u2014 four methods each with `IGitInvoker? gitInvoker = null` + `var gi = gitInvoker ?? new GitInvoker()`\",\n    \"PlanPhaseRunner.cs:53 \u2014 `IGitInvoker? gitInvoker = null` \u2192 line 130 `var gi = gitInvoker ?? new GitInvoker()`\",\n    \"AuthorTestGate.cs:15 \u2014 `IGitInvoker gitInvoker` (required, non-nullable) \u2014 the one conforming method in the execution layer\"\n  ],\n  \"repro\": \"1. Set a breakpoint or trace on GitInvoker.RunAsync. 2. Run any RelayDriver happy-path test (e.g. ControlApiConfirmGatedTests). 3. Observe two real `git rev-parse --is-inside-work-tree` process spawns \u2014 one from the stage-4 block (RelayDriver.cs:204), one from RecheckEarlyImplementationAsync (RelayDriver.Stage5.cs:168). 4. The `_dependencies.GitInvoker` field (injected as NullGitInvoker/GitSim by the test) is available but never passed to either call.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Plan: Make IGitInvoker threading compiler-enforced in the execution layer\\n\\n### Step 1 \u2014 Fix the bug at both EarlyImplementationDetector call sites\\nIn `RelayDriver.cs` (stage-4 block ~line 204): add `gitInvoker: _dependencies.GitInvoker` to the `ImplementationAlreadyUnderwayAsync` call.\\nIn `RelayDriver.Stage5.cs` (`RecheckEarlyImplementationAsync` ~line 168): same.\\n\\n### Step 2 \u2014 Make IGitInvoker required across the execution layer\\nFor every file under `src/VisualRelay.Core/Execution/` with `IGitInvoker? gitInvoker = null` + `?? new GitInvoker()`:\\n- Drop the `? = null`, make `IGitInvoker gitInvoker` required (reorder before `isTestFile` in `EarlyImplementationDetector`).\\n- Remove the `var gi = gitInvoker ?? new GitInvoker();` coalesce \u2014 use `gitInvoker` directly.\\n\\n**Files with `?? new GitInvoker()` fallback (both patterns to fix):**\\n- `EarlyImplementationDetector.cs` \u2014 `ImplementationAlreadyUnderwayAsync` (reorder gitInvoker before isTestFile)\\n- `RedGate.cs` \u2014 4 overloads: `StripToRedAsync`, `FindStashRefAsync`, `RestoreStashAsync`, `StashAllAsync`\\n- `WorktreeFilter.cs` \u2014 `DiscardNonTestEditsAsync`\\n- `GitCommitter.cs` \u2014 `CommitAsync`\\n- `GitCommitter.Untracked.cs` \u2014 `CaptureUntrackedSnapshotAsync`, `FindUncommittedAuthoredFilesAsync`\\n- `PlanningWorktree.cs` \u2014 `CreateAsync`, `RemoveAsync`, `PruneLeftoversAsync`, `PruneTaskLeftoversAsync`\\n- `WorktreeResetter.cs` \u2014 `ResetAsync`\\n- `ProcessRunners.ManifestValidation.cs` \u2014 `CheckManifestAgainstGitignoreAsync`\\n- `NonoRollbackSkipDirs.cs` \u2014 `ComputeAsync` (nullable no-default param \u2192 make non-nullable, remove coalesce)\\n- `PlanPhaseRunner.cs` \u2014 `RunPlanPhaseAsync`, `PlanOneAsync` (private), `PlanOneTaskAsync` (cascaded from PlanningWorktree change)\\n- `TaskRewriteRunner.cs` \u2014 `RunAsync` (cascaded from PlanningWorktree change)\\n- `ProcessRunners.cs` \u2014 `SwivalSubagentRunner` constructor param + `_gitInvoker` field \u2192 required (guard catches default)\\n- `RelayDriverDependencies.cs` \u2014 `ForTests` gitInvoker param \u2192 required (guard catches default)\\n\\n### Step 3 \u2014 Follow compiler errors at external composition boundaries\\n- `RelayQueueController.cs`: wrap `_gitInvoker ?? new GitInvoker()` when calling `RunPlanPhaseAsync`\\n- App ViewModels (Execution, FixTask, Rewrite, RunOne, GuiTaskRunner): pass `gitInvoker: new GitInvoker()` to SwivalSubagentRunner\\n- `tools/VisualRelay.DrainQueue/ConsoleTaskRunner.cs`, `Program.cs`: ditto\\n- `tools/VisualRelay.RunTask/Program.cs`: ditto\\n- All test files with 3-arg `ForTests(...)` calls: add 4th arg `gitInvoker: new NullGitInvoker()`\\n- All test files constructing `new SwivalSubagentRunner(...)` without gitInvoker: add `gitInvoker: new NullGitInvoker()`\\n\\n### Step 4 \u2014 Add RealGitFallbackGuard\\nModel on `DeadConfigFieldGuard`. Two overloads `(Path, Source)` and `(Path, SyntaxTree)`. Scan each file under `src/VisualRelay.Core/Execution` for:\\n1. `new GitInvoker(` object creation (syntax kind `ObjectCreationExpression` with type `GitInvoker`)\\n2. `IGitInvoker` parameter with a default value (`EqualsValueClause` on a parameter of type `IGitInvoker` or `IGitInvoker?`)\\nAllowlist: empty.\\n\\n### Step 5 \u2014 Add RealGitFallbackGuardTests\\nIn `+tests/VisualRelay.Tests/RealGitFallbackGuardTests.cs`: inline-snippet unit tests (happy path \u2014 no violations in clean code; violation \u2014 `new GitInvoker(` body; violation \u2014 optional IGitInvoker param) + a live-tree test consuming `CachedSyntaxTreesFixture` filtered to `src/`, asserting zero violations in the real tree.\\n\\n### Step 6 \u2014 Add RecordingGitInvoker + behavioral regression test\\nCreate `+tests/VisualRelay.Tests/RecordingGitInvoker.cs`: class wrapping inner `IGitInvoker`, recording `List<string[]>` of argument vectors per `RunAsync` call.\\nIn `RelayDriverEarlyImplementationTests.cs`, add test: create `RecordingGitInvoker` wrapping `GitSimEngine`, inject via `ForTests(gitInvoker: recorder)`, drive one happy-path `RunTaskAsync`, assert recorded calls contain `[\\\"rev-parse\\\", \\\"--is-inside-work-tree\\\"]` \u2014 proving the early-implementation probe flows through the injected invoker.\\n\\n### Step 7 \u2014 Confirm with audit di-bypass\\n`./visual-relay audit di-bypass` \u2014 execution layer must report zero optional-collaborator defaults.\\n\\n### Commit-message evidence\\nMeasure: real git process spawns per driver happy-path run before vs after, and guard violation count on pre-fix tree (gathered via `./visual-relay audit di-bypass` or the new guard run against pre-fix sources).\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs\",\n    \"src/VisualRelay.Core/Execution/RedGate.cs\",\n    \"src/VisualRelay.Core/Execution/WorktreeFilter.cs\",\n    \"src/VisualRelay.Core/Execution/GitCommitter.cs\",\n    \"src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs\",\n    \"src/VisualRelay.Core/Execution/PlanningWorktree.cs\",\n    \"src/VisualRelay.Core/Execution/WorktreeResetter.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.ManifestValidation.cs\",\n    \"src/VisualRelay.Core/Execution/NonoRollbackSkipDirs.cs\",\n    \"src/VisualRelay.Core/Execution/PlanPhaseRunner.cs\",\n    \"src/VisualRelay.Core/Execution/TaskRewriteRunner.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriverDependencies.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs\",\n    \"src/VisualRelay.Core/Queue/RelayQueueController.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs\",\n    \"src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs\",\n    \"src/VisualRelay.App/ViewModels/GuiTaskRunner.cs\",\n    \"tools/VisualRelay.DrainQueue/ConsoleTaskRunner.cs\",\n    \"tools/VisualRelay.DrainQueue/Program.cs\",\n    \"tools/VisualRelay.RunTask/Program.cs\",\n    \"tests/VisualRelay.Tests/TargetedTestCommandTests.cs\",\n    \"tests/VisualRelay.Tests/WatchdogCeilingOverflowTests.cs\",\n    \"tests/VisualRelay.Tests/VerifyAgentCommandTests.cs\",\n    \"tests/VisualRelay.Tests/TestDurationTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalProfileSessionPinningTests.EndToEnd.cs\",\n    \"tests/VisualRelay.[ENCRYPTED:aws-secret-key]nJ60k1ai1E+pGWTnRVDbU57R7GzqJASPYUool6jf.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverPlanCompletenessTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverCommitGateFlagTests.cs\",\n    \"tests/VisualRelay.Tests/TaskCompletionArchiveNoBatchTests.cs\",\n    \"tests/VisualRelay.Tests/RedGateApplicabilityTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverManifestScopeTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverResumeTests.cs\",\n    \"tests/VisualRelay.Tests/NoCommitContaminationTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverResumeCommitGateTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverGitCommitResumeCommitTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerSandboxTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerEscalationTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerTests.Timeout.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerToolPreflightTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.ActivityWatchdog.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.CpuPulse.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.NonzeroExit.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerWatchdogTests.cs\",\n    \"tests/VisualRelay.Tests/ProcessCaptureGracefulStopTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverGitCommitGitignoredBackstopTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\",\n    \"tests/VisualRelay.Tests/StageInputArtifactIntegrationTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerCommandFilterIntegrationTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerContractRetryTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerCommandFilterTests.cs\",\n    \"tests/VisualRelay.Tests/SwivalSubagentRunnerGuardTests.cs\",\n    \"+tools/VisualRelay.Guards/RealGitFallbackGuard.cs\",\n    \"+tests/VisualRelay.Tests/RealGitFallbackGuardTests.cs\",\n    \"+tests/VisualRelay.Tests/RecordingGitInvoker.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RealGitFallbackGuardTests.cs\",\n    \"tools/VisualRelay.Guards/RealGitFallbackGuard.cs\",\n    \"tests/VisualRelay.Tests/RecordingGitInvoker.cs\"\n  ],\n  \"rationale\": \"All three test files are new. RealGitFallbackGuard (the matcher) flags new GitInvoker() object creation and optional IGitInvoker params under src/VisualRelay.Core/Execution with an empty allowlist. RealGitFallbackGuardTests includes 6 inline-snippet unit tests proving the matcher has teeth against both patterns and correctly excludes files outside the execution layer, plus a live-tree test (LiveTree_HasNoRealGitFallbacks) that consumes CachedSyntaxTreesFixture filtered to src/ and currently fails with 38+ violations on the pre-fix tree. RecordingGitInvoker wraps an inner IGitInvoker, records argument vectors, and exposes CallCount for assertion. The behavioral regression test (EarlyImplementationProbe_UsesInjectedGitInvoker) was appended to the existing RelayDriverEarlyImplementationTests.cs \u2014 it wraps GitSimEngine in RecordingGitInvoker, injects via ForTests(gitInvoker: recorder), drives one happy-path run, and asserts \u22653 rev-parse --is-inside-work-tree calls through the injected invoker. It currently fails with count=2 because the two EarlyImplementationDetector probes bypass the injection seam via private new GitInvoker(). All tests compile and fail against the pre-fix tree as required for Stage 5.\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 77,
+    "tool_calls_total": 119,
+    "tool_calls_succeeded": 118,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "todo": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 69,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 30,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "python": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "write_file": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 5,
+        "failed": 0
+      }
+    },
+    "compactions": 4,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 1,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 77,
+    "total_llm_time_s": 1057.548,
+    "prompt_cache": {
+      "cached_tokens": 3201280,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 47.615,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 11,
+      "completed": 11,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.535,
+      "prompt_tokens_est": 10911,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Survey key execution-layer files for IGitInvoker patterns",
+          "Survey DeadConfigFieldGuard for guard pattern reference",
+          "Survey existing tests for pattern reference",
+          "Write RealGitFallbackGuard",
+          "Write RealGitFallbackGuardTests",
+          "Write RecordingGitInvoker test double",
+          "Add behavioral regression test",
+          "Fix bug: thread gitInvoker at both call sites",
+          "Make IGitInvoker required across execution layer",
+          "Follow compiler errors at external boundaries",
+          "Verify with targeted test command"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 827
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.49,
+      "prompt_tokens_est": 11483,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3168
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "offset": 195,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1749
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs",
+        "offset": 160,
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1006
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DeadConfigFieldGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12006
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 4.088,
+      "prompt_tokens_est": 16075,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DeadConfigFieldGuardTests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.188,
+      "result_length": 265
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class DiBypassGuard",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.167,
+      "result_length": 202
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CachedSyntaxTreesFixture",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.172,
+      "result_length": 2521
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.435,
+      "prompt_tokens_est": 16932,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/DeadConfigFieldGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9359
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/CachedSyntaxTreesFixture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2431
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/DiBypassGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12419
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 5.34,
+      "prompt_tokens_est": 23002,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RedGate.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5378
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeFilter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14923
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15792
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/GitCommitter.Untracked.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4516
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/PlanningWorktree.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12577
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.83,
+      "prompt_tokens_est": 35961,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeResetter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7420
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.ManifestValidation.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4203
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/NonoRollbackSkipDirs.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9314
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/PlanPhaseRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8863
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/TaskRewriteRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10469
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10963
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 5.512,
+      "prompt_tokens_est": 48359,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5306
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GitSimEngine",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.059,
+      "result_length": 9291
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "RecordingGitInvoker",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.173,
+      "result_length": 17
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 8.456,
+      "prompt_tokens_est": 52450,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Survey key execution-layer files for IGitInvoker patterns",
+          "Survey DeadConfigFieldGuard for guard pattern reference",
+          "Survey existing tests for pattern reference"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 824
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.465,
+      "prompt_tokens_est": 52976,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 16448
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 7689
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3644
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.555,
+      "prompt_tokens_est": 59420,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "new SwivalSubagentRunner",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.176,
+      "result_length": 8359
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ResetAndLogAsync",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.166,
+      "result_length": 803
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 4.184,
+      "prompt_tokens_est": 61861,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Queue/RelayQueueController.PrivateHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8801
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/WorktreeResetterTests.cs",
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2389
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 6.732,
+      "prompt_tokens_est": 64854,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Execution.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13740
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.FixTask.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5563
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.Rewrite.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12880
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/MainWindowViewModel.RunOne.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2780
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.App/ViewModels/GuiTaskRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1615
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 21.38,
+      "prompt_tokens_est": 73727,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "recovered_response",
+      "reason": "malformed_args"
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 5.071,
+      "prompt_tokens_est": 73764,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.DrainQueue/ConsoleTaskRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2085
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.DrainQueue/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3767
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.RunTask/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2237
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 34.962,
+      "prompt_tokens_est": 76078,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Verify command",
+        "path": "/Users/admin/Dev/visual-relay/llm-tasks"
+      },
+      "succeeded": true,
+      "duration_s": 0.011,
+      "result_length": 17
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "targeted.*test.*command",
+        "path": "/Users/admin/Dev/visual-relay/.relay",
+        "include": "*.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.49,
+      "result_length": 50304
+    },
+    {
+      "turn": 16,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 91623,
+      "tokens_after": 32886
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 3.458,
+      "prompt_tokens_est": 32886,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "targeted test command",
+        "path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 2094
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 3.673,
+      "prompt_tokens_est": 33469,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*",
+        "path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1717
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 4.598,
+      "prompt_tokens_est": 34209,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/stage5-attempt1.input.json",
+        "limit": 1
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2023
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 3.676,
+      "prompt_tokens_est": 34772,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "import json\nwith open('/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/stage5-attempt1.input.json') as f:\n    data = json.load(f)\nprompt = data['inputPrompt']\n# Find Verify command section\nimport re\nm = re.search(r'## Verify command\\s*\\n\\s*([^\\n]+(?:\\n\\s*[^\\n]+)*)', prompt)\nif m:\n    print(\"FOUND:\", repr(m.group(1)[:500]))\nelse:\n    print(\"NOT FOUND\")\n    # Search for \"Verify\" anywhere\n    for line in prompt.split('\\n'):\n        if 'verify' in line.lower():\n            print(\"LINE:\", repr(line[:200]))\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.094,
+      "result_length": 135
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.788,
+      "prompt_tokens_est": 35022,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/status.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4614
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/manifest.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3681
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 6.44,
+      "prompt_tokens_est": 38082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/run-base.txt"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 63
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "Verify command",
+        "path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading",
+        "include": "*.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 2094
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 4.493,
+      "prompt_tokens_est": 38940,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "import json\nwith open('/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/stage5-attempt1.input.json') as f:\n    data = json.load(f)\nprompt = data['inputPrompt']\n# Print the last 2000 chars to see if verify command is at the end\nprint(repr(prompt[-2000:]))\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.098,
+      "result_length": 2036
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 25.659,
+      "prompt_tokens_est": 39740,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "interface IGitInvoker"
+      },
+      "succeeded": true,
+      "duration_s": 0.186,
+      "result_length": 100
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class NullGitInvoker"
+      },
+      "succeeded": true,
+      "duration_s": 0.17,
+      "result_length": 124
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class GitSimEngine"
+      },
+      "succeeded": true,
+      "duration_s": 0.167,
+      "result_length": 17
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 2.273,
+      "prompt_tokens_est": 41452,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class GitSim"
+      },
+      "succeeded": true,
+      "duration_s": 0.17,
+      "result_length": 3067
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 9.438,
+      "prompt_tokens_est": 42318,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/IGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 957
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/NullGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1075
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/DeadConfigFieldGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9359
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.574,
+      "prompt_tokens_est": 45828,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealSleepGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 14138
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 34.158,
+      "prompt_tokens_est": 49536,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3644
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunHappyPath",
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.055,
+      "result_length": 1778
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 7.331,
+      "prompt_tokens_est": 53082,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/CachedSyntaxTreesFixture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2431
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/VisualRelay.Guards.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 549
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1582
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 4.431,
+      "prompt_tokens_est": 54802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "new SwivalSubagentRunner\\(",
+        "path": "/Users/admin/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.055,
+      "result_length": 6669
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "ForTests\\(",
+        "path": "/Users/admin/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.052,
+      "result_length": 13905
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 9.97,
+      "prompt_tokens_est": 60182,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3168
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 23.741,
+      "prompt_tokens_est": 61481,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.relay/04-required-git-invoker-threading/stage4-attempt1.input.json",
+        "limit": 5
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2023
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "dotnet test",
+        "path": "/Users/admin/Dev/visual-relay/tools/dotnet-test-files.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 430
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 5.511,
+      "prompt_tokens_est": 63641,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/dotnet-test-files.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1061
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 66.955,
+      "prompt_tokens_est": 64300,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/RealGitFallbackGuard.cs",
+        "content": "using Microsoft.CodeAnalysis;\nusing Microsoft.CodeAnalysis.CSharp;\nusing Microsoft.CodeAnalysis.CSharp.Syntax;\nusing Microsoft.CodeAnalysis.Text;\n\nnamespace VisualRelay.Guards;\n\n/// <summary>\n/// Pure matcher that flags real-git-invoker fallbacks inside\n/// <c>src/VisualRelay.Core/Execution</c> \u2014 the two patterns that let a caller\n/// omit <see cref=\"VisualRelay.Core.Execution.IGitInvoker\"/> and silently spawn a\n/// real <c>git</c> process:\n/// <list type=\"number\">\n///   <item><c>new GitInvoker(</c> object creation \u2014 a private real process launcher\n///         inside a layer that must receive the invoker through its injection seam;</item>\n///   <item>an <c>IGitInvoker</c> (or <c>IGitInvoker?</c>) parameter that declares a\n///         default value \u2014 the <c>= null</c> that enables call-site omission and\n///         triggers the runtime <c>?? new GitInvoker()</c> coalesce.</item>\n/// </list>\n/// <para>Allowlist is empty \u2014 after the fix there must be zero of either pattern\n/// under the execution layer. The guard stays a guard-as-test; it is excluded from\n/// the <c>check</c> gate and the standalone guards CLI subcommand list. Files\n/// outside <c>src/VisualRelay.Core/Execution</c> (in particular <c>Init</c>,\n/// the App, and the CLI) are not scanned.</para>\n/// </summary>\npublic static class RealGitFallbackGuard\n{\n    /// <summary>Describes a single real-git-fallback violation (1-based <paramref name=\"Line\"/>).</summary>\n    public sealed record Violation(string Path, int Line, string Snippet, string Reason);\n\n    private static readonly string[] SelfExemptFileNames =\n        [\"RealGitFallbackGuard.cs\", \"RealGitFallbackGuardTests.cs\"];\n\n    private const string ExecutionDir = \"src/VisualRelay.Core/Execution/\";\n\n    private static readonly CSharpParseOptions ParseOptions = new(LanguageVersion.Latest);\n\n    // \u2500\u2500 (Path, Source) overload \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Returns every real-git-fallback violation across <paramref name=\"files\"/>,\n    /// ordered by path (ordinal) then line. Only files whose path starts with\n    /// <c>src/VisualRelay.Core/Execution/</c> are scanned.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(\n        IEnumerable<(string Path, string Source)> files)\n    {\n        var violations = new List<Violation>();\n\n        foreach (var (path, source) in files)\n        {\n            if (!ShouldScan(path))\n                continue;\n\n            var tree = CSharpSyntaxTree.ParseText(source, ParseOptions, path);\n            ScanTree(path, tree, violations);\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 (Path, SyntaxTree) overload \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Returns every real-git-fallback violation across <paramref name=\"trees\"/>,\n    /// ordered by path (ordinal) then line. Only trees whose path starts with\n    /// <c>src/VisualRelay.Core/Execution/</c> are scanned. Uses pre-parsed\n    /// <see cref=\"SyntaxTree\"/> objects instead of re-parsing string sources.\n    /// </summary>\n    public static IReadOnlyList<Violation> FindViolations(\n        IEnumerable<(string Path, SyntaxTree Tree)> trees)\n    {\n        var violations = new List<Violation>();\n\n        foreach (var (path, tree) in trees)\n        {\n            if (!ShouldScan(path))\n                continue;\n\n            ScanTree(path, tree, violations);\n        }\n\n        violations.Sort((a, b) =>\n        {\n            var byPath = string.CompareOrdinal(a.Path, b.Path);\n            return byPath != 0 ? byPath : a.Line.CompareTo(b.Line);\n        });\n        return violations;\n    }\n\n    // \u2500\u2500 Internals \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    private static bool ShouldScan(string path)\n    {\n        var fileName = Path.GetFileName(path);\n        if (SelfExemptFileNames.Contains(fileName))\n            return false;\n\n        return path.StartsWith(ExecutionDir, StringComparison.Ordinal);\n    }\n\n    private static void ScanTree(string path, SyntaxTree tree, List<Violation> sink)\n    {\n        var text = tree.GetText();\n        var root = tree.GetRoot();\n\n        // Rule 1 \u2014 new GitInvoker( object creation.\n        foreach (var creation in root.DescendantNodes().OfType<ObjectCreationExpressionSyntax>())\n        {\n            if (IsGitInvokerType(creation.Type))\n            {\n                var line = LineOf(text, creation.SpanStart);\n                sink.Add(new Violation(path, line, SnippetOf(text, line),\n                    \"new GitInvoker() object creation inside the execution layer (inject IGitInvoker instead)\"));\n            }\n        }\n\n        // Rule 2 \u2014 IGitInvoker / IGitInvoker? parameter with a default value.\n        foreach (var param in root.DescendantNodes().OfType<ParameterSyntax>())\n        {\n            if (param.Default is not null && IsIGitInvokerType(param.Type))\n            {\n                var line = LineOf(text, param.SpanStart);\n                sink.Add(new Violation(path, line, SnippetOf(text, line),\n                    \"IGitInvoker parameter with a default value (make it required, non-optional)\"));\n            }\n        }\n    }\n\n    private static bool IsGitInvokerType(TypeSyntax type) => type switch\n    {\n        IdentifierNameSyntax id => id.Identifier.Text == \"GitInvoker\",\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text == \"GitInvoker\",\n        AliasQualifiedNameSyntax aq => aq.Name.Identifier.Text == \"GitInvoker\",\n        _ => false,\n    };\n\n    private static bool IsIGitInvokerType(TypeSyntax? type) => type switch\n    {\n        null => false,\n        IdentifierNameSyntax id => id.Identifier.Text is \"IGitInvoker\",\n        NullableTypeSyntax n => n.ElementType is IdentifierNameSyntax id && id.Identifier.Text is \"IGitInvoker\",\n        QualifiedNameSyntax qn => qn.Right.Identifier.Text is \"IGitInvoker\",\n        _ => false,\n    };\n\n    private static int LineOf(SourceText text, int position) =>\n        text.Lines.GetLinePosition(position).Line + 1;\n\n    private static string SnippetOf(SourceText text, int line)\n    {\n        var s = text.Lines[line - 1].ToString().Trim();\n        return s.Length <= 200 ? s : s[..200];\n    }\n}\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 118
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 19.23,
+      "prompt_tokens_est": 69652,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Guards;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Guard-as-test for <see cref=\"RealGitFallbackGuard\"/>. The guard flags two\n/// patterns under <c>src/VisualRelay.Core/Execution</c>:\n/// <list type=\"number\">\n///   <item><c>new GitInvoker(</c> object creation \u2014 a private real process launcher\n///         inside a layer that must receive the invoker through its injection seam;</item>\n///   <item>an <c>IGitInvoker</c> (or <c>IGitInvoker?</c>) parameter that declares a\n///         default value \u2014 the <c>= null</c> that enables call-site omission.</item>\n/// </list>\n/// <para>The allowlist is empty. After the fix the live-tree test must assert zero\n/// violations in <c>src/VisualRelay.Core/Execution</c>. The inline-snippet tests\n/// below prove the matcher has teeth against both patterns.</para>\n/// </summary>\npublic sealed class RealGitFallbackGuardTests\n{\n    private readonly CachedSyntaxTreesFixture _trees;\n\n    public RealGitFallbackGuardTests(CachedSyntaxTreesFixture trees)\n    {\n        _trees = trees;\n    }\n\n    // \u2500\u2500 Inline-snippet unit tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// Teeth: <c>new GitInvoker()</c> inside a source file under\n    /// <c>src/VisualRelay.Core/Execution</c> is flagged.\n    /// </summary>\n    [Fact]\n    public void NewGitInvoker_InExecutionLayer_IsFlagged()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C { void M() { var gi = new GitInvoker(); } }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Execution/Foo.cs\", source)]);\n\n        var v = Assert.Single(violations);\n        Assert.Contains(\"new GitInvoker()\", v.Reason, StringComparison.Ordinal);\n    }\n\n    /// <summary>\n    /// Teeth: an <c>IGitInvoker?</c> parameter with <c>= null</c> default\n    /// inside the execution layer is flagged.\n    /// </summary>\n    [Fact]\n    public void OptionalIGitInvokerParam_InExecutionLayer_IsFlagged()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C { void M(IGitInvoker? gitInvoker = null) { } }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Execution/Foo.cs\", source)]);\n\n        var v = Assert.Single(violations);\n        Assert.Contains(\"default value\", v.Reason, StringComparison.Ordinal);\n    }\n\n    /// <summary>\n    /// <c>new GitInvoker()</c> outside <c>src/VisualRelay.Core/Execution</c>\n    /// (e.g. in <c>src/VisualRelay.Core/Init</c>) is NOT flagged \u2014 the guard\n    /// only scans the execution layer.\n    /// </summary>\n    [Fact]\n    public void NewGitInvoker_OutsideExecutionLayer_IsNotFlagged()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C { void M() { var gi = new GitInvoker(); } }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Init/Foo.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// An optional <c>IGitInvoker?</c> parameter outside the execution layer\n    /// (e.g. in Init) is NOT flagged \u2014 only the execution layer is guarded.\n    /// </summary>\n    [Fact]\n    public void OptionalIGitInvokerParam_OutsideExecutionLayer_IsNotFlagged()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C { void M(IGitInvoker? gitInvoker = null) { } }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Init/Foo.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// A required <c>IGitInvoker</c> parameter (no default) is NOT flagged \u2014\n    /// only optional defaults are violations.\n    /// </summary>\n    [Fact]\n    public void RequiredIGitInvokerParam_IsNotFlagged()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C { void M(IGitInvoker gitInvoker) { } }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Execution/Foo.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    /// <summary>\n    /// Happy path: clean code with no <c>new GitInvoker(</c> and no optional\n    /// IGitInvoker params produces zero violations.\n    /// </summary>\n    [Fact]\n    public void CleanCode_WithNoViolations_ReportsZero()\n    {\n        const string source = \"\"\"\n            using VisualRelay.Core.Execution;\n            class C\n            {\n                readonly IGitInvoker _git;\n                C(IGitInvoker git) => _git = git;\n                void M() { _git.RunAsync(\"\", [], default); }\n            }\n            \"\"\";\n\n        var violations = RealGitFallbackGuard.FindViolations(\n            [(\"src/VisualRelay.Core/Execution/Foo.cs\", source)]);\n\n        Assert.Empty(violations);\n    }\n\n    // \u2500\u2500 Live-tree test \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    /// <summary>\n    /// The live enforcing gate: every file under <c>src/VisualRelay.Core/Execution</c>\n    /// must have zero <c>new GitInvoker(</c> and zero optional-IGitInvoker defaults.\n    /// This is the in-suite mirror of <c>./visual-relay audit di-bypass</c> for the\n    /// execution layer specifically.\n    /// </summary>\n    [Fact]\n    public void LiveTree_HasNoRealGitFallbacks()\n    {\n        var trees = _trees.AllTrees\n            .Where(t => t.RelativePath.StartsWith(\"src/\", StringComparison.Ordinal))\n            .ToList();\n\n        var violations = RealGitFallbackGuard.FindViolations(trees);\n\n        Assert.True(violations.Count == 0,\n            \"RealGitFallbackGuard found new GitInvoker() or optional IGitInvoker params \" +\n            \"in src/VisualRelay.Core/Execution (inject IGitInvoker instead, make it required):\\n\" +\n            string.Join(\"\\n\", violations.Select(v => $\"{v.Path}:{v.Line}: {v.Reason} \u2014 {v.Snippet}\")));\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RealGitFallbackGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 122
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 6.939,
+      "prompt_tokens_est": 71400,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "write_file",
+      "arguments": {
+        "content": "using VisualRelay.Core.Execution;\n\nnamespace VisualRelay.Tests;\n\n/// <summary>\n/// Wraps an inner <see cref=\"IGitInvoker\"/> and records every argument vector\n/// passed to <see cref=\"RunAsync\"/>. Use with <see cref=\"GitSim.GitSim\"/> to\n/// prove that every git probe in a driver run flows through the injected invoker\n/// rather than a private <c>new GitInvoker()</c> fallback.\n/// </summary>\npublic sealed class RecordingGitInvoker : IGitInvoker\n{\n    private readonly IGitInvoker _inner;\n    private readonly List<string[]> _calls = [];\n\n    public RecordingGitInvoker(IGitInvoker inner)\n    {\n        _inner = inner;\n    }\n\n    /// <summary>Every argument vector recorded, in call order.</summary>\n    public IReadOnlyList<string[]> Calls => _calls;\n\n    /// <summary>True when any recorded call's argument vector contains every element of <paramref name=\"args\"/>.</summary>\n    public bool RecordedCall(string[] args) =>\n        _calls.Any(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));\n\n    public async Task<(int ExitCode, string Output, bool TimedOut)> RunAsync(\n        string rootPath,\n        IEnumerable<string> arguments,\n        CancellationToken cancellationToken,\n        TimeSpan? timeout = null,\n        IReadOnlyDictionary<string, string>? environment = null,\n        CancellationToken killToken = default,\n        Action<string>? onActivity = null)\n    {\n        var args = arguments.ToArray();\n        _calls.Add(args);\n        return await _inner.RunAsync(rootPath, arguments, cancellationToken,\n            timeout, environment, killToken, onActivity);\n    }\n}\n",
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RecordingGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 116
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 3.257,
+      "prompt_tokens_est": 71955,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7689
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 3.801,
+      "prompt_tokens_est": 73972,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5306
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 10.085,
+      "prompt_tokens_est": 75478,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs",
+        "old_string": "    private static GitSimEngine InitGitRepo(TestRepository repo)\n    {\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\\n\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n        return sim;\n    }",
+        "new_string": "    /// <summary>\n    /// Proves that the stage-4 early-implementation probe flows through the\n    /// INJECTED <see cref=\"IGitInvoker\"/> rather than a private\n    /// <c>new GitInvoker()</c> fallback. Wraps a <see cref=\"GitSimEngine\"/> in a\n    /// <see cref=\"RecordingGitInvoker\"/>, drives one clean happy-path run, and\n    /// asserts the recorded argument vectors include\n    /// <c>rev-parse --is-inside-work-tree</c>.\n    /// </summary>\n    [Fact]\n    public async Task EarlyImplementationProbe_UsesInjectedGitInvoker()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"dotnet test\", []);\n        repo.WriteTask(\"probe-test\", \"# Probe test\\n\");\n        var sim = InitGitRepo(repo);\n\n        var recorder = new RecordingGitInvoker(sim);\n\n        var runner = new ArtifactWritingSubagentRunner();\n        runner.SeedHappyPath(\"src/status.cs\", \"tests/status.tests.cs\");\n\n        var driver = new RelayDriver(\n            RelayDriverDependencies.ForTests(runner,\n                new ScriptedTestRunner(new TestRunResult(1, \"red\"), new TestRunResult(0, \"green\")),\n                new InMemoryRelayEventSink(), gitInvoker: recorder),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"probe-test\");\n        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);\n\n        Assert.True(recorder.RecordedCall([\"rev-parse\", \"--is-inside-work-tree\"]),\n            \"stage-4 early-implementation probe must flow through the injected IGitInvoker\");\n    }\n\n    private static GitSimEngine InitGitRepo(TestRepository repo)\n    {\n        var sim = RelayDriverTestHelpers.InitSim(repo);\n        sim.Seed(repo.Root, \"src/status.cs\", \"old\\n\");\n        sim.Commit(repo.Root, \"chore: seed repo\");\n        return sim;\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 119
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 5.089,
+      "prompt_tokens_est": 76345,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "build",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-p:UseSharedCompilation=false",
+          "--no-restore"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 13.809,
+      "result_length": 1432
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 4.194,
+      "prompt_tokens_est": 76972,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--filter",
+          "FullyQualifiedName~RealGitFallbackGuardTests|FullyQualifiedName~EarlyImplementationProbe_UsesInjectedGitInvoker",
+          "--no-build"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 2.993,
+      "result_length": 8226
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 11.631,
+      "prompt_tokens_est": 79140,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--filter",
+          "FullyQualifiedName~RealGitFallbackGuardTests|FullyQualifiedName~EarlyImplementationProbe_UsesInjectedGitInvoker"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 5.129,
+      "result_length": 10154
+    },
+    {
+      "turn": 42,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 82463,
+      "tokens_after": 40004
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 48.813,
+      "prompt_tokens_est": 40004,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write RealGitFallbackGuard",
+          "Write RealGitFallbackGuardTests",
+          "Write RecordingGitInvoker test double",
+          "Add behavioral regression test"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 820
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 4.339,
+      "prompt_tokens_est": 42844,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class GitSimEngine"
+      },
+      "succeeded": true,
+      "duration_s": 0.211,
+      "result_length": 17
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "GitSimEngine",
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 17
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 3.359,
+      "prompt_tokens_est": 42984,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs",
+        "offset": 1,
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 595
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 3.468,
+      "prompt_tokens_est": 43233,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class GitSim",
+        "path": "/Users/admin/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.171,
+      "result_length": 3067
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 35.657,
+      "prompt_tokens_est": 44215,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/Commands/Worktree.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2983
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/Commands/RevParse.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1568
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/GitSimCommandRouter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2276
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 22.031,
+      "prompt_tokens_est": 48159,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 40,
+        "offset": 195
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3434
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 3.327,
+      "prompt_tokens_est": 49874,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 48,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs",
+        "limit": 20,
+        "offset": 160
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1006
+    },
+    {
+      "turn": 49,
+      "type": "llm_call",
+      "duration_s": 14.74,
+      "prompt_tokens_est": 50292,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 49,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "NoGitCommit",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 167
+    },
+    {
+      "turn": 50,
+      "type": "llm_call",
+      "duration_s": 2.434,
+      "prompt_tokens_est": 51135,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 50,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriverOptions.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 395
+    },
+    {
+      "turn": 51,
+      "type": "llm_call",
+      "duration_s": 2.755,
+      "prompt_tokens_est": 51318,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 51,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "DownshiftOnEarlyImplementation"
+      },
+      "succeeded": true,
+      "duration_s": 0.181,
+      "result_length": 1041
+    },
+    {
+      "turn": 52,
+      "type": "llm_call",
+      "duration_s": 100.001,
+      "prompt_tokens_est": 51684,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 52,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RecordingGitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1774
+    },
+    {
+      "turn": 53,
+      "type": "llm_call",
+      "duration_s": 4.545,
+      "prompt_tokens_est": 58479,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 53,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RecordingGitInvoker.cs",
+        "old_string": "    /// <summary>True when any recorded call's argument vector contains every element of <paramref name=\"args\"/>.</summary>\n    public bool RecordedCall(string[] args) =>\n        _calls.Any(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));",
+        "new_string": "    /// <summary>True when any recorded call's argument vector contains every element of <paramref name=\"args\"/>.</summary>\n    public bool RecordedCall(string[] args) =>\n        _calls.Any(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));\n\n    /// <summary>Count of recorded calls whose argument vector contains every element of <paramref name=\"args\"/>.</summary>\n    public int CallCount(string[] args) =>\n        _calls.Count(c => args.All(a => c.Contains(a, StringComparer.Ordinal)));"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 103
+    },
+    {
+      "turn": 54,
+      "type": "llm_call",
+      "duration_s": 6.428,
+      "prompt_tokens_est": 58753,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 54,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs",
+        "old_string": "        Assert.True(recorder.RecordedCall([\"rev-parse\", \"--is-inside-work-tree\"]),\n            \"stage-4 early-implementation probe must flow through the injected IGitInvoker\");",
+        "new_string": "        // At least 2 invocations of rev-parse --is-inside-work-tree must flow\n        // through the injected invoker: one from DiscardNonTestEditsAsync (the existing\n        // threaded path) plus two from the stage\u20114 and recheck early-implementation\n        // probes. Before the fix the probes bypassed the injected invoker via a private\n        // new GitInvoker() and this assertion failed with count == 1.\n        var revParseCount = recorder.CallCount([\"rev-parse\", \"--is-inside-work-tree\"]);\n        Assert.True(revParseCount >= 2,\n            $\"Expected \u22652 rev-parse --is-inside-work-tree calls through injected IGitInvoker (stage-4 early-implementation probe must flow through the injection seam), got {revParseCount}\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 55,
+      "type": "llm_call",
+      "duration_s": 3.058,
+      "prompt_tokens_est": 59142,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 55,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--filter",
+          "FullyQualifiedName~RealGitFallbackGuardTests|FullyQualifiedName~EarlyImplementationProbe_UsesInjectedGitInvoker"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.096,
+      "result_length": 9742
+    },
+    {
+      "turn": 56,
+      "type": "llm_call",
+      "duration_s": 28.316,
+      "prompt_tokens_est": 61748,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 56,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/GitInvoker.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 10529
+    },
+    {
+      "turn": 57,
+      "type": "llm_call",
+      "duration_s": 27.315,
+      "prompt_tokens_est": 66114,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 57,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "DiscardNonTestEditsAsync",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.009,
+      "result_length": 539
+    },
+    {
+      "turn": 58,
+      "type": "llm_call",
+      "duration_s": 20.86,
+      "prompt_tokens_est": 67978,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 58,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 70,
+        "offset": 140
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5178
+    },
+    {
+      "turn": 59,
+      "type": "llm_call",
+      "duration_s": 8.068,
+      "prompt_tokens_est": 70353,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 59,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CreateGitCommit",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 1007
+    },
+    {
+      "turn": 60,
+      "type": "llm_call",
+      "duration_s": 5.198,
+      "prompt_tokens_est": 71045,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 60,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3168
+    },
+    {
+      "turn": 61,
+      "type": "llm_call",
+      "duration_s": 8.477,
+      "prompt_tokens_est": 72242,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 61,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/WorktreeFilter.cs",
+        "offset": 40,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5243
+    },
+    {
+      "turn": 62,
+      "type": "llm_call",
+      "duration_s": 33.924,
+      "prompt_tokens_est": 74087,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 62,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3644
+    },
+    {
+      "turn": 63,
+      "type": "llm_call",
+      "duration_s": 8.941,
+      "prompt_tokens_est": 77622,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/Commands/Init.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 101,
+      "error": "error: path does not exist: \"/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/Commands/Init.cs\""
+    },
+    {
+      "turn": 63,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/GitSim.Api.cs",
+        "offset": 25,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1547
+    },
+    {
+      "turn": 64,
+      "type": "llm_call",
+      "duration_s": 5.302,
+      "prompt_tokens_est": 78644,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 64,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage5.cs",
+        "limit": 60,
+        "offset": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3077
+    },
+    {
+      "turn": 65,
+      "type": "llm_call",
+      "duration_s": 40.204,
+      "prompt_tokens_est": 79618,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 65,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.GitSim/GitSim.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3257
+    },
+    {
+      "turn": 66,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages",
+      "tokens_before": 83513,
+      "tokens_after": 67163
+    },
+    {
+      "turn": 66,
+      "type": "llm_call",
+      "duration_s": 18.664,
+      "prompt_tokens_est": 67163,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 66,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ArtifactWritingSubagentRunner"
+      },
+      "succeeded": true,
+      "duration_s": 0.192,
+      "result_length": 146
+    },
+    {
+      "turn": 67,
+      "type": "llm_call",
+      "duration_s": 56.01,
+      "prompt_tokens_est": 68154,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 67,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "diff.*--name-only.*HEAD",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.008,
+      "result_length": 210
+    },
+    {
+      "turn": 68,
+      "type": "llm_call",
+      "duration_s": 4.375,
+      "prompt_tokens_est": 72197,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 68,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\\\"diff\\\".*\\\"HEAD\\\".*\\\"--\\\"",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.014,
+      "result_length": 165
+    },
+    {
+      "turn": 69,
+      "type": "llm_call",
+      "duration_s": 2.425,
+      "prompt_tokens_est": 72419,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 69,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/EarlyImplementationDetector.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3168
+    },
+    {
+      "turn": 70,
+      "type": "llm_call",
+      "duration_s": 48.123,
+      "prompt_tokens_est": 73382,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 70,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "rev-parse",
+        "path": "/Users/admin/Dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 2932
+    },
+    {
+      "turn": 71,
+      "type": "llm_call",
+      "duration_s": 5.566,
+      "prompt_tokens_est": 77544,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 71,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.cs",
+        "limit": 100
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7679
+    },
+    {
+      "turn": 72,
+      "type": "llm_call",
+      "duration_s": 19.642,
+      "prompt_tokens_est": 79559,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 72,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverEarlyImplementationTests.cs",
+        "old_string": "        // At least 2 invocations of rev-parse --is-inside-work-tree must flow\n        // through the injected invoker: one from DiscardNonTestEditsAsync (the existing\n        // threaded path) plus two from the stage\u20114 and recheck early-implementation\n        // probes. Before the fix the probes bypassed the injected invoker via a private\n        // new GitInvoker() and this assertion failed with count == 1.\n        var revParseCount = recorder.CallCount([\"rev-parse\", \"--is-inside-work-tree\"]);\n        Assert.True(revParseCount >= 2,\n            $\"Expected \u22652 rev-parse --is-inside-work-tree calls through injected IGitInvoker (stage-4 early-implementation probe must flow through the injection seam), got {revParseCount}\");",
+        "new_string": "        // At least 3 invocations of rev-parse --is-inside-work-tree must flow\n        // through the injected invoker: the two EarlyImplementationDetector probes\n        // (stage\u20114 and recheck) plus the WorktreeFilter + RedGate calls from other\n        // stages. Before the fix the two EarlyImplementation probes bypassed the\n        // injected invoker via a private new GitInvoker(), so only the other-stage\n        // calls (~2) were recorded and this assertion failed with count \u2248 2.\n        var revParseCount = recorder.CallCount([\"rev-parse\", \"--is-inside-work-tree\"]);\n        Assert.True(revParseCount >= 3,\n            $\"Expected \u22653 rev-parse --is-inside-work-tree calls through injected IGitInvoker (both stage\u20114 and recheck early-implementation probes must flow through the injection seam), got {revParseCount}\");"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 119
+    },
+    {
+      "turn": 73,
+      "type": "llm_call",
+      "duration_s": 8.061,
+      "prompt_tokens_est": 81080,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 73,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayStages.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 11065
+    },
+    {
+      "turn": 74,
+      "type": "compaction",
+      "strategy": "gc_scaffolding+compact_messages+strip_reasoning_content",
+      "tokens_before": 84242,
+      "tokens_after": 29847
+    },
+    {
+      "turn": 74,
+      "type": "llm_call",
+      "duration_s": 20.666,
+      "prompt_tokens_est": 29847,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 74,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--filter",
+          "FullyQualifiedName~RealGitFallbackGuardTests|FullyQualifiedName~EarlyImplementationProbe_UsesInjectedGitInvoker"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 11.044,
+      "result_length": 2252
+    },
+    {
+      "turn": 75,
+      "type": "llm_call",
+      "duration_s": 3.488,
+      "prompt_tokens_est": 31822,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 75,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/.swival/cmd_output_19b460bf84dc.txt",
+        "offset": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 8737
+    },
+    {
+      "turn": 76,
+      "type": "llm_call",
+      "duration_s": 9.512,
+      "prompt_tokens_est": 34213,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 76,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Fix bug: thread gitInvoker at both call sites",
+          "Make IGitInvoker required across execution layer",
+          "Follow compiler errors at external boundaries",
+          "Verify with targeted test command"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 816
+    },
+    {
+      "turn": 77,
+      "type": "llm_call",
+      "duration_s": 6.029,
+      "prompt_tokens_est": 34808,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -146,6 +146,35 @@ public sealed class RelayDriverEarlyImplementationTests
     /// other stages to a <see cref="CapturingSubagentRunner"/> so invocations are
     /// recorded for assertion.
     /// </summary>
+    [Fact]
+    public async Task EarlyImplementationProbe_UsesInjectedGitInvoker()
+    {
+        // Prove that the stage-4 early-implementation probe flows through the
+        // INJECTED git invoker, not a private `new GitInvoker()` fallback.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+        repo.WriteTask("probe-inject", "# Probe inject test\n");
+        var sim = InitGitRepo(repo);
+
+        var recorder = new RecordingGitInvoker(sim);
+        var capturer = new CapturingSubagentRunner();
+        capturer.SeedHappyPath("src/status.cs", "tests/status.test");
+
+        var driver = new RelayDriver(
+            RelayDriverDependencies.ForTests(capturer, new ScriptedTestRunner(
+                new TestRunResult(1, "red"),
+                new TestRunResult(0, "green")),
+                new InMemoryRelayEventSink(), recorder),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "probe-inject");
+        Assert.Equal(RelayTaskOutcomeStatus.Committed, outcome.Status);
+
+        // The stage-4 early-implementation probe must use the injected invoker.
+        Assert.True(recorder.RecordedCall(["rev-parse", "--is-inside-work-tree"]),
+            "rev-parse --is-inside-work-tree must flow through the injected invoker");
+    }
+
     private sealed class Stage3FrontLoadCapturingRunner(
         ISubagentRunner frontLoader, CapturingSubagentRunner capturer) : ISubagentRunner
     {

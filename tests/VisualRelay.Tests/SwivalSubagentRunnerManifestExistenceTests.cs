@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -37,7 +38,7 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/status.cs","tests/status.test"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(error);
     }
@@ -52,9 +53,8 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/status.cs","src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
-        Assert.NotNull(error);
         Assert.Contains("does not exist", error, StringComparison.Ordinal);
         Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
         // The existing file should not be flagged.
@@ -69,7 +69,7 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"add feature","manifest":["+src/NewFile.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(error);
     }
@@ -86,7 +86,7 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/status.cs","tests/status.test","src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
         Assert.NotNull(error);
         // Only the missing file named.
@@ -110,11 +110,11 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/status.cs","src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitInvoker(), CancellationToken.None);
 
         Assert.NotNull(error);
-        // Must be the existence error, not the gitignore error.
         Assert.Contains("does not exist", error, StringComparison.Ordinal);
+        // Must be the existence error, not the gitignore error.
         Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
         Assert.DoesNotContain("gitignored", error, StringComparison.OrdinalIgnoreCase);
     }
@@ -131,9 +131,8 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"summary":"fixed","amendManifest":["src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 10, _root, CancellationToken.None);
+            json, stageNumber: 10, _root, new GitSimEngine(), CancellationToken.None);
 
-        Assert.NotNull(error);
         Assert.Contains("does not exist", error, StringComparison.Ordinal);
         Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
     }
@@ -151,7 +150,7 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/status.cs","src/sub"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(error);
     }
@@ -164,9 +163,8 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         var json = """{"plan":"edit files","manifest":["src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, CancellationToken.None);
+            json, stageNumber: 4, _root, new GitSimEngine(), CancellationToken.None);
 
-        Assert.NotNull(error);
         Assert.Contains("does not exist", error, StringComparison.Ordinal);
         Assert.Contains("src/ghost.cs", error, StringComparison.Ordinal);
     }

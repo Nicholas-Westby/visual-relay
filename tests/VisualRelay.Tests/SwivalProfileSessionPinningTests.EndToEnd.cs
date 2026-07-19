@@ -37,7 +37,7 @@ public sealed partial class SwivalProfileSessionPinningTests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(editor, tests, sink),
+            RelayDriverDependencies.ForTests(editor, tests, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "rename-profile");
@@ -78,7 +78,7 @@ public sealed partial class SwivalProfileSessionPinningTests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(editor, tests, sink),
+            RelayDriverDependencies.ForTests(editor, tests, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "rename-profile");
@@ -116,7 +116,7 @@ public sealed partial class SwivalProfileSessionPinningTests
             new TestRunResult(1, "red"),
             new TestRunResult(0, "green"));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(editor, tests, sink),
+            RelayDriverDependencies.ForTests(editor, tests, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "rename-profile");
@@ -155,7 +155,7 @@ public sealed partial class SwivalProfileSessionPinningTests
             new TestRunResult(0, "green"));
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, sink),
+            RelayDriverDependencies.ForTests(runner, tests, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "unrelated-task");

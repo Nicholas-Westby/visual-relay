@@ -49,7 +49,7 @@ public sealed class GitCommitterRunBaseSquashTests
             ["feat: add widget"], ["src/app.cs", "src/feature.cs", "src/extra.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
 
@@ -99,7 +99,7 @@ public sealed class GitCommitterRunBaseSquashTests
             ["src/one.cs", "src/two.cs", "src/three.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Single(sim.CommitsBetween(repo.Root, runBase, "HEAD"));
@@ -129,7 +129,7 @@ public sealed class GitCommitterRunBaseSquashTests
             ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Single(sim.CommitsBetween(repo.Root, runBase, "HEAD"));
@@ -167,7 +167,7 @@ public sealed class GitCommitterRunBaseSquashTests
             ["feat: ship v3"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         // One sealed commit on top of run-base.
@@ -210,7 +210,7 @@ public sealed class GitCommitterRunBaseSquashTests
             candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Single(sim.CommitsBetween(repo.Root, runBase, "HEAD"));

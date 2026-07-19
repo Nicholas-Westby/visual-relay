@@ -23,7 +23,7 @@ public sealed partial class WorktreeFilterTests
         // No git init — just a plain temp directory.
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
         Assert.Empty(result.TrackedDiscarded);
@@ -47,7 +47,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(testFile, "// new test");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["+tests/NewTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["+tests/NewTests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
         Assert.True(File.Exists(testFile),
@@ -71,7 +71,7 @@ public sealed partial class WorktreeFilterTests
 
         // Agent may emit Windows-style backslash paths.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [@"tests\FooTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [@"tests\FooTests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(testFile),
             "test file with backslash path must be preserved");
@@ -94,7 +94,7 @@ public sealed partial class WorktreeFilterTests
 
         // Agent may emit paths with "./" prefix.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["./tests/BarTests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["./tests/BarTests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(testFile),
             "test file with './' prefix must be preserved");
@@ -118,7 +118,7 @@ public sealed partial class WorktreeFilterTests
         // Agent may emit the path with different case on a
         // case-insensitive host (default macOS volume).
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/footests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/footests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(testFile),
             "case-divergent test file entry must preserve the on-disk file");
@@ -156,7 +156,7 @@ public sealed partial class WorktreeFilterTests
         // WorktreeFilterTests.cs) for `checkout HEAD -- c.txt` to fail the way
         // real git does, letting the cat-file probe + rm --cached + delete run.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new HeadCheckoutAwareGitInvoker(sim));
+            repo.Root, [], tasksDir: null, new HeadCheckoutAwareGitInvoker(sim), CancellationToken.None);
 
         Assert.Null(result.Error);
         // a.txt must be reverted — proves the batch did not abort on c.txt.
@@ -200,7 +200,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(taskFile, "modified-task");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: "llm-tasks", CancellationToken.None, sim);
+            repo.Root, [], tasksDir: "llm-tasks", sim, CancellationToken.None);
 
         // Neither tracked file should be reverted.
         Assert.Equal("modified-config", await File.ReadAllTextAsync(artifactFile));
@@ -228,7 +228,7 @@ public sealed partial class WorktreeFilterTests
             _ => Task.FromResult((1, "simulated git failure", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, [], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.NotNull(result.Error);
         Assert.Contains("revert/delete failures", result.Error, StringComparison.Ordinal);

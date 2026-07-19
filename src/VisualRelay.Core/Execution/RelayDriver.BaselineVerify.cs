@@ -19,7 +19,7 @@ public sealed partial class RelayDriver
         TestRunResult workingResult, IGitInvoker gitInvoker, CancellationToken ct)
     {
         var tag = RedGate.StashTag(taskId, runId);
-        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct, gitInvoker);
+        var stashed = await RedGate.StashAllAsync(rootPath, tag, gitInvoker, ct);
         try
         {
             if (!stashed) return "verify failed";
@@ -34,7 +34,7 @@ public sealed partial class RelayDriver
         }
         finally
         {
-            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct, gitInvoker)
+            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, ct)
                 == RedGateRestoreResult.Conflict)
             {
                 throw new InvalidOperationException(

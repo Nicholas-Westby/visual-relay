@@ -79,7 +79,7 @@ public sealed partial class WorktreeFilterTests
             new HeadCheckoutAwareGitInvoker(new GitSimEngine()));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, [], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.Null(result.Error);
         Assert.False(File.Exists(copyPath),
@@ -123,7 +123,7 @@ public sealed partial class WorktreeFilterTests
             new HeadCheckoutAwareGitInvoker(new GitSimEngine()));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["my.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, ["my.Tests.cs"], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.Null(result.Error);
 

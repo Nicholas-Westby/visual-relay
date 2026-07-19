@@ -24,10 +24,10 @@ public sealed record RelayDriverDependencies(
         ISubagentRunner subagentRunner,
         ITestRunner testRunner,
         IRelayEventSink eventSink,
-        IGitInvoker? gitInvoker = null,
+        IGitInvoker gitInvoker,
         IEnvironmentAccessor? environmentAccessor = null,
         TimeProvider? timeProvider = null) =>
-        new(subagentRunner, testRunner, eventSink, gitInvoker ?? new NullGitInvoker(),
+        new(subagentRunner, testRunner, eventSink, gitInvoker,
             environmentAccessor ?? new TempXdgEnvironmentAccessor(),
             timeProvider);
 }

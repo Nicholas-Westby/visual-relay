@@ -24,7 +24,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
 
         // S1 — snapshot at FIRST instance start (no untracked files).
         var firstInstanceSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(firstInstanceSnapshot);
 
         // Interrupted instance authors new files (stages 5–10).
@@ -33,7 +33,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
 
         // S2 — what a resumed instance would capture (includes authored files).
         var resumeSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Contains("tests/new-test.cs", resumeSnapshot);
 
         // Commit with S1 (the persisted first-instance snapshot).
@@ -48,7 +48,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -74,7 +74,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
 
         // S1 — first-instance snapshot captures the operator scratch file.
         var firstInstanceSnapshot = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Contains("scratch/notes.txt", firstInstanceSnapshot);
 
         // Interrupted instance authors new files.
@@ -93,7 +93,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);

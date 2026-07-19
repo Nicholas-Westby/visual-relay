@@ -27,8 +27,8 @@ public static class TaskRewriteRunner
         RelayTaskItem task,
         RelayConfig config,
         ISubagentRunner runner,
+        IGitInvoker git,
         CancellationToken ct,
-        IGitInvoker? git = null,
         IEnvironmentAccessor? environment = null)
     {
         var runId = "rewrite-" + DateTimeOffset.UtcNow.Ticks;
@@ -59,9 +59,9 @@ public static class TaskRewriteRunner
             // (the finally-RemoveAsync is skipped on a hard kill). Scoped to this
             // task id so a concurrent rewrite of a DIFFERENT task — which shares
             // the rewrite namespace — is never deleted.
-            await PlanningWorktree.PruneTaskLeftoversAsync(rootPath, task.Id, ct, git);
+            await PlanningWorktree.PruneTaskLeftoversAsync(rootPath, task.Id, git, ct);
 
-            worktreePath = await PlanningWorktree.CreateAsync(rootPath, task.Id, runId, ct, git, isRewrite: true);
+            worktreePath = await PlanningWorktree.CreateAsync(rootPath, task.Id, runId, git, ct, isRewrite: true);
             PlanningWorktree.CopyConfigIntoWorktree(rootPath, worktreePath);
         }
         catch (OperationCanceledException)
@@ -143,7 +143,7 @@ public static class TaskRewriteRunner
         }
         finally
         {
-            await PlanningWorktree.RemoveAsync(rootPath, worktreePath, CancellationToken.None, git);
+            await PlanningWorktree.RemoveAsync(rootPath, worktreePath, git, CancellationToken.None);
         }
     }
 

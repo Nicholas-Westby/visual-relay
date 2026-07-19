@@ -15,7 +15,7 @@ public sealed class WindowsLaunchTargetTests
     private const string Swival = @"C:\tools\swival.exe";
 
     private static SwivalSubagentRunner Runner() =>
-        new(TestConfig(), swivalBinary: Swival, backendProbe: SwivalTestHelpers.AlwaysReady);
+        new(TestConfig(), new NullGitInvoker(), swivalBinary: Swival, backendProbe: SwivalTestHelpers.AlwaysReady);
 
     [Fact]
     public void Windows_Mxc_WrapsSwivalInWxcExecWithPolicy()

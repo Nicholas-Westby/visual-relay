@@ -21,7 +21,7 @@ internal sealed class GuiTaskRunner(
     {
         var fileSink = new FileRelayEventSink(Path.Combine(mainRootPath, ".relay", taskId, "run.log"));
         var sink = new CompositeRelayEventSink(sharedSink, fileSink);
-        var subagentRunner = new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics);
+        var subagentRunner = new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: verboseDiagnostics);
         var deps = new RelayDriverDependencies(subagentRunner, testRunner, sink, new GitInvoker());
         var driver = new RelayDriver(deps, new RelayDriverOptions(CreateGitCommit: true, Resume: true));
         return driver.RunTaskAsync(rootPath, taskId, cancellationToken);

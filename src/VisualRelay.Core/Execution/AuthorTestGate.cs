@@ -24,7 +24,7 @@ internal static class AuthorTestGate
 
         try
         {
-            stashed = await RedGate.StripToRedAsync(rootPath, stripSet, tag, cancellationToken, gitInvoker);
+            stashed = await RedGate.StripToRedAsync(rootPath, stripSet, tag, gitInvoker, cancellationToken);
             result = await testRunner.RunAsync(rootPath, command, cancellationToken);
         }
         catch (InvalidOperationException ex)
@@ -36,7 +36,7 @@ internal static class AuthorTestGate
         {
             if (stashed)
             {
-                restore = await RedGate.RestoreStashAsync(rootPath, tag, cancellationToken, gitInvoker);
+                restore = await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, cancellationToken);
             }
         }
 

@@ -40,7 +40,7 @@ public sealed partial class RelayQueueController
         var gi = _gitInvoker ?? new GitInvoker();
         try
         {
-            var result = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, ct, gi);
+            var result = await WorktreeResetter.ResetAsync(RootPath, taskId, tasksDir, gi, ct);
 
             if (result.SnapshotMissing)
             {

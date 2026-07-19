@@ -95,7 +95,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));
@@ -117,7 +117,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "nonzero");
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));
@@ -138,7 +138,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
         // so the first-output watchdog (pinned tiny) fires. Each stall escalates
         // immediately (no same-config retry), so the stall path drives the full ladder.
         var script = await WriteLadderSwivalAsync(repo.Root, "stall");
-        var runner = new SwivalSubagentRunner(EscalationConfig(firstOutputMs: 2000), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(firstOutputMs: 2000), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));
@@ -160,7 +160,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var review = RelayStages.All[6]; // stage 7 Review — frontier default
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         await runner.RunAsync(InvocationFor(repo.Root, review, maxTurns: 200));
@@ -177,7 +177,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         // boosted: the effective run-1 budget is already 10× (2000); doubling is suppressed.
@@ -196,7 +196,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
         var review = RelayStages.All[6]; // stage 7 Review — frontier default
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         // Boosted frontier-base: run 1 = frontier@2000, and NextTier(frontier)=frontier
@@ -218,7 +218,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "recover2");
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(EscalationConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));
@@ -241,7 +241,7 @@ public sealed class SwivalSubagentRunnerEscalationTests
 
         using var repo = TestRepository.Create();
         var script = await WriteLadderSwivalAsync(repo.Root, "contract");
-        var runner = new SwivalSubagentRunner(EscalationConfig(maxStageFailures: 1), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(EscalationConfig(maxStageFailures: 1), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         await runner.RunAsync(InvocationFor(repo.Root, RelayStages.All[0], maxTurns: 200));

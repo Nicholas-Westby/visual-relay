@@ -160,8 +160,8 @@ public sealed partial class RelayQueueController
                                 DrainSummaryLog.Write(RootPath, drainRunId, taskId, "plan", "start");
 
                             var planResults = await PlanPhaseRunner.RunPlanPhaseAsync(
-                                RootPath, needsPlan, configResult.Config, _planTestRunner, drainCts.Token,
-                                _planEventSinkFactory, _environmentAccessor, _gitInvoker);
+                                RootPath, needsPlan, configResult.Config, _planTestRunner, _gitInvoker ?? new GitInvoker(), drainCts.Token,
+                                _planEventSinkFactory, _environmentAccessor);
 
                             foreach (var (taskId, outcome) in planResults)
                             {

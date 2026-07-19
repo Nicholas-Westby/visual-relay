@@ -44,10 +44,10 @@ internal static partial class WorktreeFilter
         string rootPath,
         IReadOnlyList<string> testFiles,
         string? tasksDir,
-        CancellationToken cancellationToken = default,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker gitInvoker,
+        CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();        // Host-gated path comparer (Defect D): OrdinalIgnoreCase on macOS/Windows.
+        var gi = gitInvoker;        // Host-gated path comparer (Defect D): OrdinalIgnoreCase on macOS/Windows.
         var pathComparer = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows()
             ? StringComparer.OrdinalIgnoreCase
             : StringComparer.Ordinal;

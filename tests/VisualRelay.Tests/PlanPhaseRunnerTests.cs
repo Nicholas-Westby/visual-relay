@@ -137,12 +137,7 @@ public sealed partial class PlanPhaseRunnerTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root,
-            tasks: [("stray-writer", strayWriter)],
-            config: config,
-            testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("stray-writer", strayWriter)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);
@@ -221,12 +216,7 @@ public sealed partial class PlanPhaseRunnerTests
 
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root,
-            tasks: [("copy-back", runner)],
-            config: config,
-            testRunner: new ScriptedTestRunner(),
-            cancellationToken: CancellationToken.None,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            mainRootPath: repo.Root, tasks: [("copy-back", runner)], config: config, testRunner: new ScriptedTestRunner(), cancellationToken: CancellationToken.None, environmentAccessor: PlanPhaseTestHelpers.TempXdg,
             gitInvoker: sim);
 
         Assert.Single(results);

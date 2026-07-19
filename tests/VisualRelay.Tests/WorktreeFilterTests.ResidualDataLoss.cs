@@ -123,7 +123,7 @@ public sealed partial class WorktreeFilterTests
 
         // Declare foo.cs (the rename destination) as the testFile.
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["foo.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, ["foo.cs"], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         // The case-renamed test file must still exist on disk with its
         // content intact, and must not be reported as discarded.
@@ -167,7 +167,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(newPath, "v2-modified");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, sim);
+            repo.Root, [], tasksDir: null, sim, CancellationToken.None);
 
         // Determine the post-condition: is src/new.cs still staged in the index?
         var staged = sim.StagedPaths(repo.Root).Contains("src/new.cs", StringComparer.Ordinal);

@@ -16,11 +16,10 @@ internal static class EarlyImplementationDetector
         string rootPath,
         IReadOnlyList<string> manifest,
         Func<string, bool> isImpl,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken,
-        Func<string, bool>? isTestFile = null,
-        IGitInvoker? gitInvoker = null)
+        Func<string, bool>? isTestFile = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
         var implFiles = manifest
             .Select(p => p.StartsWith('+') ? p[1..] : p) // manifest may carry '+' new-file prefix
             .Where(isImpl)
@@ -30,7 +29,7 @@ internal static class EarlyImplementationDetector
         if (implFiles.Count == 0) return false;
 
         // Must be inside a git work tree, else we have no HEAD baseline → safe-off.
-        var inside = await gi.RunAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
+        var inside = await gitInvoker.RunAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         if (inside.ExitCode != 0 || !inside.Output.Trim().StartsWith("true", StringComparison.Ordinal))
             return false;
 
@@ -39,7 +38,7 @@ internal static class EarlyImplementationDetector
         // are handled by the untracked check below. Exit 0 = clean, 1 = differs.
         var diffArgs = new List<string> { "diff", "--quiet", "HEAD", "--" };
         diffArgs.AddRange(implFiles);
-        var diff = await gi.RunAsync(rootPath, diffArgs, cancellationToken);
+        var diff = await gitInvoker.RunAsync(rootPath, diffArgs, cancellationToken);
         if (diff.ExitCode == 1) return true;
         if (diff.ExitCode != 0) return false; // any other code (e.g. no HEAD yet) → safe-off
 
@@ -47,7 +46,7 @@ internal static class EarlyImplementationDetector
         // Detect new impl files that already exist on disk and are untracked.
         var untrackedArgs = new List<string> { "-c", "core.quotePath=false", "ls-files", "--others", "--exclude-standard", "--" };
         untrackedArgs.AddRange(implFiles);
-        var untracked = await gi.RunAsync(rootPath, untrackedArgs, cancellationToken);
+        var untracked = await gitInvoker.RunAsync(rootPath, untrackedArgs, cancellationToken);
         if (untracked.ExitCode == 0 &&
             GitPathOutput.ParseLines(untracked.Output).Count > 0)
             return true;

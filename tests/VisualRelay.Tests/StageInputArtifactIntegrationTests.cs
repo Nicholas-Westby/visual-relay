@@ -26,7 +26,7 @@ public sealed class StageInputArtifactIntegrationTests
             """);
         var sink = new InMemoryRelayEventSink();
         var runner = new SwivalSubagentRunner(
-            TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -78,7 +78,7 @@ public sealed class StageInputArtifactIntegrationTests
             """);
         var sink = new InMemoryRelayEventSink();
         var runner = new SwivalSubagentRunner(
-            TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -139,7 +139,7 @@ public sealed class StageInputArtifactIntegrationTests
         };
 
         var runner = new SwivalSubagentRunner(
-            TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+            TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(invocation);

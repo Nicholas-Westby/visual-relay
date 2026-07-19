@@ -28,7 +28,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly string _swivalBinary;
     private readonly string _nonoBinary;
     private readonly Func<CancellationToken, Task<BackendReadiness>> _probe;
-    private readonly IGitInvoker? _gitInvoker;
+    private readonly IGitInvoker _gitInvoker;
     private readonly Func<string?> _proxyLogReader;
     // Output-only "verbose diagnostics" preference threaded from the app/CLI. When
     // false (default = quiet) the nono wrapper is invoked with --silent; when true
@@ -41,10 +41,10 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     private readonly TimeProvider _timeProvider;
     public SwivalSubagentRunner(
         RelayConfig config,
+        IGitInvoker gitInvoker,
         string swivalBinary = "swival",
         IRelayEventSink? eventSink = null,
         Func<CancellationToken, Task<BackendReadiness>>? backendProbe = null,
-        IGitInvoker? gitInvoker = null,
         // The nono wrapper binary. Defaults to NonoBinary ("nono"); injectable so a
         // unit test can supply a transparent passthrough stub and exercise the
         // always-on nono-wrapped launch path without depending on the real nono's

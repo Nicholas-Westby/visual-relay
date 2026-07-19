@@ -27,7 +27,7 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
 
         // Snapshot before the run: no untracked files.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Simulate: agent authors a new src file and modifies a tracked file,
@@ -43,7 +43,7 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.True(commit.Success, commit.Error);
 
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -57,7 +57,7 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(
             repo.Root, preRunUntracked,
             tasksDir: "llm-tasks",
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
         Assert.DoesNotContain("llm-tasks/new-task/new-task.md", missed);
     }
 }

@@ -36,7 +36,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
         // ── CRITICAL: the TAB-named production edit must be reverted ──
@@ -67,7 +67,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
         // ── CRITICAL: the newline-named production edit must be reverted ──
@@ -99,7 +99,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(full, "modified-by-agent");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
         // ── CRITICAL: the trailing-space production edit must be reverted ──
@@ -158,7 +158,7 @@ public sealed partial class WorktreeFilterTests
             _ => Task.FromResult((0, "R100\0prod.cs\0some.Tests.cs\0", false)));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["some.Tests.cs"], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, ["some.Tests.cs"], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.Null(result.Error);
 

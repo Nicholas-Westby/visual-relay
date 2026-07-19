@@ -21,8 +21,7 @@ public sealed class PlanningWorktreeDeterministicFailureTests
         var time = new ManualTimeProvider();
         var task = PlanningWorktree.CreateAsync(
             Path.Combine(Path.GetTempPath(), "vr-deterministic-test"),
-            "task-id", "run-id", CancellationToken.None,
-            gitInvoker: sim, timeProvider: time);
+            "task-id", "run-id", sim, CancellationToken.None, timeProvider: time);
 
         // The task must be FAULTED already (deterministic failure → throw,
         // no delay). If it's still pending, the retry loop slept on a

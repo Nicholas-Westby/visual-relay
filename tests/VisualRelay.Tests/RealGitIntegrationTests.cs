@@ -137,12 +137,13 @@ public sealed class RealGitIntegrationTests
         File.WriteAllText(Path.Combine(repo.Root, "src.txt"), "new\n");
 
         var tag = RedGate.StashTag("task", "absent-path");
-        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, CancellationToken.None);
+        var gi = new GitInvoker();
+        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, gi, CancellationToken.None);
 
         Assert.True(stashed);
         Assert.Equal("old\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
-        Assert.NotNull(await RedGate.FindStashRefAsync(repo.Root, tag, CancellationToken.None));
-        Assert.Equal(RedGateRestoreResult.Restored, await RedGate.RestoreStashAsync(repo.Root, tag, CancellationToken.None));
+        var restored = await RedGate.RestoreStashAsync(repo.Root, tag, gi, CancellationToken.None);
+        Assert.Equal(RedGateRestoreResult.Restored, restored);
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
     }
 
@@ -209,7 +210,7 @@ public sealed class RealGitIntegrationTests
             repo.Root, "my-task", "abc123",
             ["feat: add widget"], ["src/app.cs", "src/feature.cs", "src/extra.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            CancellationToken.None, new GitInvoker(), runBaseSha: runBase);
+            new GitInvoker(), CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Equal("1", Git(repo.Root, "rev-list", "--count", $"{runBase}..HEAD").Trim());

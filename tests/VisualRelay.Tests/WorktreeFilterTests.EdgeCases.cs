@@ -32,7 +32,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(testFile, "// test");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Contains("src/app.cs", result.TrackedDiscarded, StringComparer.Ordinal);
         Assert.Contains("src/helper.cs", result.UntrackedDeleted, StringComparer.Ordinal);
@@ -55,7 +55,7 @@ public sealed partial class WorktreeFilterTests
         await sim.Git(repo.Root, "add", "src/app.cs");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, sim);
+            repo.Root, [], tasksDir: null, sim, CancellationToken.None);
 
         // Working tree reverted.
         Assert.Equal("original", await File.ReadAllTextAsync(filePath));
@@ -84,7 +84,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(artifact, "note");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Equal("original", await File.ReadAllTextAsync(prodFile));
         Assert.False(File.Exists(untracked), "untracked file should be deleted");
@@ -111,8 +111,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "app.cs"), "modified");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/unit/a.tests.cs", "tests/unit/b.tests.cs"],
-            tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/unit/a.tests.cs", "tests/unit/b.tests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(test1), "test file a should survive");
         Assert.True(File.Exists(test2), "test file b should survive");
@@ -139,7 +138,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(untracked, "new");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Equal(2, result.TrackedDiscarded.Count);
         Assert.Single(result.UntrackedDeleted);

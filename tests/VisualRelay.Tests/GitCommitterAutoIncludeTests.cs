@@ -18,7 +18,7 @@ public sealed class GitCommitterAutoIncludeTests
 
         // Snapshot before the run: no untracked files exist.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Simulate an agent authoring a new test file and modifying a manifest-listed file.
@@ -38,7 +38,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -63,7 +63,7 @@ public sealed class GitCommitterAutoIncludeTests
 
         // Snapshot captures the pre-existing scratch file.
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Contains("scratch/notes.txt", preRunUntracked);
 
         // Agent modifies a tracked file and creates a new test file under tests/.
@@ -82,7 +82,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -103,7 +103,7 @@ public sealed class GitCommitterAutoIncludeTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Author files outside any conventional .NET source root.
@@ -124,7 +124,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -146,7 +146,7 @@ public sealed class GitCommitterAutoIncludeTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // The run authors a real test file AND leaves internal artifacts behind.
@@ -167,7 +167,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -188,7 +188,7 @@ public sealed class GitCommitterAutoIncludeTests
         sim.Commit(repo.Root, "chore: seed");
 
         var preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(
-            repo.Root, CancellationToken.None, sim);
+            repo.Root, sim, CancellationToken.None);
         Assert.Empty(preRunUntracked);
 
         // Agent creates a gitignored log file and a new test file.
@@ -208,7 +208,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -242,7 +242,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim);
+            sim, CancellationToken.None);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);

@@ -14,9 +14,9 @@ public sealed partial class SwivalSubagentRunner
     /// git error / unparseable JSON).
     /// </summary>
     internal static async Task<string?> CheckManifestAgainstGitignoreAsync(
-        string json, int stageNumber, string targetRoot, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
+        string json, int stageNumber, string targetRoot, IGitInvoker gitInvoker, CancellationToken cancellationToken)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var key = stageNumber == 4 ? "manifest" : "amendManifest";
         List<string> paths;
         try

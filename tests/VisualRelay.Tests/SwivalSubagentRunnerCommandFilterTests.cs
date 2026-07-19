@@ -153,7 +153,7 @@ public sealed class SwivalSubagentRunnerCommandFilterTests
     public void BuildArguments_WithoutResolvedCommands_UsesStageCommands()
     {
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
         var invocation = SwivalTestHelpers.Invocation(Path.GetTempPath());
 
         var args = runner.BuildArguments(invocation);
@@ -167,7 +167,7 @@ public sealed class SwivalSubagentRunnerCommandFilterTests
     public void BuildArguments_WithResolvedCommands_OverridesStageCommands()
     {
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
         var invocation = SwivalTestHelpers.Invocation(Path.GetTempPath());
 
         var args = runner.BuildArguments(invocation, "git,ls");

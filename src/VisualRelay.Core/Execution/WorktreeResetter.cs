@@ -31,10 +31,10 @@ internal static class WorktreeResetter
         string rootPath,
         string taskId,
         string? tasksDir,
-        CancellationToken cancellationToken,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker gitInvoker,
+        CancellationToken cancellationToken)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
 
         // 1. Reset index + working tree to HEAD so no tracked changes survive.
         _ = await GitAsync(gi, rootPath, ["reset", "-q", "HEAD"], cancellationToken);

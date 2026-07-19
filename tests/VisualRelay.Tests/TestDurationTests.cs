@@ -121,7 +121,7 @@ public sealed class TestDurationTests
             new TestRunResult(1, "red", Elapsed: TimeSpan.FromSeconds(0.5)),
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.2)));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "test-dur-status");
@@ -162,7 +162,7 @@ public sealed class TestDurationTests
         var testRunner = new ElapsedTestRunner(
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.0)));
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, testRunner, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-impl");
@@ -185,7 +185,7 @@ public sealed class TestDurationTests
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.8)));
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, testRunner, sink),
+            RelayDriverDependencies.ForTests(runner, testRunner, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "test-time-event");
@@ -212,7 +212,7 @@ public sealed class TestDurationTests
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.0)));
         var sink = new InMemoryRelayEventSink();
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, testRunner, sink),
+            RelayDriverDependencies.ForTests(runner, testRunner, sink, new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "no-test-time");

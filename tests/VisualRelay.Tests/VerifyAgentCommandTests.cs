@@ -46,7 +46,7 @@ public sealed class VerifyAgentCommandTests
             new TestRunResult(1, "red"),                  // stage 5 author gate
             new TestRunResult(0, "All 7 tests passed!")); // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "verify-no-cmd");
@@ -81,7 +81,7 @@ public sealed class VerifyAgentCommandTests
             new TestRunResult(1, "Failed TestX"),    // fix-verify attempt 1 gate
             new TestRunResult(0, "green"));          // fix-verify attempt 1 retry → green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fixverify-plain");
@@ -181,7 +181,7 @@ public sealed class VerifyAgentCommandTests
             new TestRunResult(1, "verify failed"),  // stage 10 retry
             new TestRunResult(0, "All green!"));    // fix-verify first run (pass)
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "red-verify-routes-to-fix");

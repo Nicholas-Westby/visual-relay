@@ -165,7 +165,7 @@ public sealed class TargetedTestInvocationTests
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "targeted-test");
@@ -207,7 +207,7 @@ public sealed class TargetedTestInvocationTests
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fallback-test");
@@ -248,7 +248,7 @@ public sealed class TargetedTestInvocationTests
             new TestRunResult(1, "red"),    // stage 5 author gate
             new TestRunResult(0, "green")); // stage 10 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, recordingTests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, recordingTests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "verify-harness");
@@ -286,7 +286,7 @@ public sealed class TargetedTestInvocationTests
             new TestRunResult(1, "Failed TestX"),  // fix-verify attempt 1 first run — red
             new TestRunResult(0, "green"));         // fix-verify attempt 1 retry — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "fix-verify-targeted");

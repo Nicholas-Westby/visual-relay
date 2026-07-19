@@ -27,7 +27,7 @@ var config = await RelayConfigLoader.LoadAsync(rootPath);
 var verboseDiagnostics = DiagnosticsSettings.LoadVerboseDiagnostics();
 var sink = new ConsoleRelayEventSink();
 var dependencies = new RelayDriverDependencies(
-    new SwivalSubagentRunner(config, eventSink: sink, verboseDiagnostics: verboseDiagnostics),
+    new SwivalSubagentRunner(config, new GitInvoker(), eventSink: sink, verboseDiagnostics: verboseDiagnostics),
     new SandboxedTestRunner(new ShellTestRunner(TimeSpan.FromMilliseconds(config.TestTimeoutMilliseconds)), config, verboseDiagnostics),
     sink,
     new GitInvoker());

@@ -44,9 +44,9 @@ public static class PlanningWorktree
     /// <c>true</c> the worktree lives in the rewrite-only namespace so a concurrent
     /// drain's <see cref="PruneLeftoversAsync"/> cannot delete it.
     /// </summary>
-    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null, bool isRewrite = false, TimeProvider? timeProvider = null)
+    public static async Task<string> CreateAsync(string repoRoot, string taskId, string runId, IGitInvoker gitInvoker, CancellationToken ct, bool isRewrite = false, TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         var worktreePath = Path.Combine(GetTempRoot(repoRoot, runId, isRewrite), taskId);
         if (Directory.Exists(worktreePath))
@@ -116,9 +116,9 @@ public static class PlanningWorktree
     /// Removes the git worktree entry and the on-disk directory.
     /// Best-effort — never throws.
     /// </summary>
-    public static async Task RemoveAsync(string repoRoot, string worktreePath, CancellationToken ct, IGitInvoker? gitInvoker = null, TimeProvider? timeProvider = null)
+    public static async Task RemoveAsync(string repoRoot, string worktreePath, IGitInvoker gitInvoker, CancellationToken ct, TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         try
         {
@@ -141,9 +141,9 @@ public static class PlanningWorktree
     /// live rewrite worktree, and a rewrite-namespace prune never touches a live
     /// planning worktree.
     /// </summary>
-    public static async Task PruneLeftoversAsync(string repoRoot, string runId, CancellationToken ct, IGitInvoker? gitInvoker = null, bool isRewrite = false, TimeProvider? timeProvider = null)
+    public static async Task PruneLeftoversAsync(string repoRoot, string runId, IGitInvoker gitInvoker, CancellationToken ct, bool isRewrite = false, TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         try
         {
@@ -177,9 +177,9 @@ public static class PlanningWorktree
     /// cannot wipe a concurrent rewrite of a DIFFERENT task that shares the
     /// namespace. Best-effort: never throws.
     /// </summary>
-    public static async Task PruneTaskLeftoversAsync(string repoRoot, string taskId, CancellationToken ct, IGitInvoker? gitInvoker = null, TimeProvider? timeProvider = null)
+    public static async Task PruneTaskLeftoversAsync(string repoRoot, string taskId, IGitInvoker gitInvoker, CancellationToken ct, TimeProvider? timeProvider = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var tp = timeProvider ?? TimeProvider.System;
         try
         {

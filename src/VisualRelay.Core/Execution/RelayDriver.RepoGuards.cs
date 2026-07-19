@@ -59,7 +59,7 @@ public sealed partial class RelayDriver
 
         // Stash working changes, run guard on clean tree, diff.
         var tag = RedGate.StashTag(taskId, runId);
-        var stashed = await RedGate.StashAllAsync(rootPath, tag, ct, gitInvoker);
+        var stashed = await RedGate.StashAllAsync(rootPath, tag, gitInvoker, ct);
         try
         {
             if (!stashed)
@@ -96,7 +96,7 @@ public sealed partial class RelayDriver
         }
         finally
         {
-            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, ct, gitInvoker)
+            if (stashed && await RedGate.RestoreStashAsync(rootPath, tag, gitInvoker, ct)
                 == RedGateRestoreResult.Conflict)
             {
                 // Baseline restore conflict is non-fatal for guard diff;

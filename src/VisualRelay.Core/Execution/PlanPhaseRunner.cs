@@ -47,10 +47,10 @@ public static class PlanPhaseRunner
         IEnumerable<(string TaskId, ISubagentRunner Runner)> tasks,
         RelayConfig config,
         ITestRunner testRunner,
+        IGitInvoker gitInvoker,
         CancellationToken cancellationToken = default,
         Func<string, IRelayEventSink>? eventSinkFactory = null,
-        IEnvironmentAccessor? environmentAccessor = null,
-        IGitInvoker? gitInvoker = null)
+        IEnvironmentAccessor? environmentAccessor = null)
     {
         var taskList = tasks.ToList();
         if (taskList.Count == 0)
@@ -62,7 +62,7 @@ public static class PlanPhaseRunner
         var results = new List<(string TaskId, RelayTaskOutcome Outcome)>();
 
         // Prune any leftover worktrees from a prior crashed drain.
-        await PlanningWorktree.PruneLeftoversAsync(mainRootPath, runId, cancellationToken, gitInvoker);
+        await PlanningWorktree.PruneLeftoversAsync(mainRootPath, runId, gitInvoker, cancellationToken);
 
         // Fire all planning tasks concurrently, gated by the semaphore.
         await Task.WhenAll(taskList.Select(t => PlanOneAsync(
@@ -85,7 +85,7 @@ public static class PlanPhaseRunner
         List<(string TaskId, RelayTaskOutcome Outcome)> results,
         Func<string, IRelayEventSink>? eventSinkFactory,
         IEnvironmentAccessor? environmentAccessor,
-        IGitInvoker? gitInvoker,
+        IGitInvoker gitInvoker,
         CancellationToken ct)
     {
         await semaphore.WaitAsync(ct);
@@ -123,15 +123,14 @@ public static class PlanPhaseRunner
         string runId,
         Func<string, IRelayEventSink>? eventSinkFactory,
         IEnvironmentAccessor? environmentAccessor,
-        IGitInvoker? gitInvoker,
+        IGitInvoker gitInvoker,
         CancellationToken ct)
     {
         string? worktreePath = null;
-        var gi = gitInvoker ?? new GitInvoker();
         try
         {
             DrainSummaryLog.Write(mainRootPath, runId, taskId, "plan", "start");
-            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, ct, gi);
+            worktreePath = await PlanningWorktree.CreateAsync(mainRootPath, taskId, runId, gitInvoker, ct);
             // The detached checkout omits the (normally git-ignored) per-repo
             // config, so provide it from the source repo before the driver loads
             // config from the worktree — otherwise stage 1 flags "config not found".
@@ -146,7 +145,7 @@ public static class PlanPhaseRunner
                 Path.Combine(worktreePath, ".relay", taskId, "run.log"));
             var sink = new CompositeRelayEventSink(observableSink, fileSink);
             var dependencies = new RelayDriverDependencies(
-                runner, testRunner, sink, gi, environmentAccessor);
+                runner, testRunner, sink, gitInvoker, environmentAccessor);
             var options = new RelayDriverOptions(CreateGitCommit: false, LastStageToRun: 4);
             var driver = new RelayDriver(dependencies, options);
 
@@ -166,7 +165,7 @@ public static class PlanPhaseRunner
         finally
         {
             if (worktreePath is not null)
-                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, ct, gi);
+                await PlanningWorktree.RemoveAsync(mainRootPath, worktreePath, gitInvoker, ct);
         }
     }
 }

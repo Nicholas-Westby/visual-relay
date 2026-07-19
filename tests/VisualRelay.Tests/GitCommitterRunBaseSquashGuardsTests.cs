@@ -68,7 +68,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: my task"], ["src/mine.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
 
@@ -109,7 +109,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: build two things"], ["src/one.cs", "src/two.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         // Squash happened: exactly one sealed commit parented on the run-base.
@@ -147,7 +147,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: add widget", "fix: alternative"], ["src/app.cs", "src/feature.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         // The commit failed (hook won) ...
         Assert.False(result.Success);
@@ -198,7 +198,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            CancellationToken.None, sim, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Single(sim.CommitsBetween(repo.Root, runBase, "HEAD"));

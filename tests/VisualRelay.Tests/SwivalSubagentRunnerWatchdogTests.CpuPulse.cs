@@ -41,7 +41,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 6_000 },
             SubagentTimeoutMilliseconds = 60_000
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -79,7 +79,7 @@ public sealed partial class SwivalSubagentRunnerWatchdogTests
             InactivityTimeoutMsByTier = new Dictionary<string, int> { ["cheap"] = 3_000 },
             SubagentTimeoutMilliseconds = 8_000  // backstop (inactivity window 3s + ~5s)
         };
-        var runner = new SwivalSubagentRunner(config, script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));

@@ -93,7 +93,7 @@ public sealed class RelayQueueControllerCrashResilienceTests
             RelayDriverDependencies.ForTests(
                 new ScriptedSubagentRunner(),
                 new ScriptedTestRunner(),
-                new InMemoryRelayEventSink()),
+                new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "crashy");

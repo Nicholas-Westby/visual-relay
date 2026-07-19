@@ -38,7 +38,7 @@ public sealed class WorktreeResetterNonAsciiTests
         var quotedInvoker = new QuotedLsFilesGitInvoker(sim, quotedName);
 
         var result = await WorktreeResetter.ResetAsync(
-            repo.Root, "test-task", tasksDir: null, CancellationToken.None, quotedInvoker);
+            repo.Root, "test-task", tasksDir: null, quotedInvoker, CancellationToken.None);
 
         // The file must be actually deleted from disk.
         Assert.False(File.Exists(fullPath), "non-ASCII untracked file should be deleted");

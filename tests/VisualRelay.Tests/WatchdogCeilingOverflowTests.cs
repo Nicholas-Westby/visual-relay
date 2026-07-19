@@ -57,7 +57,7 @@ public sealed class WatchdogCeilingOverflowTests
             new TestRunResult(1, "red"),     // stage 5 author gate
             new TestRunResult(0, "green"));  // stage 9 verify — green
         var driver = new RelayDriver(
-            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink()),
+            RelayDriverDependencies.ForTests(runner, tests, new InMemoryRelayEventSink(), new NullGitInvoker()),
             RelayDriverOptions.NoGitCommit);
 
         var outcome = await driver.RunTaskAsync(repo.Root, "overflow-task");

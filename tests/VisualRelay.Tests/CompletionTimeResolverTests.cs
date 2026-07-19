@@ -171,7 +171,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var resolved = await CompletionTimeResolver.ResolveAsync(
-            task, repo.Root, gitInvoker: null, CancellationToken.None);
+            task, repo.Root, gitInvoker: new NullGitInvoker(), CancellationToken.None);
 
         // Null gitInvoker → tier 3 skipped → tier 4 fires.
         Assert.NotNull(resolved);
@@ -232,7 +232,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var resolved = await CompletionTimeResolver.ResolveAsync(
-            task, repo.Root, gitInvoker: null, CancellationToken.None);
+            task, repo.Root, gitInvoker: new NullGitInvoker(), CancellationToken.None);
 
         // Should use the newest file mtime under .relay/relay-dir/ (the NEEDS-REVIEW file).
         Assert.NotNull(resolved);
@@ -261,7 +261,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var resolved = await CompletionTimeResolver.ResolveAsync(
-            task, repo.Root, gitInvoker: null, CancellationToken.None);
+            task, repo.Root, gitInvoker: new NullGitInvoker(), CancellationToken.None);
 
         // Empty .relay dir → tier 2 nothing → falls to tier 4 (no git).
         Assert.NotNull(resolved);
@@ -287,7 +287,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var resolved = await CompletionTimeResolver.ResolveAsync(
-            task, repo.Root, gitInvoker: null, CancellationToken.None);
+            task, repo.Root, gitInvoker: new NullGitInvoker(), CancellationToken.None);
 
         Assert.NotNull(resolved);
         Assert.Equal(knownMtime.Year, resolved.Value.Year);

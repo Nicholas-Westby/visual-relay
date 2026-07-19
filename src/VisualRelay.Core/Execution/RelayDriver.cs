@@ -202,7 +202,7 @@ public sealed partial class RelayDriver : IRelayTaskRunner
                         sessionCostUsd += cd; unknownCostStageCount += ud;
                         if (config.DownshiftOnEarlyImplementation)
                             implementationFrontLoaded = await EarlyImplementationDetector
-                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
+                                .ImplementationAlreadyUnderwayAsync(rootPath, manifest, IsImpl, _dependencies.GitInvoker, cancellationToken, isTestFile: f => TestPathClassifier.IsTestRelated(f, config.TestPaths));
                     }
 
                     if (stage.Number == 5)

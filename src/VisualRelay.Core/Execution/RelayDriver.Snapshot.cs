@@ -62,7 +62,7 @@ public sealed partial class RelayDriver
             }
             else
             {
-                preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, cancellationToken, _dependencies.GitInvoker);
+                preRunUntracked = await GitCommitter.CaptureUntrackedSnapshotAsync(rootPath, _dependencies.GitInvoker, cancellationToken);
                 await WritePreRunUntrackedAsync(snapshotPath, preRunUntracked, cancellationToken);
             }
         }

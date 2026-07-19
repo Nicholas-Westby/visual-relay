@@ -73,7 +73,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(prodFile, "modified by agent");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         // Production file reverted.
         Assert.Equal("original", await File.ReadAllTextAsync(prodFile));
@@ -102,7 +102,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(testFile, "// test");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         // Non-test untracked deleted.
         Assert.False(File.Exists(untrackedProd), "non-test untracked file should be deleted");
@@ -133,7 +133,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(stub, "stub");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/app.tests.cs"], tasksDir: null, CancellationToken.None, sim);
+            repo.Root, ["tests/app.tests.cs"], tasksDir: null, sim, CancellationToken.None);
 
         // Tracked test file is NOT reverted.
         Assert.Equal("// updated test", await File.ReadAllTextAsync(trackedTest));
@@ -167,7 +167,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(swivalPath, "cache");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(artifactPath), ".relay/ artifact should be preserved");
         Assert.True(File.Exists(scratchPath), ".relay-scratch/ artifact should be preserved");
@@ -190,7 +190,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(taskFilePath, "# Task");
 
         await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: tasksDir, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: tasksDir, new GitSimEngine(), CancellationToken.None);
 
         Assert.True(File.Exists(taskFilePath), "tasks-dir file should be preserved");
     }
@@ -207,7 +207,7 @@ public sealed partial class WorktreeFilterTests
         // Tree is clean.
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Empty(result.TrackedDiscarded);
         Assert.Empty(result.UntrackedDeleted);

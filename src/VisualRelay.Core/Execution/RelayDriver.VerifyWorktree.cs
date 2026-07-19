@@ -86,7 +86,7 @@ public sealed partial class RelayDriver
         long thresholdBytes = IgnoredOverlayCopyMaxBytes, bool cloneOverlay = true)
     {
         var worktreePath = await PlanningWorktree.CreateAsync(
-            sourcePath, worktreeId, runId, cancellationToken, _dependencies.GitInvoker,
+            sourcePath, worktreeId, runId, _dependencies.GitInvoker, cancellationToken,
             timeProvider: _dependencies.TimeProvider);
 
         // (1) ADD / MODIFY — copy every path DIFFERING from HEAD (staged + unstaged) and

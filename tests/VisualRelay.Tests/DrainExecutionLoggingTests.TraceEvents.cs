@@ -23,10 +23,7 @@ public sealed partial class DrainExecutionLoggingTests
         var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
 
         var results = await PlanPhaseRunner.RunPlanPhaseAsync(
-            mainRootPath: repo.Root, tasks: [("trace-me", traceRunner)],
-            config: config, testRunner: new ScriptedTestRunner(),
-            eventSinkFactory: _ => captured,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
+            mainRootPath: repo.Root, tasks: [("trace-me", traceRunner)], config: config, testRunner: new ScriptedTestRunner(), eventSinkFactory: _ => captured, environmentAccessor: PlanPhaseTestHelpers.TempXdg, gitInvoker: sim);
 
         Assert.Single(results);
         Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);

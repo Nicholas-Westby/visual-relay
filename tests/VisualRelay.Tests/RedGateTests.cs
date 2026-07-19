@@ -14,12 +14,12 @@ public sealed class RedGateTests
         File.WriteAllText(Path.Combine(repo.Root, "src.txt"), "new\n");
 
         var tag = RedGate.StashTag("task", "absent-path");
-        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, CancellationToken.None, sim);
+        var stashed = await RedGate.StripToRedAsync(repo.Root, ["src.txt", "ghost.txt"], tag, sim, CancellationToken.None);
 
         Assert.True(stashed);
         Assert.Equal("old\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
-        Assert.NotNull(await RedGate.FindStashRefAsync(repo.Root, tag, CancellationToken.None, sim));
-        Assert.Equal(RedGateRestoreResult.Restored, await RedGate.RestoreStashAsync(repo.Root, tag, CancellationToken.None, sim));
+        Assert.NotNull(await RedGate.FindStashRefAsync(repo.Root, tag, sim, CancellationToken.None));
+        Assert.Equal(RedGateRestoreResult.Restored, await RedGate.RestoreStashAsync(repo.Root, tag, sim, CancellationToken.None));
         Assert.Equal("new\n", File.ReadAllText(Path.Combine(repo.Root, "src.txt")));
     }
 

@@ -13,7 +13,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // it drives `nono run` itself (see BuildLaunchTarget). This test pins that
         // swival's own args stay sandbox-flag-free; the sandbox is the nono wrapper.
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
 
         var args = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
@@ -28,7 +28,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
     {
         Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
         var config = TestConfig(); // sandbox is always on
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);
@@ -243,7 +243,7 @@ public sealed partial class SwivalSubagentRunnerSandboxTests
         // After the refactor, BuildLaunchTarget must produce the same args it
         // always did — the shared builder just means the prefix isn't inlined.
         var config = TestConfig();
-        var runner = new SwivalSubagentRunner(config, backendProbe: SwivalTestHelpers.AlwaysReady);
+        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), backendProbe: SwivalTestHelpers.AlwaysReady);
         var swivalArgs = runner.BuildArguments(SwivalTestHelpers.Invocation(Path.GetTempPath()));
 
         var (fileName, args) = runner.BuildLaunchTarget(swivalArgs);

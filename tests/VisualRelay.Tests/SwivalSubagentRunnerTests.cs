@@ -26,7 +26,7 @@ public sealed partial class SwivalSubagentRunnerTests
             echo "profile was available" >&2
             exit 2
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -62,7 +62,7 @@ public sealed partial class SwivalSubagentRunnerTests
             "{\"message\": \"litellm.AuthenticationError: HuggingfaceException - " +
             "Invalid credentials in Authorization header\", \"level\": \"ERROR\"}\n" +
             "{\"message\": \"127.0.0.1:54606 - \\\"POST /v1/chat/completions HTTP/1.1\\\" 401\"}";
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root),
             proxyLogReader: () => proxyLog);
 
@@ -97,7 +97,7 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '```json\n{"summary":"ok","options":["small"]}\n```\n'
             """);
         var sink = new InMemoryRelayEventSink();
-        var runner = new SwivalSubagentRunner(TestConfig(), script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root));
@@ -126,7 +126,7 @@ public sealed partial class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             printf '```json\n{"plan":"insert a ```python fence inside the plan","manifest":["src/calculator.py"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[3] });
@@ -150,7 +150,7 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"pass","options":["small"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with
         {
@@ -187,7 +187,7 @@ public sealed partial class SwivalSubagentRunnerTests
             #!/usr/bin/env bash
             cat '{fixture}'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var result = await runner.RunAsync(SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[5] });
@@ -212,7 +212,7 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"fixed verify"}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with
         {
@@ -247,7 +247,7 @@ public sealed partial class SwivalSubagentRunnerTests
             printf '%s' "$last" > prompt-capture.txt
             printf '```json\n{"summary":"framed","options":["small"]}\n```\n'
             """);
-        var runner = new SwivalSubagentRunner(TestConfig(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(TestConfig(), new NullGitInvoker(), script, backendProbe: SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
         var invocation = SwivalTestHelpers.Invocation(repo.Root) with { Stage = RelayStages.All[0] }; // Stage 1 — Ideate
 

@@ -42,7 +42,7 @@ public sealed partial class WorktreeFilterTests
         await File.WriteAllTextAsync(junkPath, "junk");
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [testFileRel], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, [testFileRel], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         Assert.Null(result.Error);
 
@@ -84,7 +84,7 @@ public sealed partial class WorktreeFilterTests
 
         // Declare testFile with different case: tests/helper.cs (lowercase h).
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, ["tests/helper.cs"], tasksDir: null, CancellationToken.None, new GitSimEngine());
+            repo.Root, ["tests/helper.cs"], tasksDir: null, new GitSimEngine(), CancellationToken.None);
 
         var isCaseInsensitiveHost = OperatingSystem.IsMacOS() || OperatingSystem.IsWindows();
 
@@ -149,7 +149,7 @@ public sealed partial class WorktreeFilterTests
             new HeadCheckoutAwareGitInvoker(sim));
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, [], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         Assert.True(rmCalled, "rm --cached should have been called");
         Assert.Null(result.Error);
@@ -209,7 +209,7 @@ public sealed partial class WorktreeFilterTests
             });
 
         var result = await WorktreeFilter.DiscardNonTestEditsAsync(
-            repo.Root, [], tasksDir: null, cancellationToken: CancellationToken.None, gitInvoker);
+            repo.Root, [], tasksDir: null, gitInvoker, cancellationToken: CancellationToken.None);
 
         // Error must be non-null — checkout timeout produces an error.
         Assert.NotNull(result.Error);

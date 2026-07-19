@@ -43,17 +43,11 @@ internal static class NonoRollbackSkipDirs
     /// </summary>
     internal static async Task<IReadOnlyList<string>> ComputeAsync(
         string rootPath,
-        IGitInvoker? gitInvoker,
+        IGitInvoker gitInvoker,
         CancellationToken ct,
         long thresholdBytes = RollbackSkipThresholdBytes)
     {
-        // Default to a real GitInvoker when none is injected. Production historically
-        // constructed SwivalSubagentRunner WITHOUT a gitInvoker, which silently
-        // dropped the size-gated skips (the big git-ignored dirs — e.g. a multi-GB
-        // data/ tree — that actually blow nono's rollback budget) and kept only the
-        // always-list. Defaulting here makes the skip computation robust regardless
-        // of upstream wiring; tests inject a fake to exercise specific git outputs.
-        var git = gitInvoker ?? new GitInvoker();
+        var git = gitInvoker;
         var ignoredTopLevel = await GetIgnoredTopLevelDirsAsync(rootPath, git, ct);
 
         return Decide(

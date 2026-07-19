@@ -62,7 +62,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, cts.Token, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), cts.Token, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -94,7 +94,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new PostWriteCancellationRunner(RewrittenSpec, cts.Token);
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);

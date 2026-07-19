@@ -23,10 +23,10 @@ public static class RedGate
         string rootPath,
         IReadOnlyList<string> stripSet,
         string tag,
-        CancellationToken cancellationToken,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker gitInvoker,
+        CancellationToken cancellationToken)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         if (stripSet.Count == 0 || !await IsGitRepositoryAsync(rootPath, gi, cancellationToken))
         {
             return false;
@@ -48,7 +48,7 @@ public static class RedGate
         }
 
         var stash = await GitAsync(gi, rootPath, ["stash", "push", "-u", "-m", tag, "--", .. present], cancellationToken);
-        if (await FindStashRefAsync(rootPath, tag, cancellationToken, gi) is not null)
+        if (await FindStashRefAsync(rootPath, tag, gi, cancellationToken) is not null)
         {
             return true;
         }
@@ -64,10 +64,10 @@ public static class RedGate
     public static async Task<string?> FindStashRefAsync(
         string rootPath,
         string match,
-        CancellationToken cancellationToken,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker gitInvoker,
+        CancellationToken cancellationToken)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         var list = await GitAsync(gi, rootPath, ["stash", "list"], cancellationToken);
         foreach (var line in list.Output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
@@ -89,11 +89,11 @@ public static class RedGate
     public static async Task<RedGateRestoreResult> RestoreStashAsync(
         string rootPath,
         string match,
-        CancellationToken cancellationToken,
-        IGitInvoker? gitInvoker = null)
+        IGitInvoker gitInvoker,
+        CancellationToken cancellationToken)
     {
-        var gi = gitInvoker ?? new GitInvoker();
-        var reference = await FindStashRefAsync(rootPath, match, cancellationToken, gi);
+        var gi = gitInvoker;
+        var reference = await FindStashRefAsync(rootPath, match, gi, cancellationToken);
         if (reference is null)
         {
             return RedGateRestoreResult.Absent;
@@ -111,14 +111,14 @@ public static class RedGate
     }
 
     public static async Task<bool> StashAllAsync(
-        string rootPath, string tag, CancellationToken ct, IGitInvoker? gitInvoker = null)
+        string rootPath, string tag, IGitInvoker gitInvoker, CancellationToken ct)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker;
         if (!await IsGitRepositoryAsync(rootPath, gi, ct)) return false;
         var dirty = await GitAsync(gi, rootPath, ["status", "--porcelain"], ct);
         if (string.IsNullOrWhiteSpace(dirty.Output)) return false;
         await GitAsync(gi, rootPath, ["stash", "push", "-u", "-m", tag], ct);
-        return await FindStashRefAsync(rootPath, tag, ct, gi) is not null;
+        return await FindStashRefAsync(rootPath, tag, gi, ct) is not null;
     }
 
     private static async Task<bool> IsGitRepositoryAsync(string rootPath, IGitInvoker gitInvoker, CancellationToken cancellationToken)
