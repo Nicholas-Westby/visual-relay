@@ -24,7 +24,7 @@ public sealed partial class SwivalSubagentRunner
             return BuildWindowsLaunchTarget(swivalArguments, mode, wxc, policy);
         }
 
-        var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs, verboseDiagnostics: _verboseDiagnostics);
+        var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs, verboseDiagnostics: _verboseDiagnostics, workspaceRoot: invocation?.TargetRoot);
         var nonoArguments = new List<string>(prefix) { _swivalBinary };
         nonoArguments.AddRange(swivalArguments);
         return (_nonoBinary, nonoArguments);

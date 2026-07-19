@@ -63,6 +63,33 @@ public sealed class NonoLaunchDriftGuardTests
         }
     }
 
+    [Fact]
+    public void BuildNonoPrefix_VolumeTempGrant_AgentAndVerifyCarryIdenticalGrant()
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "macOS-only /Volumes/ paradigm");
+        var config = TestConfig();
+        var rootPath = "/Volumes/Tera/dev/x";
+
+        var agentPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true,
+            workspaceRoot: rootPath).ToList();
+        var verifyPrefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false,
+            workspaceRoot: rootPath).ToList();
+
+        // Both must contain the volume temp grant.
+        Assert.Contains("/Volumes/Tera/.TemporaryItems", agentPrefix);
+        Assert.Contains("/Volumes/Tera/.TemporaryItems", verifyPrefix);
+
+        // Agent must have --rollback and --no-rollback-prompt; verify must NOT.
+        Assert.Contains("--rollback", agentPrefix);
+        Assert.Contains("--no-rollback-prompt", agentPrefix);
+        Assert.DoesNotContain("--rollback", verifyPrefix);
+        Assert.DoesNotContain("--no-rollback-prompt", verifyPrefix);
+
+        // The non-rollback portions must be identical (including the volume grant).
+        var agentCore = agentPrefix.Where(x => x is not "--rollback" and not "--no-rollback-prompt").ToList();
+        Assert.Equal(agentCore, verifyPrefix);
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────
 
     private static RelayConfig TestConfig() =>

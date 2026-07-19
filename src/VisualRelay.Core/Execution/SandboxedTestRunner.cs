@@ -53,7 +53,7 @@ public sealed partial class SandboxedTestRunner(
 
         // Sandbox always on: wrap in nono. verboseDiagnostics is output-only (--silent
         // when quiet); it never changes what the sandbox enforces.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics);
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath);
 
         if (inner is ShellTestRunner)
         {

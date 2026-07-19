@@ -151,7 +151,8 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     /// </summary>
     internal static IReadOnlyList<string> BuildNonoPrefix(
         RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,
-        bool verboseDiagnostics = false, string? userTemplatesDirOverride = null)
+        bool verboseDiagnostics = false, string? userTemplatesDirOverride = null,
+        string? workspaceRoot = null)
     {
         // Load by absolute path, not the global profile name: NonoProfileEnsurer
         // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
@@ -172,6 +173,24 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         Directory.CreateDirectory(templatesDir);
         args.Add("-a");
         args.Add(templatesDir);
+
+        // Auto-grant the workspace volume's .TemporaryItems directory when the
+        // workspace root lives on an external macOS volume. Foundation atomic writes
+        // stage temp files at the volume root — outside --allow-cwd — which causes
+        // EPERM (PolicyBlocked) for swift build, swiftformat, and any tool doing
+        // NSWriteAuxiliaryFile. This is an internal-only grant; users cannot add it
+        // via SandboxExtraAllowPaths (RelayConfigLoader rejects paths outside $HOME).
+        if (workspaceRoot is { Length: > 0 })
+        {
+            var volumeTemp = WorkspaceVolumeTempDir.Resolve(workspaceRoot);
+            if (volumeTemp is not null)
+            {
+                // nono accepts -a for paths that don't yet exist. If it ever doesn't,
+                // best-effort create and fall back to no grant — never fail the run.
+                args.Add("-a");
+                args.Add(volumeTemp);
+            }
+        }
 
         if (skipDirs is { Count: > 0 })
         {
