@@ -10,7 +10,15 @@ namespace VisualRelay.Cli;
 public static class WatchdogTimeouts
 {
     public static TimeSpan ForTest() =>
-        Resolve(Environment.GetEnvironmentVariable("VISUAL_RELAY_TEST_TIMEOUT"), 60);
+        ForTest(serial: false);
+
+    /// <summary>
+    /// <paramref name="serial"/> selects the default timeout: 1800s in serial
+    /// mode (one collection at a time), 60s otherwise. The
+    /// <c>VISUAL_RELAY_TEST_TIMEOUT</c> env var wins when set.
+    /// </summary>
+    public static TimeSpan ForTest(bool serial) =>
+        Resolve(Environment.GetEnvironmentVariable("VISUAL_RELAY_TEST_TIMEOUT"), serial ? 1800 : 60);
 
     public static TimeSpan ForCheck() =>
         Resolve(Environment.GetEnvironmentVariable("VISUAL_RELAY_CHECK_TEST_TIMEOUT"), 300);

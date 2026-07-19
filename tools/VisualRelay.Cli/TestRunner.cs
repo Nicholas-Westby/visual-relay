@@ -23,35 +23,29 @@ public static class TestRunner
             HostName(),
             Environment.ProcessId);
 
-        var testArgs = new List<string>
-        {
-            "test", paths.TestsProject,
-            "-m:1", "-p:UseSharedCompilation=false",
-            "--logger", "console;verbosity=normal",
-            "--logger", $"trx;LogFileName={log.Stem}.trx",
-            "--results-directory", logDir,
-        };
+        var noBuild = string.Equals(Environment.GetEnvironmentVariable("NO_BUILD"), "1", StringComparison.Ordinal);
 
-        if (string.Equals(Environment.GetEnvironmentVariable("NO_BUILD"), "1", StringComparison.Ordinal))
-            testArgs.Add("--no-build");
-
-        // A leading non-flag token becomes the FullyQualifiedName filter (the
-        // test.sh positional). Remaining args are forwarded verbatim.
-        var forwarded = new List<string>(args);
-        if (forwarded.Count > 0 && !forwarded[0].StartsWith('-'))
+        string[] testArgs;
+        bool isSerial;
+        try
         {
-            testArgs.Add("--filter");
-            testArgs.Add($"FullyQualifiedName~{forwarded[0]}");
-            forwarded.RemoveAt(0);
+            testArgs = BuildTestArgs(paths.TestsProject, args.ToArray(), log.Stem, logDir, noBuild, out isSerial);
         }
-        testArgs.AddRange(forwarded);
+        catch (InvalidOperationException)
+        {
+            Console.Error.WriteLine(
+                "visual-relay: serial mode cannot be combined with a caller-supplied -- RunSettings tail");
+            return 2;
+        }
 
-        var timeout = WatchdogTimeouts.ForTest();
+        var timeout = WatchdogTimeouts.ForTest(isSerial);
         var rc = await TimeoutWatchdog.RunAsync(ProcessLauncher.Dotnet, testArgs, paths.Root, timeout);
 
         Console.Error.WriteLine();
         Console.Error.WriteLine($"Log dir  : {logDir}");
         Console.Error.WriteLine($"TRX file : {log.TrxFile}");
+        if (isSerial)
+            Console.Error.WriteLine("serial mode: one collection at a time; per-test timings are trustworthy");
 
         if (rc == 124)
         {
@@ -68,6 +62,65 @@ public static class TestRunner
         }
 
         return rc;
+    }
+
+    /// <summary>
+    /// Pure builder: produces the <c>dotnet test</c> argument list. When the
+    /// first token is <c>"serial"</c> (ordinal), it is consumed and
+    /// <paramref name="isSerial"/> is set — the returned args end with
+    /// <c>-- xUnit.ParallelizeTestCollections=false</c>. The remaining tokens
+    /// follow the existing filter/forward logic unchanged.
+    /// </summary>
+    internal static string[] BuildTestArgs(
+        string testsProject,
+        ReadOnlySpan<string> args,
+        string trxStem,
+        string resultsDirectory,
+        bool noBuild,
+        out bool isSerial)
+    {
+        var testArgs = new List<string>
+        {
+            "test", testsProject,
+            "-m:1", "-p:UseSharedCompilation=false",
+            "--logger", "console;verbosity=normal",
+            "--logger", $"trx;LogFileName={trxStem}.trx",
+            "--results-directory", resultsDirectory,
+        };
+
+        if (noBuild)
+            testArgs.Add("--no-build");
+
+        isSerial = false;
+        if (args.Length > 0 && args[0].Equals("serial", StringComparison.Ordinal))
+        {
+            isSerial = true;
+            args = args.Slice(1);
+        }
+
+        // A leading non-flag token becomes the FullyQualifiedName filter (the
+        // test.sh positional). Remaining args are forwarded verbatim.
+        var forwarded = new List<string>(args.Length);
+        foreach (var a in args)
+            forwarded.Add(a);
+        if (forwarded.Count > 0 && !forwarded[0].StartsWith('-'))
+        {
+            testArgs.Add("--filter");
+            testArgs.Add($"FullyQualifiedName~{forwarded[0]}");
+            forwarded.RemoveAt(0);
+        }
+
+        if (isSerial)
+        {
+            if (forwarded.Contains("--"))
+                throw new InvalidOperationException(
+                    "Cannot combine serial mode with a caller-supplied -- RunSettings tail.");
+            testArgs.Add("--");
+            testArgs.Add("xUnit.ParallelizeTestCollections=false");
+        }
+
+        testArgs.AddRange(forwarded);
+        return testArgs.ToArray();
     }
 
     private static void PrintFailures(string trxFile)

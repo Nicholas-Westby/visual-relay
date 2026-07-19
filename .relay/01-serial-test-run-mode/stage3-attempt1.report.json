@@ -1,0 +1,600 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-19T22:06:18.112143+00:00",
+  "task": "# Relay stage 3: Diagnose\nTask: 01-serial-test-run-mode\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Add a serial test mode \u2014 `./visual-relay test serial [Filter]`\n\nThe parallel suite's per-test timings are unusable for finding slow tests. Add\nan opt-in serial mode that runs test collections one at a time so a timing run\nproduces trustworthy per-test numbers. Default behavior must not change.\n\n### Evidence (2026-07-19 slow-test investigation)\n\n- `tests/VisualRelay.Tests/xunit.runner.json` sets `parallelizeTestCollections:\n  true`, `maxParallelThreads: \"2.0x\"`, `parallelAlgorithm: \"aggressive\"`. In a\n  full-suite TRX the per-test durations sum to ~5,200s inside ~92s of wall\n  clock (host run `test-logs/20260712T222826_Mac_17600.trx`: 3,174 tests, sum\n  5,204s, wall 91s; VM run `20260718T124658_\u2026_5259.trx`: 3,306 tests, sum\n  5,194s, wall 92s). A test's reported duration is dominated by time queued\n  between awaits, not work.\n- Concrete: `RelayDriverVerifyFixTests.RunTaskAsync_VerifyGreen_\u2026` reported\n  29s in a full host run but measures 0.016s in a filtered class run;\n  `ControlServerKestrelHandlerTests.UnknownRoute_Returns404_Json` swung 0.0s \u2194\n  20s between two full runs. See attached `investigation-baseline.md`.\n- `tools/VisualRelay.Cli/TestRunner.cs:38-47` \u2014 a leading non-flag token\n  becomes the `FullyQualifiedName~` filter; remaining args are forwarded to\n  `dotnet test` verbatim.\n- xunit accepts RunSettings overrides as inline `dotnet test` arguments after\n  `--`, e.g. `dotnet test -- xUnit.ParallelizeTestCollections=false`\n  (https://xunit.net/docs/runsettings; the repo uses xunit.v3 +\n  xunit.runner.visualstudio 3.1.5, which honor the `xUnit.*` keys).\n- `tools/VisualRelay.Cli/WatchdogTimeouts.cs:12-13` \u2014 the test watchdog\n  defaults to 60s (`VISUAL_RELAY_TEST_TIMEOUT` overrides). A serial full suite\n  will exceed 60s by construction (the parallel run already takes ~92s).\n\n### What to build\n\nExactly this shape, in `tools/VisualRelay.Cli/TestRunner.cs`:\n\n1. Extract the argument construction into a pure, testable\n   `internal static` builder (e.g. `BuildTestArgs(...)`) that `RunAsync` calls.\n   Keep behavior byte-identical for existing inputs.\n2. Recognize the literal first token `serial` (ordinal comparison): consume\n   it and set serial mode. After consuming it, the existing rule applies\n   unchanged to the remaining tokens \u2014 a next non-flag token becomes the\n   filter, the rest are forwarded. `./visual-relay test serial`,\n   `./visual-relay test serial GitCommitter`, and `./visual-relay test\n   GitCommitter` must all work.\n3. In serial mode append the RunSettings tail as the final arguments:\n   `--` then `xUnit.ParallelizeTestCollections=false`. Tests within a\n   collection already run sequentially, so this one key yields a fully serial\n   run. Do not modify `xunit.runner.json` (the default run keeps its\n   parallelism).\n4. In serial mode, when `VISUAL_RELAY_TEST_TIMEOUT` is unset, use a 1800s\n   watchdog default instead of 60s (add a serial-aware resolver next to\n   `WatchdogTimeouts.ForTest()`; the env var still wins when set).\n5. Print one stderr line when serial mode is active, alongside the existing\n   log-path lines, e.g. `serial mode: one collection at a time; per-test\n   timings are trustworthy`.\n6. Update the CLI usage/help text where `test` is documented (grep the CLI\n   project for the existing `test` usage string) and add a short note to the\n   test-runner section of `TROUBLESHOOTING.md` saying serial mode exists and\n   what it is for.\n\nOut of scope: combining `serial` with a caller-supplied `--` RunSettings tail;\nif the forwarded args already contain `--`, fail with a clear error rather\nthan merging.\n\n### Constraints\n\n- Default (non-serial) invocations must produce byte-identical `dotnet test`\n  arguments to today \u2014 prove it with the builder tests.\n- No new dependencies; keep files under the 300-line guard.\n- Coverage is non-negotiable: no test is deleted, skipped, or weakened.\n\n### Tests (red first)\n\nIn a new `CliSerialTestModeTests` (pattern: `CliTestLogPathsTests`):\n\n- `serial` leading token \u2192 args end with `--` followed by\n  `xUnit.ParallelizeTestCollections=false`, and no\n  `FullyQualifiedName~serial` filter is present.\n- `serial GitCommitter` \u2192 both the RunSettings tail and\n  `--filter FullyQualifiedName~GitCommitter` are present.\n- `GitCommitter` alone \u2192 args identical to today's (no RunSettings tail).\n- Serial + `VISUAL_RELAY_TEST_TIMEOUT` unset \u2192 1800s; set to `90` \u2192 90s\n  (exercise the pure `Resolve`-style seam, not process-global env state).\n\n### Verification\n\n- `./visual-relay check` fully green.\n- Manual: `./visual-relay test serial CliSerialTestModeTests` runs and the\n  stderr note appears; `NO_BUILD=1 ./visual-relay test serial` completes a\n  full serial suite without tripping the watchdog.\n\n### Commit-message evidence\n\nMeasure before and after while implementing (a serial run's wall time vs the\nparallel run's is the natural pair), then put one filled-in evidence bullet in\nthe commit message body, following the attached `commit-message-evidence.md`.\nNever pre-fill that bullet \u2014 numbers are measured at implementation time and\ngo into the eventual commit message, nowhere else.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n### investigation-baseline.md (2073 bytes)\n# Baseline data \u2014 2026-07-19 slow-test investigation\n\nWhy per-test timings from the parallel suite cannot be trusted, with the\nmeasurements behind this task batch. All \"solo\" numbers were taken with\n`NO_BUILD=1 ./visual-relay test <ClassName>` (one class per invocation,\nsequential) on the guest VM on 2026-07-19; TRX files are in `test-logs/`\n(`20260719T13*`). Reported numbers come from full parallel runs.\n\n## Full-suite parallelism signature\n\n| Run | Tests | Sum of per-test durations | Wall clock |\n|---|---|---|---|\n| Host `20260712T222826_Mac_17600.trx` | 3,174 | 5,204s | 91s |\n| VM `20260718T124658_\u2026_5259.trx` | 3,306 | 5,194s | 92s |\n\n~56 tests are \"in flight\" at any moment; a reported duration is mostly queue\ntime between awaits. Await-heavy tests (the full-pipeline driver family has\n~100 async artifact writes per run) absorb the most queuing, which is why they\nuniformly report 25-30s.\n\n## Reported vs solo (selected)\n\n| Test | Reported (host run) | Solo |\n|---|---|---|\n| RelayDriverVerifyFixTests.RunTaskAsync_VerifyGreen_\u2026 | 29s | 0.02s |\n| NoCommitContaminationTests.\u2026TwoTasks\u2026 | 32s | 0.19s (parametrized rows 0.05s) |\n| RelayDriverNonResumeStaleStateTests.\u2026ArchivesAndRunsFresh | 35s | 0.04s |\n| ControlServerKestrelHandlerTests.UnknownRoute_Returns404_Json | 20s | 0.25s |\n| GitCommitterProbeRetryTests.CommitAsync_ProbeFailsTwice\u2026 | 5s | 0.02s |\n| RewriteHistoryRunnerTests.RunAsync_RewritesNonConforming\u2026 | 37s | 0.96s |\n| GitCommitterRunBaseSquashGuardsTests.\u2026RestoresOrigHead | 5s | 2.54s (real retry sleep) |\n\nThe same test also swings wildly between full runs (Kestrel handler test:\n0.0s in the July 12 host run vs 20s in the July 18/19 one; FdLeak sampler:\n0.1s vs 8s) \u2014 scheduling luck, not test changes.\n\n## Full cause map\n\nThe complete per-test cause classification produced by the investigation was\ndelivered as `slow-test-causes.csv` (user's Desktop, 2026-07-19): columns\nReal Git / Retry Sleep / Real Process / Roslyn Parse / UI Thread /\nFull Pipeline / Parallel Scheduling, with reported and solo seconds per test.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Add an opt-in serial test mode to `./visual-relay test` so per-test timings become trustworthy. The CLI recognizes `serial` as the first token, appends `-- xUnit.ParallelizeTestCollections=false`, raises the default watchdog timeout to 1800s, prints a stderr notice, and updates docs. A pure `BuildTestArgs(...)` static builder must be extracted from `RunAsync` with byte-identical defaults. New `CliSerialTestModeTests` cover four scenarios. Callee-supplied `--` is rejected with a clear error. The task prescribes exactly this shape.\",\n  \"options\": [\n    \"Option A \u2014 Pure builder with ordinal token check (prescribed): Extract `internal static BuildTestArgs(ReadOnlySpan<string?> args, out bool isSerial) -> string[]`. Ordinal compare for `\\\"serial\\\"`, consume it, then apply existing filter logic to remaining tokens. Append `-- xUnit.ParallelizeTestCollections=false` when serial. Add `WatchdogTimeouts.ForTest(serial: bool)` \u2192 1800s when serial and env var absent. Stderr line prints in `RunAsync`. Minimal, testable, byte-identical for non-serial.\",\n    \"Option B \u2014 Result-record wrapper: Same extraction but return `(string[] Args, bool IsSerial)` tuple or a `TestArgs` record instead of `out bool`. Slightly cleaner functional style at the cost of one extra allocation per invocation. Otherwise identical to Option A.\",\n    \"Option C \u2014 Interface/strategy: Define `ITestArgumentBuilder` with current impl and a `SerialTestArgumentBuilder` decorator. Clean OCP but over-engineered for a single boolean. Would exceed the 300-line guard with boilerplate.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"TestRunner.cs:112 lines, RunAsync builds dotnet test args inline (lines 26-47) \u2014 filter logic at lines 38-47, NO_BUILD check at line 35-36. Must extract BuildTestArgs. WatchdogTimeouts.cs:28 lines, ForTest() \u2192 Resolve(envVar, 60). CommandRouter.cs:24 lines, UsageLine lists all commands. TROUBLESHOOTING.md:102 lines, no serial mode note. TestCommand.cs:10 lines, thin delegate. New test file goes in tests/VisualRelay.Tests/ following CliTestLogPathsTests pattern (using VisualRelay.Cli, public sealed class, [Fact]/[Theory]). Serial detection: ordinal compare first token to \\\"serial\\\", consume it, rest follows existing filter rule. -- conflict: reject if serial mode and forwarded args contain \\\"--\\\". Stderr line: \\\"serial mode: one collection at a time; per-test timings are trustworthy\\\". 300-line guard: TestRunner 112 + ~35 ok, WatchdogTimeouts 28 + ~5 ok, new test file ~80 ok. No new dependencies, no test deletions.\",\n  \"constraints\": [\n    \"Default (non-serial) invocations must produce byte-identical dotnet test arguments \u2014 prove via builder tests\",\n    \"No new dependencies; keep all files under the 300-line guard\",\n    \"No test is deleted, skipped, or weakened\",\n    \"serial token must use ordinal string comparison\",\n    \"VISUAL_RELAY_TEST_TIMEOUT env var must still win when set (serial mode only changes the default from 60s to 1800s)\",\n    \"Do not modify xunit.runner.json \u2014 default parallelism must be unchanged\",\n    \"Combining serial with a caller-supplied -- RunSettings tail must fail with a clear error rather than merging\",\n    \"Tests must exercise the pure Resolve-style seam, not process-global env state\",\n    \"Output format must match: new test file CliSerialTestModeTests, tests for all 4 scenarios specified\",\n    \"Commit-message evidence bullet must be measured at implementation time, never pre-filled\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"evidence\": string, \"excerpts\": string[], \"repro\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Here is the diagnosis, grounded in the current code at HEAD (16f5bf0).\n\n---\n\n## Evidence\n\n### 1. Argument construction is inlined \u2014 no extraction point exists\n\n`TestRunner.RunAsync` (112 lines) builds the `dotnet test` argument list inline at lines 26\u201347. There is no separate builder method, so a serial-mode flag cannot be injected without touching the core construction logic. The block:\n\n```\n26: var testArgs = new List<string> { \"test\", paths.TestsProject, \"-m:1\", \u2026 };\n35: if (NO_BUILD) testArgs.Add(\"--no-build\");\n38-47: // filter extraction + forwarded args\n49: var timeout = WatchdogTimeouts.ForTest();\n```\n\nEvery piece \u2014 base args, NO_BUILD, filter, forwarding \u2014 is hard-coded in `RunAsync`. To add serial mode, the arg construction must first be extracted into a pure method so the serial flag can be consumed and the `-- xUnit.ParallelizeTestCollections=false` tail can be appended without duplicating the existing logic.\n\n### 2. No serial-detection token exists\n\nThe CLI accepts `./visual-relay test [args...]`. `TestCommand.RunAsync` (10 lines, thin delegate) forwards directly to `TestRunner.RunAsync`. There is no token recognition before the filter logic runs. The first non-flag token is always treated as a `FullyQualifiedName~` filter (line 41). Adding `serial` recognition requires an ordinal comparison check *before* the filter logic, consuming the token if matched.\n\n### 3. Watchdog default is hard-coded to 60s with no serial awareness\n\n`WatchdogTimeouts.ForTest()` at line 12\u201313:\n\n```csharp\npublic static TimeSpan ForTest() =>\n    Resolve(Environment.GetEnvironmentVariable(\"VISUAL_RELAY_TEST_TIMEOUT\"), 60);\n```\n\nThe default of 60s is correct for the parallel suite (~92s wall clock means no individual `dotnet test` process exceeds 60s), but a serial full suite will take much longer (the parallel run is already ~92s; serial will be many minutes). A 1800s default is needed, but only when serial mode is active. The env var must still win when set. The pure `Resolve(string?, int)` seam at line 22 is already testable \u2014 the serial variant needs only to supply a different default.\n\n### 4. Usage text and docs are silent about serial mode\n\n`CommandRouter.UsageLine` (line 21\u201323) lists `test` among commands with no hint of `serial`:\n\n```\n\"usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|\" +\n\"install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|provision-mxc]\"\n```\n\n`TROUBLESHOOTING.md` (102 lines) has a \"test run hangs\" section (lines 5\u201322) that mentions `--blame-hang` and the timeout env var, but nothing about serial mode for trustworthy per-test timings.\n\n### 5. `--` conflict: no detection exists\n\nThe current forwarding logic at line 47 (`testArgs.AddRange(forwarded)`) passes everything through to `dotnet test` verbatim. If a caller supplies `-- someRunSetting` alongside serial mode, the builder would append a second `-- xUnit.ParallelizeTestCollections=false`, producing two `--` separators. xUnit's argument parser would see only the first `--` and treat the second as a test filter, not a RunSettings key. The task requires a clear error rather than silent misbehavior.\n\n### 6. No `InternalsVisibleTo` \u2014 all tested types are `public`\n\nThe CLI project (`VisualRelay.Cli.csproj`) has no `[assembly: InternalsVisibleTo]`. Every type tested from `VisualRelay.Tests` (`TestLogPaths`, `WatchdogTimeouts`, `TimeoutWatchdog`, `CommandRouter`) is declared `public`. The new `BuildTestArgs` must either be `public` or the project must add `InternalsVisibleTo(\"VisualRelay.Tests\")`. The task says `internal static`; the project needs the attribute regardless.\n\n### 7. Test file shape is clear from precedent\n\n`CliTestLogPathsTests` (50 lines) and `CliWatchdogTests` (83 lines) establish the pattern: `public sealed class` in `namespace VisualRelay.Tests;`, `using VisualRelay.Cli;`, `[Fact]`/`[Theory]` attributes, no constructor, no `IClassFixture`. The new `CliSerialTestModeTests` follows the same shape.\n\n### 8. Line-count guard is satisfied\n\n| File | Current | After |\n|---|---|---|\n| `TestRunner.cs` | 112 | ~155 |\n| `WatchdogTimeouts.cs` | 28 | ~35 |\n| `CommandRouter.cs` | 24 | ~25 |\n| `TROUBLESHOOTING.md` | 102 | ~107 |\n| New `CliSerialTestModeTests.cs` | 0 | ~80 |\n\nAll well under 300.\n\n---\n\n## Excerpts\n\n### TestRunner.cs:26-50 \u2014 the extraction target\n```csharp\nvar testArgs = new List<string>\n{\n    \"test\", paths.TestsProject,\n    \"-m:1\", \"-p:UseSharedCompilation=false\",\n    \"--logger\", \"console;verbosity=normal\",\n    \"--logger\", $\"trx;LogFileName={log.Stem}.trx\",\n    \"--results-directory\", logDir,\n};\n\nif (string.Equals(Environment.GetEnvironmentVariable(\"NO_BUILD\"), \"1\", StringComparison.Ordinal))\n    testArgs.Add(\"--no-build\");\n\nvar forwarded = new List<string>(args);\nif (forwarded.Count > 0 && !forwarded[0].StartsWith('-'))\n{\n    testArgs.Add(\"--filter\");\n    testArgs.Add($\"FullyQualifiedName~{forwarded[0]}\");\n    forwarded.RemoveAt(0);\n}\ntestArgs.AddRange(forwarded);\n\nvar timeout = WatchdogTimeouts.ForTest();\n```\n\n### WatchdogTimeouts.cs:12-13 \u2014 the hard-coded 60s default\n```csharp\npublic static TimeSpan ForTest() =>\n    Resolve(Environment.GetEnvironmentVariable(\"VISUAL_RELAY_TEST_TIMEOUT\"), 60);\n```\n\n### WatchdogTimeouts.cs:22-27 \u2014 the pure Resolve seam (already testable)\n```csharp\npublic static TimeSpan Resolve(string? rawValue, int defaultSecs)\n{\n    if (!string.IsNullOrEmpty(rawValue) && int.TryParse(rawValue, out var secs) && secs > 0)\n        return TimeSpan.FromSeconds(secs);\n    return TimeSpan.FromSeconds(defaultSecs);\n}\n```\n\n### CommandRouter.cs:21-23 \u2014 usage line without serial hint\n```csharp\npublic static string UsageLine =>\n    \"usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|\" +\n    \"install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|provision-mxc]\";\n```\n\n### xunit.runner.json \u2014 the parallelism config serial mode must override\n```json\n{\n  \"parallelizeTestCollections\": true,\n  \"maxParallelThreads\": \"2.0x\",\n  \"parallelAlgorithm\": \"aggressive\"\n}\n```\n\n---\n\n## Repro\n\n1. **Confirm the baseline**: `NO_BUILD=1 ./visual-relay test CliSerialTestModeTests` \u2014 this fails because the test class doesn't exist yet (red-first).\n2. **Confirm the extraction point**: inspect `TestRunner.cs:26-47` \u2014 all argument construction is inline.\n3. **Confirm the watchdog gap**: `WatchdogTimeouts.ForTest()` always returns 60s default; a serial full suite would trip it.\n4. **Confirm the UsageLine gap**: `grep 'test' tools/VisualRelay.Cli/CommandRouter.cs` shows no serial mention.\n5. **Confirm the TROUBLESHOOTING gap**: `grep -i serial TROUBLESHOOTING.md` returns nothing.\n\n---\n\n## Needed changes (prose summary)\n\n### TestRunner.cs\n\n1. Extract a `public static List<string> BuildTestArgs(string testsProject, string logDir, string stem, bool noBuild, IReadOnlyList<string> cliArgs, out bool isSerial)` method from lines 26\u201347. The method builds the same `List<string>` that `RunAsync` currently builds inline. `isSerial` is set true when the first token ordinals-equals `\"serial\"` and that token is consumed.\n\n2. Inside `BuildTestArgs`: after the optional `\"serial\"` consumption, apply the existing filter logic to the *remaining* tokens unchanged. Then, if `isSerial`: check whether any remaining forwarded token is exactly `\"--\"` and throw an `ArgumentException` with a clear message if so. Otherwise append `\"--\"` and `\"xUnit.ParallelizeTestCollections=false\"` as the final two entries.\n\n3. In `RunAsync`: call `BuildTestArgs` instead of the inline block. Call a new `WatchdogTimeouts.ForTest(serial: isSerial)` instead of `ForTest()`. When `isSerial` is true, print `\"serial mode: one collection at a time; per-test timings are trustworthy\"` to stderr alongside the existing log-path lines.\n\n### WatchdogTimeouts.cs\n\n4. Add an overload or parameterized variant: `public static TimeSpan ForTest(bool serial)` that calls `Resolve(Environment.GetEnvironmentVariable(\"VISUAL_RELAY_TEST_TIMEOUT\"), serial ? 1800 : 60)`. The existing parameterless `ForTest()` can delegate to `ForTest(serial: false)` for backward compatibility (only `CheckCommand` uses `ForTest()` outside of `TestRunner`, and it wants the 60s default).\n\n### CommandRouter.cs\n\n5. Update `UsageLine` to append `\"  test [serial] [filter] [-- dotnet-test-args]\"` or similar, making the `serial` token visible.\n\n### TROUBLESHOOTING.md\n\n6. Add a short section (e.g. after the hang section or as a new subsection) explaining that `./visual-relay test serial` runs test collections one at a time so per-test timings are trustworthy, useful for finding slow tests.\n\n### New test file: `tests/VisualRelay.Tests/CliSerialTestModeTests.cs`\n\n7. Four tests following the `CliTestLogPathsTests` / `CliWatchdogTests` pattern:\n   - `[Fact]` \u2014 `\"serial\"` leading token produces args ending with `\"--\"`, `\"xUnit.ParallelizeTestCollections=false\"` and no `FullyQualifiedName~serial` filter.\n   - `[Fact]` \u2014 `\"serial\", \"GitCommitter\"` produces both the RunSettings tail and `\"--filter\"`, `\"FullyQualifiedName~GitCommitter\"`.\n   - `[Fact]` \u2014 `\"GitCommitter\"` alone produces args identical to today's (no RunSettings tail).\n   - `[Theory]` with `[InlineData]` \u2014 `WatchdogTimeouts.ForTest(serial: true)` returns 1800s when env var is absent, and honors the env var when set (exercise `Resolve` directly with canned values).\n\n### InternalsVisibleTo (if keeping `internal`)\n\n8. If `BuildTestArgs` is `internal static` as the task states, add `[assembly: InternalsVisibleTo(\"VisualRelay.Tests\")]` to `VisualRelay.Cli.csproj` or to a `AssemblyInfo.cs` in the CLI project. (Making it `public static` avoids this \u2014 all other tested types are already public \u2014 but the task says `internal`.)\n\n```json\n{\n  \"evidence\": \"TestRunner.cs:26-47 builds dotnet test args inline with no extraction point. WatchdogTimeouts.ForTest() hard-codes 60s default with no serial awareness. CommandRouter.UsageLine and TROUBLESHOOTING.md are silent about serial mode. No -- conflict detection exists. The CLI project has no InternalsVisibleTo attribute. All modifications stay well under the 300-line guard (TestRunner 112\u2192~155, WatchdogTimeouts 28\u2192~35, CommandRouter 24\u2192~25, TROUBLESHOOTING.md 102\u2192~107, new test file ~80).\",\n  \"excerpts\": [\n    \"TestRunner.cs:26-50 \u2014 inline arg construction with filter/forwarding logic\",\n    \"WatchdogTimeouts.cs:12-13 \u2014 ForTest() defaults to 60s unconditionally\",\n    \"WatchdogTimeouts.cs:22-27 \u2014 pure Resolve(string?, int) seam already testable\",\n    \"CommandRouter.cs:21-23 \u2014 UsageLine lists test without serial hint\",\n    \"xunit.runner.json \u2014 parallelizeTestCollections:true, maxParallelThreads:2.0x\"\n  ],\n  \"repro\": \"grep -n 'testArgs = new' tools/VisualRelay.Cli/TestRunner.cs && grep -n 'ForTest()' tools/VisualRelay.Cli/WatchdogTimeouts.cs && grep -n 'serial' tools/VisualRelay.Cli/CommandRouter.cs TROUBLESHOOTING.md\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 17,
+    "tool_calls_total": 31,
+    "tool_calls_succeeded": 30,
+    "tool_calls_failed": 1,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 14,
+        "failed": 1
+      },
+      "grep": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 3,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 1,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 17,
+    "total_llm_time_s": 160.401,
+    "prompt_cache": {
+      "cached_tokens": 313216,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.507,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 0,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 4.976,
+      "prompt_tokens_est": 7041,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4388
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/WatchdogTimeouts.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1321
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/CommandRouter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 1164
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/TROUBLESHOOTING.md"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5769
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.845,
+      "prompt_tokens_est": 10631,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestCommand.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.001,
+      "result_length": 96,
+      "error": "error: path does not exist: \"/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestCommand.cs\""
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CliTestLogPathsTests",
+        "path": "/Users/admin/Dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.116,
+      "result_length": 2296
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "usage.*test\\|test.*usage\\|test.*help\\|help.*test",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.012,
+      "result_length": 17
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.681,
+      "prompt_tokens_est": 11510,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/CliTestLogPathsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1808
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "test\"",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 571
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 393
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.69,
+      "prompt_tokens_est": 12478,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Program.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2067
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 596
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 3.152,
+      "prompt_tokens_est": 13330,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands/TestCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 470
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "usage|Usage|help|Help",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 1154
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 7.54,
+      "prompt_tokens_est": 13905,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.05,
+      "result_length": 5946
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/xunit.runner.json"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 221
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.633,
+      "prompt_tokens_est": 15945,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "WatchdogTimeouts",
+        "path": "/Users/admin/Dev/visual-relay/tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.08,
+      "result_length": 221
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CliTestLogPaths|WatchdogTimeouts|TestRunner",
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.077,
+      "result_length": 11827
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 2.642,
+      "prompt_tokens_est": 19113,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/CliWatchdogTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3971
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.093,
+      "prompt_tokens_est": 20262,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TimeoutWatchdog.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4277
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.csproj",
+        "pattern": "VisualRelay.Cli",
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.027,
+      "result_length": 161
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.451,
+      "prompt_tokens_est": 21532,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2661
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "InternalsVisibleTo",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 17
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.697,
+      "prompt_tokens_est": 22438,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/VisualRelay.Cli.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 604
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 5.561,
+      "prompt_tokens_est": 22693,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "public.*class TestLogPaths|internal.*class TestLogPaths",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.006,
+      "result_length": 17
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "public.*class WatchdogTimeouts|internal.*class WatchdogTimeouts",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 105
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.632,
+      "prompt_tokens_est": 22967,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestLogPaths.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1145
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 39.378,
+      "prompt_tokens_est": 23324,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/RepoPaths.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2513
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"wc\", \"-l\", \"/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestRunner.cs\", \"/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/WatchdogTimeouts.cs\", \"/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/CommandRouter.cs\", \"/Users/admin/Dev/visual-relay/TROUBLESHOOTING.md\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.042,
+      "result_length": 401
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 13.52,
+      "prompt_tokens_est": 26713,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": "[\"git\", \"log\", \"--oneline\", \"-5\"]"
+      },
+      "succeeded": true,
+      "duration_s": 0.064,
+      "result_length": 340
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 10.577,
+      "prompt_tokens_est": 27643,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "diagnosis-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 77
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 44.331,
+      "prompt_tokens_est": 28320,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

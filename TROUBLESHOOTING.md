@@ -38,6 +38,21 @@ owns it`. All headless UI tests therefore use `[AvaloniaFact]`/`[AvaloniaTheory]
 `HeadlessUnitTestSession` is **banned** via `Microsoft.CodeAnalysis.BannedApiAnalyzers`
 (`tests/VisualRelay.Tests/BannedSymbols.txt`); reintroducing it fails the build (RS0030).
 
+## Serial test mode for trustworthy per-test timings
+
+The default parallel run packs many tests into ~92s of wall clock, but a test's reported
+duration is dominated by time queued between awaits, not real work (e.g. a 0.02s test
+reports 29s). To get real per-test numbers:
+
+```bash
+./visual-relay test serial              # full suite, one collection at a time
+./visual-relay test serial GitCommitter # filter within serial mode
+```
+
+Serial mode appends `-- xUnit.ParallelizeTestCollections=false` and raises the watchdog
+timeout to 1800s (unless `VISUAL_RELAY_TEST_TIMEOUT` is set). The stderr output prints a
+`serial mode:` banner so it is obvious in saved logs.
+
 ## Backend state lives under `$XDG_DATA_HOME/visual-relay/`
 
 The model backend (LiteLLM proxy) keeps all per-machine state in your user data

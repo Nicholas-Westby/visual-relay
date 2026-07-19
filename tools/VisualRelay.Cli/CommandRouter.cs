@@ -19,6 +19,6 @@ public static class CommandRouter
         command is not null && KnownCommands.Contains(command);
 
     public static string UsageLine =>
-        "usage: ./visual-relay [launch|build|test|format|screenshot|run-task|init|" +
+        "usage: ./visual-relay [launch|build|test [serial] [Filter]|format|screenshot|run-task|init|" +
         "install-hooks|bump-version|check|inspect|guards|audit|gen-backend-config|provision-mxc]";
 }
