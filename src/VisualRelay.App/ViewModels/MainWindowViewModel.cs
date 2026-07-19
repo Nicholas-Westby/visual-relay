@@ -196,10 +196,11 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(PauseNoticeText))]
     private bool _isBusy;
 
-    // Backend reachability surfaced to the UI. Defaults to reachable so the
-    // startup banner stays hidden until a probe says otherwise. The later
-    // top-bar status task reuses this state + RefreshBackendStatusAsync rather
-    // than running a second probe.
+    // Backend reachability surfaced to the UI. Defaults to false so a test
+    // can observe the effect of RefreshBackendStatusAsync (StartBackground-
+    // Inspections fires the probe before the window first paints, so no
+    // banner flash is visible). The later top-bar status task reuses this
+    // state + RefreshBackendStatusAsync rather than running a second probe.
     // Injectable so tests can supply a fake completer; defaults to the frontier proxy.
     public LlmTestCommandFinder TestCommandFinder { get; init; } = new();
 
@@ -208,7 +209,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyPropertyChangedFor(nameof(BackendStatusLabel))]
     [NotifyCanExecuteChangedFor(nameof(StartBackendCommand))]
     [NotifyCanExecuteChangedFor(nameof(FindTestCommandCommand))]
-    private bool _isBackendReachable = true;
+    private bool _isBackendReachable;
 
     [ObservableProperty]
     private string? _backendStatusMessage;
@@ -232,20 +233,15 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         LoadObsidianBridgeSettings();
         LoadDiagnosticsSettings();
-        _ = LoadSandboxPathsAsync(); // fire async — nono calls are subprocesses
         PopulateModelCostRows();
 
-        // RefreshAsync now also probes the backend, so probe directly only when
-        // there is no root to refresh. Non-blocking either way: the probe runs
-        // off the UI thread (HttpClient async) and the window is already shown,
-        // so a down backend never freezes startup.
+        // RefreshAsync also probes the backend when a root exists. The initial
+        // no-root backend probe and sandbox-path inspection moved to
+        // StartBackgroundInspections() (called only from App startup) so unit
+        // tests spin no subprocesses or sockets.
         if (Directory.Exists(RootPath))
         {
             await RefreshAsync();
-        }
-        else
-        {
-            await RefreshBackendStatusAsync();
         }
 
         // Populate key states so the key panel and HF gate are accurate from

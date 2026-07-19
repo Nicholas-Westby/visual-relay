@@ -44,8 +44,21 @@ public partial class MainWindowViewModel
     private string? _sandboxWindowsCaveatUrl;
 
     /// <summary>
+    /// Fires background inspections (sandbox-path discovery and an initial
+    /// backend readiness probe) without blocking the UI. Called ONLY from
+    /// App startup (never the ctor or LoadInitialAsync) so unit tests spin
+    /// no subprocesses or sockets — exactly the same pattern as
+    /// <see cref="StartBackendMonitoring"/>.
+    /// </summary>
+    public void StartBackgroundInspections()
+    {
+        _ = LoadSandboxPathsAsync();
+        _ = RefreshBackendStatusAsync();
+    }
+
+    /// <summary>
     /// Fires the async sandbox-path inspection without blocking the UI.
-    /// Called from <see cref="LoadInitialAsync"/> as a fire-and-forget;
+    /// Called from <see cref="StartBackgroundInspections"/> as a fire-and-forget;
     /// the nono group calls are subprocesses and must not hold up opening
     /// the Settings panel.
     /// </summary>

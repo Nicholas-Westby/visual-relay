@@ -7,6 +7,61 @@ namespace VisualRelay.Tests;
 
 public sealed class MainWindowViewModelInitTests
 {
+    // ── Startup-inspection isolation ─────────────────────────────────────
+
+    [Fact]
+    public async Task LoadInitialAsync_WithNoRoot_DoesNotTriggerSandboxInspectionOrBackendProbe()
+    {
+        var viewModel = new MainWindowViewModel(); // default root; no repo on disk
+        await viewModel.LoadInitialAsync();
+
+        Assert.False(viewModel.IsSandboxInfoLoading);
+        Assert.False(viewModel.IsSandboxInfoAvailable);
+        Assert.Null(viewModel.BackendStatusMessage);
+    }
+
+    [Fact]
+    public async Task StartBackgroundInspections_CompletesSandboxInspection()
+    {
+        var viewModel = new MainWindowViewModel();
+        viewModel.StartBackgroundInspections();
+
+        // LoadSandboxPathsAsync sets IsSandboxInfoLoading=true before its
+        // first await, then clears it in a finally. When nono is on PATH the
+        // subprocess call yields and the flag stays true; when nono is absent
+        // the entire inspection completes synchronously, so the true state
+        // may be unobservable by the time we check. Poll for completion
+        // instead — the flag transitions back to false in either case.
+        for (var i = 0; i < 100; i++)
+        {
+            if (!viewModel.IsSandboxInfoLoading)
+                break;
+            await Task.Delay(2); // vr-allow-sleep: polling for fire-and-forget sandbox inspection completion
+        }
+
+        Assert.False(viewModel.IsSandboxInfoLoading);
+    }
+
+    [Fact]
+    public async Task StartBackgroundInspections_TriggersBackendStatusRefresh()
+    {
+        var viewModel = new MainWindowViewModel();
+        viewModel.StartBackgroundInspections();
+
+        // The probe is fire-and-forget (HTTP GET with 2s timeout). With
+        // _isBackendReachable defaulting to false, the probe always produces
+        // an observable change: IsBackendReachable flips to true when the
+        // backend is up, or BackendStatusMessage becomes non-null when it is
+        // down. Poll for either signal.
+        for (var i = 0; i < 500; i++)
+        {
+            if (viewModel.IsBackendReachable || viewModel.BackendStatusMessage is not null)
+                break;
+            await Task.Delay(10); // vr-allow-sleep: fire-and-forget async probe has no exposed completion signal
+        }
+
+        Assert.True(viewModel.IsBackendReachable || viewModel.BackendStatusMessage is not null);
+    }
     [Fact]
     public async Task RunSelected_WithNoConfig_BlocksAndFlagsInitialization()
     {
