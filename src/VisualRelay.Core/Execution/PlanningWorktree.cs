@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.Core.Execution;
 
@@ -89,6 +90,41 @@ public static class PlanningWorktree
         catch
         {
             // Best-effort: a failed config copy must NOT abort worktree creation.
+        }
+    }
+
+    /// <summary>
+    /// Copies the pending task's spec from the MAIN repo into the worktree so
+    /// the planning stages see the real task markdown (and attachments) instead
+    /// of fabricating an empty input. Unlike <see cref="CopyConfigIntoWorktree"/>
+    /// this is NOT best-effort: a missing or unresolvable task throws so the
+    /// per-task catch in PlanOneAsync converts it to a Failed outcome.
+    /// </summary>
+    public static async Task CopyTaskSpecIntoWorktree(
+        string mainRepoRoot, string worktreePath, string taskId, CancellationToken ct)
+    {
+        var repository = new RelayTaskRepository(mainRepoRoot);
+        var task = (await repository.ListAsync(includeNeedsReview: true, cancellationToken: ct))
+            .FirstOrDefault(x => x.Id == taskId);
+
+        if (task is null)
+            throw new InvalidOperationException(
+                $"Task '{taskId}' not found in {mainRepoRoot} — cannot provision spec into planning worktree.");
+
+        if (task.IsNested)
+        {
+            // Folder task: recursively copy the entire folder (spec + siblings/attachments).
+            var taskRelative = Path.GetRelativePath(mainRepoRoot, task.TaskDirectory);
+            var destDir = Path.Combine(worktreePath, taskRelative);
+            CopyDirectoryRecursive(task.TaskDirectory, destDir);
+        }
+        else
+        {
+            // Flat task: copy the single .md file.
+            var markdownRelative = Path.GetRelativePath(mainRepoRoot, task.MarkdownPath);
+            var destFile = Path.Combine(worktreePath, markdownRelative);
+            Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+            File.Copy(task.MarkdownPath, destFile, overwrite: true);
         }
     }
 

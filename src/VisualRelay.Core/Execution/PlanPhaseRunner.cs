@@ -135,6 +135,7 @@ public static class PlanPhaseRunner
             // config, so provide it from the source repo before the driver loads
             // config from the worktree — otherwise stage 1 flags "config not found".
             PlanningWorktree.CopyConfigIntoWorktree(mainRootPath, worktreePath);
+            await PlanningWorktree.CopyTaskSpecIntoWorktree(mainRootPath, worktreePath, taskId, ct);
 
             // Each planning task gets its OWN event sink to avoid log interleaving.
             // When an observable factory is provided (GUI drain), live progress

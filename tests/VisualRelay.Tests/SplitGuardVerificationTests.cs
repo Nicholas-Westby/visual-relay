@@ -192,7 +192,10 @@ public sealed partial class SplitGuardVerificationTests
         // added RunTaskAsync_ResumeFirstRun_CapturesUntrackedBaseline (+1) and
         // RunTaskAsync_ResumeWithExistingSnapshot_ReusesItUnchanged (+1) to the
         // RelayDriverResumeTests family.
-        const int baseline = 176;
+        // Bumped 176→177 on 2026-07-19: provision-task-specs-into-planning-worktrees
+        // added RunPlanPhase_PendingTaskSpecProvisionedIntoStage1Input (+1) to the
+        // PlanPhaseRunnerTests family.
+        const int baseline = 177;
 
         string[] prefixes =
         [

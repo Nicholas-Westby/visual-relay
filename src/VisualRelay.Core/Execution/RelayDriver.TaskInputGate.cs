@@ -26,13 +26,6 @@ public sealed partial class RelayDriver
         List<StageStatusEntry> statusEntries,
         CancellationToken cancellationToken)
     {
-        // When task is null and the tasks directory itself is absent from disk,
-        // this is a plan-phase worktree (PlanningWorktree only copies config, not
-        // the tasks dir). The main repo still has the real task spec; this is not
-        // the incident where a previously-present task folder was deleted mid-drain.
-        if (task is null && !Directory.Exists(Path.Combine(rootPath, tasksDir)))
-            return null;
-
         if (task is not null && !string.IsNullOrWhiteSpace(input.Markdown))
             return null;
 

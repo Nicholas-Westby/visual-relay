@@ -43,6 +43,43 @@ public sealed class RelayDriverEmptyTaskInputTests
     }
 
     [Fact]
+    public async Task Run_NoTasksDirAndNullTask_FailsWithNeedsReview()
+    {
+        // After exemption removal, a worktree with NO tasks dir at all and
+        // a null task must also flag as empty_task_input — the previously
+        // exempted case now surfaces loudly.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+
+        // Deliberately do NOT create the llm-tasks/ directory — this is the
+        // case the old exemption silenced.
+
+        var sink = new InMemoryRelayEventSink();
+        var runner = new ScriptedSubagentRunner();
+        runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+        var driver = new RelayDriver(
+            RelayDriverTestHelpers.DepsFor(repo, runner, new ScriptedTestRunner(new TestRunResult(0, "green"), new TestRunResult(0, "green")), sink),
+            RelayDriverOptions.NoGitCommit);
+
+        var outcome = await driver.RunTaskAsync(repo.Root, "ghost");
+
+        // Must be Flagged — the exemption is gone.
+        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);
+
+        // NEEDS-REVIEW marker exists.
+        var needsReviewPath = Path.Combine(repo.Root, ".relay", "ghost", "NEEDS-REVIEW");
+        Assert.True(File.Exists(needsReviewPath), "NEEDS-REVIEW marker should exist");
+        var firstLine = (await File.ReadAllTextAsync(needsReviewPath)).Split('\n')[0].Trim();
+        Assert.Contains("task spec missing or empty", firstLine, StringComparison.Ordinal);
+
+        // No stage 1 input was written.
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "ghost", "stage1-attempt1.input.json")));
+
+        // An error event was published.
+        Assert.Contains(sink.Events, e => e.EventName == "empty_task_input" && e.Level == "error");
+    }
+
+    [Fact]
     public async Task Run_TaskMarkdownWhitespaceOnly_FailsWithNeedsReview()
     {
         using var repo = TestRepository.Create();

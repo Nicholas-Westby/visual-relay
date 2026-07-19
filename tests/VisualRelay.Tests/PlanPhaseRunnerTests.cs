@@ -234,4 +234,52 @@ public sealed partial class PlanPhaseRunnerTests
         Assert.True(File.Exists(Path.Combine(taskDir, "stage1-attempt1.report.json")));
     }
 
+    [Fact]
+    public async Task RunPlanPhase_PendingTaskSpecProvisionedIntoStage1Input()
+    {
+        // When HEAD contains llm-tasks/completed/ (the post-first-seal state),
+        // the planning worktree must still receive the pending task's real spec,
+        // and stage 1's input.json must contain that markdown — not blank.
+        using var repo = TestRepository.Create();
+        repo.WriteConfig("dotnet test", []);
+
+        // Write the pending folder task with distinctive markdown.
+        repo.WriteNestedTask("real-spec", "# Real spec content HERE");
+
+        // Commit a DONE-fake.md under llm-tasks/completed/ so HEAD contains
+        // the tasks dir — this arms the old false-positive path.
+        repo.WriteCompletedTask("fake", "# Fake completed");
+        // In-memory GitSim repo backing worktree creation.
+        var sim = PlanPhaseTestHelpers.InitGitSim(repo.Root);
+        // Must commit completed/ into the sim so it appears in worktrees.
+        sim.Seed(repo.Root, "llm-tasks/completed/batch-001/DONE-fake.md", "# Fake completed");
+        sim.Commit(repo.Root, "seed completed dir");
+
+        // Use a capturing runner so we can inspect the TaskInput the driver passed
+        // to stage 1 — it must contain the real spec, not blank.
+        var capturer = new CapturingSubagentRunner();
+        capturer.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
+
+        var config = PlanPhaseTestHelpers.MakeConfig(maxPlanConcurrency: 1);
+        var results = await PlanPhaseRunner.RunPlanPhaseAsync(
+            mainRootPath: repo.Root,
+            tasks: [("real-spec", capturer)],
+            config: config,
+            testRunner: new ScriptedTestRunner(),
+            cancellationToken: CancellationToken.None,
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
+
+        Assert.Single(results);
+        // Must NOT flag — the real spec was provisioned into the worktree.
+        Assert.Equal(RelayTaskOutcomeStatus.Planned, results[0].Outcome.Status);
+
+        // The stage 1 invocation must have the real task markdown in TaskInput.
+        var stage1 = capturer.Invocations.FirstOrDefault(i => i.Stage.Number == 1);
+        Assert.NotNull(stage1);
+        Assert.Contains("# Real spec content HERE", stage1!.TaskInput, StringComparison.Ordinal);
+        Assert.False(string.IsNullOrWhiteSpace(stage1.TaskInput),
+            "TaskInput must not be blank when the task spec was provisioned");
+    }
+
 }
