@@ -38,6 +38,15 @@ public static class ProjectBootstrapper
     private static readonly TimeSpan UpgradeValidationTimeout = TimeSpan.FromSeconds(120);
 
     /// <summary>
+    /// Validation timeout for the manual "Create config" GUI path (2 min).
+    /// A first-ever run may cold-compile the whole package (measured ~2 min
+    /// for a small SwiftPM package); warm runs are typically 2–3 s. This
+    /// value matches <see cref="UpgradeValidationTimeout"/> today but is a
+    /// deliberately separate knob for the manual GUI path.
+    /// </summary>
+    public static readonly TimeSpan CreateConfigValidationTimeout = TimeSpan.FromMinutes(2);
+
+    /// <summary>
     /// Default validation timeout during init (60 s). Real suites can take ~30 s;
     /// this gives headroom without being unbounded. Once a config exists the
     /// task pipeline uses testTimeoutMs, so this only affects the create-config path.

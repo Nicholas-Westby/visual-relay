@@ -1,10 +1,15 @@
 using CommunityToolkit.Mvvm.Input;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 
 namespace VisualRelay.App.ViewModels;
 
 public partial class MainWindowViewModel
 {
+    // Injectable factory for Create config validation. Null → DirectExecTestRunner
+    // with CreateConfigValidationTimeout. Tests inject a fake without real processes.
+    public Func<TimeSpan, ITestRunner>? InitValidationRunnerFactory { get; set; }
+
     private bool CanBootstrapProject() => !IsBusy && Directory.Exists(RootPath);
 
     // Makes an empty/greenfield folder runnable in one action: git init + a HEAD

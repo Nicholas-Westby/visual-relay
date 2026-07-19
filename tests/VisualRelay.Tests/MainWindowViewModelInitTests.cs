@@ -1,5 +1,7 @@
 using VisualRelay.App.ViewModels;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
+using VisualRelay.Domain;
 
 namespace VisualRelay.Tests;
 
@@ -70,5 +72,78 @@ public sealed class MainWindowViewModelInitTests
         await viewModel.FindTestCommandCommand.ExecuteAsync(null);
 
         Assert.Equal("go test ./...", viewModel.InitTestCommandInput);
+    }
+
+    [Fact]
+    public async Task CreateConfig_UsesCreateConfigValidationTimeout()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        TimeSpan? capturedTimeout = null;
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            InitValidationRunnerFactory = timeout =>
+            {
+                capturedTimeout = timeout;
+                return new ScriptedTestRunner(new TestRunResult(0, "green"));
+            }
+        };
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.NotNull(capturedTimeout);
+        Assert.Equal(ProjectBootstrapper.CreateConfigValidationTimeout, capturedTimeout!.Value);
+        Assert.False(viewModel.NeedsInitialization);
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    [Fact]
+    public async Task CreateConfig_SetsValidatingStatusBeforeValidation()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        string? capturedStatusText = null;
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+        };
+        viewModel.InitValidationRunnerFactory = timeout =>
+            new StatusCaptureTestRunner(new TestRunResult(0, "green"),
+                () => capturedStatusText = viewModel.StatusText);
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.NotNull(capturedStatusText);
+        Assert.Contains("Validating", capturedStatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.False(viewModel.NeedsInitialization);
+        Assert.True(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
+    }
+
+    [Fact]
+    public async Task CreateConfig_RejectsTimeoutAndSurfacesReason()
+    {
+        using var repo = TestRepository.Create();
+        repo.WriteTask("alpha", "# Alpha\n");
+        var viewModel = new MainWindowViewModel
+        {
+            RootPath = repo.Root,
+            InitValidationRunnerFactory = _ => new TimeoutSimulatingTestRunner()
+        };
+        await viewModel.LoadInitialAsync();
+        Assert.True(viewModel.NeedsInitialization);
+
+        viewModel.InitTestCommandInput = "dotnet test";
+        await viewModel.CreateConfigCommand.ExecuteAsync(null);
+
+        Assert.Contains("timed out", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.True(viewModel.NeedsInitialization);
+        Assert.False(File.Exists(Path.Combine(repo.Root, ".relay", "config.json")));
     }
 }

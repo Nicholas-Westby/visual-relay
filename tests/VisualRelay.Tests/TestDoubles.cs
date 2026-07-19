@@ -168,6 +168,20 @@ internal sealed class TimeoutSimulatingTestRunner : ITestRunner
 }
 
 /// <summary>
+/// Returns a scripted result and captures a snapshot (e.g. <c>StatusText</c>)
+/// at <c>RunAsync</c> call time, so a test can assert that the UI was updated
+/// BEFORE the potentially-long validation run started.
+/// </summary>
+internal sealed class StatusCaptureTestRunner(TestRunResult result, Action capture) : ITestRunner
+{
+    public Task<TestRunResult> RunAsync(string rootPath, string command, CancellationToken cancellationToken = default)
+    {
+        capture();
+        return Task.FromResult(result);
+    }
+}
+
+/// <summary>
 /// Wraps a <see cref="ScriptedTestRunner"/> and records every invocation so
 /// tests can assert on call count and command strings (e.g. to verify that a
 /// bootstrap check command was passed or skipped).
