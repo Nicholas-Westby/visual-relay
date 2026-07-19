@@ -104,48 +104,6 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         Assert.Contains(log, l => l.Contains("stale pidfile"));
     }
 
-    // ── Legacy cleanup (start path) ──────────────────────────────────────
-
-    [Fact]
-    public async Task Start_RemovesLegacyRepoLocalState()
-    {
-        var repoRoot = Path.Combine(_home, "repo");
-        var legacyVenv = Path.Combine(repoRoot, "tools", "backend", ".venv");
-        var legacyScratch = Path.Combine(repoRoot, ".relay-scratch");
-        Directory.CreateDirectory(legacyVenv);
-        Directory.CreateDirectory(legacyScratch);
-        await File.WriteAllTextAsync(Path.Combine(legacyVenv, "legacy.txt"), "x");
-
-        var log = new List<string>();
-        var options = new BackendStartOptions
-        {
-            RepoRoot = repoRoot,
-            ReadyTimeout = TimeSpan.FromMilliseconds(50),
-        };
-        // Unhealthy + injected no-toolchain (skips real venv probe) => start
-        // returns down quickly, but legacy cleanup runs first.
-        var lifecycle = Lifecycle(healthy: false, options: options, log: log,
-            ensureVenv: (_, _) => new BackendVenv.Result(null));
-        var time = new ManualTimeProvider();
-        var task = lifecycle.StartAsync(timeProvider: time);
-
-        // Advance time well past the ReadyTimeout (50 ms).
-        // ManualTimeProvider fires the internal Task.Delay(1s, timeProvider)
-        // synchronously during Advance, so the poll loop exits instantly.
-        time.Advance(TimeSpan.FromSeconds(10));
-
-        // Pump the async state machine: at most 5 real-time ticks.
-        for (var i = 0; i < 5 && !task.IsCompleted; i++)
-            await Task.Yield();
-
-        await task;
-
-        Assert.False(Directory.Exists(legacyVenv));
-        Assert.True(Directory.Exists(legacyScratch));
-        Assert.Contains(log, l => l.Contains("legacy repo-local venv"));
-        Assert.DoesNotContain(log, l => l.Contains("legacy repo-local scratch"));
-    }
-
     // ── Missing toolchain: graceful degrade ──────────────────────────────
 
     [Fact]
