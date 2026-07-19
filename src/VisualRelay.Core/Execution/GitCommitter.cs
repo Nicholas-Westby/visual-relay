@@ -203,7 +203,8 @@ internal static partial class GitCommitter
                     ["RELAY_NONCE"] = commitToken,
                 }
                 : null;
-            var attempt = await GitAsync(gi, rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv, timeProvider: tp);
+            var attempt = await GitAsync(gi, rootPath, ["commit", "-m", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv,
+                isSuccessExit: static code => code is 0 or 1, timeProvider: tp);
             if (attempt.ExitCode == 0)
             {
                 var sha = await GitAsync(gi, rootPath, ["rev-parse", "HEAD"], cancellationToken, timeProvider: tp);

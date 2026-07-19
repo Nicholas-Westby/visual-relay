@@ -38,7 +38,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -82,7 +82,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -124,7 +124,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -167,7 +167,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -208,7 +208,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -242,7 +242,7 @@ public sealed class GitCommitterAutoIncludeTests
             commitToken: null,
             preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);

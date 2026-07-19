@@ -48,7 +48,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -93,7 +93,7 @@ public sealed class GitCommitterAutoIncludeFirstInstanceTests
             commitToken: null,
             firstInstanceSnapshot,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);

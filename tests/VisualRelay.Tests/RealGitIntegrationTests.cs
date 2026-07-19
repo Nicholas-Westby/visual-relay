@@ -210,7 +210,7 @@ public sealed class RealGitIntegrationTests
             repo.Root, "my-task", "abc123",
             ["feat: add widget"], ["src/app.cs", "src/feature.cs", "src/extra.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            new GitInvoker(), CancellationToken.None, runBaseSha: runBase);
+            new GitInvoker(), CancellationToken.None, runBaseSha: runBase, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Equal("1", Git(repo.Root, "rev-list", "--count", $"{runBase}..HEAD").Trim());

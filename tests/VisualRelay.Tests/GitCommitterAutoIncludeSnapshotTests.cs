@@ -82,7 +82,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: no authored file should remain untracked.
@@ -117,7 +117,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
         Assert.True(commit.Success, commit.Error);
 
         // Post-commit: the authored test file is still untracked.
@@ -153,7 +153,7 @@ public sealed class GitCommitterAutoIncludeSnapshotTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
         Assert.True(commit.Success, commit.Error);
 
         var missed = await GitCommitter.FindUncommittedAuthoredFilesAsync(

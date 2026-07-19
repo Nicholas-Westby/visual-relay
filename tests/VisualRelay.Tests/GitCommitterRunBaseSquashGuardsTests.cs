@@ -68,7 +68,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: my task"], ["src/mine.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
 
@@ -109,7 +109,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: build two things"], ["src/one.cs", "src/two.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         // Squash happened: exactly one sealed commit parented on the run-base.
@@ -142,12 +142,19 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
         // Target repo hook rejects EVERY candidate message.
         sim.PreCommitHook = _ => GitSimHookVerdict.Reject("hook: all commits rejected");
 
-        var result = await GitCommitter.CommitAsync(
+        var time = new ManualTimeProvider();
+        var task = GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123",
             ["feat: add widget", "fix: alternative"], ["src/app.cs", "src/feature.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase, timeProvider: time);
+        while (!task.IsCompleted)
+        {
+            time.Advance(TimeSpan.FromMilliseconds(250));
+            await Task.Yield();
+        }
+        var result = await task;
 
         // The commit failed (hook won) ...
         Assert.False(result.Success);
@@ -198,7 +205,7 @@ public sealed class GitCommitterRunBaseSquashGuardsTests
             ["feat: add widget"], ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None, runBaseSha: runBase);
+            sim, CancellationToken.None, runBaseSha: runBase, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.Single(sim.CommitsBetween(repo.Root, runBase, "HEAD"));

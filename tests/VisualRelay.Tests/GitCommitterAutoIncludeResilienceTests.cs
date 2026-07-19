@@ -43,7 +43,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             commitToken: null, preRunUntracked,
             tasksDir: null,
             cancellationToken: CancellationToken.None,
-            gitInvoker: staleInvoker);
+            gitInvoker: staleInvoker, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -89,7 +89,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, result.Error);
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
@@ -127,7 +127,7 @@ public sealed class GitCommitterAutoIncludeResilienceTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
         Assert.True(commit.Success, commit.Error);
 
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);

@@ -27,7 +27,7 @@ public sealed class GitCommitterTests
         var result = await GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", candidates, ["src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success, $"Expected success, got: {result.Error}");
         Assert.False(string.IsNullOrWhiteSpace(result.CommitSha));
@@ -53,7 +53,7 @@ public sealed class GitCommitterTests
         var result = await GitCommitter.CommitAsync(
             repo.Root, "my-task", "abc123", ["feat: add widget"], ["swival.toml", "src/app.cs"], [],
             commitToken: null, preRunUntracked: null, tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.False(result.Success);
         Assert.NotNull(result.Error);

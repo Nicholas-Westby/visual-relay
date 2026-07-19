@@ -1,0 +1,505 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-19T22:36:24.767825+00:00",
+  "task": "# Relay stage 4: Plan\nTask: 02-fail-fast-hook-rejected-commit-candidates\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Stop retrying hook-rejected commit candidates, and finish the fake-clock migration\n\n`GitCommitter` retries a commit candidate that a commit-msg/pre-commit hook\njust rejected, sleeping 250ms + 1s of real time before giving up on it \u2014\nretrying an identical rejected message is always futile. This burns ~1.25s per\nrejected candidate in every production drain and in two tests. Fix the\nproduct, fix the one test class that missed the fake-clock migration, and add\na guard so no future test calls `GitCommitter.CommitAsync` on the real clock.\n\n### Evidence (2026-07-19 slow-test investigation)\n\n- `src/VisualRelay.Core/Execution/GitCommitter.cs:206` \u2014 the per-candidate\n  `git commit` attempt goes through `GitAsync` WITHOUT an `isSuccessExit`\n  widening, so a hook rejection (exit 1) is treated as transient: retried 3\u00d7\n  with 250ms + 1s backoff (`GitCommitter.cs:245-257`) before the candidate\n  loop moves on.\n- `GitCommitter.cs:239-242` documents the intended fix seam: \"A caller widens\n  this for a command whose non-zero exit is a normal result, not a transient\n  failure \u2014 otherwise that result burns pointless backoff.\"\n- Measured solo (VM, filtered runs, 2026-07-19):\n  `GitCommitterRunBaseSquashGuardsTests.CommitAsync_WithRunBase_WhenAllCandidatesRejectedAfterSquash_RestoresOrigHead`\n  = 2.54s (two rejected candidates \u00d7 1.25s real sleep) and\n  `RelayDriverGitCommitTests.RunTaskAsync_CommitMsgHookRejectsFileNames_FallsBackToLaterCandidate`\n  = 1.28s (one rejected candidate). For contrast, the already-migrated\n  `GitCommitterHookRejectsFirstTests`/`GitCommitterHookRejectsAllTests`\n  (see `GitCommitterHookRejectionTests.cs`, which inject `ManualTimeProvider`)\n  measure 0.02s.\n- `tests/VisualRelay.Tests/GitCommitterRunBaseSquashGuardsTests.cs:145-151` \u2014\n  the `CommitAsync` call passes no `timeProvider:`, so the backoff runs on\n  `TimeProvider.System`.\n- `src/VisualRelay.Core/Execution/RelayDriverDependencies.cs:23-32` \u2014\n  `ForTests` defaults `TimeProvider` to null, so driver-level commit tests\n  also sleep for real when a candidate is rejected.\n\n### What to build\n\nThree focused commits, in this order:\n\n1. **Product fix.** At the commit-attempt call (`GitCommitter.cs:206`) pass\n   `isSuccessExit: static code => code is 0 or 1`. Exit 1 from `git commit`\n   is a final per-candidate verdict (hook rejection, precondition failure);\n   the candidate loop already falls through to the next message. Genuinely\n   transient failures (e.g. `index.lock` contention) surface as exit 128 with\n   a `fatal:` message and keep the existing retry/backoff. Do not touch the\n   backoff schedule or `GitFailureClassifier` \u2014 the widening seam is the\n   designed fix point.\n   - Coverage mapping duty: check `GitCommitterProbeRetryTests` and\n     `GitCommitterPersistentTimingTests` (in `GitCommitterResilienceTests.cs`).\n     If their scripted failures use exit 1 for the *commit* step, change the\n     scripted exit code to a retryable one (e.g. 128 without a deterministic\n     message) so the retry path keeps its coverage \u2014 same scenarios, same\n     assertions, name-by-name unchanged.\n2. **Test fix.** Inject a `ManualTimeProvider` in\n   `GitCommitterRunBaseSquashGuardsTests` exactly the way\n   `GitCommitterHookRejectionTests.cs` does (advance-pump loop pattern),\n   passing `timeProvider:` to every `CommitAsync` call in the class. After\n   commit 1 the sleeps are gone anyway; this makes the class immune to any\n   future retryable path.\n3. **Guard.** New guard-as-test rule: inside `tests/VisualRelay.Tests`, any\n   direct invocation of `GitCommitter.CommitAsync(` must pass a\n   `timeProvider:` named argument. Implement as\n   `tools/VisualRelay.Guards/TestClockInjectionGuard.cs` (pure matcher,\n   mirror the structure and self-exemption style of\n   `RealGitFallbackGuard.cs`) plus a test-side runner\n   `TestClockInjectionGuardTests` that scans via the shared\n   `CachedSyntaxTreesFixture` (pattern: `FakeClockGuardTests`). Empty\n   allowlist. Driver-level tests that reach commits through\n   `RelayDriverDependencies.ForTests` are explicitly out of scope for the\n   guard (that seam-wide migration is a separate effort); the guard covers\n   the direct-call slip that actually happened.\n\n### Constraints\n\n- Production behavior change is exit-1-fail-fast only; all other retry\n  behavior (probe retries, exit-128 transients, backoff timings) unchanged.\n- Coverage is non-negotiable: no test deleted, skipped, or weakened; any test\n  whose scripted exits change carries a name-by-name mapping in the run\n  summary showing the scenario still covered.\n- Keep files under the 300-line guard.\n\n### Tests (red first)\n\n- New `GitCommitter` unit test: scripted invoker returns exit 1 for the\n  commit step with two candidates \u2192 the second candidate is attempted with\n  ZERO delay calls observed on an injected `ManualTimeProvider` (assert no\n  timer was ever scheduled, or that virtual time never advanced).\n- Existing retry tests still green after the exit-code adjustment in step 1's\n  mapping.\n- Guard test: a synthetic source with a bare `GitCommitter.CommitAsync(...)`\n  call (no `timeProvider:`) yields exactly one violation; the repo tree scan\n  yields zero.\n\n### Verification\n\n- `./visual-relay check` fully green.\n\n### Commit-message evidence\n\nMeasure before and after while implementing (the two named tests, solo runs),\nthen put one filled-in evidence bullet in the commit message body, following\nthe attached `commit-message-evidence.md`. Never pre-fill that bullet \u2014\nnumbers are measured at implementation time and go into the eventual commit\nmessage, nowhere else.\n\n\n## Manifest\n(not set yet)\n\n## Task context\n### commit-message-evidence.md (1306 bytes)\n# Commit-message evidence for test-speed changes\n\nAny commit that changes how long tests take must carry, in its commit-message\nbody, exactly one bullet of this shape, blanks filled with real measurements:\n\n- test time dropped from <before> to <after>, saving <delta> (<scope>)\n\nHow to fill it in:\n\n- `<before>` / `<after>`: numbers you measured yourself, on this machine, with\n  the same command, once right before starting and once right after finishing.\n  Never copy them from a task description, an estimate, or a prediction.\n- `<delta>`: the difference between the two.\n- `<scope>`: what the numbers cover: `full-suite wall time`, `single test`, or\n  `<TestClass> file total`.\n- A finished example:\n  `- test time dropped from 80s to 60s, saving 20s (full-suite wall time)`\n\nRules:\n\n- The filled-in bullet belongs in the commit message body, never in a task\n  file. A task file states the requirement; only the commit records numbers.\n- Exactly one evidence bullet per commit. The commit hook allows at most 3\n  body bullets of at most 20 words each, all `- ` hyphen bullets, no em\n  dashes; keep the evidence bullet well inside those limits.\n- If you cannot measure a real improvement, say so in your run summary and do\n  not invent numbers. A commit with no measured effect gets no evidence bullet.\n\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Stop retrying hook-rejected commit candidates (exit 1 \u2192 fail-fast) and finish the fake-clock migration by injecting ManualTimeProvider into GitCommitterRunBaseSquashGuardsTests, with a new static-analysis guard enforcing timeProvider: on all direct GitCommitter.CommitAsync( calls in the test project \u2014 three ordered commits, no coverage loss, files under 300 lines.\",\n  \"options\": [\n    \"1. Prescribed order (product fix \u2192 test fix \u2192 guard). Commit 1: add isSuccessExit at GitCommitter.cs:206 and adjust retry-test exit codes (1\u2192128) where needed; keep retry coverage name-by-name. Commit 2: inject ManualTimeProvider + advance-pump loop into GitCommitterRunBaseSquashGuardsTests. Commit 3: new TestClockInjectionGuard.cs + tests. This follows the task structure exactly; the risk is that adjusting retry-test scripts in commit 1 conflates production change with test churn, making review slightly larger in a single commit.\",\n    \"2. Guard-first (guard \u2192 product fix \u2192 test fix). Commit 1: build the TestClockInjectionGuard + tests first, so the direct-call slip is blocked before touching any production or test logic. Commit 2: product fix + retry-test exit-code adjustments. Commit 3: fake-clock injection in RunBaseSquashGuardsTests. Safer order of concern (guard rails first), but the guard may initially flag the very call sites we're about to fix, requiring temporary exemptions or a staged rollout.\",\n    \"3. Merge retry-test adjustment into a standalone prep commit. Commit 1: rename/probe-retry tests only \u2014 change scripted exit codes from 1 to 128, keeping all assertions and scenario names. Commit 2: product fix + test fix. Commit 3: guard. This keeps the product fix commit pure (no test-rigging logic changes), at the cost of one extra conceptual step in the retry-test mapping.\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"Investigated the codebase against the three-commit plan. (1) Product fix: GitCommitter.cs line 206 calls `GitAsync` for `git commit` without `isSuccessExit`, so exit 1 (hook rejection) retries 3\u00d7 with backoff. One-line fix mirrors the `check-ignore` seam at line 80-81. (2) Retry coverage: GitCommitterResilienceTests.cs probes use `rev-parse`/`add` command failures, not `commit` step \u2014 zero scripted exit changes needed. GitCommitterProbeRetryTests, GitCommitterPersistentTimingTests, GitCommitterAddRetryTests all script failure on non-commit commands, unaffected. (3) GitCommitterRunBaseSquashGuardsTests.cs has 4 direct `CommitAsync(` calls without `timeProvider:`; pattern to follow is GitCommitterHookRejectionTests.cs (ManualTimeProvider + advance-pump loop). (4) Nine additional test files (GitCommitterTests, GitCommitterAutoInclude*, GitCommitterCommitMsgHooksTests, GitCommitterRunBaseSquashTests, RealGitIntegrationTests) also call `CommitAsync(` directly without `timeProvider:`. For the guard's live-tree scan to yield zero violations, all these need `timeProvider:` (either `ManualTimeProvider` or `TimeProvider.System`). (5) Guard structure: TestClockInjectionGuard.cs mirrors RealGitFallbackGuard.cs (pure matcher with `FindViolations` overloads for `(Path, Source)` and `(Path, SyntaxTree)` tuples, self-exempt list); TestClockInjectionGuardTests mirrors FakeClockGuardTests (CachedSyntaxTreesFixture, synthetic check + live-tree scan). (6) All files are under 300 lines; additions won't exceed the limit. (7) GitSim's commit handler returns exit 1 on hook rejection (GitSimCommands.Commit.cs line 73). GitFailureClassifier does not classify exit 1 as deterministic, so without the fix it retries.\",\n  \"constraints\": [\n    \"Production behavior change is exit-1-fail-fast only; all other retry behavior (probe retries, exit-128 transients, backoff timings) unchanged.\",\n    \"No test deleted, skipped, or weakened; any scripted exit change must carry a name-by-name mapping showing the scenario still covered.\",\n    \"Files must stay under the 300-line guard.\",\n    \"Guard must have an empty allowlist.\",\n    \"Guard must scan tests/VisualRelay.Tests for direct GitCommitter.CommitAsync( calls without timeProvider: named argument.\",\n    \"Driver-level tests reaching CommitAsync through RelayDriverDependencies.ForTests are explicitly out of scope for the guard.\",\n    \"The guard's live-tree scan must yield zero violations (requires adding timeProvider: to all remaining direct call sites).\",\n    \"The guard must mirror RealGitFallbackGuard.cs structure (pure matcher, FindViolations overloads for (Path, Source) and (Path, SyntaxTree), self-exempt file list).\",\n    \"Test-side runner must mirror FakeClockGuardTests pattern (CachedSyntaxTreesFixture injection, synthetic inline-snippet tests, live-tree scan).\",\n    \"visual-relay check must be fully green after all three commits.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The `git commit` invocation at GitCommitter.cs:206 calls `GitAsync` without `isSuccessExit:`, so the default predicate (`code == 0`) is used. A hook rejection from `git commit` produces exit 1 (see GitSim/Commands/Commit.cs:73: `return GitSimResult.Code(1, verdict.Message...)`). Exit 1 is not 0, and `GitFailureClassifier.IsDeterministic` only matches \\\"not a git repository\\\" and \\\"invalid reference\\\" \u2014 so exit 1 with a hook-rejection message is treated as transient, retried 3\u00d7 with 250ms + 1s backoff (lines 245-257). The candidate loop at line 190 already handles rejected candidates by moving to the next message; the retry on the same candidate is pointless. The fix seam is documented at lines 239-242: a caller widens `isSuccessExit` for commands whose non-zero exit is a normal result. This is the identical pattern already applied to `check-ignore` at lines 80-81 (`isSuccessExit: static code => code is 0 or 1`).\\n\\nTwo tests measure the real-time cost: `GitCommitterRunBaseSquashGuardsTests.CommitAsync_WithRunBase_WhenAllCandidatesRejectedAfterSquash_RestoresOrigHead` (2 candidates \u00d7 ~1.25s = 2.54s) and `RelayDriverGitCommitTests.RunTaskAsync_CommitMsgHookRejectsFileNames_FallsBackToLaterCandidate` (1 candidate \u00d7 ~1.25s = 1.28s). The already-migrated `GitCommitterHookRejectionTests` (which inject `ManualTimeProvider`) measure 0.02s.\\n\\nNine test files call `GitCommitter.CommitAsync(` directly without `timeProvider:`: GitCommitterTests (2), GitCommitterCommitMsgHooksTests (2), GitCommitterAutoIncludeTests (6), GitCommitterAutoIncludeFirstInstanceTests (2), GitCommitterAutoIncludeResilienceTests (3), GitCommitterAutoIncludeSnapshotTests (3), GitCommitterAutoIncludeTasksDirTests (1), GitCommitterRunBaseSquashTests (5), GitCommitterRunBaseSquashGuardsTests (4). GitCommitterHookRejectionTests and GitCommitterResilienceTests already pass `timeProvider:`.\\n\\nThe resilience retry tests (GitCommitterResilienceTests.cs) script failures only on `rev-parse` and `add` commands, never `commit` \u2014 so the `isSuccessExit` fix on the commit step requires zero scripted exit code changes. Retry coverage is preserved name-by-name as-is.\",\n  \"excerpts\": [\n    \"GitCommitter.cs:206 \u2014 `var attempt = await GitAsync(gi, rootPath, [\\\"commit\\\", \\\"-m\\\", attemptMessage], cancellationToken, TimeSpan.FromMinutes(2), attemptEnv, timeProvider: tp);` \u2014 missing `isSuccessExit:`; exit 1 (hook rejection) retries 3\u00d7\",\n    \"GitCommitter.cs:239-242 \u2014 `// Which exit codes are a FINAL answer (never retried). Default: only 0. A caller widens this for a command whose non-zero exit is a normal result, not a transient failure \u2014 otherwise that result burns pointless backoff.` \u2014 the documented fix seam\",\n    \"GitCommitter.cs:80-81 \u2014 `var ci = await GitAsync(gi, rootPath, checkArgs, cancellationToken, isSuccessExit: static code => code is 0 or 1, timeProvider: tp);` \u2014 identical pattern already applied to `check-ignore`\",\n    \"GitCommitter.cs:245-257 \u2014 retry loop: 250ms delay on attempt 1, 1s on attempt 2, up to 3 attempts, unless `isSuccess(exitCode)` or `GitFailureClassifier.IsDeterministic`\",\n    \"GitFailureClassifier.cs:19-26 \u2014 `IsDeterministic` only matches \\\"not a git repository\\\" and \\\"invalid reference\\\"; exit 1 with hook rejection message is not classified \u2192 retried\",\n    \"GitSim/Commands/Commit.cs:68-73 \u2014 `if (ctx.PreCommitHook is not null) { ... if (!verdict.Accepted) return GitSimResult.Code(1, verdict.Message...); }` \u2014 hook rejection produces exit 1\",\n    \"GitCommitterRunBaseSquashGuardsTests.cs:145-151 \u2014 `CommitAsync` call without `timeProvider:` on the all-rejected test; runs ~2.54s real time\",\n    \"GitCommitterHookRejectionTests.cs:31-41 \u2014 `var time = new ManualTimeProvider(); ... while (!task.IsCompleted) { time.Advance(...); await Task.Yield(); }` \u2014 the advance-pump pattern to follow\",\n    \"GitCommitterResilienceTests.cs:24-25,56-57,89,118 \u2014 all four retry tests script failures on `rev-parse` or `add` with exit 128, never `commit` \u2014 zero scripted exit changes needed\",\n    \"RelayDriverDependencies.cs:23-32 \u2014 `ForTests` defaults `TimeProvider` to null, so driver-level commit tests also sleep for real\"\n  ],\n  \"repro\": \"1. Run a single slow test solo: `dotnet test --filter \\\"FullyQualifiedName~GitCommitterRunBaseSquashGuardsTests.CommitAsync_WithRunBase_WhenAllCandidatesRejectedAfterSquash_RestoresOrigHead\\\"` \u2014 observe ~2.5s wall time (two rejected candidates \u00d7 1.25s real sleep).\\n2. Run the already-migrated counterpart: `dotnet test --filter \\\"FullyQualifiedName~GitCommitterHookRejectsAllTests.CommitAsync_AllCandidatesRejected_ReturnsFailure\\\"` \u2014 observe ~0.02s (ManualTimeProvider injected).\\n3. Inspect GitCommitter.cs:206 \u2014 the `GitAsync` call for `git commit` lacks `isSuccessExit:`, so exit 1 retries. Add `isSuccessExit: static code => code is 0 or 1` and re-run step 1: the test drops to ~0.02s with zero sleep (exit 1 \u2192 fail-fast \u2192 candidate loop moves on immediately).\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Now I have all the information needed. Here is the concrete plan and manifest:\n\n---\n\n## Plan\n\n### Commit 1: Product fix \u2014 fail-fast on `git commit` exit 1\n\n**`src/VisualRelay.Core/Execution/GitCommitter.cs` line 206**\n\nThe `GitAsync` call for `git commit` currently uses the default `isSuccessExit` predicate (only exit 0), so a hook rejection (exit 1) triggers 3 retries with 250ms + 1s backoff. Add `isSuccessExit: static code => code is 0 or 1` so exit 1 becomes a final per-candidate verdict \u2014 the candidate loop immediately moves to the next message. Genuinely transient failures (exit 128 with `fatal:`) keep the existing retry.\n\n**Coverage mapping**: zero scripted exit code changes needed. All retry tests in `GitCommitterResilienceTests.cs` (`GitCommitterProbeRetryTests`, `GitCommitterProbePersistentTests`, `GitCommitterAddRetryTests`, `GitCommitterPersistentTimingTests`) script failures on `rev-parse` and `add` commands with exit 128, never on `commit`. Retry coverage preserved name-by-name as-is.\n\n**New unit test**: Write a test in a new method (or extend existing) that scripts the invoker to return exit 1 for the `commit` step with two candidates, injects a `ManualTimeProvider`, and asserts zero timer delays \u2014 the second candidate is attempted immediately with zero virtual time advance. (This can land in commit 1 or 2; the task says \"red first\" so it goes in commit 1 as a new fact in an existing or new test class.)\n\n**Test to add**: A new test class `GitCommitterCommitExit1FailFastTests` with a single `[Fact]` \u2014 two candidates, hook rejects both via exit 1 on `commit`, `ManualTimeProvider` injected, assert `timeProvider` never advanced (no `Delay` scheduled) and result is `Failed` with \"commit rejected\".\n\n### Commit 2: Fake-clock injection in `GitCommitterRunBaseSquashGuardsTests`\n\n**`tests/VisualRelay.Tests/GitCommitterRunBaseSquashGuardsTests.cs`** \u2014 all 4 test methods:\n\n- Add `var time = new ManualTimeProvider();` \n- Add `timeProvider: time` to every `GitCommitter.CommitAsync(` call\n- For the all-rejected test (`CommitAsync_WithRunBase_WhenAllCandidatesRejectedAfterSquash_RestoresOrigHead`, line 145), restructure to the advance-pump loop pattern (capture `Task`, `while (!task.IsCompleted) { time.Advance(250ms); await Task.Yield(); }`) matching `GitCommitterHookRejectionTests.cs`\n- For the other 3 tests (lines 66, 107, 196), keep `await` directly with just `timeProvider: time` added\n\n### Commit 3: Guard + fix all remaining direct-call sites\n\n**New: `+tools/VisualRelay.Guards/TestClockInjectionGuard.cs`**\n\nPure static matcher mirroring `RealGitFallbackGuard.cs`:\n- `Violation` record (Path, Line, Snippet, Reason)\n- `FindViolations(IEnumerable<(string Path, string Source)>)` \u2014 parse + scan\n- `FindViolations(IEnumerable<(string Path, SyntaxTree Tree)>)` \u2014 pre-parsed tree scan\n- `ShouldScan` \u2014 filters to `tests/VisualRelay.Tests/`, excludes self (`TestClockInjectionGuard.cs`, `TestClockInjectionGuardTests.cs`)\n- `ScanTree` \u2014 walks `InvocationExpressionSyntax` nodes looking for `CommitAsync` in a `MemberAccessExpressionSyntax` whose expression resolves to `GitCommitter`, then checks argument list for any `ArgumentSyntax` with `NameColon.Name.Identifier.Text == \"timeProvider\"`. Absence = violation.\n- Empty allowlist (only self-exemption).\n\n**New: `+tests/VisualRelay.Tests/TestClockInjectionGuardTests.cs`**\n\nMirrors `FakeClockGuardTests`:\n- Inject `CachedSyntaxTreesFixture` via constructor\n- Synthetic test: `\"class C { void M() { GitCommitter.CommitAsync(null!, \\\"\\\", \\\"\\\", [], [], [], sim, default); } }\"` \u2192 1 violation (\"missing timeProvider:\")\n- Synthetic test: same source but with `timeProvider: TimeProvider.System` \u2192 0 violations\n- Live-tree scan: filter `_trees.AllTrees` to `tests/VisualRelay.Tests/` prefix \u2192 assert 0 violations\n\n**Modified test files \u2014 add `timeProvider: TimeProvider.System` to every direct `GitCommitter.CommitAsync(` call:**\n\n| File | Calls | Notes |\n|---|---|---|\n| `tests/VisualRelay.Tests/GitCommitterTests.cs` | 2 | Lines 27, 53 \u2014 append after `CancellationToken.None` |\n| `tests/VisualRelay.Tests/GitCommitterCommitMsgHooksTests.cs` | 2 | Lines 35, 74 \u2014 append after `CancellationToken.None` |\n| `tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.cs` | 6 | Lines 31, 75, 117, 160, 201, 235 |\n| `tests/VisualRelay.Tests/GitCommitterAutoIncludeFirstInstanceTests.cs` | 2 | Lines 41, 86 |\n| `tests/VisualRelay.Tests/GitCommitterAutoIncludeResilienceTests.cs` | 3 | Line 41 uses named args `cancellationToken:`, `gitInvoker:` \u2014 add `timeProvider: TimeProvider.System` alongside them. Lines 88, 126 \u2014 append after `CancellationToken.None` |\n| `tests/VisualRelay.Tests/GitCommitterAutoIncludeSnapshotTests.cs` | 3 | Lines 81, 116, 152 |\n| `tests/VisualRelay.Tests/GitCommitterAutoIncludeTasksDirTests.cs` | 1 | Line 42 |\n| `tests/VisualRelay.Tests/GitCommitterRunBaseSquashTests.cs` | 5 | Lines 47, 96, 127, 165, 208 \u2014 append after `runBaseSha: runBase` |\n| `tests/VisualRelay.Tests/RealGitIntegrationTests.cs` | 1 | Line 209 \u2014 append after `runBaseSha: runBase` |\n\nAll 25 direct calls across 9 files get `timeProvider: TimeProvider.System`. `GitCommitterHookRejectionTests.cs` and `GitCommitterResilienceTests.cs` already pass `timeProvider:` \u2014 no changes needed. `GitCommitterRunBaseSquashGuardsTests.cs` was fixed in commit 2 with `ManualTimeProvider`.\n\nDriver-level tests (through `RelayDriverDependencies.ForTests`) never contain a direct `GitCommitter.CommitAsync(` call \u2014 they are not scanned and need no changes.\n\n### Verification\n\n- `./visual-relay check` fully green after each commit\n- After commit 1: the two named slow tests solo-run at ~0.02s instead of 2.54s / 1.28s (evidence bullet goes in commit message, measured at implementation time)\n- After commit 3: `TestClockInjectionGuardTests.LiveTree_HasNoMissingTimeProvider` passes with zero violations\n\n```json\n{\n  \"plan\": \"Three-commit sequence. Commit 1: Add `isSuccessExit: static code => code is 0 or 1` to the `git commit` GitAsync call at GitCommitter.cs:206 so hook-rejected exit-1 candidates fail fast instead of burning ~1.25s of retry backoff. Add a new unit test `GitCommitterCommitExit1FailFastTests` that scripts exit 1 on commit with two candidates on a ManualTimeProvider and asserts zero timer delays. Zero retry-test script changes needed \u2014 all retry tests script failures on rev-parse/add with exit 128, never on commit. Commit 2: Inject ManualTimeProvider + advance-pump loop into all 4 test methods in GitCommitterRunBaseSquashGuardsTests.cs, mirroring GitCommitterHookRejectionTests.cs. Commit 3: Create TestClockInjectionGuard.cs (pure matcher, mirrors RealGitFallbackGuard.cs) detecting direct GitCommitter.CommitAsync( calls without timeProvider: in tests/VisualRelay.Tests/. Create TestClockInjectionGuardTests.cs (mirrors FakeClockGuardTests) with synthetic violation test and live-tree scan asserting zero violations. Add timeProvider: TimeProvider.System to all 25 remaining direct CommitAsync( calls across 9 test files so the live-tree scan passes. Driver-level tests through RelayDriverDependencies.ForTests are out of scope \u2014 they never contain direct CommitAsync( calls.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/GitCommitter.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterRunBaseSquashGuardsTests.cs\",\n    \"+tools/VisualRelay.Guards/TestClockInjectionGuard.cs\",\n    \"+tests/VisualRelay.Tests/TestClockInjectionGuardTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterCommitMsgHooksTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterAutoIncludeFirstInstanceTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterAutoIncludeResilienceTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterAutoIncludeSnapshotTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterAutoIncludeTasksDirTests.cs\",\n    \"tests/VisualRelay.Tests/GitCommitterRunBaseSquashTests.cs\",\n    \"tests/VisualRelay.Tests/RealGitIntegrationTests.cs\",\n    \"+tests/VisualRelay.Tests/GitCommitterCommitExit1FailFastTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 13,
+    "tool_calls_total": 28,
+    "tool_calls_succeeded": 28,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 23,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 13,
+    "total_llm_time_s": 205.307,
+    "prompt_cache": {
+      "cached_tokens": 403968,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.541,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 10.241,
+      "prompt_tokens_est": 8098,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitCommitter.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 15764
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterRunBaseSquashGuardsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11505
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterHookRejectionTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3565
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 3.326,
+      "prompt_tokens_est": 16389,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Guards/RealGitFallbackGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 7080
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FakeClockGuardTests",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.123,
+      "result_length": 189
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "CachedSyntaxTreesFixture",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.103,
+      "result_length": 2721
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.429,
+      "prompt_tokens_est": 19013,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/FakeClockGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6980
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tools/VisualRelay.Guards/FakeClockGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8238
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 4.088,
+      "prompt_tokens_est": 22832,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GitCommitter\\.CommitAsync\\(",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.101,
+      "result_length": 2956
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterResilienceTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6594
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 25.116,
+      "prompt_tokens_est": 25381,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3182
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RealGitIntegrationTests.cs",
+        "offset": 195,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2037
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterCommitMsgHooksTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3928
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 4.665,
+      "prompt_tokens_est": 29557,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/GitFailureClassifier.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1287
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/CachedSyntaxTreesFixture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2431
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 70.162,
+      "prompt_tokens_est": 30591,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2661
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "GlobalUsings|global using",
+        "path": "tests/VisualRelay.Tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.133,
+      "result_length": 896
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 14.232,
+      "prompt_tokens_est": 37192,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 10982
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeFirstInstanceTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4862
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeResilienceTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12851
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 3.248,
+      "prompt_tokens_est": 45393,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeSnapshotTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9597
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterAutoIncludeTasksDirTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3175
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/GitCommitterRunBaseSquashTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 11345
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 3.995,
+      "prompt_tokens_est": 51731,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RealGitIntegrationTests.cs",
+        "offset": 200,
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1811
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ForTests",
+        "path": "tests/VisualRelay.Tests",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.072,
+      "result_length": 13854
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.809,
+      "prompt_tokens_est": 55726,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "src/VisualRelay.Core/Execution/RelayDriverDependencies.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5274
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RelayDriverGitCommitTests.cs",
+        "offset": 155,
+        "limit": 80
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4417
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 32.474,
+      "prompt_tokens_est": 58254,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "tests/VisualRelay.Tests/RealGitIntegrationTests.cs",
+        "limit": 15
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 831
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 28.521,
+      "prompt_tokens_est": 61280,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

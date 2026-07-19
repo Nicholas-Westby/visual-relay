@@ -42,7 +42,7 @@ public sealed class GitCommitterCommitMsgHooksTests
             commitToken: nonce,
             preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success,
             "the second candidate should land; if it didn't, the token was missing on retry");
@@ -81,7 +81,7 @@ public sealed class GitCommitterCommitMsgHooksTests
             commitToken: nonce,
             preRunUntracked: null,
             tasksDir: null,
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
 
         Assert.True(result.Success,
             "commit must pass a RELAY_NONCE-checking guard; if it didn't, GitCommitter isn't setting RELAY_NONCE");

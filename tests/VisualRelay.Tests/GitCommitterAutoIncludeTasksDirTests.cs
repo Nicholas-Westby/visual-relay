@@ -43,7 +43,7 @@ public sealed class GitCommitterAutoIncludeTasksDirTests
             repo.Root, "task", "abc", ["feat: x"], manifest, [],
             commitToken: null, preRunUntracked,
             tasksDir: "llm-tasks",
-            sim, CancellationToken.None);
+            sim, CancellationToken.None, timeProvider: TimeProvider.System);
         Assert.True(commit.Success, commit.Error);
 
         var committed = sim.FilesInCommit(repo.Root, sim.Head(repo.Root)!);
