@@ -6,6 +6,9 @@ internal static partial class GitCommitter
     // deliberate proof subset is force-added via proofFiles); everything else the
     // run authors is fair game. Auto-include must stay repo-agnostic — it must NOT
     // assume a src/tests/tools layout, since Visual Relay runs on any repo.
+    // TODO: .relay-scratch/ entry is removable once the workspace-side cleanup
+    // (RelayTaskRepository.ListAsync) has been deployed widely enough to purge
+    // stale legacy dirs from the wild.
     private static readonly string[] InternalArtifactPrefixes = [".relay/", ".relay-scratch/", ".swival/"];
 
     /// <summary>

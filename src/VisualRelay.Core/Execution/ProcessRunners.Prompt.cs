@@ -25,7 +25,7 @@ public sealed partial class SwivalSubagentRunner
         if (!string.IsNullOrWhiteSpace(invocation.TasksDir))
         {
             // Right after "Working directory:" so every stage sees it before the task input.
-            parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/, .relay-scratch/, .swival/");
+            parts.Insert(3, $"Protected paths (queue bookkeeping — never part of this task's diff): {invocation.TasksDir}/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.");
         }
         if (!string.IsNullOrWhiteSpace(invocation.TaskContext))
         {

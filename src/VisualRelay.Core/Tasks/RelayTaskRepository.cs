@@ -19,6 +19,8 @@ public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gi
         bool includeNeedsReview = true,
         CancellationToken cancellationToken = default)
     {
+        // Best-effort removal of stale .relay-scratch/ legacy dirs.
+        TryDeleteLegacyScratch();
         var loaded = await RelayConfigLoader.TryLoadAsync(RootPath, cancellationToken);
         if (loaded.Status == RelayConfigStatus.Malformed)
         {
@@ -287,5 +289,12 @@ public sealed partial class RelayTaskRepository(string rootPath, IGitInvoker? gi
     private static bool IsSkippedName(string name) =>
         name.StartsWith("DONE-", StringComparison.OrdinalIgnoreCase) ||
         name.StartsWith("IGNORE-", StringComparison.OrdinalIgnoreCase);
+
+    private void TryDeleteLegacyScratch()
+    {
+        var d = Path.Combine(RootPath, ".relay-scratch");
+        if (Directory.Exists(d))
+            try { Directory.Delete(d, recursive: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+    }
 
 }

@@ -20,7 +20,7 @@ Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 // rendered tab/column-width depend on whatever layout that machine last persisted
 // (e.g. a collapsed-to-minimum activity column on an empty Output tab). Isolating it
 // makes the screenshot deterministic and stops the tool from clobbering real state.
-var scratchRoot = Path.GetFullPath(Path.Combine(".relay-scratch", "screenshot-root"));
+var scratchRoot = Path.GetFullPath(Path.Combine(".relay", "scratch", "screenshot-root"));
 Directory.CreateDirectory(scratchRoot);
 Environment.SetEnvironmentVariable("XDG_CONFIG_HOME", Path.Combine(scratchRoot, ".config"));
 
