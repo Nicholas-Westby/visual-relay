@@ -30,7 +30,7 @@ public sealed partial class SandboxedTestRunner(
         // plain wait rides TestTimeoutMilliseconds even when the tests passed in
         // seconds. RunWatchedAsync reaps once the tree goes output-silent +
         // CPU-idle and surfaces the inner command's real red/green result.
-        return await RunWatchedAsync(
+        var result = await RunWatchedAsync(
             fileName, args, rootPath, targetEnv.Overrides,
             firstOutputTimeoutMs: config.TestIdleGraceMilliseconds,
             idleGraceMs: config.TestIdleGraceMilliseconds,
@@ -38,6 +38,15 @@ public sealed partial class SandboxedTestRunner(
             cpuSampleIntervalMs: CpuPulseSampleIntervalMs,
             cancellationToken, _timeProvider,
             envRemove: targetEnv.Remove);
+
+        // Post-process: extract and strip the --diagnostics-json session object
+        // from the captured output so callers see clean command output only.
+        if (NonoDiagnosticsJsonParser.TryExtractDenials(result.Output, out var stripped, out var denials))
+        {
+            return result with { Output = stripped, Denials = denials };
+        }
+
+        return result;
     }
 
     /// <summary>
@@ -53,7 +62,9 @@ public sealed partial class SandboxedTestRunner(
 
         // Sandbox always on: wrap in nono. verboseDiagnostics is output-only (--silent
         // when quiet); it never changes what the sandbox enforces.
-        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath);
+        // requestDiagnostics: true requests --diagnostics-json so denial records are
+        // captured and surfaced in verify artifacts — the verification path ONLY.
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath, requestDiagnostics: true);
 
         if (inner is ShellTestRunner)
         {

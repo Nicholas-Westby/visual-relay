@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using VisualRelay.Domain;
 
 namespace VisualRelay.Core.Execution;
@@ -17,6 +18,7 @@ public sealed partial class RelayDriver
         string? BootstrapCommand,
         string? BootstrapOutput,
         string? GuardCheck,
+        string? GuardCommand,
         string? GuardOutput,
         string? NewGuardProbeCheck,
         string? NewGuardProbeOutput,
@@ -24,6 +26,12 @@ public sealed partial class RelayDriver
         string TestCommand,
         int? TestExitCode)
     {
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<SandboxDenial>? BootstrapDenials { get; init; }
+
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public IReadOnlyList<SandboxDenial>? GuardDenials { get; init; }
+
         public static SetupCheckResults FromPreAgentData(
             Stage10PreAgentData data, RelayConfig config)
         {
@@ -44,6 +52,7 @@ public sealed partial class RelayDriver
                 BootstrapCommand: data.BootstrapCmd,
                 BootstrapOutput: data.BootstrapFailed ? data.BootstrapFailureOutput : null,
                 GuardCheck: guardCheck,
+                GuardCommand: config.GuardCommand,
                 GuardOutput: data.GuardFailed ? data.GuardOutput : null,
                 NewGuardProbeCheck: newGuardProbeCheck,
                 NewGuardProbeOutput: data.NewGuardOutput,
@@ -58,7 +67,9 @@ public sealed partial class RelayDriver
             string? guardOutput,
             string? guardCmd,
             TestRunResult testResult,
-            string testCommand)
+            string testCommand,
+            IReadOnlyList<SandboxDenial>? bootstrapDenials = null,
+            IReadOnlyList<SandboxDenial>? guardDenials = null)
         {
             string? bootstrapCheck = null;
             if (bootstrapCmd is not null)
@@ -73,12 +84,17 @@ public sealed partial class RelayDriver
                 BootstrapCommand: bootstrapCmd,
                 BootstrapOutput: bootstrapResult?.Output,
                 GuardCheck: guardCheck,
+                GuardCommand: guardCmd,
                 GuardOutput: guardOutput,
                 NewGuardProbeCheck: null,
                 NewGuardProbeOutput: null,
                 TestCheck: testResult.ExitCode == 0 ? "green" : "red",
                 TestCommand: testCommand,
-                TestExitCode: testResult.ExitCode);
+                TestExitCode: testResult.ExitCode)
+            {
+                BootstrapDenials = bootstrapDenials,
+                GuardDenials = guardDenials
+            };
         }
 
         public Dictionary<string, string> ToEventData()
@@ -90,6 +106,8 @@ public sealed partial class RelayDriver
             if (NewGuardProbeCheck is not null) d["newGuardProbeCheck"] = NewGuardProbeCheck;
             if (TestCheck is not null) d["testCheck"] = TestCheck;
             if (TestExitCode.HasValue) d["testExitCode"] = TestExitCode.Value.ToString();
+            if (BootstrapDenials is { Count: > 0 }) d["bootstrapDenials"] = string.Join(", ", BootstrapDenials.Select(dd => dd.Target));
+            if (GuardDenials is { Count: > 0 }) d["guardDenials"] = string.Join(", ", GuardDenials.Select(dd => dd.Target));
             return d;
         }
 
@@ -97,16 +115,18 @@ public sealed partial class RelayDriver
         {
             var sb = new StringBuilder();
             sb.AppendLine("--- Setup check breakdown ---");
-            sb.AppendLine(FormatLine("bootstrap", BootstrapCheck));
-            sb.AppendLine(FormatLine("guard", GuardCheck));
-            sb.AppendLine(FormatLine("new-guard-probe", NewGuardProbeCheck));
-            sb.AppendLine(FormatLine("test", TestCheck));
+            sb.AppendLine(FormatLine("bootstrap", BootstrapCheck, BootstrapDenials));
+            sb.AppendLine(FormatLine("guard", GuardCheck, GuardDenials));
+            sb.AppendLine(FormatLine("new-guard-probe", NewGuardProbeCheck, null));
+            sb.AppendLine(FormatLine("test", TestCheck, null));
             return sb.ToString();
         }
 
-        private static string FormatLine(string name, string? check) =>
+        private static string FormatLine(string name, string? check, IReadOnlyList<SandboxDenial>? denials) =>
             check switch
             {
+                "red" when denials is { Count: > 0 } =>
+                    $"✗ {name}: red (sandbox denial: {denials[0].Target})",
                 "green" => $"✓ {name}: green",
                 "red" => $"✗ {name}: red",
                 _ => $"— {name}: skipped"

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
 
@@ -200,5 +201,63 @@ public sealed class SetupCheckResultsTests
     {
         Assert.Null(SetupCheckDiagnostic.CapForState(null));
         Assert.Null(SetupCheckDiagnostic.CapForState(""));
+    }
+
+    // ── ToSummaryLines with denials ────────────────────────────────────
+
+    [Fact]
+    public void ToSummaryLines_WithDenials_RendersDenialPathAlongsideRedCheck()
+    {
+        var denials = new List<SandboxDenial> { new("file-write-create", "/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc") };
+        var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: null, BootstrapCommand: null, BootstrapOutput: null, GuardCheck: "red", GuardCommand: "swift build", GuardOutput: "error", NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "swift test", TestExitCode: 0) { GuardDenials = denials };
+        var summary = checks.ToSummaryLines();
+        Assert.Contains("✗ guard: red", summary);
+        Assert.Contains("sandbox denial", summary);
+        Assert.Contains("/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc", summary);
+    }
+
+    [Fact]
+    public void ToSummaryLines_WithoutDenials_RedCheckHasNoDenialSuffix()
+    {
+        var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: null, BootstrapCommand: null, BootstrapOutput: null, GuardCheck: "red", GuardCommand: "swift build", GuardOutput: "lint violations", NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "swift test", TestExitCode: 0);
+        var summary = checks.ToSummaryLines();
+        Assert.Contains("✗ guard: red", summary);
+        Assert.DoesNotContain("sandbox denial", summary);
+    }
+
+    [Fact]
+    public void ToSummaryLines_GuardGreenWithDenials_DoesNotRenderDenial()
+    {
+        var denials = new List<SandboxDenial> { new("file-read", "/tmp/some-path") };
+        var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: null, BootstrapCommand: null, BootstrapOutput: null, GuardCheck: "green", GuardCommand: "swift build", GuardOutput: null, NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "swift test", TestExitCode: 0) { GuardDenials = denials };
+        var summary = checks.ToSummaryLines();
+        Assert.Contains("✓ guard: green", summary);
+        Assert.DoesNotContain("sandbox denial", summary);
+    }
+
+    // ── JSON serialization includes denials ────────────────────────────
+
+    [Fact]
+    public void Serialization_IncludesDenialFields()
+    {
+        var denials = new List<SandboxDenial> { new("file-write-create", "/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc"), new("file-read", "/tmp/other") };
+        var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: null, BootstrapCommand: null, BootstrapOutput: null, GuardCheck: "red", GuardCommand: "swift build", GuardOutput: "sandbox denial", NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "swift test", TestExitCode: 0) { GuardDenials = denials };
+        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true };
+        var json = System.Text.Json.JsonSerializer.Serialize(checks, opts);
+        Assert.Contains("guardDenials", json);
+        Assert.Contains("file-write-create", json);
+        Assert.Contains("/Volumes/Tera/.TemporaryItems/NSIRD_swift-build_abc", json);
+        Assert.Contains("file-read", json);
+        Assert.Contains("/tmp/other", json);
+    }
+
+    [Fact]
+    public void Serialization_NoDenials_OmitsDenialFields()
+    {
+        var checks = new RelayDriver.SetupCheckResults(BootstrapCheck: "green", BootstrapCommand: "nix develop", BootstrapOutput: null, GuardCheck: "green", GuardCommand: null, GuardOutput: null, NewGuardProbeCheck: null, NewGuardProbeOutput: null, TestCheck: "green", TestCommand: "bun test", TestExitCode: 0);
+        var opts = new System.Text.Json.JsonSerializerOptions { PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase, WriteIndented = true };
+        var json = System.Text.Json.JsonSerializer.Serialize(checks, opts);
+        Assert.DoesNotContain("Denials", json);
+        Assert.DoesNotContain("sandbox denial", json);
     }
 }

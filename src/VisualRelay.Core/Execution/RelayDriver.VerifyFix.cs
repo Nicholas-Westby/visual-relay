@@ -141,12 +141,13 @@ public sealed partial class RelayDriver
 
             // Guard re-check: runs after bootstrap, before test command.
             // Uses baseline diff so pre-existing violations don't block.
+            IReadOnlyList<SandboxDenial> guardDenials = Array.Empty<SandboxDenial>();
             if (guardCmd is not null)
             {
-                var (newViolations, _, timedOut) = await RunGuardCheckAsync(
+                var (newViolations, _, timedOut, gd) = await RunGuardCheckAsync(
                     rootPath, taskId, runId, _dependencies.TestRunner, _dependencies.GitInvoker,
                     config.FormatCommand, guardCmd, config.BaselineVerify, cancellationToken);
-
+                guardDenials = gd;
                 if (timedOut)
                 {
                     var outcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
@@ -173,16 +174,14 @@ public sealed partial class RelayDriver
             }
 
             check ??= testResult.ExitCode == 0 ? "green" : "red";
-            // The COMPLETE combined log persisted to this attempt's artifact: the full test
-            // output PLUS any guard/bootstrap text — the full version of the trimmed tail the
-            // NEXT iteration shows the agent (built below as failingTestOutput). Null on green.
-            var attemptFullOutput = check == "red"
-                ? BuildFullFailureOutput(testResult, guardFailureOutput, bootstrapFailingResult is not null, bootstrapFailingResult?.Output)
-                : null;
+            // The COMPLETE combined log persisted to this attempt's artifact.
+            var attemptFullOutput = check == "red" ? BuildFullFailureOutput(testResult, guardFailureOutput, bootstrapFailingResult is not null, bootstrapFailingResult?.Output, guardDenials: guardDenials, bootstrapDenials: bootstrapFailingResult?.Denials) : null;
             var attemptSetupChecks = SetupCheckResults.FromFixVerifyIteration(
                 bootstrapFailingResult, bootstrapCheckCmd,
                 guardFailureOutput, guardCmd,
-                testResult, config.TestCommand);
+                testResult, config.TestCommand,
+                bootstrapDenials: bootstrapFailingResult?.Denials,
+                guardDenials: guardDenials);
             lastAttemptSetupChecks = attemptSetupChecks;
             var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
@@ -224,7 +223,7 @@ public sealed partial class RelayDriver
             // Build combined failure output for the next iteration, carrying the matching
             // full-output artifact path so the next prompt can point the agent at it.
             failingTestOutput = BuildFailureOutput(testResult, guardFailureOutput,
-                bootstrapFailingResult is not null, bootstrapFailingResult?.Output);
+                bootstrapFailingResult is not null, bootstrapFailingResult?.Output, guardDenials: guardDenials, bootstrapDenials: bootstrapFailingResult?.Denials);
             failingVerifyOutputPath = attemptVerifyOutputPath;
         }
 

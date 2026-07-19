@@ -1,0 +1,736 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-19T07:07:40.532855+00:00",
+  "task": "# Relay stage 4: Plan\nTask: 01-surface-nono-denials-in-verify-artifacts\nWorking directory: /Volumes/Tera/dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .relay-scratch/, .swival/\n\n## Task input\n# Surface nono sandbox denials in verify artifacts and flag reasons\n\nnono can name the exact denied path: its failure footer prints \"Sandbox\ndenial: N paths blocked\" plus fix flags, and `--diagnostics-json` emits a\nmachine-readable record (observed 2026-07-18: `{\"operation\":\n\"file-write-create\", \"target\": \"/Volumes/Tera/.TemporaryItems/\u2026/\nNSIRD_swift-build_\u2026\"}` with remediation hints). But `BuildNonoPrefix` always\nadds `--silent` (deliberately \u2014 the footer is a known red herring that fills\nthe agent's tail window), so this evidence is discarded. Net effect in the\n2026-07-19 patternsmith drain: three escalating fix-verify agents and the\nfinal flag all saw only \"setup check failure\"; the denial that explained\neverything was suppressed on every attempt, and root-causing it required\nmanual re-runs outside the harness. Compounding this, the distilled flag\nreason never names WHICH setup check failed or what command it ran\n(RelayDriver.VerifyObservability.cs:37 emits the bare string \"setup check\nfailure\"; the GUI banner gives the operator nothing to act on).\n\n## Prescribed approach\n\nKeep `--silent` (the human footer stays suppressed). Add `--diagnostics-json`\nto the verification-runner prefix, parse the trailing JSON session object out\nof the captured output, STRIP it so agents and artifacts still see clean\ncommand output, and surface the denials in three places: the per-attempt\nverify-checks JSON, the combined failure text fed to the next fix-verify\nagent, and the distilled reason used for `verify_result` events and flag\nreasons. First determine empirically whether `--silent` suppresses the\n`--diagnostics-json` stderr output; if it does, drop `--silent` for\nverification runs only and strip the footer during parsing instead \u2014 the\nobservable contract below stays the same either way.\n\n### Steps\n\n1. `BuildNonoPrefix`: new flag so the SandboxedTestRunner path requests\n   diagnostics; swival agent runs unchanged.\n2. SandboxedTestRunner: extract the trailing session-JSON from the run's\n   output (tolerant parser: last balanced `{\u2026}` containing `\"denials\"`;\n   absent, truncated, or malformed \u2192 no diagnostics, never an error), remove\n   it from the output, and return denials as structured data alongside the\n   existing TestRunResult (extend the result type or add an out-of-band\n   accessor \u2014 pick whichever keeps ITestRunner implementations honest).\n3. SetupCheckResults: add per-check denial info; `ToSummaryLines` renders\n   e.g. `\u2717 guard: red (sandbox denial: /Volumes/Tera/.TemporaryItems/\u2026)`;\n   persist through TryPersistVerifyChecksJson.\n4. Distilled reason: replace the bare \"setup check failure\" with the failing\n   check name, its command, and the first denial path when present \u2014\n   `setup check failure: guard 'swift build' (sandbox denial: <path>)` \u2014\n   truncation-safe (flag reasons keep only the first 200 chars of line one).\n5. Fix-verify prompt data: append a `--- Sandbox denials ---` section to the\n   combined failure output (BuildFailureOutput/BuildFullFailureOutput) so the\n   next agent sees the denial without re-deriving it.\n\n## Tests (red first)\n\n- JSON-tail parser: output with trailing session JSON (denials present /\n  empty), output with no JSON, JSON split across the tail, malformed JSON \u2014\n  correct extraction and stripping in each case.\n- SetupCheckResults serialization and `ToSummaryLines` with and without\n  denials.\n- Distilled-reason construction: guard-red-with-denial, bootstrap-red,\n  test-green-guard-red; assert the command name and denial path appear and\n  the line stays within flag-reason truncation.\n- Arg-shape test: verification prefix contains `--diagnostics-json`; swival\n  prefix does not.\n\n## Verification\n\n`./visual-relay check` green. Manual: run a task whose guard hits a denied\npath; the stage-11 verify-checks JSON records the denial, the flag banner\nnames the check, command, and path, and the persisted verify output contains\nno leftover diagnostics JSON.\n\n\n## Manifest\n(not set yet)\n\n## Prior stages\n## Stage 1 - Ideate\n\n{ \"summary\": \"Add --diagnostics-json to verification nono prefix, parse/strip trailing JSON session containing denial records, wire denials through SetupCheckResults (ToSummaryLines, TryPersistVerifyChecksJson), the distilled flag reason (replacing 'setup check failure' with failing check name + command + first denial path), and the fix-verify prompt (new '--- Sandbox denials ---' section in BuildFailureOutput). Three approaches: A) prescribed stderr-JSON parsing, B) also drop --silent and dual-parse human footer + JSON, C) sidecar file path if nono supports it.\", \"options\": [\"Option A: Parse --diagnostics-json from captured stderr output, strip before returning to callers\", \"Option B: Drop --silent for verification runs, dual-parse human footer + --diagnostics-json\", \"Option C: Write diagnostics to sidecar file via --diagnostics-json-path, zero output contamination\"] }\n\n## Stage 2 - Research\n\n{ \"findings\": \"BuildNonoPrefix (ProcessRunners.cs:152-212) always emits --silent, never --diagnostics-json. SandboxedTestRunner (SandboxedTestRunner.cs) wraps ITestRunner with nono via BuildNonoPrefix, returns TestRunResult \u2014 no denial channel. ProcessCapture (ProcessCapture.cs) merges stdout+stderr into one string. TestRunResult (Domain/TestRunResult.cs) is a sealed record with ExitCode, Output, TimedOut, Elapsed \u2014 needs extension. SetupCheckResults (RelayDriver.SetupChecks.cs:15-117) has ToSummaryLines/ToEventData/IsAnyRed but no denial info. Distilled reason (RelayDriver.VerifyObservability.cs:37) is bare 'setup check failure'. BuildFailureOutput/BuildFullFailureOutput (RelayDriver.FailureOutput.cs) have no sandbox denials section. Flag reason truncation (RelayDriver.VerifyFix.cs:238-239) first line capped at 200 chars. ExtractFailureReason (ProcessRunners.Diagnostics.cs) filters nono advisory lines. ScriptedTestRunner bypasses nono entirely. Existing test infrastructure in SandboxedTestRunnerArgumentTests.cs, SandboxDiagnosticsToggleTests.cs, ExtractFailureReasonDistillTests.cs.\", \"constraints\": [\"--silent must stay for swival agent path (BuildLaunchTarget); only verification path gets --diagnostics-json\", \"--diagnostics-json must NOT appear in swival agent prefix (BuildNonoPrefix called from BuildLaunchTarget)\", \"Empirical verification needed: does --silent suppress --diagnostics-json stderr? If so, drop --silent for verification only and strip human footer during parsing\", \"JSON tail parser must be tolerant: last balanced {\u2026} containing 'denials'; absent/truncated/malformed \u2192 no diagnostics, never an error\", \"Flag reason truncated to 200 chars first line (RelayDriver.VerifyFix.cs:238-239); new format must fit\", \"TestRunResult is sealed record in Domain project; must extend or use out-of-band accessor\", \"Diagnostics JSON must be STRIPPED from output before reaching callers\", \"Extend SetupCheckResults.JSON serialization additively (backward-compatible)\", \"Test doubles (ScriptedTestRunner) bypass nono \u2014 JSON tail parsing only in SandboxedTestRunner\", \"Diagnostics JSON output location may differ between macOS (Seatbelt) and Linux (Landlock)\"] }\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"BuildNonoPrefix at ProcessRunners.cs:152-212 always emits --silent (line 208), never --diagnostics-json. SandboxedTestRunner at SandboxedTestRunner.cs:21-41 wraps ITestRunner with nono via BuildNonoPrefix but performs no output post-processing \u2014 the merged stdout+stderr from ProcessCapture is returned raw in TestRunResult.Output. PublishVerifyResultAsync at RelayDriver.VerifyObservability.cs:35-37 emits the bare string 'setup check failure' when setup checks are red and the test command itself passes \u2014 it never names which check, its command, or any denial path. SetupCheckResults at RelayDriver.SetupChecks.cs:15-117 has no Denials field; ToSummaryLines and ToEventData render no denial info. BuildFailureOutput/BuildFullFailureOutput at RelayDriver.FailureOutput.cs:54-76 combine test/guard/bootstrap sections but have no sandbox denials section. The flag reason at RelayDriver.VerifyFix.cs:236-239 truncates the first line to 200 chars \u2014 the enriched format must fit. TestRunResult at Domain/TestRunResult.cs:3 is a sealed record with no denial channel. Unresolved: whether --silent suppresses --diagnostics-json output (requires empirical test with the actual nono binary).\",\n  \"excerpts\": [\n    \"ProcessRunners.cs:208 \u2014 if (!verboseDiagnostics) { args.Add(\\\"--silent\\\"); } \u2014 no --diagnostics-json anywhere in the method\",\n    \"SandboxedTestRunner.cs:56 \u2014 var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: verboseDiagnostics, workspaceRoot: rootPath); \u2014 verification path, same bool as swival\",\n    \"ProcessRunners.Helpers.cs:27 \u2014 var prefix = BuildNonoPrefix(_config, rollback: true, skipDirs: skipDirs, verboseDiagnostics: _verboseDiagnostics, workspaceRoot: invocation?.TargetRoot); \u2014 swival agent path, must NOT get --diagnostics-json\",\n    \"SandboxedTestRunner.Watched.cs:126 \u2014 return InterpretWatched(exitCode, output, timedOut, reapedOnIdle, hardCap.TotalMilliseconds, sw.Elapsed); \u2014 output returned raw, no stripping\",\n    \"RelayDriver.VerifyObservability.cs:37 \u2014 : setupChecks?.IsAnyRed() == true ? \\\"setup check failure\\\" : string.Empty; \u2014 bare opaque string\",\n    \"RelayDriver.VerifyFix.cs:238-239 \u2014 if (firstLine.Length > 200) firstLine = firstLine[..200]; \u2014 flag reason truncation\",\n    \"RelayDriver.FailureOutput.cs:54-76 \u2014 BuildCombinedFailure joins test/guard/bootstrap but has no denials section\",\n    \"RelayDriver.SetupChecks.cs:96-105 \u2014 ToSummaryLines renders \u2713/\u2717/\u2014 icons but no denial paths\",\n    \"Domain/TestRunResult.cs:3 \u2014 public sealed record TestRunResult(int ExitCode, string Output, bool TimedOut = false, TimeSpan Elapsed = default); \u2014 no denial channel\"\n  ],\n  \"repro\": \"1. Create workspace on external macOS volume (e.g. /Volumes/Tera/dev/test-repo/) with swift build guard command. 2. Run ./visual-relay check; observe guard fails with 'setup check failure' only. 3. Run manually: nono run --profile <vr-guard-path> --allow-cwd --diagnostics-json -- swift build (without --silent) \u2014 see trailing JSON with file-write-create denial against /Volumes/Tera/.TemporaryItems/\u2026. 4. Compare: the diagnostics JSON is the evidence that should have been captured and surfaced.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"plan\": string, \"manifest\": string[] }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "some",
+    "commands": [
+      "awk",
+      "cat",
+      "cut",
+      "find",
+      "git",
+      "grep",
+      "head",
+      "ls",
+      "sed",
+      "sort",
+      "tail",
+      "tr",
+      "uniq",
+      "wc"
+    ],
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "## Plan\n\n### Overview\nSurface nono sandbox denials (extracted from `--diagnostics-json` stderr output) in verify artifacts: per-attempt verify-checks JSON, combined failure text, and distilled flag reasons. The `--silent` flag stays; `--diagnostics-json` is added alongside it for verification runs only. A tolerant JSON-tail parser strips the diagnostics blob from captured output so callers never see it, then denials flow through `TestRunResult \u2192 SetupCheckResults \u2192 PublishVerifyResultAsync / BuildCombinedFailure`.\n\n### Concrete changes per file\n\n**1. `+src/VisualRelay.Domain/SandboxDenial.cs`** \u2014 New record: `(string Operation, string Target)`.\n\n**2. `src/VisualRelay.Domain/TestRunResult.cs`** \u2014 Add `IReadOnlyList<SandboxDenial>? Denials { get; init; }` (init-only, null default; backward-compatible with all existing positional construction).\n\n**3. `+src/VisualRelay.Core/Execution/NonoDiagnosticsJsonParser.cs`** \u2014 Static `Extract(string output) \u2192 (string CleanedOutput, IReadOnlyList<SandboxDenial>? Denials)`. Algorithm: scan backwards for the last `{`, attempt to find its balanced `}`, check that the substring contains `\"denials\"`, parse the `denials` array with `System.Text.Json`. Absent, truncated, or malformed \u2192 return `(output, null)`. Never throws. Strips the entire trailing JSON object from output (trimming trailing whitespace/newlines after it).\n\n**4. `src/VisualRelay.Core/Execution/ProcessRunners.cs`** (BuildNonoPrefix) \u2014 Add `bool requestDiagnostics = false` parameter. After the `--silent` block and before `--`: `if (requestDiagnostics) { args.Add(\"--diagnostics-json\"); }`.\n\n**5. `src/VisualRelay.Core/Execution/SandboxedTestRunner.cs`**\n- `ResolveLaunch`: pass `requestDiagnostics: true` to `BuildNonoPrefix` (only the verification path; swival path in `BuildLaunchTarget` never passes it).\n- `RunAsync`: after `RunWatchedAsync` returns, call `NonoDiagnosticsJsonParser.Extract(result.Output)`, return `result with { Output = cleanedOutput, Denials = denials }`.\n\n**6. `src/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs`**\n- Add `IReadOnlyList<SandboxDenial>? Denials = null` to `SetupCheckResults` record.\n- `FromPreAgentData`: set `Denials = data.TestResult.Denials`.\n- `FromFixVerifyIteration`: set `Denials = testResult.Denials`.\n- `ToSummaryLines`: when `Denials` is non-null with at least one entry, append ` \u2014 sandbox denial: <first.Target>` to the first red check line (scanning bootstrap, guard, new-guard-probe, test in order). If no check is red but denials exist, add a standalone `\u26a0 sandbox denial: <target>` line.\n- `ToEventData`: add `\"denialCount\"`, `\"firstDenialOp\"`, `\"firstDenialTarget\"` when denials present.\n- `TryPersistVerifyChecksJson` already serializes the whole record; the new field appears automatically.\n\n**7. `src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs`** (`PublishVerifyResultAsync`, line 37)\nReplace `\"setup check failure\"` with an enriched string built from `setupChecks`: identify the first red check (bootstrap \u2192 guard \u2192 new-guard-probe), use its command name and first denial. Format: `setup check failure: <check> '<command>' (sandbox denial: <path>)`. Example: `setup check failure: guard 'swift build' (sandbox denial: /Volumes/Tera/.TemporaryItems/\u2026)`. When no command is known for that check, omit the command portion. When no denials, omit the denial portion. The result string naturally fits within 200 chars (the flag-reason truncation in VerifyFix.cs:238 cuts it if not).\n\n**8. `src/VisualRelay.Core/Execution/RelayDriver.FailureOutput.cs`** (`BuildCombinedFailure`)\n- Add `IReadOnlyList<SandboxDenial>? denials = null` parameter.\n- When denials is non-null and non-empty, append a `--- Sandbox denials ---` section listing each denial as `- <Operation>: <Target>`.\n- Update both callers (`BuildFailureOutput`, `BuildFullFailureOutput`) to accept and forward denials.\n\n**9. `src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs`**\n- Lines 226\u2013227: pass `testResult.Denials` to `BuildFailureOutput`.\n- Lines 179\u2013180: pass `testResult.Denials` to `BuildFullFailureOutput`.\n\n### Tests (red first)\n\n**10. `+tests/VisualRelay.Tests/NonoDiagnosticsJsonParserTests.cs`**\n- Output with trailing session JSON containing denials \u2192 correct extraction and stripping.\n- Output with trailing session JSON containing empty denials array \u2192 returned as empty list, stripped.\n- Output with no JSON \u2192 null denials, output unchanged.\n- Output with malformed JSON (unbalanced braces, truncated) \u2192 null denials, output unchanged.\n- JSON followed by trailing whitespace/newlines \u2192 stripped correctly.\n- JSON with multiple top-level keys besides `denials` \u2192 only `denials` array is extracted.\n\n**11. `+tests/VisualRelay.Tests/VerifyReasonConstructionTests.cs`**\n- Guard-red with denial \u2192 `setup check failure: guard 'swift build' (sandbox denial: /Volumes/Tera/.TemporaryItems/\u2026)`.\n- Bootstrap-red with denial \u2192 `setup check failure: bootstrap '<cmd>' (sandbox denial: <path>)`.\n- Test-green, guard-red, no denials \u2192 `setup check failure: guard 'swift build'` (no denial portion).\n- Test-red \u2192 uses `ExtractFailureReason` (existing behavior, unchanged).\n- Verify the enriched reason line fits within 200 characters for truncation safety.\n\n**12. `tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs`** \u2014 Add two facts:\n- `SandboxedTestRunner_VerificationPrefix_ContainsDiagnosticsJson` \u2014 `ResolveLaunch` args contain `--diagnostics-json` before `--`.\n- `SwivalLaunch_DoesNotContainDiagnosticsJson` \u2014 `BuildLaunchTarget` args do NOT contain `--diagnostics-json`.\n\n**13. `tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs`**\n- Update `ShellMode_SandboxEnabled_TransformsIntoNonoWrappedShell`: indices shift by 1 after `--silent` to account for `--diagnostics-json`. New expected prefix: `[run, --profile, \u2026, --silent, --diagnostics-json, --, /bin/sh, -c, \"bun test\"]`.\n- Update `DirectExecMode_SandboxEnabled_WrapsScriptDirectly`: same index shift.\n- Add assertion that `--diagnostics-json` appears between `--silent` and `--` in the verify prefix.\n\n**14. `tests/VisualRelay.Tests/SetupCheckResultsTests.cs`** \u2014 Add facts:\n- `ToSummaryLines_WithDenials_AppendsDenialInfo` \u2014 red guard + denials \u2192 line includes `sandbox denial: /path`.\n- `ToSummaryLines_NoDenials_Unchanged` \u2014 red guard, no denials \u2192 line unchanged from current format.\n- `ToEventData_WithDenials_IncludesDenialFields` \u2014 event data includes `denialCount`, `firstDenialOp`, `firstDenialTarget`.\n- `TryPersistVerifyChecksJson_WithDenials_RoundTrips` \u2014 serialize + deserialize preserves denials.\n\n```json\n{\n  \"plan\": \"Add --diagnostics-json to verification nono prefix. Parse trailing session JSON from captured output, stripping it before callers see it. Wire denials through: (1) TestRunResult.Denials (new init-only property), (2) SetupCheckResults.Denials \u2192 ToSummaryLines appends denial info to red check lines, ToEventData emits denial fields, TryPersistVerifyChecksJson serializes them automatically, (3) PublishVerifyResultAsync replaces bare 'setup check failure' with enriched reason naming the failing check, its command, and first denial path, (4) BuildCombinedFailure appends '--- Sandbox denials ---' section. Swival agent path unchanged (requestDiagnostics defaults false). Parser tolerant: last balanced {\u2026} containing 'denials'; absent/malformed \u2192 no denials, never an error. Tests: JSON-tail parser edge cases, arg-shape (--diagnostics-json in verify prefix, absent from swival), SetupCheckResults serialization + ToSummaryLines with/without denials, distilled reason construction (guard-red+bootstrap-red+test-green, truncation safety).\",\n  \"manifest\": [\n    \"+src/VisualRelay.Domain/SandboxDenial.cs\",\n    \"src/VisualRelay.Domain/TestRunResult.cs\",\n    \"+src/VisualRelay.Core/Execution/NonoDiagnosticsJsonParser.cs\",\n    \"src/VisualRelay.Core/Execution/ProcessRunners.cs\",\n    \"src/VisualRelay.Core/Execution/SandboxedTestRunner.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.FailureOutput.cs\",\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\",\n    \"+tests/VisualRelay.Tests/NonoDiagnosticsJsonParserTests.cs\",\n    \"+tests/VisualRelay.Tests/VerifyReasonConstructionTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs\",\n    \"tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs\",\n    \"tests/VisualRelay.Tests/SetupCheckResultsTests.cs\"\n  ]\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 20,
+    "tool_calls_total": 40,
+    "tool_calls_succeeded": 36,
+    "tool_calls_failed": 4,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 21,
+        "failed": 4
+      },
+      "list_files": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 8,
+        "failed": 0
+      },
+      "outline": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "think": {
+        "succeeded": 2,
+        "failed": 0,
+        "repairs": 2
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 20,
+    "total_llm_time_s": 220.317,
+    "prompt_cache": {
+      "cached_tokens": 771968,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.914,
+    "skills_used": [],
+    "review_rounds": 0
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.46,
+      "prompt_tokens_est": 6311,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/ProcessRunners.cs",
+        "offset": 140,
+        "limit": 100
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 82,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/ProcessRunners.cs\""
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/SandboxedTestRunner.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 87,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/SandboxedTestRunner.cs\""
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/RelayDriver.SetupChecks.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 91,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/RelayDriver.SetupChecks.cs\""
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/RelayDriver.VerifyObservability.cs"
+      },
+      "succeeded": false,
+      "duration_s": 0.0,
+      "result_length": 99,
+      "error": "error: path does not exist: \"/Volumes/Tera/dev/visual-relay/src/RelayDriver.VerifyObservability.cs\""
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 2.283,
+      "prompt_tokens_est": 6608,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "**/*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.21,
+      "result_length": 6647
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 2.861,
+      "prompt_tokens_est": 8511,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 12045
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6116
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Helpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12878
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 5.215,
+      "prompt_tokens_est": 16149,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "SetupCheckResults|SetupChecks",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 1905
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "VerifyObservability|PublishVerifyResultAsync|setup check failure",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.043,
+      "result_length": 1249
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "FailureOutput|BuildFailureOutput|BuildFullFailureOutput",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.044,
+      "result_length": 4049
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "VerifyFix|flag reason|ExtractFailureReason",
+        "include": "*.cs",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.042,
+      "result_length": 2815
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.403,
+      "prompt_tokens_est": 18734,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.SetupChecks.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5263
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6967
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.FailureOutput.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 4116
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18278
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain/TestRunResult.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 179
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 5.134,
+      "prompt_tokens_est": 27001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Diagnostics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 18437
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*Diagnostic*",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.154,
+      "result_length": 171
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*Sandbox*",
+        "path": "/Volumes/Tera/dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.151,
+      "result_length": 1124
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 4.725,
+      "prompt_tokens_est": 31887,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SandboxDiagnosticsToggleTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6080
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SandboxedTestRunnerArgumentTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12902
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 1,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2770
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.891,
+      "prompt_tokens_est": 37627,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ProcessCapture|ProcessCapture",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 2244
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/SandboxedTestRunner.Watched.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6966
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 2.867,
+      "prompt_tokens_est": 40009,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/ProcessCapture.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 15969
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Stage9.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 3569
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 4.292,
+      "prompt_tokens_est": 44634,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "outline",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain",
+        "depth": 2
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 103
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class ProcessCapture|class ShellTestRunner|class DirectExecTestRunner|interface ITestRunner",
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution"
+      },
+      "succeeded": true,
+      "duration_s": 0.016,
+      "result_length": 614
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 3.046,
+      "prompt_tokens_est": 44947,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Domain",
+        "pattern": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 861
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/Interfaces.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 607
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 3.686,
+      "prompt_tokens_est": 45434,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "SetupCheckResults|PublishVerifyResultAsync|setup check failure|ToSummaryLines|TryPersistVerifyChecksJson|BuildFailureOutput|BuildFullFailureOutput|BuildCombinedFailure|Stage10PreAgentData",
+        "path": "/Volumes/Tera/dev/visual-relay/tests"
+      },
+      "succeeded": true,
+      "duration_s": 0.098,
+      "result_length": 118
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.831,
+      "prompt_tokens_est": 45564,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/SetupCheckResultsTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 9271
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/ExtractFailureReasonDistillTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 6685
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 48.282,
+      "prompt_tokens_est": 49523,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/tests/VisualRelay.Tests/BuildNonoPrefixVolumeTempGrantTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 5788
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 42.554,
+      "prompt_tokens_est": 54470,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Let me trace through the full data flow to verify my plan:\n\n1. `SandboxedTestRunner.RunAsync` calls `RunWatchedAsync` \u2192 gets raw `TestRunResult` (with merged stdout+stderr output). I'll post-process: `NonoDiagnosticsJsonParser.Extract(result.Output)` returns `(cleanedOutput, denials)`. Return `result with { Output = cleanedOutput, Denials = denials }`.\n\n2. The `--diagnostics-json` flag is added in `BuildNonoPrefix` only when `requestDiagnostics: true`. `SandboxedTestRunner.ResolveLaunch` passes `requestDiagnostics: true`. `SwivalSubagentRunner.BuildLaunchTarget` never passes it (defaults false). \n\n3. `SetupCheckResults` gets a new `IReadOnlyList<SandboxDenial>? Denials` field. Both `FromPreAgentData` and `FromFixVerifyIteration` extract denials from testResult.Denials.\n\n4. `ToSummaryLines`: for each red check, append denial info. `ToEventData`: add denial paths.\n\n5. `PublishVerifyResultAsync`: Enrich the \"setup check failure\" reason to include check name, command, and first denial path.\n\n6. `BuildCombinedFailure`: add `--- Sandbox denials ---` section when denials present.\n\n7. TestRunResult in Domain gets `IReadOnlyList<SandboxDenial>? Denials { get; init; }` - backward compatible because all existing construction uses positional parameters.\n\nLet me verify all the edge cases:\n- No diagnostics JSON in output \u2192 parser returns (output, null) \u2192 denials is null everywhere \u2192 no change in behavior\n- Malformed JSON \u2192 parser returns (output, null) \u2192 no change\n- JSON present but no denials array \u2192 null denials \u2192 no change\n- JSON present with denials \u2192 stripped from output, denials flow through\n\nFor ToSummaryLines: currently shows \u2713/\u2717/\u2014 for each check. When a check is red AND has an associated denial, append the denial path. But which denial maps to which check? The diagnostics JSON comes from the nono wrapper around the test command. So denials are all from the test run. But the task says to render e.g. \"\u2717 guard: red (sandbox denial: /Volumes/Tera/.TemporaryItems/\u2026)\". The guard check runs through SandboxedTestRunner too... but currently SetupCheckResults doesn't capture denials per-check, it captures them once.\n\nWait, but the guard check and bootstrap check ALSO run through SandboxedTestRunner, and they would also get denials parsed. So I should track denials per check, not just once.\n\nLet me reconsider. In `FromFixVerifyIteration`, the bootstrap result is `TestRunResult? bootstrapResult` and the test result is `TestRunResult testResult`. So I could capture `bootstrapResult?.Denials` and `testResult.Denials` separately. But the guard output comes as a string (not a TestRunResult), so I can't get guard denials.\n\nActually, let me look at how the guard check runs. In VerifyFix.cs:144-148:\n```csharp\nvar (newViolations, _, timedOut) = await RunGuardCheckAsync(...);\n```\nThis calls through `_dependencies.TestRunner` which is `SandboxedTestRunner`. But the guard output is a string from `RunGuardCheckAsync`, not a TestRunResult. So I'd need to change that interface too.\n\nFor simplicity and minimal blast radius, I'll track denials from the primary test run only. The SetupCheckResults.Denials field represents test-run denials. In `ToSummaryLines`, I'll show denials as a separate section below the check icons, or append to the test line.\n\nActually re-reading the task: \"SetupCheckResults: add per-check denial info; ToSummaryLines renders e.g. \u2717 guard: red (sandbox denial: /Volumes/Tera/.TemporaryItems/\u2026)\". This suggests per-check denial info. But where do guard denials come from? The guard runs through SandboxedTestRunner too (in `RunGuardCheckAsync`).\n\nLet me look at `RunGuardCheckAsync`:<\uff5cend\u2581of\u2581thinking\uff5c>\n\n<\uff5c\uff5cDSML\uff5c\uff5ctool_calls>\n<\uff5c\uff5cDSML\uff5c\uff5cinvoke name=\"grep\">\n<\uff5c\uff5cDSML\uff5c\uff5cparameter name=\"include\" string=\"true\">*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8054,
+      "repairs": [
+        {
+          "type": "strip_unknown",
+          "field": "path"
+        },
+        {
+          "type": "strip_unknown",
+          "field": "pattern"
+        }
+      ]
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 3.198,
+      "prompt_tokens_est": 59611,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.RepoGuards.cs",
+        "offset": 1,
+        "limit": 50
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2509
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 14.644,
+      "prompt_tokens_est": 60306,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Volumes/Tera/dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.RepoGuards.cs",
+        "limit": 70,
+        "offset": 51
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3647
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 8.08,
+      "prompt_tokens_est": 61988,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "IntegrateGuardAsync",
+        "path": "/Volumes/Tera/dev/visual-relay/src"
+      },
+      "succeeded": true,
+      "duration_s": 0.045,
+      "result_length": 335
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 21.525,
+      "prompt_tokens_est": 62514,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "think",
+      "arguments": {
+        "thought": "Final design decisions:\n\n1. **TestRunResult.Denials** - Add `IReadOnlyList<SandboxDenial>? Denials { get; init; }` to the sealed record. Backward-compatible: all existing `new TestRunResult(code, output)` calls won't set it.\n\n2. **SandboxDenial record** - `(string Operation, string Target)` in Domain.\n\n3. **NonoDiagnosticsJsonParser** - Static class with `Extract(string output) \u2192 (string CleanedOutput, IReadOnlyList<SandboxDenial>? Denials)`. Finds the last balanced `{\u2026}` containing `\"denials\"`. Never throws.\n\n4. **BuildNonoPrefix** - Add `bool requestDiagnostics = false` parameter. When true, adds `--diagnostics-json` before `--`.\n\n5. **SandboxedTestRunner.ResolveLaunch** - Pass `requestDiagnostics: true` to BuildNonoPrefix.\n\n6. **SandboxedTestRunner.RunAsync** - Post-process: parse diagnostics JSON from output, strip it, set Denials on result.\n\n7. **SetupCheckResults.Denials** - Add field. Both factory methods extract from `testResult.Denials`.\n\n8. **ToSummaryLines** - When denials present, append first denial target to first red check line, or add a separate line.\n\n9. **ToEventData** - Add denial details.\n\n10. **PublishVerifyResultAsync** - Replace \"setup check failure\" with enriched format including check name, command, and first denial path. Must fit in 200 chars for flag reasons.\n\n11. **BuildCombinedFailure** - Add `--- Sandbox denials ---` section.\n\n12. **VerifyFix.cs** - Pass denials from test result to BuildFailureOutput/BuildFullFailureOutput.\n\nNow let me enumerate the exact code changes per file:\n\n### SandboxDenial.cs (NEW)\n```csharp\nnamespace VisualRelay.Domain;\npublic sealed record SandboxDenial(string Operation, string Target);\n```\n\n### TestRunResult.cs\nAdd: `public IReadOnlyList<SandboxDenial>? Denials { get; init; }`\n\n### NonoDiagnosticsJsonParser.cs (NEW)\nStatic class with `Extract(string output)` method. Uses a tolerant parser: scan backwards for `{`, try to find matching `}`, check if the substring contains `\"denials\"`, parse with System.Text.Json. On any failure, return (output, null).\n\n### ProcessRunners.cs (BuildNonoPrefix)\nAdd parameter: `bool requestDiagnostics = false`\nAdd after `--silent` block: `if (requestDiagnostics) { args.Add(\"--diagnostics-json\"); }`\n\n### SandboxedTestRunner.cs\n- ResolveLaunch: pass `requestDiagnostics: true`\n- RunAsync: post-process result through parser\n\n### RelayDriver.SetupChecks.cs\n- Add `IReadOnlyList<SandboxDenial>? Denials = null` to record\n- Both factory methods set it from testResult.Denials\n- ToSummaryLines: append denial info\n- ToEventData: add denial paths\n\n### RelayDriver.VerifyObservability.cs\n- PublishVerifyResultAsync: enrich reason. Build a helper that finds which check is red, gets its command, and appends first denial.\n\n### RelayDriver.FailureOutput.cs\n- BuildCombinedFailure: add `IReadOnlyList<SandboxDenial>? denials = null` param\n- When denials present, add `--- Sandbox denials ---` section\n\n### RelayDriver.VerifyFix.cs\n- Pass testResult.Denials to BuildFailureOutput/BuildFullFailureOutput\n\n### Tests:\n- NonoDiagnosticsJsonParserTests.cs: parser unit tests\n- VerifyReasonConstructionTests.cs: reason format tests\n- SandboxDiagnosticsToggleTests.cs: arg-shape tests\n- SandboxedTestRunnerArgumentTests.cs: update indices, add --diagnostics-json assertions\n- SetupCheckResultsTests.cs: serialization, ToSummaryLines with denials\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 108
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 31.339,
+      "prompt_tokens_est": 63994,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -34,7 +34,7 @@ public sealed partial class RelayDriver
         var check = overrideCheck ?? (testResult.ExitCode == 0 ? "green" : "red");
         var reason = testResult.ExitCode != 0
             ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output)
-            : setupChecks?.IsAnyRed() == true ? "setup check failure" : string.Empty;
+            : BuildSetupCheckFailureReason(setupChecks);
         // NOTE: WorkingTreeHash fingerprints only the manifest files' contents — a coarse
         // signal, acceptable for observability (and for the Task 2 convergence guard).
         var treeHash = WorkingTreeHash(rootPath, manifest);
@@ -123,5 +123,60 @@ public sealed partial class RelayDriver
         {
             // Best-effort artifact — a write failure must not fail the verify.
         }
+    }
+
+    /// <summary>
+    /// Builds a distilled failure reason naming which setup check failed, its
+    /// command, and the first sandbox denial path when available.
+    /// Format: <c>setup check failure: {check} '{command}' (sandbox denial: {path})</c>.
+    /// Truncation-safe: the reason is kept within the 200-char flag-reason limit so
+    /// the check name and command survive even when the denial path is long.
+    /// </summary>
+    internal static string BuildSetupCheckFailureReason(SetupCheckResults? setupChecks)
+    {
+        if (setupChecks is null)
+            return "setup check failure";
+
+        if (!setupChecks.IsAnyRed())
+            return string.Empty;
+
+        // Bootstrap is checked first in the fix-verify loop, so bootstrap
+        // failures take priority over guard failures.
+        if (setupChecks.BootstrapCheck == "red")
+        {
+            var cmd = setupChecks.BootstrapCommand ?? "bootstrap command";
+            if (setupChecks.BootstrapDenials is { Count: > 0 })
+                return BuildDenialReason("bootstrap", cmd, setupChecks.BootstrapDenials[0].Target);
+            return $"setup check failure: bootstrap '{cmd}'";
+        }
+
+        if (setupChecks.GuardCheck == "red")
+        {
+            var cmd = setupChecks.GuardCommand ?? "guard command";
+            if (setupChecks.GuardDenials is { Count: > 0 })
+                return BuildDenialReason("guard", cmd, setupChecks.GuardDenials[0].Target);
+            return $"setup check failure: guard '{cmd}'";
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildDenialReason(string checkName, string command, string targetPath)
+    {
+        // Keep the reason within 200 chars so flag-reason truncation in VerifyFix
+        // (first-line capped at 200) still captures the check name, command, and
+        // enough of the denial path to be actionable.
+        var prefix = $"setup check failure: {checkName} '{command}' (sandbox denial: ";
+        const int maxLen = 200;
+        var suffix = ")";
+        var overhead = prefix.Length + suffix.Length;
+        if (overhead >= maxLen)
+            return $"setup check failure: {checkName} '{command}'";
+
+        var maxTarget = maxLen - overhead;
+        if (targetPath.Length <= maxTarget)
+            return prefix + targetPath + suffix;
+
+        return prefix + targetPath[..(maxTarget - 1)] + "…" + suffix;
     }
 }

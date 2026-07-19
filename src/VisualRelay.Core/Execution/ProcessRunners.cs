@@ -152,7 +152,7 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
     internal static IReadOnlyList<string> BuildNonoPrefix(
         RelayConfig config, bool rollback, IReadOnlyList<string>? skipDirs = null,
         bool verboseDiagnostics = false, string? userTemplatesDirOverride = null,
-        string? workspaceRoot = null)
+        string? workspaceRoot = null, bool requestDiagnostics = false)
     {
         // Load by absolute path, not the global profile name: NonoProfileEnsurer
         // resolves the same VR-owned $XDG_CONFIG_HOME/visual-relay/vr-guard.json it
@@ -198,6 +198,12 @@ public sealed partial class SwivalSubagentRunner : ISubagentRunner
         }
 
         if (rollback) { args.Add("--rollback"); args.Add("--no-rollback-prompt"); }
+
+        // Request machine-readable diagnostics JSON on stderr.  Only the
+        // verification path requests this; swival agent runs do not.
+        // Independent of verboseDiagnostics — we keep --silent so nono's
+        // human footer stays suppressed.
+        if (requestDiagnostics) { args.Add("--diagnostics-json"); }
 
         // Quiet by default: suppress nono's own banner/summary/status/WARN-preflight
         // and the failure footer so only the child command's output reaches the

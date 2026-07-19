@@ -115,6 +115,45 @@ public sealed class SandboxDiagnosticsToggleTests
         Assert.DoesNotContain("--silent", args);
     }
 
+    // ── Request diagnostics (--diagnostics-json) ─────────────────────────
+
+    [Fact]
+    public void BuildNonoPrefix_RequestDiagnosticsTrue_IncludesDiagnosticsJson()
+    {
+        var config = TestConfig();
+
+        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+
+        Assert.Contains("--diagnostics-json", verify);
+        // --diagnostics-json is a nono flag, so it must precede the `--` child separator.
+        Assert.True(verify.ToList().IndexOf("--diagnostics-json") < verify.ToList().IndexOf("--"));
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_RequestDiagnosticsFalse_OmitsDiagnosticsJson()
+    {
+        var config = TestConfig();
+
+        var verify = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: false);
+        var swival = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+
+        Assert.DoesNotContain("--diagnostics-json", verify);
+        Assert.DoesNotContain("--diagnostics-json", swival);
+    }
+
+    [Fact]
+    public void BuildNonoPrefix_RequestDiagnostics_IsIndependentOfVerbose()
+    {
+        // requestDiagnostics adds --diagnostics-json regardless of verboseDiagnostics.
+        var config = TestConfig();
+
+        var quietWithDiag = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+        var verboseWithDiag = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, verboseDiagnostics: true, requestDiagnostics: true);
+
+        Assert.Contains("--diagnostics-json", quietWithDiag);
+        Assert.Contains("--diagnostics-json", verboseWithDiag);
+    }
+
     // ── Helpers ─────────────────────────────────────────────────────────
 
     private static string ProfilePath => NonoProfileEnsurer.ResolveProfilePath();

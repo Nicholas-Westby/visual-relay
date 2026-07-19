@@ -23,16 +23,16 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("bun test");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, args.Take(8));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--diagnostics-json", "--silent", "--" }, args.Take(9));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/bin/sh", args[8]);
+        Assert.Equal("/bin/sh", args[9]);
         // -c and the command MUST be separate ArgumentList entries. SandboxedTestRunner
         // uses the IEnumerable<string> ProcessCapture overload, which adds each entry
         // verbatim (no quote-splitting); a merged `-c "bun test"` entry reaches /bin/sh
         // as one unparseable arg → exit 2 (every sandboxed verify falsely red).
-        Assert.Equal("-c", args[9]);
-        Assert.Equal("bun test", args[10]);
+        Assert.Equal("-c", args[10]);
+        Assert.Equal("bun test", args[11]);
     }
 
     [Fact]
@@ -46,11 +46,11 @@ public sealed class SandboxedTestRunnerArgumentTests
         var (fileName, args) = sut.ResolveLaunch("/path/to/guard.sh arg1");
 
         Assert.Equal("nono", fileName);
-        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--silent", "--" }, args.Take(8));
+        Assert.Equal(new[] { "run", "--profile", ProfilePath, "--allow-cwd", "-a", TemplatesDir, "--diagnostics-json", "--silent", "--" }, args.Take(9));
         Assert.DoesNotContain("--rollback", args);
         Assert.DoesNotContain("--no-rollback-prompt", args);
-        Assert.Equal("/path/to/guard.sh", args[8]);
-        Assert.Equal("arg1", args[9]);
+        Assert.Equal("/path/to/guard.sh", args[9]);
+        Assert.Equal("arg1", args[10]);
     }
 
     // Shared nono-prefix builder (SwivalSubagentRunner.BuildNonoPrefix)
@@ -223,6 +223,32 @@ public sealed class SandboxedTestRunnerArgumentTests
 
         Assert.True(RelayDriver.IsPathWithinGuardRoot(legitPath, tmp.GuardsRoot));
         Assert.True(RelayDriver.IsSymlinkTargetContained(legitPath, tmp.GuardsRoot));
+    }
+
+    // ── Diagnostics-json toggle ─────────────────────────────────────────
+
+    [Fact]
+    public void VerifyPrefix_ContainsDiagnosticsJson()
+    {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        var config = TestConfig();
+        // SandboxedTestRunner always passes requestDiagnostics: true — the
+        // verification path is the ONLY path that requests --diagnostics-json.
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: false, requestDiagnostics: true);
+
+        Assert.Contains("--diagnostics-json", prefix);
+        Assert.True(prefix.ToList().IndexOf("--diagnostics-json") < prefix.ToList().IndexOf("--"));
+    }
+
+    [Fact]
+    public void SwivalPrefix_DoesNotContainDiagnosticsJson()
+    {
+        Assert.SkipUnless(!OperatingSystem.IsWindows(), "Unix nono wrapper (Windows uses the MXC seam)");
+        var config = TestConfig();
+        // Swival-agent path: rollback: true, no requestDiagnostics.
+        var prefix = SwivalSubagentRunner.BuildNonoPrefix(config, rollback: true);
+
+        Assert.DoesNotContain("--diagnostics-json", prefix);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────

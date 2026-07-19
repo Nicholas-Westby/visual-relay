@@ -23,7 +23,7 @@ public sealed partial class RelayDriver
     /// <c>TimedOut</c> is true when the guard command timed out
     /// — callers must flag, not enter fix-verify.
     /// </returns>
-    private static async Task<(string? NewViolations, string? FullOutput, bool TimedOut)> RunGuardCheckAsync(
+    private static async Task<(string? NewViolations, string? FullOutput, bool TimedOut, IReadOnlyList<SandboxDenial> Denials)> RunGuardCheckAsync(
         string rootPath,
         string taskId,
         string runId,
@@ -47,15 +47,15 @@ public sealed partial class RelayDriver
 
         // Guard timed out — caller must flag, not enter fix-verify.
         if (workingResult.TimedOut)
-            return (workingOutput, workingOutput, true);
+            return (workingOutput, workingOutput, true, workingResult.Denials);
 
         // Guard passed — nothing to report.
         if (workingResult.ExitCode == 0)
-            return (null, null, false);
+            return (null, null, false, workingResult.Denials);
 
         // No baseline verify — all output is new.
         if (!baselineVerify)
-            return (workingOutput, workingOutput, false);
+            return (workingOutput, workingOutput, false, workingResult.Denials);
 
         // Stash working changes, run guard on clean tree, diff.
         var tag = RedGate.StashTag(taskId, runId);
@@ -63,7 +63,7 @@ public sealed partial class RelayDriver
         try
         {
             if (!stashed)
-                return (workingOutput, workingOutput, false); // can't baseline — treat all as new
+                return (workingOutput, workingOutput, false, workingResult.Denials); // can't baseline — treat all as new
 
             var baselineResult = await testRunner.RunAsync(rootPath, guardCmd, ct);
             // ReSharper disable once NullCoalescingConditionIsAlwaysNotNullAccordingToAPIContract
@@ -71,7 +71,7 @@ public sealed partial class RelayDriver
             var baselineOutput = baselineResult.Output ?? string.Empty;
 
             if (baselineResult.TimedOut)
-                return (workingOutput, workingOutput, false); // can't baseline — treat all as new
+                return (workingOutput, workingOutput, false, workingResult.Denials); // can't baseline — treat all as new
 
             // Diff working vs baseline using count-normalized keys so that
             // pre-existing oversize files the task merely touched (shifting
@@ -90,9 +90,9 @@ public sealed partial class RelayDriver
             }
 
             if (newRawLines.Count == 0)
-                return (null, workingOutput, false); // all pre-existing
+                return (null, workingOutput, false, workingResult.Denials); // all pre-existing
 
-            return (string.Join('\n', newRawLines.Order(StringComparer.Ordinal)), workingOutput, false);
+            return (string.Join('\n', newRawLines.Order(StringComparer.Ordinal)), workingOutput, false, workingResult.Denials);
         }
         finally
         {
@@ -156,7 +156,7 @@ public sealed partial class RelayDriver
         if (config.GuardCommand is null)
             return (false, null, false);
 
-        var (newViolations, fullOutput, timedOut) = await RunGuardCheckAsync(
+        var (newViolations, fullOutput, timedOut, _) = await RunGuardCheckAsync(
             rootPath, taskId, runId, _dependencies.TestRunner, _dependencies.GitInvoker,
             config.FormatCommand, config.GuardCommand, config.BaselineVerify, ct);
 

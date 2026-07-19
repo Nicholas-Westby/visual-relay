@@ -21,10 +21,13 @@ public sealed partial class RelayDriver
         string? guardOutput,
         bool bootstrapFailed,
         string? bootstrapFailureOutput,
-        string? newGuardOutput = null) =>
+        string? newGuardOutput = null,
+        IReadOnlyList<SandboxDenial>? guardDenials = null,
+        IReadOnlyList<SandboxDenial>? bootstrapDenials = null) =>
         BuildCombinedFailure(
             testResult.ExitCode != 0 ? SwivalSubagentRunner.ExtractFailureReason(testResult.Output) : null,
-            guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
+            guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput,
+            guardDenials, bootstrapDenials);
 
     /// <summary>
     /// Builds the COMPLETE combined failure log persisted to the verify-output artifact:
@@ -39,24 +42,30 @@ public sealed partial class RelayDriver
         string? guardOutput,
         bool bootstrapFailed,
         string? bootstrapFailureOutput,
-        string? newGuardOutput = null) =>
+        string? newGuardOutput = null,
+        IReadOnlyList<SandboxDenial>? guardDenials = null,
+        IReadOnlyList<SandboxDenial>? bootstrapDenials = null) =>
         BuildCombinedFailure(
             testResult.ExitCode != 0 ? testResult.Output : null,
-            guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput);
+            guardOutput, bootstrapFailed, bootstrapFailureOutput, newGuardOutput,
+            guardDenials, bootstrapDenials);
 
     /// <summary>
     /// Shared assembly for <see cref="BuildFailureOutput"/> (distilled tail) and
     /// <see cref="BuildFullFailureOutput"/> (complete persisted log): joins the optional
-    /// test-failure text with the guard / new-guard-probe / bootstrap sections in a stable
-    /// order. <paramref name="testFailureText"/> is null when the test command itself passed
-    /// (a guard/bootstrap-only failure), which also selects the bootstrap section's wording.
+    /// test-failure text with the guard / new-guard-probe / bootstrap / sandbox-denials
+    /// sections in a stable order. <paramref name="testFailureText"/> is null when the test
+    /// command itself passed (a guard/bootstrap-only failure), which also selects the
+    /// bootstrap section's wording.
     /// </summary>
     private static string BuildCombinedFailure(
         string? testFailureText,
         string? guardOutput,
         bool bootstrapFailed,
         string? bootstrapFailureOutput,
-        string? newGuardOutput)
+        string? newGuardOutput,
+        IReadOnlyList<SandboxDenial>? guardDenials = null,
+        IReadOnlyList<SandboxDenial>? bootstrapDenials = null)
     {
         var parts = new List<string>();
         if (testFailureText is not null)
@@ -72,6 +81,19 @@ public sealed partial class RelayDriver
             else
                 parts.Add("Bootstrap check failed:\n" + bootstrapFailureOutput);
         }
+
+        // Append sandbox denials section so the next fix-verify agent sees the
+        // denial without re-deriving it — even when --silent suppressed the
+        // human footer.
+        var allDenials = new List<SandboxDenial>();
+        if (guardDenials is not null) allDenials.AddRange(guardDenials);
+        if (bootstrapDenials is not null) allDenials.AddRange(bootstrapDenials);
+        if (allDenials.Count > 0)
+        {
+            var denialLines = allDenials.Select(d => $"- {d.Operation}: {d.Target}");
+            parts.Add("--- Sandbox denials ---\n" + string.Join("\n", denialLines));
+        }
+
         return string.Join("\n\n", parts);
     }
 }
