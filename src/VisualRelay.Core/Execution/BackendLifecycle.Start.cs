@@ -231,12 +231,6 @@ public sealed partial class BackendLifecycle
             TryDeleteDir(legacyVenv);
         }
 
-        var legacyScratch = Path.Combine(root, ".relay-scratch");
-        if (Directory.Exists(legacyScratch))
-        {
-            _log($"removing legacy repo-local scratch at {legacyScratch}");
-            TryDeleteDir(legacyScratch);
-        }
     }
 
     private static void TryDeleteDir(string dir)

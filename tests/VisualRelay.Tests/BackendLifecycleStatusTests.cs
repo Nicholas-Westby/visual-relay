@@ -141,9 +141,9 @@ public sealed partial class BackendLifecycleStatusTests : IDisposable
         await task;
 
         Assert.False(Directory.Exists(legacyVenv));
-        Assert.False(Directory.Exists(legacyScratch));
+        Assert.True(Directory.Exists(legacyScratch));
         Assert.Contains(log, l => l.Contains("legacy repo-local venv"));
-        Assert.Contains(log, l => l.Contains("legacy repo-local scratch"));
+        Assert.DoesNotContain(log, l => l.Contains("legacy repo-local scratch"));
     }
 
     // ── Missing toolchain: graceful degrade ──────────────────────────────
