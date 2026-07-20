@@ -90,6 +90,7 @@ The code is mostly C# and the UI is built with [Avalonia](https://avaloniaui.net
 - `./visual-relay build` - builds the app (the launcher also does this).
 - `./visual-relay install-hooks` - installs pre-commit hooks.
 - `./visual-relay test` - runs the test suite.
+- `./visual-relay test serial` - runs the test suite, one test at a time.
 - `./visual-relay check` - runs the file-size guard, format verification, build, the test suite, and the README screenshot render.
 
 ## Learn more
