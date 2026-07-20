@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -42,14 +43,14 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsTrue_WhenTrackedImplFileModifiedVsHead()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Modify a tracked impl file.
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "x.cs"), "modified\n");
 
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         Assert.True(result);
     }
@@ -58,7 +59,7 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsTrue_WhenNewImplFileUntracked()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Create a new, untracked impl file.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -67,7 +68,7 @@ public sealed class EarlyImplementationDetectorTests
         // Manifest uses '+' prefix for new files.
         var manifest = new[] { "+src/new.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         Assert.True(result);
     }
@@ -76,12 +77,12 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsFalse_WhenImplFilesCleanVsHead()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Leave the committed file unchanged.
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         Assert.False(result);
     }
@@ -90,7 +91,7 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsFalse_WhenOnlyNonCodeFileModified()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Modify a file with a non-code extension — IsImpl returns false for
         // .md files, so the detector must also return false.
@@ -99,7 +100,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "docs/README.md" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         Assert.False(result);
     }
@@ -108,7 +109,7 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsFalse_WhenOnlyCodeExtensionTestFileModified()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Modify a committed test file with a code extension (.cs) —
         // IsImpl returns true for .cs, but IsTestFile returns true for
@@ -118,7 +119,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "tests/x.tests.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None, isTestFile: IsTestFile);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None, isTestFile: IsTestFile);
 
         Assert.False(result);
     }
@@ -127,7 +128,7 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsTrue_WhenNonTestImplFileModified()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Modify a committed impl file that is NOT a test file —
         // IsImpl returns true and IsTestFile returns false, so the
@@ -137,7 +138,7 @@ public sealed class EarlyImplementationDetectorTests
 
         var manifest = new[] { "src/x.cs" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None, isTestFile: IsTestFile);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None, isTestFile: IsTestFile);
 
         Assert.True(result);
     }
@@ -146,12 +147,12 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsFalse_WhenManifestHasNoImplFiles()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         // Manifest contains only a non-code file.
         var manifest = new[] { "docs/README.md" };
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         Assert.False(result);
     }
@@ -167,8 +168,10 @@ public sealed class EarlyImplementationDetectorTests
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "x.cs"), "content\n");
 
         var manifest = new[] { "src/x.cs" };
+        // A non-init'd GitSim also has no HEAD baseline → safe-off.
+        var sim = new GitSimEngine();
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, manifest, IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, manifest, IsImpl, sim, CancellationToken.None);
 
         // Must return false: no HEAD baseline available → safe-off.
         Assert.False(result);
@@ -178,15 +181,15 @@ public sealed class EarlyImplementationDetectorTests
     public async Task ReturnsFalse_OnEmptyManifest()
     {
         using var repo = TestRepository.Create();
-        InitGitRepo(repo.Root);
+        var sim = InitGitRepo(repo.Root);
 
         var result = await EarlyImplementationDetector.ImplementationAlreadyUnderwayAsync(
-            repo.Root, [], IsImpl, new GitInvoker(), CancellationToken.None);
+            repo.Root, [], IsImpl, sim, CancellationToken.None);
 
         Assert.False(result);
     }
 
-    private static void InitGitRepo(string root)
+    private static GitSimEngine InitGitRepo(string root)
     {
         Directory.CreateDirectory(Path.Combine(root, "src"));
         Directory.CreateDirectory(Path.Combine(root, "tests"));
@@ -195,10 +198,12 @@ public sealed class EarlyImplementationDetectorTests
         // Also create a non-code file so multi-file manifests have a non-impl entry.
         Directory.CreateDirectory(Path.Combine(root, "docs"));
         File.WriteAllText(Path.Combine(root, "docs", "README.md"), "# README\n");
-        TestGit.Run(root, "init");
-        TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-        TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-m", "chore: seed repo");
+        var sim = new GitSimEngine();
+        sim.InitRepo(root);
+        sim.Seed(root, "src/x.cs", "original\n");
+        sim.Seed(root, "tests/x.tests.cs", "original\n");
+        sim.Seed(root, "docs/README.md", "# README\n");
+        sim.Commit(root, "chore: seed repo");
+        return sim;
     }
 }

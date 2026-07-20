@@ -138,7 +138,7 @@ public sealed partial class DrainQueueToolTests
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
         repo.WriteTask("gamma", "# Gamma\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var planRunner = new ScriptedSubagentRunner();
         planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -148,7 +148,8 @@ public sealed partial class DrainQueueToolTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
         await controller.RefreshAsync();
 
         // Select only alpha and gamma, in that order.
@@ -177,7 +178,7 @@ public sealed partial class DrainQueueToolTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var planRunner = new ScriptedSubagentRunner();
         planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -187,7 +188,8 @@ public sealed partial class DrainQueueToolTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
         await controller.RefreshAsync();
 
         controller.Tasks.Clear();

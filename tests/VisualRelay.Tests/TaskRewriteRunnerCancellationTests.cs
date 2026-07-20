@@ -1,6 +1,7 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -9,18 +10,15 @@ public sealed class TaskRewriteRunnerCancellationTests
     private const string OriginalSpec = "# Original\n\nDo the thing.\n";
     private const string RewrittenSpec = "# Rewritten\n\nBetter spec.\n";
 
-    private static (string Root, RelayTaskItem Task, RelayConfig Config) SetupRepo(string taskId = "my-task")
+    private static (string Root, RelayTaskItem Task, RelayConfig Config, GitSimEngine Sim) SetupRepo(string taskId = "my-task")
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-rwc-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
 
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "test@example.test");
-        TestGit.Run(root, "config", "user.name", "Test");
-
-        File.WriteAllText(Path.Combine(root, "README.md"), "# Repo\n");
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", "seed");
+        var sim = new GitSimEngine();
+        sim.InitRepo(root);
+        sim.Seed(root, "README.md", "# Repo\n");
+        sim.Commit(root, "seed");
 
         Directory.CreateDirectory(Path.Combine(root, ".relay"));
         File.WriteAllText(Path.Combine(root, ".relay", "config.json"),
@@ -39,7 +37,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             SiblingPaths: []);
 
         var config = RelayConfigLoader.Defaults();
-        return (root, task, config);
+        return (root, task, config, sim);
     }
 
     // Pins XDG_CONFIG_HOME under the per-test repo so the once-per-run vr-guard
@@ -51,7 +49,7 @@ public sealed class TaskRewriteRunnerCancellationTests
     [Fact]
     public async Task Cancellation_LeavesSpecByteIdentical()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var originalBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
@@ -62,7 +60,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), cts.Token, environment: TempXdg(root));
+                root, task, config, fake, sim, cts.Token, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -85,7 +83,7 @@ public sealed class TaskRewriteRunnerCancellationTests
     [Fact]
     public async Task Cancellation_AfterWorktreeCreation_StillCleansUp()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var originalBytes = await File.ReadAllBytesAsync(task.MarkdownPath, TestContext.Current.CancellationToken);
@@ -94,7 +92,7 @@ public sealed class TaskRewriteRunnerCancellationTests
             var fake = new PostWriteCancellationRunner(RewrittenSpec, cts.Token);
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);

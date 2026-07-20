@@ -22,7 +22,7 @@ public partial class MainWindowViewModel
     {
         try
         {
-            var result = await ProjectBootstrapper.BootstrapAsync(RootPath);
+            var result = await ProjectBootstrapper.BootstrapAsync(RootPath, new GitInvoker());
             var gitNote = result.GitInitialized ? "initialized git repo; " : string.Empty;
             SetupCheck = result.SetupCheck;
             StatusText = result.HookWarning

@@ -91,6 +91,7 @@ internal sealed class GitRepository
 
     public string DefaultBranch { get; set; } = "main";
     public string? HooksPath { get; set; }
+    public string? CoreFileMode { get; set; }
     public GitPerson Identity { get; set; } =
         new("VisualRelay Test", "test@example.test", DateTimeOffset.FromUnixTimeSeconds(1_600_000_000));
 

@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -52,9 +53,8 @@ public sealed class RelayDriverGitCommitGitignoredBackstopTests
         // valid manifest without the missing path.
         using var repo = TestRepository.Create();
         // Set up a real git repo with existing files.
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         File.WriteAllText(Path.Combine(repo.Root, "src", "status.cs"), "content");
         // src/ghost.cs is deliberately NOT created — it is a missing path.

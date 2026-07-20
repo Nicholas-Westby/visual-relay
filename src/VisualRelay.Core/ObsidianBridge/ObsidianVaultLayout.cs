@@ -110,7 +110,7 @@ public sealed partial class ObsidianVaultLayout
         IGitInvoker? gitInvoker = null,
         CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
         try
         {
             var result = await gi.RunAsync(

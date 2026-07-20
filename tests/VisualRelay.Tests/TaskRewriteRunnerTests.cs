@@ -1,6 +1,7 @@
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -9,30 +10,30 @@ public sealed class TaskRewriteRunnerTests
     private const string OriginalSpec = "# Original\n\nDo the thing.\n";
     private const string RewrittenSpec = "# Rewritten\n\nBetter spec.\n";
 
-    private static void InitGitRepo(string root)
+    private static GitSimEngine InitGitRepo(string root)
     {
-        TestGit.Run(root, "init", "-q");
-        TestGit.Run(root, "config", "user.email", "test@example.test");
-        TestGit.Run(root, "config", "user.name", "Test");
+        var sim = new GitSimEngine();
+        sim.InitRepo(root);
+        return sim;
     }
 
-    private static void CommitAll(string root, string message)
+    private static void CommitAll(GitSimEngine sim, string root, string message)
     {
-        TestGit.Run(root, "add", ".");
-        TestGit.Run(root, "commit", "-q", "-m", message);
+        // Seed stages and writes the file; then we commit.
+        sim.Seed(root, "README.md", "# Repo\n");
+        sim.Commit(root, message);
     }
 
-    private static (string Root, RelayTaskItem Task, RelayConfig Config) SetupRepo(
+    private static (string Root, RelayTaskItem Task, RelayConfig Config, GitSimEngine Sim) SetupRepo(
         string taskId = "my-task",
         string? taskMarkdown = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "vr-rwr-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
 
-        InitGitRepo(root);
+        var sim = InitGitRepo(root);
 
-        File.WriteAllText(Path.Combine(root, "README.md"), "# Repo\n");
-        CommitAll(root, "seed");
+        CommitAll(sim, root, "seed");
 
         Directory.CreateDirectory(Path.Combine(root, ".relay"));
         File.WriteAllText(Path.Combine(root, ".relay", "config.json"),
@@ -53,7 +54,7 @@ public sealed class TaskRewriteRunnerTests
 
         var config = RelayConfigLoader.Defaults();
 
-        return (root, task, config);
+        return (root, task, config, sim);
     }
 
     // Pins XDG_CONFIG_HOME under the per-test repo so the once-per-run vr-guard
@@ -70,7 +71,7 @@ public sealed class TaskRewriteRunnerTests
     [Fact]
     public async Task Success_CopiesOnlyTaskFolderBack()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var fake = new RewriteFakeRunner
@@ -81,7 +82,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
             Assert.True(outcome.Changed);
@@ -102,7 +103,7 @@ public sealed class TaskRewriteRunnerTests
     [Fact]
     public async Task Success_PreservesPreExistingDirtyFile()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var dirtyPath = Path.Combine(root, "src", "dirty.cs");
@@ -113,7 +114,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, task.Id));
@@ -130,13 +131,13 @@ public sealed class TaskRewriteRunnerTests
     [Fact]
     public async Task Success_ReportsUnchanged_WhenSpecDidNotChange()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var fake = new RewriteFakeRunner { NewContent = OriginalSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed, "unchanged spec must report Changed=false");
             Assert.Equal(OriginalSpec, ReadSpec(root, task.Id));
@@ -152,7 +153,7 @@ public sealed class TaskRewriteRunnerTests
     [Fact]
     public async Task Error_LeavesSpecUntouched()
     {
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var originalBytes = File.ReadAllBytes(task.MarkdownPath);
@@ -164,7 +165,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -190,13 +191,13 @@ public sealed class TaskRewriteRunnerTests
         // also deletes the diagnostic the (full output: …) breadcrumb points at. A
         // failed rewrite must preserve that diagnostic OUT of the worktree so the
         // breadcrumb resolves to a file that still exists.
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         try
         {
             var fake = new RewriteDiagnosticFailureRunner();
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.False(outcome.Changed);
             Assert.NotNull(outcome.Error);
@@ -232,7 +233,7 @@ public sealed class TaskRewriteRunnerTests
         // rewrite path invokes nono --profile <that path>; without an EnsureAsync
         // up front (mirroring RelayDriver.RunTaskAsync) nono fails. The rewrite
         // run must self-heal the profile before launching the sandboxed model.
-        var (root, task, config) = SetupRepo();
+        var (root, task, config, sim) = SetupRepo();
         var xdgRoot = Path.Combine(Path.GetTempPath(), "vr-rwr-xdg-" + Guid.NewGuid().ToString("N"));
         var env = new DictionaryEnvironmentAccessor { ["XDG_CONFIG_HOME"] = xdgRoot };
         var profilePath = NonoProfileEnsurer.ResolveProfilePath(env);
@@ -244,7 +245,7 @@ public sealed class TaskRewriteRunnerTests
             var fake = new RewriteFakeRunner { NewContent = RewrittenSpec };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: env);
+                root, task, config, fake, sim, CancellationToken.None, environment: env);
 
             Assert.True(outcome.Changed);
             Assert.True(File.Exists(profilePath),
@@ -263,7 +264,7 @@ public sealed class TaskRewriteRunnerTests
     [Fact]
     public async Task Success_DoesNotCopySiblingTaskFolders()
     {
-        var (root, task, config) = SetupRepo("task-a");
+        var (root, task, config, sim) = SetupRepo("task-a");
         try
         {
             var siblingDir = Path.Combine(root, "llm-tasks", "task-b");
@@ -279,7 +280,7 @@ public sealed class TaskRewriteRunnerTests
             };
 
             var outcome = await TaskRewriteRunner.RunAsync(
-                root, task, config, fake, new GitInvoker(), CancellationToken.None, environment: TempXdg(root));
+                root, task, config, fake, sim, CancellationToken.None, environment: TempXdg(root));
 
             Assert.True(outcome.Changed);
             Assert.Equal(RewrittenSpec, ReadSpec(root, "task-a"));

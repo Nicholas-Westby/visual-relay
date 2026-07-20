@@ -58,7 +58,7 @@ exit 1
     /// </summary>
     public static async Task<HookInstallResult> InstallAsync(string rootPath, CancellationToken cancellationToken, IGitInvoker? gitInvoker = null)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
 
         // Guard: without a real repository there is nowhere for a pre-commit hook to
         // run. Refuse rather than fabricate a bogus .git/hooks directory (which would

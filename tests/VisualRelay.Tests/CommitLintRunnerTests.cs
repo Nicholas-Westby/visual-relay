@@ -1,5 +1,6 @@
 using VisualRelay.Core.CommitLint;
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -23,47 +24,39 @@ public sealed class CommitLintRunnerTests
     [Fact]
     public async Task DecideTier_NoActiveRun_IsHuman()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "anything", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "anything", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Human, tier);
     }
 
     [Fact]
     public async Task DecideTier_ActiveRunTokenMatches_IsDriver()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         WriteActiveNonce(repo.Root, "abc123def456");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Driver, tier);
     }
 
     [Fact]
     public async Task DecideTier_ActiveRunTokenMismatch_IsHuman()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         WriteActiveNonce(repo.Root, "abc123def456");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "wrong-token", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "wrong-token", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Human, tier);
     }
 
     [Fact]
     public async Task DecideTier_ActiveRunNoToken_IsHuman()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         WriteActiveNonce(repo.Root, "abc123def456");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: null, git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: null, sim, CancellationToken.None);
         Assert.Equal(RuleTier.Human, tier);
     }
 
@@ -81,36 +74,30 @@ public sealed class CommitLintRunnerTests
         // even a stale/leftover token must NOT grant Driver. The read must not
         // throw; the tier is Human. (Fail-open to Driver is only for a PRESENT
         // info.json that cannot be read/parsed mid start/stop.)
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "tok", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "tok", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Human, tier);
     }
 
     [Fact]
     public async Task DecideTier_MalformedJsonWithToken_DoesNotThrowAndIsDriver()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         // Truncated mid-write — exactly the start/stop race this guards against.
         WriteRawActiveInfo(repo.Root, "{ \"nonce\": \"abc12");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Driver, tier);
     }
 
     [Fact]
     public async Task DecideTier_MalformedJsonNoToken_DoesNotThrowAndIsHuman()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         WriteRawActiveInfo(repo.Root, "not json at all {{{");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: null, git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: null, sim, CancellationToken.None);
         Assert.Equal(RuleTier.Human, tier);
     }
 
@@ -119,12 +106,10 @@ public sealed class CommitLintRunnerTests
     {
         // A present but unreadable-as-nonce info.json with a token set must fail
         // open to Driver, never propagate and abort the commit.
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         WriteRawActiveInfo(repo.Root, "\0\0\0 binary garbage \xff");
 
-        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "some-token", git, CancellationToken.None);
+        var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "some-token", sim, CancellationToken.None);
         Assert.Equal(RuleTier.Driver, tier);
     }
 
@@ -135,9 +120,7 @@ public sealed class CommitLintRunnerTests
         // open to Driver, never propagate to abort the commit. Force the failure
         // cross-platform by holding an exclusive (FileShare.None) handle, so the
         // hook's File.ReadAllText throws IOException.
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         var dir = Path.Combine(repo.Root, ".relay", "ACTIVE");
         Directory.CreateDirectory(dir);
         var info = Path.Combine(dir, "info.json");
@@ -145,7 +128,7 @@ public sealed class CommitLintRunnerTests
 
         await using (new FileStream(info, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
-            var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", git, CancellationToken.None);
+            var tier = await CommitLintRunner.DecideTierAsync(repo.Root, token: "abc123def456", sim, CancellationToken.None);
             Assert.Equal(RuleTier.Driver, tier);
         }
     }
@@ -153,17 +136,15 @@ public sealed class CommitLintRunnerTests
     [Fact]
     public async Task GatherChangedBasenames_ReturnsStagedFileBasenames()
     {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
         // Seed a base commit so there is a HEAD, then stage a new file.
-        await repo.SeedCommitAsync(git, "seed.txt", "x", "feat: seed\n",
-            "2021-01-01T10:00:00", "2021-01-01T10:00:00");
+        sim.Seed(repo.Root, "seed.txt", "x");
+        sim.Commit(repo.Root, "feat: seed");
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "src", "Widget.cs"), "// code");
-        await git.RunAsync(repo.Root, ["add", "src/Widget.cs"], CancellationToken.None);
+        await sim.RunAsync(repo.Root, ["add", "src/Widget.cs"], CancellationToken.None);
 
-        var names = await CommitLintRunner.GatherChangedBasenamesAsync(repo.Root, git, CancellationToken.None);
+        var names = await CommitLintRunner.GatherChangedBasenamesAsync(repo.Root, sim, CancellationToken.None);
         Assert.Contains("Widget.cs", names);
         Assert.DoesNotContain("src/Widget.cs", names);
     }

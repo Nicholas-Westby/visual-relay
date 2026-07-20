@@ -32,7 +32,7 @@ public sealed class OrchestratorProfileIsolationTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("orchestrator-isolation", "# Orchestrator isolation\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         // A dedicated, FRESH temp XDG dir for THIS run (not the suite-shared accessor),
         // so "a profile appeared here" is attributable to this planning phase's self-heal
@@ -60,7 +60,8 @@ public sealed class OrchestratorProfileIsolationTests
                 new RecordingTaskRunner(),
                 planSubagentRunnerFactory: _ => planRunner,
                 planTestRunner: new ScriptedTestRunner(),
-                environmentAccessor: env);
+                environmentAccessor: env,
+                gitInvoker: sim);
 
             await controller.RefreshAsync();
             var results = await controller.DrainAsync();

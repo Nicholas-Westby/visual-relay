@@ -46,7 +46,26 @@ internal static class GitSimRegistry
     public static bool TryGet(string root, out Worktree worktree) =>
         Worktrees.TryGetValue(Normalize(root), out worktree!);
 
-    /// <summary>The worktree at <paramref name="root"/>, or null when it is not a registered repo.</summary>
-    public static Worktree? Find(string root) =>
-        Worktrees.GetValueOrDefault(Normalize(root));
+    /// <summary>The worktree at <paramref name="root"/>, or null when it is not a registered repo.
+    /// Walks up parent directories so that <c>rev-parse --show-toplevel</c> works from
+    /// any subdirectory inside a registered repository.</summary>
+    public static Worktree? Find(string root)
+    {
+        var normalized = Normalize(root);
+        // Direct match first (common case).
+        if (Worktrees.TryGetValue(normalized, out var direct))
+            return direct;
+        // Walk up parent directories to find the nearest ancestor repo.
+        var dir = normalized;
+        while (dir.Length > 0)
+        {
+            var parent = Path.GetDirectoryName(dir);
+            if (parent is null || parent.Length >= dir.Length)
+                break;
+            dir = parent;
+            if (Worktrees.TryGetValue(dir, out var ancestor))
+                return ancestor;
+        }
+        return null;
+    }
 }

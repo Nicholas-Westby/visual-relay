@@ -1,4 +1,3 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Guards;
 
 namespace VisualRelay.Tests;
@@ -6,18 +5,13 @@ namespace VisualRelay.Tests;
 /// <summary>
 /// The enforcing shell-script size guard-as-test (the house idiom mirrored from
 /// <see cref="SplitGuardVerificationTests.AllTestCsFiles_AreAtMost300Lines"/>).
-/// It enumerates the git-tracked tree from <see cref="RepoSetup.Root"/> through the
-/// same <see cref="IGitInvoker"/> seam the <c>shell-size</c> runner uses, runs
-/// <see cref="ShellSizeGuard.FindViolations"/> at the shared limit, and asserts no
-/// tracked shell script exceeds 24 logic lines. The <c>visual-relay</c> bootstrap
-/// has a fixed 100-line structural carve-out — <see cref="ShellSizeGuard.BootstrapLimit"/> —
-/// because it must exist before .NET; all other logic moves to C#. shfmt formatting
-/// is enforced by the <c>check</c> gate (via <c>ShellFormatGuard</c>), not by this
-/// test — exactly as C# formatting is enforced by <c>dotnet format --verify-no-changes</c>.
+/// It walks the filesystem from <see cref="RepoSetup.Root"/> (skipping .git),
+/// classifies files with the same <see cref="ShellScriptClassifier"/> heuristic the
+/// <c>shell-size</c> runner uses, runs <see cref="ShellSizeGuard.FindViolations"/>
+/// at the shared limit, and asserts no shell script exceeds 24 logic lines.
 /// </summary>
 public sealed class ShellScriptSizeGuardTests
 {
-    private static readonly IGitInvoker Git = new GitInvoker();
 
     /// <summary>
     /// Every git-tracked shell script in the live tree is at most 24 logic lines
@@ -26,9 +20,9 @@ public sealed class ShellScriptSizeGuardTests
     /// grows past its ceiling.
     /// </summary>
     [Fact]
-    public async Task AllTrackedShellScripts_AreWithinTheLimit()
+    public void AllTrackedShellScripts_AreWithinTheLimit()
     {
-        var files = await ReadTrackedFilesAsync(RepoSetup.Root);
+        var files = EnumerateProjectScripts(RepoSetup.Root);
         var violations = ShellSizeGuard.FindViolations(files, ShellSizeGuard.ResolveLimit());
 
         Assert.True(violations.Count == 0,
@@ -67,9 +61,9 @@ public sealed class ShellScriptSizeGuardTests
     /// script at exactly 24 lines passes (24 is the inclusive ceiling).
     /// </summary>
     [Fact]
-    public async Task OverLimitScript_IsAViolation_AtLimitScript_IsNot()
+    public void OverLimitScript_IsAViolation_AtLimitScript_IsNot()
     {
-        var realFiles = await ReadTrackedFilesAsync(RepoSetup.Root);
+        var realFiles = EnumerateProjectScripts(RepoSetup.Root);
 
         var over = realFiles.Append(("fixtures/too-fat.sh", ShellScript(25))).ToList();
         var overViolations = ShellSizeGuard.FindViolations(over, ShellSizeGuard.ResolveLimit());
@@ -116,13 +110,48 @@ public sealed class ShellScriptSizeGuardTests
     }
 
     /// <summary>
-    /// Reads the git-tracked tree from <paramref name="repoRoot"/> through the same
-    /// <see cref="TrackedShellScripts.EnumerateAsync"/> path the runner uses,
-    /// returning (relativePath, lines) for every tracked shell script.
+    /// Walks the filesystem at <paramref name="repoRoot"/>, skipping .git
+    /// directories, and returns (relativePath, lines) for every file classified
+    /// as a shell script by <see cref="ShellScriptClassifier"/>.
     /// </summary>
-    private static async Task<List<(string Path, string[] Lines)>> ReadTrackedFilesAsync(string repoRoot)
+    private static List<(string Path, string[] Lines)> EnumerateProjectScripts(string repoRoot)
     {
-        return await TrackedShellScripts.EnumerateAsync(repoRoot, Git);
+        var results = new List<(string Path, string[] Lines)>();
+        foreach (var full in Directory.EnumerateFiles(repoRoot, "*", SearchOption.AllDirectories))
+        {
+            var rel = Path.GetRelativePath(repoRoot, full);
+            if (IsInsideGitDir(rel))
+                continue;
+            try
+            {
+                var firstLine = ReadFirstLine(full);
+                if (ShellScriptClassifier.IsShellScript(rel, firstLine))
+                    results.Add((rel, File.ReadAllLines(full)));
+            }
+            catch
+            {
+                // skip unreadable files
+            }
+        }
+        return results;
+    }
+
+    private static bool IsInsideGitDir(string rel) =>
+        rel == ".git"
+        || rel.StartsWith(".git/", StringComparison.Ordinal)
+        || rel.StartsWith(".git" + Path.DirectorySeparatorChar, StringComparison.Ordinal);
+
+    private static string? ReadFirstLine(string path)
+    {
+        try
+        {
+            using var reader = new StreamReader(path);
+            return reader.ReadLine();
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>A hashbanged shell script with <paramref name="logicLines"/> echo lines.</summary>

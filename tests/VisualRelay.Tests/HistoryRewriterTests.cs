@@ -1,16 +1,14 @@
 using VisualRelay.Core.CommitLint;
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
-/// Integration tests for <see cref="HistoryRewriter"/> against a real throwaway
-/// git repo (the <see cref="ScratchRepo"/> pattern). They seed commits with
-/// non-conforming messages and varied authors/dates, export them, supply
-/// rewritten messages, replay, and assert the spec invariants: messages now
-/// validate clean, author identity + author dates preserved, branch ref moved,
-/// working tree and index unchanged, a re-run is a no-op, and a merge commit
-/// triggers a clear failure.
+/// Integration tests for <see cref="HistoryRewriter"/> against an in-memory
+/// <see cref="GitSim"/> repo (the <see cref="ScratchRepo"/> pattern). They seed
+/// commits with non-conforming messages and varied authors/dates, export them,
+/// supply rewritten messages, replay, and assert the spec invariants.
 /// </summary>
 public sealed class HistoryRewriterTests
 {
@@ -21,7 +19,7 @@ public sealed class HistoryRewriterTests
     public async Task RewriteAsync_NonConformingHistory_RewritesAllAndPreservesIdentityAndDates()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
 
         // Three non-conforming commits, distinct authors + author dates.
@@ -83,7 +81,7 @@ public sealed class HistoryRewriterTests
     public async Task ReplayAsync_MovesBranchRef_AndLeavesIndexClean()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "Bad subject.",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -110,7 +108,7 @@ public sealed class HistoryRewriterTests
     public async Task RewriteAsync_AlreadyConforming_IsNoOp()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "feat: add alpha\n",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -136,7 +134,7 @@ public sealed class HistoryRewriterTests
     public async Task ReplayAsync_RewrittenMessageStillInvalid_AbortsBeforeWriting()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "Bad subject.",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -162,7 +160,7 @@ public sealed class HistoryRewriterTests
     public async Task ReplayAsync_MissingRewriteForACommit_FailsClearly()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "Bad one.",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -186,7 +184,7 @@ public sealed class HistoryRewriterTests
     public async Task ExportAsync_MergeCommitInRange_FailsClearly()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "feat: base\n",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -202,7 +200,7 @@ public sealed class HistoryRewriterTests
     public async Task ReplayAsync_DirtyWorkingTree_FailsClearly()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "Bad subject.",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -226,7 +224,7 @@ public sealed class HistoryRewriterTests
     public async Task ReplayAsync_CreatesBackupRefBeforeMovingBranch()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "Bad subject.",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");

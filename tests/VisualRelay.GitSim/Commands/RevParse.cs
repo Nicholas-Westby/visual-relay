@@ -19,7 +19,7 @@ internal static partial class GitSimCommands
             return GitSimResult.Ok("true\n");
 
         if (ctx.Has("--show-toplevel"))
-            return GitSimResult.Ok(GitSimRegistry.Normalize(ctx.Root) + "\n");
+            return GitSimResult.Ok(wt.Root + "\n");
 
         var quiet = ctx.Has("--quiet");
         var operand = ctx.Args.Skip(1).LastOrDefault(a => !a.StartsWith('-'));

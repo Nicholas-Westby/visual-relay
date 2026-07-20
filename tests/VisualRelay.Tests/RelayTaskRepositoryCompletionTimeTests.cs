@@ -1,4 +1,3 @@
-using VisualRelay.Core.Execution;
 using VisualRelay.Core.Tasks;
 
 namespace VisualRelay.Tests;
@@ -116,35 +115,31 @@ public sealed class RelayTaskRepositoryCompletionTimeTests
     [Fact]
     public async Task ListCompletedAsync_WithGitInvoker_Tier3ProbesForUnresolvedTasks()
     {
-        using var scratch = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await scratch.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
 
-        Directory.CreateDirectory(Path.Combine(scratch.Root, ".relay"));
+        Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
         await File.WriteAllTextAsync(
-            Path.Combine(scratch.Root, ".relay", "config.json"),
+            Path.Combine(repo.Root, ".relay", "config.json"),
             """{ "testCmd": "dotnet test", "logSources": [] }""");
 
-        var batch1 = Path.Combine(scratch.Root, "llm-tasks", "completed", "batch-1");
-        var batch2 = Path.Combine(scratch.Root, "llm-tasks", "completed", "batch-2");
+        var batch1 = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-1");
+        var batch2 = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-2");
         Directory.CreateDirectory(batch1);
         Directory.CreateDirectory(batch2);
 
         var earlierPath = Path.Combine(batch1, "DONE-earlier.md");
         await File.WriteAllTextAsync(earlierPath, "# Earlier\n");
-        await scratch.SeedCommitAsync(git, "llm-tasks/completed/batch-1/DONE-earlier.md",
-            "# Earlier\n", "feat: earlier",
-            authorDate: "2026-06-01T10:00:00-07:00",
-            committerDate: "2026-06-01T10:00:00-07:00");
+        var earlierDate = new DateTimeOffset(2026, 6, 1, 10, 0, 0, TimeSpan.FromHours(-7));
+        sim.Seed(repo.Root, "llm-tasks/completed/batch-1/DONE-earlier.md", "# Earlier\n");
+        sim.Commit(repo.Root, "feat: earlier", dates: (earlierDate, earlierDate));
 
         var laterPath = Path.Combine(batch2, "DONE-later.md");
         await File.WriteAllTextAsync(laterPath, "# Later\n");
-        await scratch.SeedCommitAsync(git, "llm-tasks/completed/batch-2/DONE-later.md",
-            "# Later\n", "feat: later",
-            authorDate: "2026-06-10T18:00:00-07:00",
-            committerDate: "2026-06-10T18:00:00-07:00");
+        var laterDate = new DateTimeOffset(2026, 6, 10, 18, 0, 0, TimeSpan.FromHours(-7));
+        sim.Seed(repo.Root, "llm-tasks/completed/batch-2/DONE-later.md", "# Later\n");
+        sim.Commit(repo.Root, "feat: later", dates: (laterDate, laterDate));
 
-        var tasks = await new RelayTaskRepository(scratch.Root, git).ListCompletedAsync();
+        var tasks = await new RelayTaskRepository(repo.Root, sim).ListCompletedAsync();
 
         Assert.Equal(2, tasks.Count);
         Assert.Equal("later", tasks[0].Id);

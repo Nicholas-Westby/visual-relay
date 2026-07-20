@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -14,8 +15,10 @@ public sealed class RelayDriverResumeFlaggedWork3Tests
     public async Task CaptureRestore_RoundTrip_PreservesTrackedRelayFiles()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Commit a tracked .relay/config.json at the run base.
         Directory.CreateDirectory(Path.Combine(repo.Root, ".relay"));
@@ -76,8 +79,10 @@ public sealed class RelayDriverResumeFlaggedWork3Tests
     public async Task CaptureRestore_RoundTrip_PreservesExecutableMode_UnderCoreFileModeFalse()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Set core.fileMode=false — the defect scenario.
         await git.RunAsync(repo.Root, ["config", "core.fileMode", "false"], CancellationToken.None,
@@ -144,5 +149,33 @@ public sealed class RelayDriverResumeFlaggedWork3Tests
         // The task's real edit must also be restored.
         Assert.True(File.Exists(featureFile), "Feature file should be restored");
         Assert.Equal("// feature", await File.ReadAllTextAsync(featureFile));
+    }
+
+    [Fact]
+    public async Task FlaggedWorkBundle_Deleted_OnDelete()
+    {
+        using var repo = ScratchRepo.Create();
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
+
+        var taskId = "task-delete";
+        var taskDirectory = Path.Combine(repo.Root, ".relay", taskId);
+        Directory.CreateDirectory(taskDirectory);
+
+        // Create dummy files.
+        var bundlePath = Path.Combine(taskDirectory, "flagged-work.bundle");
+        var sidecarPath = Path.Combine(taskDirectory, "flagged-work.json");
+        await File.WriteAllTextAsync(bundlePath, "dummy");
+        await File.WriteAllTextAsync(sidecarPath, "{}");
+
+        Assert.True(File.Exists(bundlePath));
+        Assert.True(File.Exists(sidecarPath));
+
+        FlaggedWorkStore.Delete(taskDirectory);
+
+        Assert.False(File.Exists(bundlePath));
+        Assert.False(File.Exists(sidecarPath));
     }
 }

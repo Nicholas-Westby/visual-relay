@@ -218,7 +218,7 @@ public sealed class SetupCommitHelperTests
         File.WriteAllText(Path.Combine(repo.Root, ".relay", ".gitignore"),
             RelayGitignoreWriter.Content);
 
-        var diagnostic = await SetupCommitHelper.TryCommitSetupFilesAsync(repo.Root);
+        var diagnostic = await SetupCommitHelper.TryCommitSetupFilesAsync(repo.Root, gitInvoker: new VisualRelay.GitSim.GitSim());
 
         // Must return null — no false diagnostic, no crash.
         Assert.Null(diagnostic);

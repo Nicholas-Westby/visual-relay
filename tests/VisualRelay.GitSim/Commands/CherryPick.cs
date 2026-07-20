@@ -55,6 +55,7 @@ internal static partial class GitSimCommands
                 {
                     conflict = true;
                     StageConflict(index, path, baseEntry?.Mode, baseSha, diskSha, null, null);
+                    WriteConflictFile(wt, path, diskSha, null, theirs: null);
                 }
 
                 continue;
@@ -65,6 +66,7 @@ internal static partial class GitSimCommands
             {
                 conflict = true;
                 StageConflict(index, path, parentEntries.GetValueOrDefault(path)?.Mode, baseSha, diskSha, theirs.Mode, theirs.Sha);
+                WriteConflictFile(wt, path, diskSha, theirs.Sha, theirs: commit);
             }
             else
             {
@@ -91,5 +93,23 @@ internal static partial class GitSimCommands
             index.Set(path, new IndexEntry("100644", oursSha, 2));
         if (theirsSha is not null)
             index.Set(path, new IndexEntry(theirMode ?? "100644", theirsSha, 3));
+    }
+
+    private static void WriteConflictFile(Worktree wt, string path, string? oursSha,
+        string? theirsSha, GitCommit? theirs)
+    {
+        var store = wt.Repo.Objects;
+        var theirsLabel = theirs is not null ? $"cherry-pick of {theirs.Message.Split('\n', 2)[0]}" : "theirs";
+        using var ms = new MemoryStream();
+        using var sw = new StreamWriter(ms, System.Text.Encoding.UTF8);
+        sw.WriteLine("<<<<<<< HEAD");
+        if (oursSha is not null && store.TryGetBlob(oursSha, out var oursBlob))
+            sw.Write(System.Text.Encoding.UTF8.GetString(oursBlob.Content));
+        sw.WriteLine("=======");
+        if (theirsSha is not null && store.TryGetBlob(theirsSha, out var theirsBlob))
+            sw.Write(System.Text.Encoding.UTF8.GetString(theirsBlob.Content));
+        sw.WriteLine($">>>>>>> {theirsLabel}");
+        sw.Flush();
+        WorkingTree.WriteBytes(wt.Root, path, ms.ToArray());
     }
 }

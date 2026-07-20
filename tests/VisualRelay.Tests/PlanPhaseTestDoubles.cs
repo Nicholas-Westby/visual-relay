@@ -49,14 +49,9 @@ internal static class PlanPhaseTestHelpers
     /// Initializes a fresh git repo with a seed commit so worktree creation
     /// has a valid HEAD reference.
     /// </summary>
-    public static void InitGitRepo(string rootPath)
+    public static GitSimEngine InitGitRepo(string rootPath)
     {
-        TestGit.Run(rootPath, "init");
-        TestGit.Run(rootPath, "config", "user.email", "test@example.test");
-        TestGit.Run(rootPath, "config", "user.name", "Test");
-        File.WriteAllText(Path.Combine(rootPath, ".gitkeep"), string.Empty);
-        TestGit.Run(rootPath, "add", ".");
-        TestGit.Run(rootPath, "commit", "-m", "seed");
+        return InitGitSim(rootPath);
     }
 
     /// <summary>

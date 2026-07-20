@@ -27,10 +27,15 @@ internal static partial class GitSimCommands
             return GitSimResult.Ok(JoinPaths(lines, nul));
         }
 
+        // --stage / -s: show mode sha stage\tpath for tracked entries.
+        var stage = ctx.Has("--stage");
+
         if (ctx.Has("--deleted"))
         {
             var deleted = tracked.Where(p => !WorkingTree.FileExists(wt.Root, p)).OrderBy(p => p, StringComparer.Ordinal);
-            return GitSimResult.Ok(JoinPaths(deleted, nul));
+            return GitSimResult.Ok(stage
+                ? JoinPaths(deleted.Select(p => FormatStageEntry(index, p)), nul)
+                : JoinPaths(deleted, nul));
         }
 
         if (ctx.Has("--others"))
@@ -39,12 +44,23 @@ internal static partial class GitSimCommands
         // Tracked listing: bare, pattern, or -- <paths>.
         var patterns = ctx.Pathspecs();
         if (patterns.Count == 0)
-            patterns = ctx.Args.Skip(1).Where(a => !a.StartsWith('-') && a != "--").ToList();
+            patterns = ctx.Args.Skip(1).Where(a => !a.StartsWith('-') && a != "--" && a != "--stage").ToList();
 
         var listed = tracked
             .Where(p => patterns.Count == 0 || patterns.Any(pat => MatchesTracked(p, pat)))
             .OrderBy(p => p, StringComparer.Ordinal);
-        return GitSimResult.Ok(JoinPaths(listed, nul));
+        return GitSimResult.Ok(stage
+            ? JoinPaths(listed.Select(p => FormatStageEntry(index, p)), nul)
+            : JoinPaths(listed, nul));
+    }
+
+    private static string FormatStageEntry(GitIndex index, string path)
+    {
+        // Try stage-0 first; fall back to first unmerged entry.
+        if (index.TryGet(path, out var entry))
+            return $"{entry.Mode} {entry.Sha} {entry.Stage}\t{path}";
+        var unmerged = index.Unmerged.FirstOrDefault(e => e.Path == path);
+        return $"{unmerged.Entry.Mode} {unmerged.Entry.Sha} {unmerged.Entry.Stage}\t{path}";
     }
 
     private static IEnumerable<string> Others(GitSimContext ctx, Worktree wt, HashSet<string> tracked)

@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using GitSimEngine = VisualRelay.GitSim.GitSim;
 
@@ -19,8 +20,8 @@ public sealed class GitBootstrapperTests
         Assert.True(initialized);
         Assert.True(Directory.Exists(Path.Combine(repo.Root, ".git")));
         // HEAD must resolve — PlanningWorktree does `git worktree add --detach <p> HEAD`,
-        // which fails against an unborn HEAD. (TestGit.Run asserts git exit 0.)
-        var head = TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim();
+        // which fails against an unborn HEAD.
+        var head = (await new GitInvoker().RunAsync(repo.Root, ["rev-parse", "HEAD"], CancellationToken.None)).Output.Trim();
         Assert.NotEmpty(head);
     }
 

@@ -24,7 +24,7 @@ public sealed class RelayQueueControllerDrainTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha — will flag in planning\n");
         repo.WriteTask("beta", "# Beta — must still run\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         // Alpha flags at stage 3 (Diagnose).  Beta runs normally.
         var flagAt3 = new FlagAtStageSubagentRunner(flagAtStage: 3);
@@ -36,7 +36,8 @@ public sealed class RelayQueueControllerDrainTests
             new RecordingTaskRunner(),
             planSubagentRunnerFactory: taskId => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -79,7 +80,7 @@ public sealed class RelayQueueControllerDrainTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha — planning artifacts fail to copy\n");
         repo.WriteTask("beta", "# Beta — must still run\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         // Create .relay/alpha as a FILE so CopyArtifactsBack throws.
         var relayDir = Path.Combine(repo.Root, ".relay");
@@ -95,7 +96,8 @@ public sealed class RelayQueueControllerDrainTests
             new RecordingTaskRunner(),
             planSubagentRunnerFactory: taskId => taskId == "alpha" ? flagAt3 : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -166,7 +168,7 @@ public sealed class RelayQueueControllerDrainTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha — WriteNeedsReviewMarker will throw\n");
         repo.WriteTask("beta", "# Beta — must still run\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         // Alpha's subagent flags at stage 3 AND creates NEEDS-REVIEW as a
         // directory in the worktree artifact dir.  After CopyArtifactsBack,
@@ -182,7 +184,8 @@ public sealed class RelayQueueControllerDrainTests
             new RecordingTaskRunner(),
             planSubagentRunnerFactory: taskId => taskId == "alpha" ? poisoner : betaRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();

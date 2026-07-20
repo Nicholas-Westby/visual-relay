@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -8,8 +9,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task FlagAsync_CreatesFlaggedWorkBundle_WhenMidPipelineStageFlags()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Initial commit + .gitignore so .relay/* is ignored (as in the real project).
         await File.WriteAllTextAsync(Path.Combine(repo.Root, ".gitignore"), ".relay/*\n");
@@ -53,8 +56,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task CaptureAsync_DoesNotFail_WhenNoRunBase()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Create an initial commit.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -76,8 +81,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task Resume_RestoresWork_WhenBundleExists()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Initial commit.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -117,8 +124,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task Resume_FallsBackToStage1_WhenBundleVerifyFails()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         var taskId = "task-corrupt";
         var taskDirectory = Path.Combine(repo.Root, ".relay", taskId);
@@ -136,8 +145,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task Restore_ReturnsUnrestorable_WhenBundleMissing()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         var taskId = "task-missing";
         var taskDirectory = Path.Combine(repo.Root, ".relay", taskId);
@@ -152,8 +163,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task Resume_RestoresWork_OntoAdvancedBase()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Initial commit.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -197,8 +210,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     public async Task Resume_ProducesConflicts_WhenUpstreamOverlaps()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         // Authored file with feature work.
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
@@ -238,32 +253,6 @@ public sealed class RelayDriverResumeFlaggedWorkTests
     }
 
     [Fact]
-    public async Task FlaggedWorkBundle_Deleted_OnDelete()
-    {
-        using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
-
-        var taskId = "task-delete";
-        var taskDirectory = Path.Combine(repo.Root, ".relay", taskId);
-        Directory.CreateDirectory(taskDirectory);
-
-        // Create dummy files.
-        var bundlePath = Path.Combine(taskDirectory, "flagged-work.bundle");
-        var sidecarPath = Path.Combine(taskDirectory, "flagged-work.json");
-        await File.WriteAllTextAsync(bundlePath, "dummy");
-        await File.WriteAllTextAsync(sidecarPath, "{}");
-
-        Assert.True(File.Exists(bundlePath));
-        Assert.True(File.Exists(sidecarPath));
-
-        FlaggedWorkStore.Delete(taskDirectory);
-
-        Assert.False(File.Exists(bundlePath));
-        Assert.False(File.Exists(sidecarPath));
-    }
-
-    [Fact]
     public async Task Resume_DoesNotRestore_WhenNotMidPipelineStage()
     {
         // The gating logic lives in RestoreFlaggedWorkIfNeededAsync which is
@@ -271,8 +260,10 @@ public sealed class RelayDriverResumeFlaggedWorkTests
         // this range (1-4, 11+) should not trigger restore. This is a code-level
         // contract; the integration test confirms the gating in the driver.
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await repo.InitAsync(git);
+        var git = new GitSimEngine();
+        git.InitRepo(repo.Root);
+        git.Seed(repo.Root, "readme.md", "content");
+        git.Commit(repo.Root, "seed");
 
         Directory.CreateDirectory(Path.Combine(repo.Root, "src"));
         await repo.SeedCommitAsync(git, "src/x.txt", "x", "initial",

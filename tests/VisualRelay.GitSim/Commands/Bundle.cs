@@ -43,7 +43,14 @@ internal static partial class GitSimCommands
         if (tip is null)
             return GitSimResult.Fatal("Refusing to create empty bundle.");
 
-        File.WriteAllText(path, JsonSerializer.Serialize(BuildBundle(wt.Repo.Objects, refName, tip)));
+        var baseRef = ctx.Args.ElementAtOrDefault(4);
+        string? excludeBase = null;
+        if (baseRef is not null && baseRef.StartsWith('^'))
+        {
+            excludeBase = ResolveRevision(wt, baseRef[1..]);
+        }
+
+        File.WriteAllText(path, JsonSerializer.Serialize(BuildBundle(wt.Repo.Objects, refName, tip, excludeBase)));
         return GitSimResult.Ok($"Created bundle at {path}\n");
     }
 
@@ -69,14 +76,18 @@ internal static partial class GitSimCommands
         return GitSimResult.Ok();
     }
 
-    private static BundleDto BuildBundle(GitObjectStore store, string refName, string tip)
+    private static BundleDto BuildBundle(GitObjectStore store, string refName, string tip, string? excludeBase = null)
     {
         var commits = new List<BundleCommit>();
         var trees = new Dictionary<string, BundleTree>(StringComparer.Ordinal);
         var blobs = new Dictionary<string, string>(StringComparer.Ordinal);
 
+        var excluded = excludeBase is not null ? ReachableFrom(store, excludeBase) : new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var sha in ReachableFrom(store, tip))
         {
+            if (excluded.Contains(sha))
+                continue;
             if (!store.TryGetCommit(sha, out var c))
                 continue;
             commits.Add(new BundleCommit(sha, c.TreeSha, c.Parents.ToList(), ToDto(c.Author), ToDto(c.Committer), c.Message));

@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -10,22 +11,23 @@ public sealed partial class VerifyWorktreeDeletionOverlayTests
         SlowIntegration.SkipIfNotOptedIn();
         var root = Path.Combine(Path.GetTempPath(), "vr-vw-del-dangling-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        var git = new GitInvoker();
         var driver = new RelayDriver(RelayDriverDependencies.ForTests(
-            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), gitInvoker: new GitInvoker()));
+            new ScriptedSubagentRunner(), new ScriptedTestRunner(), new InMemoryRelayEventSink(), gitInvoker: git));
         string? worktree = null;
         try
         {
-            TestGit.Run(root, "init", "-q");
-            TestGit.Run(root, "config", "user.email", "visual-relay@example.test");
-            TestGit.Run(root, "config", "user.name", "Visual Relay Tests");
+            await git.RunAsync(root, ["init", "-q"], CancellationToken.None);
+            await git.RunAsync(root, ["config", "user.email", "visual-relay@example.test"], CancellationToken.None);
+            await git.RunAsync(root, ["config", "user.name", "Visual Relay Tests"], CancellationToken.None);
             // A tracked symlink whose target does NOT exist → dangling once checked out.
             File.CreateSymbolicLink(Path.Combine(root, "link"), "missing-target");
             await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "keep");
-            TestGit.Run(root, "add", ".");
-            TestGit.Run(root, "commit", "-q", "-m", "seed");
+            await git.RunAsync(root, ["add", "."], CancellationToken.None);
+            await git.RunAsync(root, ["commit", "-q", "-m", "seed"], CancellationToken.None);
 
             // Staged removal of the (dangling) tracked symlink.
-            TestGit.Run(root, "rm", "-q", "link");
+            await git.RunAsync(root, ["rm", "-q", "link"], CancellationToken.None);
 
             worktree = await driver.CreateVerifyWorktreeForTestAsync(root, "task-del-dangling", "run-del-dangling", CancellationToken.None);
 

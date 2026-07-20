@@ -12,14 +12,14 @@ namespace VisualRelay.Tests;
 public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
 {
     private readonly string _root;
+    private readonly GitSimEngine _sim;
 
     public SwivalSubagentRunnerManifestExistenceTests()
     {
         _root = Path.Combine(Path.GetTempPath(), "vr-manifest-existence-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_root);
-        TestGit.Run(_root, "init");
-        TestGit.Run(_root, "config", "user.email", "test@example.test");
-        TestGit.Run(_root, "config", "user.name", "Test");
+        _sim = new GitSimEngine();
+        _sim.InitRepo(_root);
     }
 
     public void Dispose()
@@ -104,13 +104,13 @@ public sealed class SwivalSubagentRunnerManifestExistenceTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "src", "status.cs"), "content");
         File.WriteAllText(Path.Combine(_root, ".gitignore"), "src/ghost.cs\n");
         // Re-init so git reads the new .gitignore.
-        TestGit.Run(_root, "add", ".");
-        TestGit.Run(_root, "commit", "-m", "seed");
+        _sim.Seed(_root, ".gitignore", "src/ghost.cs\n");
+        _sim.Commit(_root, "seed");
 
         var json = """{"plan":"edit files","manifest":["src/status.cs","src/ghost.cs"]}""";
 
         var error = await SwivalSubagentRunner.CheckManifestAgainstGitignoreAsync(
-            json, stageNumber: 4, _root, new GitInvoker(), CancellationToken.None);
+            json, stageNumber: 4, _root, _sim, CancellationToken.None);
 
         Assert.NotNull(error);
         Assert.Contains("does not exist", error, StringComparison.Ordinal);

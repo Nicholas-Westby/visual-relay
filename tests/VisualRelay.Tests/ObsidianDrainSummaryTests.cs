@@ -1,6 +1,7 @@
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.ObsidianBridge;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -94,7 +95,7 @@ public sealed class ObsidianDrainSummaryTests : IDisposable
         MainWindowViewModel viewModel, string vaultRoot, string taskId)
     {
         var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(
-            viewModel.RootPath);
+            viewModel.RootPath, gitInvoker: new GitSimEngine());
         var layout = new ObsidianVaultLayout(vaultRoot, repoName);
         // The export is fire-and-forget (_ = ExportSummaryOnCompletion(...)). Wait
         // event-driven (a FileSystemWatcher on the repo dir, not a poll) for the dated

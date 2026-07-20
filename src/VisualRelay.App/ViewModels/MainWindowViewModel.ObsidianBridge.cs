@@ -111,7 +111,7 @@ public partial class MainWindowViewModel
         _bridgeCycleBusy = true;
         try
         {
-            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath);
+            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath, new GitInvoker());
             var layout = new ObsidianVaultLayout(ObsidianVaultRoot, repoName);
             layout.EnsureScaffold();
 
@@ -194,7 +194,7 @@ public partial class MainWindowViewModel
         if (!ObsidianEnabled || string.IsNullOrWhiteSpace(ObsidianVaultRoot)) return;
         try
         {
-            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath);
+            var repoName = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(RootPath, new GitInvoker());
             var layout = new ObsidianVaultLayout(ObsidianVaultRoot, repoName);
             layout.EnsureScaffold();
             var spec = await ResolveTaskSpecAsync(taskId);

@@ -14,7 +14,7 @@ public static class GitBootstrapper
     public static async Task<bool> IsRepositoryAsync(
         string rootPath, IGitInvoker? gitInvoker = null, CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
         var inside = await gi.RunAsync(rootPath, ["rev-parse", "--is-inside-work-tree"], cancellationToken);
         return inside.ExitCode == 0 && inside.Output.Trim().Equals("true", StringComparison.Ordinal);
     }
@@ -28,7 +28,7 @@ public static class GitBootstrapper
     public static async Task<bool> EnsureRepositoryAsync(
         string rootPath, IGitInvoker? gitInvoker = null, CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
 
         var alreadyRepo = await IsRepositoryAsync(rootPath, gi, cancellationToken);
         if (!alreadyRepo)

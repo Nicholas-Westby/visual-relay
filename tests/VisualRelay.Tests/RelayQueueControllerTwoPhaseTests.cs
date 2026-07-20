@@ -16,7 +16,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("alpha", "# Alpha\n");
         repo.WriteTask("beta", "# Beta\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var planRunner = new ScriptedSubagentRunner();
         planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -26,7 +26,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -48,7 +49,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("good", "# Good\n");
         repo.WriteTask("bad-plan", "# Bad plan\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var goodRunner = new ScriptedSubagentRunner();
         goodRunner.SeedHappyPath("src/good.cs", "tests/good.tests.cs");
@@ -59,7 +60,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: taskId => taskId == "bad-plan" ? flagAt3 : goodRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -83,7 +85,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("already-planned", "# Already planned\n");
         repo.WriteTask("fresh", "# Fresh\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         // Pre-populate status for "already-planned".
         var taskDir = Path.Combine(repo.Root, ".relay", "already-planned");
@@ -101,7 +103,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -122,7 +125,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("bad-1", "# Bad 1\n");
         repo.WriteTask("bad-2", "# Bad 2\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var flagAt2 = new FlagAtStageSubagentRunner(flagAtStage: 2);
         var phase2Runner = new RecordingTaskRunner();
@@ -131,7 +134,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             repo.Root, phase2Runner,
             planSubagentRunnerFactory: _ => flagAt2,
             planTestRunner: new ScriptedTestRunner(),
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         var results = await controller.DrainAsync();
@@ -156,7 +160,7 @@ public sealed class RelayQueueControllerTwoPhaseTests
         repo.WriteConfig("dotnet test", []);
         repo.WriteTask("task-1", "# Task 1\n");
         repo.WriteTask("task-2", "# Task 2\n");
-        PlanPhaseTestHelpers.InitGitRepo(repo.Root);
+        var sim = PlanPhaseTestHelpers.InitGitRepo(repo.Root);
 
         var planRunner = new ScriptedSubagentRunner();
         planRunner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
@@ -180,7 +184,8 @@ public sealed class RelayQueueControllerTwoPhaseTests
             planSubagentRunnerFactory: _ => planRunner,
             planTestRunner: new ScriptedTestRunner(),
             lifecycle: lifecycle,
-            environmentAccessor: PlanPhaseTestHelpers.TempXdg);
+            environmentAccessor: PlanPhaseTestHelpers.TempXdg,
+            gitInvoker: sim);
 
         await controller.RefreshAsync();
         await controller.DrainAsync();

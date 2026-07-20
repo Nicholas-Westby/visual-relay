@@ -39,6 +39,9 @@ internal static partial class GitSimCommands
                 case "core.hooksPath":
                     wt.Repo.HooksPath = positional[1];
                     return GitSimResult.Ok();
+                case "core.fileMode":
+                    wt.Repo.CoreFileMode = positional[1];
+                    return GitSimResult.Ok();
                 case "user.name":
                     wt.Repo.Identity = wt.Repo.Identity with { Name = positional[1] };
                     return GitSimResult.Ok();
@@ -46,7 +49,9 @@ internal static partial class GitSimCommands
                     wt.Repo.Identity = wt.Repo.Identity with { Email = positional[1] };
                     return GitSimResult.Ok();
                 default:
-                    return ctx.Unsupported();
+                    // Silently accept unknown config keys — tests set things like
+                    // commit.gpgsign that don't affect the in-memory model.
+                    return GitSimResult.Ok();
             }
         }
 

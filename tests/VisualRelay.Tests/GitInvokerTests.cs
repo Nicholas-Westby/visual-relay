@@ -87,7 +87,7 @@ public sealed class GitInvokerTests
         if (!File.Exists("/usr/bin/git"))
             Assert.Skip("/usr/bin/git not found on this system");
         using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        await new GitInvoker("/usr/bin/git").RunAsync(repo.Root, ["init"], CancellationToken.None);
 
         var invoker = new GitInvoker("/usr/bin/git");
         var result = await invoker.RunAsync(repo.Root, ["status"], CancellationToken.None,
@@ -110,7 +110,7 @@ public sealed class GitInvokerTests
         if (!File.Exists("/usr/bin/git"))
             Assert.Skip("/usr/bin/git not found on this system");
         using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        await new GitInvoker("/usr/bin/git").RunAsync(repo.Root, ["init"], CancellationToken.None);
 
         var invoker = new GitInvoker("/usr/bin/git");
         var result = await invoker.RunAsync(repo.Root, ["status"], CancellationToken.None,
@@ -138,7 +138,7 @@ public sealed class GitInvokerTests
                 "test path that only exists under a real nix-managed macOS environment.");
 
         using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        await new GitInvoker("/usr/bin/git").RunAsync(repo.Root, ["init"], CancellationToken.None);
 
         var invoker = new GitInvoker(nixGit);
         var result = await invoker.RunAsync(repo.Root, ["status"], CancellationToken.None,
@@ -180,7 +180,7 @@ public sealed class GitInvokerTests
     public async Task RunAsync_WithRealGit_ExecutesSuccessfully()
     {
         using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        await new GitInvoker("/usr/bin/git").RunAsync(repo.Root, ["init"], CancellationToken.None);
         File.WriteAllText(Path.Combine(repo.Root, "readme.md"), "hello");
         var invoker = new GitInvoker();
         var result = await invoker.RunAsync(

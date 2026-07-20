@@ -22,19 +22,14 @@ public sealed class CompletionTimeResolverTests
     {
         // Tier 3: when no .relay/<id>/ dir exists, the resolver falls through
         // tiers 1–2 and fires a git log for the committer date.
-        using var scratch = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await scratch.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
 
         // Seed a commit touching a mock DONE markdown with a known committer date.
-        var markdownPath = Path.Combine(scratch.Root, "llm-tasks", "DONE-git-task.md");
-        Directory.CreateDirectory(Path.GetDirectoryName(markdownPath)!);
-        await File.WriteAllTextAsync(markdownPath, "# Git task\n");
-        var committerDate = "2026-06-15T14:30:00-07:00";
-        await scratch.SeedCommitAsync(git, "llm-tasks/DONE-git-task.md", "# Git task\n",
-            "feat: complete git task",
-            authorDate: "2026-06-15T14:30:00-07:00",
-            committerDate: committerDate);
+        var markdownPath = Path.Combine(repo.Root, "llm-tasks", "DONE-git-task.md");
+        var committerDate = new DateTimeOffset(2026, 6, 15, 14, 30, 0, TimeSpan.FromHours(-7));
+        sim.Seed(repo.Root, "llm-tasks/DONE-git-task.md", "# Git task\n");
+        sim.Commit(repo.Root, "feat: complete git task",
+            dates: (committerDate, committerDate));
 
         // Create a task with no .relay dir (tiers 1–2 fail), no CompletedAt set.
         var task = new RelayTaskItem("git-task", markdownPath,
@@ -42,7 +37,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var result = await CompletionTimeResolver.ResolveAsync(
-            task, scratch.Root, git, CancellationToken.None);
+            task, repo.Root, sim, CancellationToken.None);
 
         Assert.NotNull(result);
         // The returned timestamp must match the committer date of the seed commit.
@@ -58,32 +53,28 @@ public sealed class CompletionTimeResolverTests
     public async Task Tier3_GitCommitTime_FollowsRenameIntoCompleted()
     {
         // Verify --follow resolves a rename from <id>.md → completed/batch-n/DONE-<id>.md.
-        using var scratch = ScratchRepo.Create();
-        var git = new GitInvoker();
-        await scratch.InitAsync(git);
+        var (sim, repo) = GitSimTestHelpers.NewRepo();
 
         // First commit: create the file at its original path.
-        var originalPath = Path.Combine(scratch.Root, "llm-tasks", "follow-task.md");
-        Directory.CreateDirectory(Path.GetDirectoryName(originalPath)!);
-        await File.WriteAllTextAsync(originalPath, "# Follow\n");
-        await scratch.SeedCommitAsync(git, "llm-tasks/follow-task.md", "# Follow\n",
-            "feat: create follow task",
-            authorDate: "2026-06-10T10:00:00-07:00",
-            committerDate: "2026-06-10T10:00:00-07:00");
+        var originalPath = Path.Combine(repo.Root, "llm-tasks", "follow-task.md");
+        var firstDate = new DateTimeOffset(2026, 6, 10, 10, 0, 0, TimeSpan.FromHours(-7));
+        sim.Seed(repo.Root, "llm-tasks/follow-task.md", "# Follow\n");
+        sim.Commit(repo.Root, "feat: create follow task",
+            dates: (firstDate, firstDate));
 
         // Second commit: rename to DONE-* and move into completed/batch-1/.
-        var completedDir = Path.Combine(scratch.Root, "llm-tasks", "completed", "batch-1");
+        var completedDir = Path.Combine(repo.Root, "llm-tasks", "completed", "batch-1");
         Directory.CreateDirectory(completedDir);
         var archivedPath = Path.Combine(completedDir, "DONE-follow-task.md");
         File.Move(originalPath, archivedPath);
-        TestGit.Run(scratch.Root, "add", "-A");
+        await sim.RunAsync(repo.Root, ["add", "-A"], CancellationToken.None);
         // Use explicit committer date for the retirement commit.
         var retirementDate = "2026-06-17T22:00:00-07:00";
         var env = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["GIT_COMMITTER_DATE"] = retirementDate,
         };
-        var result = await git.RunAsync(scratch.Root, ["commit", "--no-verify", "-m", "chore: retire follow task"],
+        var result = await sim.RunAsync(repo.Root, ["commit", "--no-verify", "-m", "chore: retire follow task"],
             CancellationToken.None, environment: env);
         Assert.Equal(0, result.ExitCode);
 
@@ -92,7 +83,7 @@ public sealed class CompletionTimeResolverTests
             IsArchived: true);
 
         var resolved = await CompletionTimeResolver.ResolveAsync(
-            task, scratch.Root, git, CancellationToken.None);
+            task, repo.Root, sim, CancellationToken.None);
 
         Assert.NotNull(resolved);
         Assert.Equal(2026, resolved.Value.Year);

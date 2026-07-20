@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -102,9 +103,8 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
 
         using var repo = TestRepository.Create();
         // Set up a real git repo with a .gitignore so git check-ignore works.
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
         File.WriteAllText(Path.Combine(repo.Root, ".gitignore"), "swival.toml\n");
         // Runtime artifact — exists on disk but is gitignored.
         File.WriteAllText(Path.Combine(repo.Root, "swival.toml"), "[runtime]\nkey = \"val\"");
@@ -134,7 +134,7 @@ public sealed partial class SwivalSubagentRunnerContractRetryTests
         {
             SubagentTimeoutMilliseconds = 30_000
         };
-        var runner = new SwivalSubagentRunner(config, new NullGitInvoker(), script, sink, SwivalTestHelpers.AlwaysReady,
+        var runner = new SwivalSubagentRunner(config, sim, script, sink, SwivalTestHelpers.AlwaysReady,
             nonoBinary: await SwivalTestHelpers.WritePassthroughNonoAsync(repo.Root));
 
         var stage4 = RelayStages.All[3]; // stage 4 Plan — produces manifest

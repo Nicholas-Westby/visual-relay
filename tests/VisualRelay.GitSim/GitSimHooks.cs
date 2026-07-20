@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace VisualRelay.GitSim;
 
 /// <summary>
@@ -20,4 +22,34 @@ public sealed record GitSimHookVerdict(bool Accepted, string Message)
 {
     public static GitSimHookVerdict Accept { get; } = new(true, string.Empty);
     public static GitSimHookVerdict Reject(string message) => new(false, message);
+}
+
+/// <summary>
+/// Helpers to manage hook files in the simulated repository's <c>.git/hooks</c>
+/// directory. Hook files live on the real filesystem under the repo root, mirroring
+/// real git's convention.
+/// </summary>
+public static class GitSimHooks
+{
+    private static string HooksDir(string root) =>
+        Path.Combine(root, ".git", "hooks");
+
+    /// <summary>
+    /// Writes <paramref name="content"/> to the hook file at
+    /// <c>&lt;root&gt;/.git/hooks/&lt;hookName&gt;</c>. Creates the hooks directory
+    /// if it does not exist.
+    /// </summary>
+    public static void SetHookFile(string root, string hookName, string content)
+    {
+        var dir = HooksDir(root);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, hookName), content, Encoding.UTF8);
+    }
+
+    /// <summary>
+    /// Whether a hook file exists at
+    /// <c>&lt;root&gt;/.git/hooks/&lt;hookName&gt;</c>.
+    /// </summary>
+    public static bool HasHookFile(string root, string hookName) =>
+        File.Exists(Path.Combine(HooksDir(root), hookName));
 }

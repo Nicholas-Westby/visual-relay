@@ -2,6 +2,7 @@ using System.Text.Json;
 using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Execution;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -153,11 +154,10 @@ public sealed class TestDurationTests
         // Minimal git repo so the stage-5 worktree filter can enumerate.
         Directory.CreateDirectory(Path.Combine(repo.Root, "llm-tasks"));
         await File.WriteAllTextAsync(Path.Combine(repo.Root, "llm-tasks", "a.md"), "# a");
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Test");
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "seed");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        sim.Seed(repo.Root, "llm-tasks/a.md", "# a");
+        sim.Commit(repo.Root, "seed");
 
         var testRunner = new ElapsedTestRunner(
             new TestRunResult(0, "green", Elapsed: TimeSpan.FromSeconds(1.0)));

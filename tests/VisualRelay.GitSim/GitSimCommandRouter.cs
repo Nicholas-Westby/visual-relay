@@ -34,6 +34,7 @@ internal static class GitSimCommandRouter
         "fetch" => GitSimCommands.Fetch(ctx),
         "cherry-pick" => GitSimCommands.CherryPick(ctx),
         "log" => GitSimCommands.Log(ctx),
+        "merge" => GitSimCommands.Merge(ctx),
         "worktree" => GitSimCommands.Worktree(ctx),
         "config" => GitSimCommands.Config(ctx),
         "init" => GitSimCommands.Init(ctx),
@@ -41,6 +42,7 @@ internal static class GitSimCommandRouter
         "var" => GitSimCommands.Var(ctx),
         "tag" => GitSimCommands.Tag(ctx),
         "check-ignore" => GitSimCommands.CheckIgnore(ctx),
+        "update-index" => GitSimCommands.UpdateIndex(ctx),
         _ => ctx.Unsupported(),
     };
 }

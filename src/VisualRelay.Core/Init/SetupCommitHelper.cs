@@ -26,7 +26,7 @@ public static class SetupCommitHelper
         IGitInvoker? gitInvoker = null,
         CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided");
 
         // Skip early when the folder isn't a git repository or has no HEAD yet
         // (GUI CreateConfigAsync on a non-git folder, or before the initial

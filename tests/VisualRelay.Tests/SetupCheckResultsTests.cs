@@ -2,6 +2,7 @@ using System.Text.Json;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -17,8 +18,9 @@ public sealed class SetupCheckResultsTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n\ngo 1.22\n");
         // Exit 127 with no output → rejected (command not found).
         var failingRunner = new ScriptedTestRunner(new TestRunResult(127, ""));
+        var sim = new GitSimEngine();
 
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner);
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim, validationRunner: failingRunner);
 
         Assert.True(result.UsedPlaceholderTestCommand);
         Assert.NotNull(result.SetupCheck);
@@ -44,8 +46,9 @@ public sealed class SetupCheckResultsTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n\ngo 1.22\n");
         var timedOut = new TestRunResult(-1, "partial output before kill\n", TimedOut: true);
         var failingRunner = new ScriptedTestRunner(timedOut);
+        var sim = new GitSimEngine();
 
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failingRunner,
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim, validationRunner: failingRunner,
             validationTimeoutMs: 5000);
 
         Assert.NotNull(result.SetupCheck);
@@ -63,8 +66,9 @@ public sealed class SetupCheckResultsTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n\ngo 1.22\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
+        var sim3 = new GitSimEngine();
 
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: accepting);
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim3, validationRunner: accepting);
 
         Assert.Null(result.SetupCheck);
         Assert.False(result.UsedPlaceholderTestCommand);
@@ -81,7 +85,8 @@ public sealed class SetupCheckResultsTests
         var alwaysFails = new ScriptedTestRunner(
             new TestRunResult(-1, "npm timed out", TimedOut: true),
             new TestRunResult(-1, "go timed out", TimedOut: true));
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: alwaysFails,
+        var sim4 = new GitSimEngine();
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim4, validationRunner: alwaysFails,
             validationTimeoutMs: 10000);
 
         Assert.NotNull(result.SetupCheck);
@@ -104,7 +109,8 @@ public sealed class SetupCheckResultsTests
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n\ngo 1.22\n");
         var output = "some stderr\nfrom failing command\n";
         var failing = new ScriptedTestRunner(new TestRunResult(1, output, TimedOut: true));
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: failing,
+        var sim5 = new GitSimEngine();
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim5, validationRunner: failing,
             validationTimeoutMs: 15000);
 
         Assert.NotNull(result.SetupCheck);
@@ -144,7 +150,8 @@ public sealed class SetupCheckResultsTests
         using var repo = TestRepository.Create();
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n\ngo 1.22\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: accepting);
+        var sim6 = new GitSimEngine();
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim6, validationRunner: accepting);
 
         Assert.Null(result.SetupCheck);
     }

@@ -2,6 +2,7 @@ using VisualRelay.App.ViewModels;
 using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -33,7 +34,7 @@ public sealed partial class MainWindowViewModelTests
         // Greenfield: bootstrap to a placeholder, then a "scaffold task" added a toolchain
         // marker. package.json's scripts.test = "true" keeps the upgrade's real validation
         // hermetic (no node needed — the detected command IS "true", which always exits 0).
-        await ProjectBootstrapper.BootstrapAsync(repo.Root);
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: new GitSimEngine());
         File.WriteAllText(Path.Combine(repo.Root, "package.json"), "{\"scripts\":{\"test\":\"true\"}}");
 
         var viewModel = new MainWindowViewModel { RootPath = repo.Root };

@@ -85,8 +85,10 @@ internal static partial class GitSimCommands
 
     /// <summary>
     /// <c>checkout &lt;rev&gt; -- &lt;path&gt;</c> (overwrite the working tree + index
-    /// with the revision's version) and <c>checkout -- .</c> (restore the working tree
-    /// from the index).
+    /// with the revision's version),
+    /// <c>checkout -b &lt;branch&gt;</c> (create and switch to a new branch at HEAD),
+    /// <c>checkout &lt;branch&gt;</c> (switch to an existing branch),
+    /// and <c>checkout -- .</c> (restore the working tree from the index).
     /// </summary>
     public static GitSimResult Checkout(GitSimContext ctx)
     {
@@ -97,6 +99,19 @@ internal static partial class GitSimCommands
         var index = ctx.Index(wt);
         var pathspecs = ctx.Pathspecs();
         var rest = ctx.Args.Skip(1).ToList();
+
+        // checkout -b <branchname>  — create new branch at HEAD and switch to it.
+        if (ctx.Has("-b"))
+        {
+            var branchName = ctx.ValueAfter("-b")!;
+            var headSha = wt.ResolveHead();
+            if (headSha is null)
+                return GitSimResult.Fatal("cannot create branch: empty HEAD");
+            wt.Repo.Refs["refs/heads/" + branchName] = headSha;
+            wt.Head.PointAt("refs/heads/" + branchName);
+            return GitSimResult.Ok();
+        }
+
         var source = rest.Count > 0 && rest[0] != "--" ? rest[0] : null;
 
         if (source is not null)
@@ -104,6 +119,11 @@ internal static partial class GitSimCommands
             var sourceSha = ResolveRevision(wt, source);
             if (sourceSha is null)
                 return GitSimResult.Fatal($"could not resolve {source}");
+            // If source is a known branch name, attach HEAD to that branch.
+            if (wt.Repo.Refs.TryGetValue("refs/heads/" + source, out _))
+                wt.Head.PointAt("refs/heads/" + source);
+            else
+                wt.Head.Detach(sourceSha);
             var tree = TreeBuilder.FlattenTree(store, TreeBuilder.ResolveTreeSha(store, sourceSha) ?? sourceSha);
             foreach (var (path, entry) in tree)
             {

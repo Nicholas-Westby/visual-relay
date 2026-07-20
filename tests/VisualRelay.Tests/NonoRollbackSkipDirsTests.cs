@@ -1,4 +1,5 @@
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -130,7 +131,8 @@ public sealed class NonoRollbackSkipDirsTests
         Directory.CreateDirectory(root);
         try
         {
-            TestGit.Run(root, "init", "-q");
+            var sim = new GitSimEngine();
+            sim.InitRepo(root);
 
             // Tracked source dir (large but fully tracked → must NOT be skipped).
             Directory.CreateDirectory(Path.Combine(root, "src"));
@@ -142,13 +144,18 @@ public sealed class NonoRollbackSkipDirsTests
             Directory.CreateDirectory(Path.Combine(root, "big"));
             File.WriteAllText(Path.Combine(root, "big", "blob.bin"), new string('z', 8_000));
 
-            // A VR-internal artifact dir that exists on disk.
+            sim.Seed(root, ".gitignore", "big/\n");
+            sim.Seed(root, "src/a.cs", new string('a', 4_000));
+            sim.Seed(root, "src/b.cs", new string('b', 4_000));
+            sim.Commit(root, "seed");
+
+            // Seed the gitignored and artifact dirs (not tracked, but exist on disk).
+            Directory.CreateDirectory(Path.Combine(root, "big"));
+            File.WriteAllText(Path.Combine(root, "big", "blob.bin"), new string('z', 8_000));
             Directory.CreateDirectory(Path.Combine(root, ".relay"));
             File.WriteAllText(Path.Combine(root, ".relay", "state.json"), "{}");
 
-            TestGit.Run(root, "add", ".gitignore", "src/a.cs", "src/b.cs");
-
-            var invoker = new GitInvoker("/usr/bin/git");
+            var invoker = sim;
 
             // Lowered threshold seam so we don't write 256 MB but still exercise the gate.
             var result = await NonoRollbackSkipDirs.ComputeAsync(
@@ -184,19 +191,20 @@ public sealed class NonoRollbackSkipDirsTests
         Directory.CreateDirectory(root);
         try
         {
-            TestGit.Run(root, "init", "-q");
-            File.WriteAllText(Path.Combine(root, ".gitignore"), "big/\n");
-            File.WriteAllText(Path.Combine(root, "tracked.txt"), "x");
+            var sim = new GitSimEngine();
+            sim.InitRepo(root);
+            sim.Seed(root, ".gitignore", "big/\n");
+            sim.Seed(root, "tracked.txt", "x");
+            sim.Commit(root, "seed");
             Directory.CreateDirectory(Path.Combine(root, "big"));
             File.WriteAllText(Path.Combine(root, "big", "blob.bin"), new string('z', 8_000));
-            TestGit.Run(root, "add", ".gitignore", "tracked.txt");
 
-            // gitInvoker: new GitInvoker() — the ignored "big" dir is size-gated in.
+            // gitInvoker: sim — the ignored "big" dir is size-gated in.
             var result = await NonoRollbackSkipDirs.ComputeAsync(
-                root, gitInvoker: new GitInvoker(), CancellationToken.None, thresholdBytes: 1_000);
+                root, gitInvoker: sim, CancellationToken.None, thresholdBytes: 1_000);
 
             Assert.Contains(".git", result);
-            Assert.Contains("big", result); // proves real git ran
+            Assert.Contains("big", result);
         }
         finally
         {

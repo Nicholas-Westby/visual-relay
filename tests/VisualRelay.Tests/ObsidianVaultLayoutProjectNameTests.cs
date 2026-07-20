@@ -1,4 +1,5 @@
 using VisualRelay.Core.ObsidianBridge;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -38,9 +39,10 @@ public sealed class ObsidianVaultLayoutProjectNameTests : IDisposable
         var repo = TempDir();
         var projectDir = Path.Combine(repo, "my-project");
         Directory.CreateDirectory(projectDir);
-        TestGit.Run(projectDir, "init");
+        var sim = new GitSimEngine();
+        sim.InitRepo(projectDir);
 
-        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(projectDir);
+        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(projectDir, gitInvoker: sim);
 
         Assert.Equal("my-project", name);
     }
@@ -55,12 +57,13 @@ public sealed class ObsidianVaultLayoutProjectNameTests : IDisposable
         var repo = TempDir();
         var projectDir = Path.Combine(repo, "my-project");
         Directory.CreateDirectory(projectDir);
-        TestGit.Run(projectDir, "init");
+        var sim = new GitSimEngine();
+        sim.InitRepo(projectDir);
 
         var subDir = Path.Combine(projectDir, "sub", "deep");
         Directory.CreateDirectory(subDir);
 
-        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(subDir);
+        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(subDir, gitInvoker: sim);
 
         Assert.Equal("my-project", name);
     }
@@ -73,8 +76,9 @@ public sealed class ObsidianVaultLayoutProjectNameTests : IDisposable
         var dir = TempDir();
         var leafDir = Path.Combine(dir, "plain-directory");
         Directory.CreateDirectory(leafDir);
+        var sim = new GitSimEngine();
 
-        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(leafDir);
+        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(leafDir, gitInvoker: sim);
 
         Assert.Equal("plain-directory", name);
     }
@@ -87,8 +91,9 @@ public sealed class ObsidianVaultLayoutProjectNameTests : IDisposable
         var dir = TempDir();
         var leafDir = Path.Combine(dir, "graceful-fallback");
         Directory.CreateDirectory(leafDir);
+        var sim = new GitSimEngine();
 
-        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(leafDir);
+        var name = await ObsidianVaultLayout.ResolveProjectFolderNameAsync(leafDir, gitInvoker: sim);
 
         Assert.Equal("graceful-fallback", name);
     }

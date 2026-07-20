@@ -1,16 +1,24 @@
 using VisualRelay.Core.Init;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
 public sealed class HookInstallerTests
 {
+    private static (GitSimEngine Sim, TestRepository Repo) CreateGitSimRepo()
+    {
+        var repo = TestRepository.Create();
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
+        return (sim, repo);
+    }
+
     [Fact]
     public async Task InstallAsync_CreatesPreCommitHook_InDefaultHooksDir()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
 
-        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.True(result.Installed);
         var hookPath = Path.Combine(repo.Root, ".git", "hooks", "pre-commit");
@@ -30,8 +38,9 @@ public sealed class HookInstallerTests
     public async Task InstallAsync_NonGitFolder_ReturnsWarning_WithoutCreatingGitDir()
     {
         using var repo = TestRepository.Create(); // a plain dir, NOT a git repo
+        var sim = new GitSimEngine();
 
-        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.False(result.Installed);
         Assert.NotNull(result.Warning);
@@ -42,13 +51,12 @@ public sealed class HookInstallerTests
     [Fact]
     public async Task InstallAsync_IsIdempotent()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
 
-        var first = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var first = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
         Assert.True(first.Installed);
 
-        var second = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var second = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
         Assert.True(second.Installed, "re-installing should still report Installed=true");
 
         var hookPath = Path.Combine(repo.Root, ".git", "hooks", "pre-commit");
@@ -62,13 +70,12 @@ public sealed class HookInstallerTests
     [Fact]
     public async Task InstallAsync_RespectsCoreHooksPath()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
         var customDir = Path.Combine(repo.Root, "my-hooks");
         Directory.CreateDirectory(customDir);
-        TestGit.Run(repo.Root, "config", "core.hooksPath", "my-hooks");
+        await sim.RunAsync(repo.Root, ["config", "core.hooksPath", "my-hooks"], CancellationToken.None);
 
-        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.True(result.Installed);
         var hookPath = Path.Combine(customDir, "pre-commit");
@@ -80,8 +87,7 @@ public sealed class HookInstallerTests
     [Fact]
     public async Task InstallAsync_PreservesForeignHook()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
         var hooksDir = Path.Combine(repo.Root, ".git", "hooks");
         Directory.CreateDirectory(hooksDir);
         var hookPath = Path.Combine(hooksDir, "pre-commit");
@@ -93,7 +99,7 @@ public sealed class HookInstallerTests
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.False(result.Installed, "should not overwrite a foreign pre-commit hook");
         Assert.NotNull(result.Warning);
@@ -105,8 +111,7 @@ public sealed class HookInstallerTests
     [Fact]
     public async Task InstallAsync_OverwritesVisualRelayOwnedHook()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
         var hooksDir = Path.Combine(repo.Root, ".git", "hooks");
         Directory.CreateDirectory(hooksDir);
         var hookPath = Path.Combine(hooksDir, "pre-commit");
@@ -119,7 +124,7 @@ public sealed class HookInstallerTests
                 UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
         }
 
-        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        var result = await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         Assert.True(result.Installed, "should overwrite a VR-owned pre-commit hook");
         var content = await File.ReadAllTextAsync(hookPath);
@@ -131,15 +136,14 @@ public sealed class HookInstallerTests
     [Fact]
     public async Task InstallAsync_LeavesCommitMsgUntouched()
     {
-        using var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
+        var (sim, repo) = CreateGitSimRepo();
         var hooksDir = Path.Combine(repo.Root, ".git", "hooks");
         Directory.CreateDirectory(hooksDir);
         var commitMsgPath = Path.Combine(hooksDir, "commit-msg");
         var commitMsgContent = "#!/bin/sh\necho 'custom commit-msg'\nexit 0\n";
         await File.WriteAllTextAsync(commitMsgPath, commitMsgContent);
 
-        await HookInstaller.InstallAsync(repo.Root, CancellationToken.None);
+        await HookInstaller.InstallAsync(repo.Root, CancellationToken.None, gitInvoker: sim);
 
         // commit-msg must be left alone (different file, not our concern).
         Assert.True(File.Exists(commitMsgPath));

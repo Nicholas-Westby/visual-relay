@@ -64,7 +64,7 @@ public static class ProjectBootstrapper
         int? validationTimeoutMs = null,
         CancellationToken cancellationToken = default)
     {
-        var gi = gitInvoker ?? new GitInvoker();
+        var gi = gitInvoker ?? throw new InvalidOperationException("GitInvoker is required but was not provided — callers must inject a real or simulated invoker");
         var timeout = validationTimeoutMs is { } ms ? TimeSpan.FromMilliseconds(ms) : InitValidationTimeout;
 
         // 1. Resolve a test command: detect + smoke-validate, else a green placeholder

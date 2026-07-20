@@ -2,17 +2,25 @@ using VisualRelay.Core.Configuration;
 using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 using VisualRelay.Domain;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
 public sealed class ProjectBootstrapperTests
 {
+    private static (TestRepository Repo, GitSimEngine Sim) CreateSimRepo()
+    {
+        var repo = TestRepository.Create();
+        var sim = new GitSimEngine();
+        return (repo, sim);
+    }
+
     [Fact]
     public async Task BootstrapAsync_EmptyFolder_MakesItRunnableWithPlaceholder()
     {
-        using var repo = TestRepository.Create();
+        var (repo, sim) = CreateSimRepo();
 
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root);
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
 
         Assert.True(result.GitInitialized);
         Assert.True(result.UsedPlaceholderTestCommand);
@@ -24,7 +32,8 @@ public sealed class ProjectBootstrapperTests
         Assert.Equal(RelayConfigStatus.Loaded, loaded.Status);
 
         // HEAD resolves (worktrees work) and the authority hook is installed.
-        Assert.NotEmpty(TestGit.Run(repo.Root, "rev-parse", "HEAD").Trim());
+        var head = (await sim.RunAsync(repo.Root, ["rev-parse", "HEAD"], CancellationToken.None)).Output.Trim();
+        Assert.NotEmpty(head);
         Assert.True(File.Exists(Path.Combine(repo.Root, ".git", "hooks", "pre-commit")));
     }
 
@@ -43,11 +52,11 @@ public sealed class ProjectBootstrapperTests
     [Fact]
     public async Task BootstrapAsync_DetectsRealToolchain_DoesNotUsePlaceholder()
     {
-        using var repo = TestRepository.Create();
+        var (repo, sim) = CreateSimRepo();
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module example.com/m\n\ngo 1.22\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
-        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, validationRunner: accepting);
+        var result = await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim, validationRunner: accepting);
 
         Assert.False(result.UsedPlaceholderTestCommand);
         Assert.Contains("go test", result.TestCommand);
@@ -56,8 +65,8 @@ public sealed class ProjectBootstrapperTests
     [Fact]
     public async Task TryUpgrade_PlaceholderConfigGainsToolchain_AdoptsRealCommand()
     {
-        using var repo = TestRepository.Create();
-        await ProjectBootstrapper.BootstrapAsync(repo.Root);
+        var (repo, sim) = CreateSimRepo();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
         // Simulate a scaffold task adding the toolchain marker.
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module example.com/m\n\ngo 1.22\n");
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
@@ -88,8 +97,8 @@ public sealed class ProjectBootstrapperTests
     [Fact]
     public async Task TryUpgrade_NoToolchainMarker_StaysPlaceholder()
     {
-        using var repo = TestRepository.Create();
-        await ProjectBootstrapper.BootstrapAsync(repo.Root);
+        var (repo, sim) = CreateSimRepo();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
         var accepting = new ScriptedTestRunner(new TestRunResult(0, "ok"));
 
         var upgraded = await ProjectBootstrapper.TryUpgradePlaceholderTestCommandAsync(repo.Root, accepting);
@@ -102,8 +111,8 @@ public sealed class ProjectBootstrapperTests
     [Fact]
     public async Task TryUpgrade_PreservesOtherConfigKeys()
     {
-        using var repo = TestRepository.Create();
-        await ProjectBootstrapper.BootstrapAsync(repo.Root);
+        var (repo, sim) = CreateSimRepo();
+        await ProjectBootstrapper.BootstrapAsync(repo.Root, gitInvoker: sim);
         // Set an operator-changed key that the upgrade must preserve.
         RelayConfigWriter.UpsertCommitProofArtifacts(repo.Root, false);
         File.WriteAllText(Path.Combine(repo.Root, "go.mod"), "module m\n");

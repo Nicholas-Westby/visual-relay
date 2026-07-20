@@ -27,7 +27,7 @@ internal static partial class GitSimCommands
             var newest = head is null
                 ? null
                 : OrderByDateDescending(store, ReachableFrom(store, head))
-                    .FirstOrDefault(s => pathspecs.Any(p => CommitChangedPath(store, s, p)));
+                    .FirstOrDefault(s => pathspecs.Any(p => CommitChangedPath(store, s, p, wt.Root)));
             return newest is null ? GitSimResult.Ok() : GitSimResult.Ok(FormatCommit(store, newest, format) + "\n");
         }
 
@@ -56,12 +56,21 @@ internal static partial class GitSimCommands
         return GitSimResult.Ok(string.Concat(shas.Select(s => FormatCommit(store, s, format) + "\n")));
     }
 
-    private static bool CommitChangedPath(GitObjectStore store, string sha, string path)
+    private static bool CommitChangedPath(GitObjectStore store, string sha, string path, string? repoRoot)
     {
         if (!store.TryGetCommit(sha, out var commit))
             return false;
-        var current = TreeBuilder.Lookup(store, commit.TreeSha, path)?.Sha;
-        var previous = commit.Parents.Count > 0 ? TreeBuilder.Lookup(store, commit.Parents[0], path)?.Sha : null;
+        // If the path is absolute, make it relative to the repo root so it
+        // matches the repo-relative paths stored in tree objects.
+        var relPath = path;
+        if (Path.IsPathRooted(path) && repoRoot is not null)
+        {
+            var normalizedRoot = repoRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (path.StartsWith(normalizedRoot, StringComparison.Ordinal))
+                relPath = path[normalizedRoot.Length..].Replace('\\', '/');
+        }
+        var current = TreeBuilder.Lookup(store, commit.TreeSha, relPath)?.Sha;
+        var previous = commit.Parents.Count > 0 ? TreeBuilder.Lookup(store, commit.Parents[0], relPath)?.Sha : null;
         return !string.Equals(current, previous, StringComparison.Ordinal);
     }
 }

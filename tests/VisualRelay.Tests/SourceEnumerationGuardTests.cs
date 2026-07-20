@@ -1,5 +1,6 @@
 using VisualRelay.Core.Execution;
 using VisualRelay.Guards;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
@@ -12,7 +13,6 @@ namespace VisualRelay.Tests;
 /// </summary>
 public sealed class SourceEnumerationGuardTests
 {
-    private static readonly IGitInvoker Git = new GitInvoker();
 
     /// <summary>
     /// On an intact repo, the guard exits 0 and emits no remedy message.
@@ -22,7 +22,7 @@ public sealed class SourceEnumerationGuardTests
     {
         using var repo = CreateRepoWithSources(["src/App.cs", "src/Lib.cs", "tests/App.Tests.cs"]);
 
-        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(0, exitCode);
         Assert.Empty(message);
@@ -43,7 +43,7 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(2, exitCode);
         Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
@@ -73,7 +73,7 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(2, exitCode);
         Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
@@ -96,7 +96,7 @@ public sealed class SourceEnumerationGuardTests
         var allFiles = Directory.GetFiles(repo.Root, "*.cs", SearchOption.AllDirectories);
         File.Delete(allFiles[0]); // delete 1
 
-        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(0, exitCode);
     }
@@ -119,7 +119,7 @@ public sealed class SourceEnumerationGuardTests
         File.WriteAllText(Path.Combine(objDir, "generated.cs"), "// generated");
         File.WriteAllText(Path.Combine(binDir, "leftover.cs"), "// leftover");
 
-        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, _) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(0, exitCode);
     }
@@ -140,7 +140,7 @@ public sealed class SourceEnumerationGuardTests
             File.Delete(f);
         }
 
-        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, Git);
+        var (exitCode, message) = await SourceEnumerationGuard.RunAsync(repo.Root, repo.Sim);
 
         Assert.Equal(2, exitCode);
         Assert.Contains("STALE VIRTIO-FS", message, StringComparison.OrdinalIgnoreCase);
@@ -149,14 +149,13 @@ public sealed class SourceEnumerationGuardTests
     /// <summary>
     /// Creates a temp git repo with the given relative file paths under
     /// <c>src/</c> (and optionally <c>tests/</c>, <c>tools/</c>), commits them,
-    /// and returns a disposable wrapper.
+    /// and returns a disposable wrapper with the GitSim instance.
     /// </summary>
     private static TestRepo CreateRepoWithSources(string[] files)
     {
         var repo = TestRepository.Create();
-        TestGit.Run(repo.Root, "init");
-        TestGit.Run(repo.Root, "config", "user.email", "guard-test@example.test");
-        TestGit.Run(repo.Root, "config", "user.name", "Guard Test");
+        var sim = new GitSimEngine();
+        sim.InitRepo(repo.Root);
 
         foreach (var relPath in files)
         {
@@ -165,16 +164,23 @@ public sealed class SourceEnumerationGuardTests
             File.WriteAllText(fullPath, $"// {relPath}");
         }
 
-        TestGit.Run(repo.Root, "add", ".");
-        TestGit.Run(repo.Root, "commit", "-m", "chore: seed test sources");
+        // Seed and commit each file via GitSim
+        foreach (var relPath in files)
+        {
+            var fullPath = Path.Combine(repo.Root, relPath);
+            var content = File.ReadAllText(fullPath);
+            sim.Seed(repo.Root, relPath, content);
+        }
+        sim.Commit(repo.Root, "chore: seed test sources");
 
-        return new TestRepo(repo);
+        return new TestRepo(repo, sim);
     }
 
-    /// <summary>Wraps <see cref="TestRepository"/> for disposal.</summary>
-    private sealed class TestRepo(TestRepository repo) : IDisposable
+    /// <summary>Wraps <see cref="TestRepository"/> for disposal and holds the GitSim.</summary>
+    private sealed class TestRepo(TestRepository repo, GitSimEngine sim) : IDisposable
     {
         public string Root => repo.Root;
+        public GitSimEngine Sim => sim;
 
         public void Dispose() => repo.Dispose();
     }

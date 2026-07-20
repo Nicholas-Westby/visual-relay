@@ -51,7 +51,8 @@ var controller = new RelayQueueController(
     phase2Runner,
     planSubagentRunnerFactory: PlanSubagentFactory,
     planTestRunner: planTestRunner,
-    planEventSinkFactory: PlanSinkFactory);
+    planEventSinkFactory: PlanSinkFactory,
+    gitInvoker: new GitInvoker());
 
 // ── Refresh and optionally enforce subset/order ──
 await controller.RefreshAsync();

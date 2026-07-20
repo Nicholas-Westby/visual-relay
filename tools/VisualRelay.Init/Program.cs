@@ -1,3 +1,4 @@
+using VisualRelay.Core.Execution;
 using VisualRelay.Core.Init;
 
 var rootPath = Path.GetFullPath(args.Length > 0 ? args[0] : Directory.GetCurrentDirectory());
@@ -10,7 +11,7 @@ if (!Directory.Exists(rootPath))
 // Bootstrap makes the folder runnable: detect (or placeholder) a test command, write
 // .relay/config.json, initialize a git repo with a HEAD commit when missing, and install
 // the pre-commit authority hook. An empty/greenfield folder becomes runnable immediately.
-var result = await ProjectBootstrapper.BootstrapAsync(rootPath);
+var result = await ProjectBootstrapper.BootstrapAsync(rootPath, new GitInvoker());
 
 if (result.HookWarning is not null)
 {

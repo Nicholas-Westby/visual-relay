@@ -2,17 +2,13 @@ using System.Text;
 using VisualRelay.CheckCommitMessage;
 using VisualRelay.Core.CommitLint;
 using VisualRelay.Core.Execution;
+using GitSimEngine = VisualRelay.GitSim.GitSim;
 
 namespace VisualRelay.Tests;
 
 /// <summary>
 /// Integration tests for the <c>--rewrite-history</c> driver mode
-/// (<see cref="RewriteHistoryRunner"/>) against a throwaway git repo. They seed
-/// a mix of conforming and non-conforming commits, drop per-commit rewrite files
-/// into a directory keyed by full sha, run the driver, and assert: the reported
-/// outcome, that every message validates afterwards, that a conforming commit
-/// with no rewrite file keeps its original message verbatim, that author dates
-/// are preserved, and that the usage / missing-directory paths behave.
+/// (<see cref="RewriteHistoryRunner"/>) against an in-memory GitSim repo.
 /// </summary>
 public sealed class RewriteHistoryRunnerTests
 {
@@ -22,7 +18,7 @@ public sealed class RewriteHistoryRunnerTests
     public async Task RunAsync_RewritesNonConformingAndKeepsConformingMessages()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
 
         // c0: non-conforming. c1: already conforming (no file written for it).
@@ -83,7 +79,7 @@ public sealed class RewriteHistoryRunnerTests
     public async Task RunAsync_AllConformingNoFiles_ReportsNoChanges()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "feat: add alpha",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -107,7 +103,7 @@ public sealed class RewriteHistoryRunnerTests
     public async Task RunAsync_NonexistentDirectory_TreatsAsNoRewriteFiles()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "feat: already fine",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
@@ -126,7 +122,7 @@ public sealed class RewriteHistoryRunnerTests
     [Fact]
     public async Task RunAsync_MissingDirectoryArgument_PrintsUsageAndExits2()
     {
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         var (exit, _, stderr) = await RunAsync(git, Directory.GetCurrentDirectory(), []);
 
         Assert.Equal(2, exit);
@@ -137,7 +133,7 @@ public sealed class RewriteHistoryRunnerTests
     public async Task RunAsync_ExportFailure_PrintsErrorAndExits1()
     {
         using var repo = ScratchRepo.Create();
-        var git = new GitInvoker();
+        var git = new GitSimEngine();
         await repo.InitAsync(git);
         await repo.SeedCommitAsync(git, "a.txt", "1", "feat: only commit",
             "2021-01-01T10:00:00", "2021-01-01T10:00:00");
