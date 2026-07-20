@@ -49,6 +49,10 @@ public sealed class RelayDriverVerifyFixConvergenceGuardTests
         Assert.Equal(3, fixVerifyStarts.Count);
         var flagged = sink.Events.Single(e => e.EventName == "flagged");
         Assert.Contains("after 3 fix-verify", flagged.Data?["reason"] ?? "", StringComparison.OrdinalIgnoreCase);
+        // ScriptedSubagentRunner writes no files → equal tree hashes AND identical text → both triggers fire.
+        var warn = sink.Events.FirstOrDefault(e => e.EventName == "verify_identical_failures");
+        Assert.NotNull(warn);
+        Assert.Equal("text,tree", warn!.Data!["trigger"]);
     }
 
     [Fact]

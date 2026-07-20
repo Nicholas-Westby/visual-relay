@@ -57,7 +57,7 @@ public sealed partial class RelayDriver
 
         var runsExecuted = 0;
         SetupCheckResults? lastAttemptSetupChecks = null;
-        var verifySignatures = new List<(string Reason, string OutputPath)>();
+        var verifySignatures = new List<(string Reason, string OutputPath, string TreeHash)>();
         for (var run = 1; run <= maxRuns; run++)
         {
             var tier = StageEscalation.TierForRun(stage.Tier, run);
@@ -183,12 +183,12 @@ public sealed partial class RelayDriver
                 bootstrapDenials: bootstrapFailingResult?.Denials,
                 guardDenials: guardDenials);
             lastAttemptSetupChecks = attemptSetupChecks;
-            var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
+            var (attemptVerifyOutputPath, _, attemptTreeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);
 
             // Record verify failure signature for enriched flag reasons.
             if (check == "red" && !string.IsNullOrWhiteSpace(verifyReason))
             {
-                verifySignatures.Add((verifyReason, attemptVerifyOutputPath ?? string.Empty));
+                verifySignatures.Add((verifyReason, attemptVerifyOutputPath ?? string.Empty, attemptTreeHash));
             }
 
             // Record attempt in ledger with labeled section.
@@ -232,7 +232,7 @@ public sealed partial class RelayDriver
         var exhaustReason = $"verify failed after {runsExecuted} fix-verify {(runsExecuted == 1 ? "attempt" : "attempts")}";
         if (verifySignatures.Count > 0)
         {
-            var (lastReason, lastOutputPath) = verifySignatures[^1];
+            var (lastReason, lastOutputPath, _) = verifySignatures[^1];
             var firstLine = lastReason.Split('\n')[0];
             if (firstLine.Length > 200)
                 firstLine = firstLine[..200];
@@ -243,24 +243,8 @@ public sealed partial class RelayDriver
                 exhaustReason += $" (see {relativePath})";
             }
 
-            // Identical-signature advisory.
-            if (verifySignatures.Count > 1)
-            {
-                var normalized = verifySignatures
-                    .Select(s => NormalizeVerifySignature(s.Reason))
-                    .ToList();
-                if (normalized.All(n => n == normalized[0]))
-                {
-                    exhaustReason += " — identical failure across all attempts; likely environment/harness, not the change";
-                    await _dependencies.EventSink.PublishAsync(new RelayEvent(
-                        DateTimeOffset.UtcNow, "warn", "verify_identical_failures", runId, rootPath, taskId,
-                        stage.Number, stage.Tier,
-                        Data: new Dictionary<string, string>
-                        {
-                            ["message"] = "All fix-verify attempts produced an identical failure signature"
-                        }), cancellationToken);
-                }
-            }
+            exhaustReason = await TryAppendIdenticalFailureAdvisoryAsync(
+                verifySignatures, exhaustReason, runId, rootPath, taskId, stage, cancellationToken);
         }
         var flagDetails = (lastAttemptSetupChecks?.ToSummaryLines() + "\n\n") + failingTestOutput;
         var finalOutcome = await FlagAsync(rootPath, runId, taskId, taskDirectory, stage.Number,
@@ -268,11 +252,16 @@ public sealed partial class RelayDriver
         return (finalOutcome, previousSeal, taskHash, sessionCostUsd, unknownCostStageCount);
     }
 
-    private static string NormalizeVerifySignature(string reason)
+    internal static string NormalizeVerifySignature(string reason)
     {
         if (string.IsNullOrEmpty(reason)) return string.Empty;
         var s = System.Text.RegularExpressions.Regex.Replace(reason, @"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?([+-]\d{2}:\d{2}|Z)?", "");
         s = System.Text.RegularExpressions.Regex.Replace(s, @"""outputFile"":\s*""[^""]*""", "");
+        // Mask standalone digit runs (durations, counts) so they cannot break
+        // equality, mirroring NormalizeForComparison in RepoGuards.cs. Digits
+        // adjacent to ASCII letters (e.g. "Page1") are left intact so different
+        // failing-test names never normalize equal.
+        s = System.Text.RegularExpressions.Regex.Replace(s, @"(?<![A-Za-z])[0-9]+(?![A-Za-z])", "#");
         return System.Text.RegularExpressions.Regex.Replace(s, @"\s+", " ").Trim();
     }
 

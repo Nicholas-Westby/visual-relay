@@ -1,0 +1,1251 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-20T04:09:24.225526+00:00",
+  "task": "# Relay stage 5: Author-tests\nTask: 08-identical-failure-advisory-robust-signatures\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Make the identical-failure advisory fire despite duration and tail noise\n\nThe fix-verify loop appends `\u2014 identical failure across all attempts; likely\nenvironment/harness, not the change` to the flag reason (and publishes a\n`verify_identical_failures` event) when every attempt fails the same way. In\nthe 2026-07-19 patternsmith flag this diagnosis was exactly right \u2014 three\nattempts red on the identical `everySourceFileUnder200Lines()` failure, with\nidentical sealed treeHash \u2014 yet the advisory never fired. The per-attempt\nsignatures were 600-char log TAILS whose durations and interleaved\npassing-test lines differ every run, and `NormalizeVerifySignature` strips\nonly ISO timestamps and `outputFile` values. Give the advisory signature\nsources that are actually stable.\n\n### Evidence (2026-07-19 patternsmith `better-explain-the-1-stuff` flag)\n\n- `RelayDriver.VerifyFix.cs:246-263`: advisory + `verify_identical_failures`\n  event, gated on `normalized.All(n => n == normalized[0])` over the\n  per-attempt reasons collected at `:189-192`.\n- `RelayDriver.VerifyFix.cs:271-277` `NormalizeVerifySignature`: strips\n  ISO-8601 timestamps and `\"outputFile\": \"\u2026\"` values, collapses whitespace.\n  Durations (`after 0.198 seconds`), counts, and all other digit runs\n  survive.\n- The three real attempt signatures (run.log `reason=` entries) were\n  left-trimmed tails each beginning mid-line: `\u2026 after 0.224 seconds. \udbc4\udc5b\n  Test runCapsManyMatchesAndFlagsTruncation() passed \u2026`, `\u2026passed after\n  0.207 seconds. \udbc4\udc5b Test editingInputClearsStaleMatches() passed \u2026`,\n  `\u2026fter 0.198 seconds. \udbc4\udc5b Test contextSnippetExtractsSurroundingLines()\n  passed \u2026`. They differ in durations AND in which concurrently-finishing\n  passing tests landed inside each 600-char window \u2014 so digit-masking alone\n  would NOT have equalized them. run.log contains zero\n  `verify_identical_failures` events for the run.\n- The seals already carried a noise-free equality signal: stage-11 attempts\n  1-3 all sealed treeHash `ddf95628\u2026`. `WorkingTreeHash`\n  (`RelayDriver.Artifacts.cs:157`) fingerprints manifest files only (see\n  the note at `RelayDriver.VerifyObservability.cs:38`), and the per-attempt\n  value is computed at `RelayDriver.VerifyFix.cs:203` right before sealing.\n- In-repo precedent for digit-drift masking: `NormalizeForComparison`\n  (`RelayDriver.RepoGuards.cs:120-123`) replaces standalone digit runs with\n  `#` precisely so count drift (`332 lines` \u2192 `333 lines`) cannot fake a\n  new guard violation.\n\n### What to build\n\n1. **Digit masking in `NormalizeVerifySignature`.** Mask standalone digit\n   runs (reuse or mirror `NormalizeForComparison`) so durations and counts\n   cannot break equality. With companion task\n   `07-surface-failing-test-line-in-flag-reason` landed, the three incident\n   reasons all anchor on the same failing line and normalize identically\n   (`failed after # seconds with # issue`); without 07, masking is\n   necessary but not sufficient (see evidence) \u2014 which is why item 2\n   exists.\n2. **Tree-identity trigger.** Also fire the advisory when every red attempt\n   sealed the SAME treeHash \u2014 identical task-scoped tree in, red out, N\n   times is the environment/harness signature even when the reason text is\n   noisy. Use distinct wording, e.g. `\u2014 tree unchanged across all attempts\n   while verify stayed red; likely environment/harness, not the change`,\n   and document the scope caveat in a comment: equal hash means the\n   MANIFEST files were unchanged, not the whole worktree.\n3. **Event payload names the trigger.** Extend the\n   `verify_identical_failures` event data with which trigger(s) fired\n   (`text`, `tree`, or both) so run.log distinguishes them.\n4. **Regression fixtures replaying the incident.** Three tail-style\n   signatures from the evidence plus equal tree hashes \u21d2 advisory fires via\n   the tree trigger; three anchored-style reasons differing only in digits\n   \u21d2 fires via the text trigger; two genuinely different failures\n   (different failing-test names, different tree hashes) \u21d2 stays silent.\n\n### Constraints\n\n- No false positives: digit masking must mask digit RUNS only, never words\n  \u2014 two different failing-test names must never normalize equal; differing\n  tree hashes with differing text stay silent.\n- Keep the existing text-equality message verbatim and the event name\n  `verify_identical_failures` unchanged (both are grep targets).\n- The advisory still appends to the flag reason AFTER the `(see \u2026)`\n  artifact pointer, preserving today's ordering\n  (`RelayDriver.VerifyFix.cs:239-263`).\n- `RelayDriver.VerifyFix.cs` is ~298 lines against the 300-line file guard\n  \u2014 the new trigger logic almost certainly needs a helper/partial rather\n  than growing this file.\n\n### Tests (red first)\n\n- `NormalizeVerifySignature(\"failed after 0.016 seconds with 1 issue\")` ==\n  `NormalizeVerifySignature(\"failed after 0.019 seconds with 1 issue\")`.\n- Incident replay (tree trigger): three noisy tail signatures + equal\n  per-attempt tree hashes \u21d2 flag reason ends with the tree-trigger wording\n  and exactly one `verify_identical_failures` event is published with\n  `trigger=tree`.\n- Text trigger: three digit-variant anchored reasons, distinct tree hashes\n  \u21d2 existing wording, `trigger=text`.\n- Negative: different failing-test names and different tree hashes \u21d2 no\n  advisory, no event.\n\n### Verification\n\n- `./visual-relay check` fully green.\n\n\n## Manifest\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\nsrc/VisualRelay.Core/Execution/RelayDriver.VerifyFailureAdvisor.cs\ntests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs\ntests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Fix the identical-failure advisory by adding digit-run masking to NormalizeVerifySignature (so durations and counts don't break equality) and a tree-identity trigger (same sealed treeHash across all-red attempts fires the advisory with distinct wording). Extract the advisory logic into a VerifyFailureAdvisor helper to keep VerifyFix.cs under 300 lines. Extend the verify_identical_failures event payload with a `trigger` field (text/tree/both). Add regression fixtures replaying the 2026-07-19 incident (three noisy tail signatures + equal tree hashes \u2192 tree trigger), digit-variant anchored reasons (\u2192 text trigger), and a negative case (different failures \u2192 silent).\",\n  \"options\": [\n    \"Option A \u2014 Inline digit masking + tree check directly in VerifyFix.cs (simplest, single-file change, but pushes close to the 300-line cap)\",\n    \"Option B \u2014 Extract advisory logic into a VerifyFailureAdvisor helper; keeps VerifyFix.cs lean, isolates logic for testing, adds natural home for tree-hash scope comment (recommended)\",\n    \"Option C \u2014 Full extraction with shared SignatureNormalizer utility used by both RepoGuards and VerifyFix, plus parametrized theory tests (most DRY but bigger refactor footprint)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The RelayDriver is a partial class split across ~30 files in `src/VisualRelay.Core/Execution/`. The fix-verify loop and advisory live in `RelayDriver.VerifyFix.cs` (298 lines, dangerously close to the 300-line file guard). The advisory logic (lines 246-263) checks `normalized.All(n => n == normalized[0])` over per-attempt reasons collected at line 191, but the normalization (`NormalizeVerifySignature`, lines 271-277) strips only ISO-8601 timestamps and `outputFile` values \u2014 it does NOT mask digit runs (durations like `0.224 seconds`, counts like `1 issue`). The existing `NormalizeForComparison` in `RepoGuards.cs` (line 120-123) already has the correct digit-run masking regex `(?<![A-Za-z])[0-9]+` \u2192 `#`, usable as a template. Per-attempt tree hashes are computed at VerifyFix.cs:203 (`WorkingTreeHash`, which fingerprints only manifest files' contents per Artifacts.cs:157) and sealed at line 205-208, but are never consulted by the advisory. The tree hash is also available earlier from `PublishVerifyResultAsync`'s return tuple (3rd element). The existing tests in `RelayDriverBaselineVerifyTests.cs` (`VerifyFixLoop_StableFailureSignature_EnrichesReasonWithSignatureAndAdvisory` and `VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly`) cover text-trigger positive/negative paths but not tree-trigger or mixed scenarios. No unit tests exist for `NormalizeVerifySignature` directly. The `RelayEvent` record in `RelayEvent.cs` accepts a `Data: IReadOnlyDictionary<string, string>` bag; existing `verify_identical_failures` event at line 255-261 sets `[\\\"message\\\"]`. Test infrastructure includes `ScriptedTestRunner` (queued `TestRunResult`), `ScriptedSubagentRunner`, `InMemoryRelayEventSink` (captures `Events` list), and `TestRepository`. The `SwivalSubagentRunner.ExtractFailureReason` (FailureDistiller.cs) produces per-attempt reasons from test output; anchored reasons contain the failing-test line at the head.\",\n  \"constraints\": [\n    \"RelayDriver.VerifyFix.cs is ~298 lines \u2014 must not exceed 300-line file guard; extraction to a helper/partial is required\",\n    \"Existing text-trigger message must remain verbatim: '\u2014 identical failure across all attempts; likely environment/harness, not the change'\",\n    \"Event name `verify_identical_failures` must stay unchanged \u2014 both run.log grep targets are fixed\",\n    \"Advisory suffix appends AFTER the `(see \u2026)` artifact pointer, preserving today's ordering at lines 239-263\",\n    \"Digit masking must mask digit RUNS only, never words embedded in ASCII letters \u2014 `NormalizeForComparison` regex `(?<![A-Za-z])[0-9]+(?![A-Za-z])` is the correct pattern; two different failing-test names must never normalize equal\",\n    \"Differing tree hashes with differing text must stay silent (no false positives)\",\n    \"Tree-trigger documentation caveat: equal hash means MANIFEST files were unchanged, not the whole worktree\",\n    \"No pre-existing unit tests for `NormalizeVerifySignature` \u2014 new tests needed\",\n    \"The `verifySignatures` list currently stores `(Reason, OutputPath)` \u2014 must be extended to include TreeHash from PublishVerifyResultAsync's return tuple\",\n    \"The per-attempt tree hash at VerifyFix.cs:203 is computed AFTER signature collection at line 191, but PublishVerifyResultAsync already returns TreeHash \u2014 can capture it at line 186 without computing twice\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"## Root cause\\n\\nThe identical-failure advisory (`RelayDriver.VerifyFix.cs:246-263`) gates on `normalized.All(n => n == normalized[0])` over per-attempt `verifyReason` strings normalized by `NormalizeVerifySignature` (lines 271-277). That normalizer strips only ISO-8601 timestamps and `\\\"outputFile\\\": \\\"\u2026\\\"` values, then collapses whitespace \u2014 it does **not** mask digit runs. The three real incident signatures were 600-char tail-style reasons (`ExtractFailureReason` default `tailChars=600`, `ProcessRunners.Diagnostics.cs:32`). Each tail began mid-line with a different duration (`\u2026 after 0.224 seconds.`, `\u2026passed after 0.207 seconds.`, `\u2026fter 0.198 seconds.`) and contained different interleaved passing-test lines because concurrent test execution land different passing tests inside each 600-char window. Even if digit masking were added, those **different test names** would still break equality \u2014 the tail's content beyond the duration is non-deterministic in a concurrent runner. That's why item 2 (tree-identity trigger) is essential.\\n\\n## Line-level trace\\n\\n1. **Signature collection** (`VerifyFix.cs:186-192`): `PublishVerifyResultAsync` returns `(outputFile, check, treeHash, reason)`. At line 186 the caller destructures as `(attemptVerifyOutputPath, _, _, verifyReason)` \u2014 the **treeHash is discarded**. The `verifySignatures` list (line 60) stores `(string Reason, string OutputPath)` \u2014 no tree hash anywhere.\\n\\n2. **Tree hash recomputed later** (`VerifyFix.cs:203`): `WorkingTreeHash(rootPath, manifest)` is called AFTER signature collection at line 191, so it can't retroactively populate the list. It's sealed at line 205 and never consulted by the advisory.\\n\\n3. **`PublishVerifyResultAsync`** (`VerifyObservability.cs:21-72`): Computes `treeHash` at line 40 via `WorkingTreeHash(rootPath, manifest)` and returns it as the 3rd tuple element (line 71: `return (outputFile, check, treeHash, reason)`). It's already available at line 186 \u2014 just discarded.\\n\\n4. **`WorkingTreeHash`** (`Artifacts.cs:157-168`): Iterates `manifest` files in order, hashing `(relative path, file contents or empty)`. It fingerprints **manifest files only** \u2014 not the whole worktree. Equal hash means same manifest-file contents, not necessarily identical working tree. This scope caveat must appear in a comment on the tree-trigger path.\\n\\n5. **`NormalizeVerifySignature`** (`VerifyFix.cs:271-277`): Three regex replaces: (a) ISO timestamp `\\\\d{4}-\\\\d{2}-\\\\d{2}T\u2026`, (b) `\\\"outputFile\\\": \\\"\u2026\\\"`, (c) whitespace collapse. No digit-run masking.\\n\\n6. **Existing digit-masking precedent** (`RepoGuards.cs:120-123`): `NormalizeForComparison` uses `(?<![A-Za-z])[0-9]+(?![A-Za-z])` \u2192 `#`. Word-boundary lookbehind/lookahead ensures `Page1.cs` vs `Page2.cs` stay distinct. This is the correct pattern for `NormalizeVerifySignature`.\\n\\n7. **Advisory logic** (`VerifyFix.cs:246-263`): Single boolean path: text-only equality. No tree-hash fallback. The `verify_identical_failures` event (lines 255-261) publishes `Data: { [\\\"message\\\"] = \\\"\u2026\\\" }` \u2014 no `trigger` field.\\n\\n8. **File guard**: VerifyFix.cs is exactly 298 lines. The 300-line guard on RelayDriver partials means adding tree-trigger logic (new branch, new event field, new wording) will exceed the cap unless extracted to a helper/partial.\\n\\n9. **Existing test coverage** (`RelayDriverBaselineVerifyTests.cs:83-118`): `VerifyFixLoop_StableFailureSignature_EnrichesReasonWithSignatureAndAdvisory` tests the text-trigger path with identical `MochaNotFound` outputs (no digit variance). `VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly` (line 121) tests the negative path with genuinely different failure names. No test exercises tree-trigger, digit-variant text normalization, or mixed scenarios. No unit tests for `NormalizeVerifySignature` exist.\\n\\n10. **Convergence test** (`RelayDriverVerifyFixConvergenceGuardTests.cs:9-52`): `RunVerifyFixLoop_RedTreeUnchanged_DoesNotEarlyFlag_SpendsAllRunsThenFlags` comment at lines 20-21 explicitly notes: \\\"ScriptedSubagentRunner writes no files \u2014 manifest files never exist, so WorkingTreeHash is identical every attempt.\\\" This test passes today because `ScriptedTestRunner` returns identical output strings AND tree hashes match \u2014 the text trigger fires. In the real incident, identical tree hashes existed but text didn't match.\",\n  \"excerpts\": [\n    \"RelayDriver.VerifyFix.cs:60 \u2014 verifySignatures = new List<(string Reason, string OutputPath)>()  [no tree hash stored]\",\n    \"RelayDriver.VerifyFix.cs:186 \u2014 var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(\u2026)  [treeHash discarded as _]\",\n    \"RelayDriver.VerifyFix.cs:246-263 \u2014 normalized.All(n => n == normalized[0])  [text-only equality, no tree check]\",\n    \"RelayDriver.VerifyFix.cs:271-277 \u2014 NormalizeVerifySignature: strips ISO timestamps + outputFile, NO digit masking\",\n    \"RelayDriver.VerifyFix.cs:203 \u2014 var treeHash = WorkingTreeHash(rootPath, manifest)  [computed after signature collection, never used by advisory]\",\n    \"RelayDriver.VerifyFix.cs:255-261 \u2014 verify_identical_failures event with Data: { [\\\"message\\\"] = \\\"\u2026\\\" }  [no trigger field]\",\n    \"RelayDriver.RepoGuards.cs:120-123 \u2014 NormalizeForComparison: Regex.Replace(line, \\\"(?<![A-Za-z])[0-9]+(?![A-Za-z])\\\", \\\"#\\\")  [correct digit-masking pattern]\",\n    \"RelayDriver.VerifyObservability.cs:21-72 \u2014 PublishVerifyResultAsync returns (outputFile, check, treeHash, reason)  [treeHash available at call site]\",\n    \"RelayDriver.Artifacts.cs:157-168 \u2014 WorkingTreeHash: fingerprints manifest files only (relative path + file contents)\",\n    \"ProcessRunners.Diagnostics.cs:32 \u2014 ExtractFailureReason(output, tailChars = 600)  [600-char tail default]\",\n    \"ProcessRunners.FailureDistiller.cs:80-82 \u2014 anchored reasons use TrimForHead (first N chars); unanchored fallback uses TrimForTail (last N chars)\",\n    \"RelayDriverBaselineVerifyTests.cs:83-118 \u2014 VerifyFixLoop_StableFailureSignature_EnrichesReasonWithSignatureAndAdvisory  [text-trigger test only]\",\n    \"RelayDriverBaselineVerifyTests.cs:121-152 \u2014 VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly  [negative test \u2014 different failure names]\",\n    \"RelayDriverVerifyFixConvergenceGuardTests.cs:9-52 \u2014 RedTreeUnchanged test: identical outputs + identical tree hashes \u2192 advisory fires via text trigger\",\n    \"RelayDriverVerifyFixConvergenceGuardTests.cs:20-21 \u2014 comment: 'ScriptedSubagentRunner writes no files \u2014 manifest files never exist, so WorkingTreeHash is identical'\",\n    \"RelayEvent.cs:3-18 \u2014 Data: IReadOnlyDictionary<string, string>?  [extensible bag, adding \\\"trigger\\\" key is non-breaking]\",\n    \"TestDoubles.cs:133-142 \u2014 InMemoryRelayEventSink.Events: List<RelayEvent>  [captures all published events for assertion]\"\n  ],\n  \"repro\": \"## Reproduction scenario\\n\\nThree fix-verify attempts all red, all with the same sealed `treeHash`, but with 600-char tail-style reasons that differ in durations and interleaved passing-test names:\\n\\n```\\nReason 1: \\\"\u2026 after 0.224 seconds. \u2713 Test runCapsManyMatchesAndFlagsTruncation() passed \u2026\\\"\\nReason 2: \\\"\u2026passed after 0.207 seconds. \u2713 Test editingInputClearsStaleMatches() passed \u2026\\\"\\nReason 3: \\\"\u2026fter 0.198 seconds. \u2713 Test contextSnippetExtractsSurroundingLines() passed \u2026\\\"\\n```\\n\\n1. `NormalizeVerifySignature` processes each: ISO timestamps stripped (none present), `outputFile` values stripped (none in tail), whitespace collapsed. Digit runs (`0.224`, `0.207`, `0.198`) survive \u2192 reasons differ. `normalized.All(n => n == normalized[0])` is **false**.\\n2. Tree-trigger path does not exist \u2192 advisory never fires.\\n3. No `verify_identical_failures` event is published.\\n4. The flag reason carries only `\\\"verify failed after 3 fix-verify attempts \u2014 last: \u2026\\\"` without the advisory suffix.\\n\\n**With companion task 07 landed** (anchored reasons starting with the failing test line): the three reasons would normalize identically after digit masking because they'd be head-anchored on the same `Failed everySourceFileUnder200Lines()` line and differ only in `\\\"after 0.NNN seconds with 1 issue\\\"` \u2192 text trigger fires. **Without 07**, digit masking alone is insufficient because the tail content beyond the duration still differs \u2014 hence the tree trigger is the safety net.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"## Summary\\n\\nFix the identical-failure advisory by adding digit-run masking to `NormalizeVerifySignature` (reusing the `(?<![A-Za-z])[0-9]+(?![A-Za-z])` \u2192 `#` pattern from `NormalizeForComparison`) and a tree-identity trigger that fires when every red attempt sealed the same `treeHash`. Extract the advisory logic into a new `RelayDriver.VerifyFailureAdvisor.cs` partial to keep `VerifyFix.cs` under the 300-line file guard. Extend the `verify_identical_failures` event with a `trigger` field (`\\\"text\\\"`, `\\\"tree\\\"`, or `\\\"text,tree\\\"`). Add four regression tests: digit-masking unit tests, tree-trigger incident replay, text-trigger digit-variant, and a clean negative.\\n\\n---\\n\\n## Step 1: Digit masking in NormalizeVerifySignature (VerifyFix.cs:271-277)\\n\\n- Change `private static` \u2192 `internal static` so tests can call it directly.\\n- Insert a third regex replace between the `outputFile` strip and the whitespace collapse:\\n  ```csharp\\n  s = System.Text.RegularExpressions.Regex.Replace(s, @\\\"(?<![A-Za-z])[0-9]+(?![A-Za-z])\\\", \\\"#\\\");\\n  ```\\n  This mirrors `NormalizeForComparison` in `RelayDriver.RepoGuards.cs:120-123`. Letter-adjacent digits (e.g. `Page1`) are NOT masked, so two different failing-test names never normalize equal.\\n\\n## Step 2: Capture treeHash in verifySignatures (VerifyFix.cs:60, 186, 191, 235)\\n\\n- Line 60: change type to `List<(string Reason, string OutputPath, string TreeHash)>`.\\n- Line 186: destructure `PublishVerifyResultAsync`'s 3rd element into `treeHash` instead of discarding it:\\n  ```csharp\\n  var (attemptVerifyOutputPath, _, treeHash, verifyReason) = await PublishVerifyResultAsync(...);\\n  ```\\n- Line 191: include `treeHash` in the tuple added to `verifySignatures`.\\n- Line 235: destructure the last signature ignoring treeHash:\\n  ```csharp\\n  var (lastReason, lastOutputPath, _) = verifySignatures[^1];\\n  ```\\n\\n## Step 3: Extract advisory logic to new partial (new file: RelayDriver.VerifyFailureAdvisor.cs)\\n\\n- Create `src/VisualRelay.Core/Execution/RelayDriver.VerifyFailureAdvisor.cs` \u2014 a `public sealed partial class RelayDriver` with one method:\\n  ```csharp\\n  private async Task<string> TryAppendIdenticalFailureAdvisoryAsync(\\n      List<(string Reason, string OutputPath, string TreeHash)> verifySignatures,\\n      string exhaustReason, string rootPath, string runId, string taskId,\\n      RelayStageDefinition stage, CancellationToken cancellationToken)\\n  ```\\n- **Early return** when `verifySignatures.Count <= 1` (no advisory for single attempts).\\n- **Text trigger**: compute `normalized` list via `NormalizeVerifySignature`; when `normalized.All(n => n == normalized[0])`, append the EXISTING verbatim wording ` \u2014 identical failure across all attempts; likely environment/harness, not the change` and record trigger `\\\"text\\\"`.\\n- **Tree trigger**: when all `TreeHash` values in `verifySignatures` are equal, append distinct wording ` \u2014 tree unchanged across all attempts while verify stayed red; likely environment/harness, not the change` and record trigger `\\\"tree\\\"`. Include a comment documenting the scope caveat: equal hash means MANIFEST files were unchanged, not the whole worktree.\\n- **Event**: publish a single `verify_identical_failures` event when either trigger fires, with `Data[\\\"trigger\\\"] = string.Join(\\\",\\\", triggers)` (yielding `\\\"text\\\"`, `\\\"tree\\\"`, or `\\\"text,tree\\\"`). The existing `[\\\"message\\\"]` entry stays verbatim.\\n- Both triggers can fire independently in a single call; when both conditions are true the event gets `trigger=text,tree` and the reason gets both advisory suffixes.\\n\\n## Step 4: Wire the helper into VerifyFix.cs\\n\\n- Replace lines 246-263 (the `if (verifySignatures.Count > 1)` advisory block) with:\\n  ```csharp\\n  exhaustReason = await TryAppendIdenticalFailureAdvisoryAsync(\\n      verifySignatures, exhaustReason, rootPath, runId, taskId, stage, cancellationToken);\\n  ```\\n- This keeps the advisory suffix AFTER the `(see \u2026)` artifact pointer, preserving the existing ordering.\\n\\n## Step 5: Update existing tests for the trigger field\\n\\n### RelayDriverBaselineVerifyTests.cs\\n- `VerifyFixLoop_StableFailureSignature_EnrichesReasonWithSignatureAndAdvisory` (line 83): after line 117 (`Assert.NotNull(warn)`), add:\\n  ```csharp\\n  Assert.Equal(\\\"text,tree\\\", warn!.Data![\\\"trigger\\\"]);\\n  ```\\n  (ScriptedSubagentRunner writes no files \u2192 tree hashes equal; identical outputs \u2192 text matches. Both triggers fire.)\\n- `VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly` (line 121): change from `ScriptedSubagentRunner` to `WriteEachAttemptSubagentRunner` so tree hashes DIFFER between attempts (the agent writes distinct `src/app.cs` content each stage-11 call). The existing negative assertions (no advisory text, no event) remain correct because both text AND tree hash differ. Lines 123-124:\\n  ```csharp\\n  var runner = new WriteEachAttemptSubagentRunner(repo.Root, \\\"src/app.cs\\\");\\n  runner.SeedHappyPath(\\\"src/app.cs\\\", \\\"tests/app.tests.cs\\\");\\n  ```\\n\\n### RelayDriverVerifyFixConvergenceGuardTests.cs\\n- `RunVerifyFixLoop_RedTreeUnchanged_DoesNotEarlyFlag_SpendsAllRunsThenFlags` (line 9): after line 51, add assertion on the `flagged` event's reason containing the advisory AND add:\\n  ```csharp\\n  var warn = sink.Events.FirstOrDefault(e => e.EventName == \\\"verify_identical_failures\\\");\\n  Assert.NotNull(warn);\\n  Assert.Equal(\\\"text,tree\\\", warn!.Data![\\\"trigger\\\"]);\\n  ```\\n\\n## Step 6: New regression tests (RelayDriverBaselineVerifyTests.cs)\\n\\n### 6a. NormalizeVerifySignature unit tests\\n- `NormalizeVerifySignature_MasksDigitRuns`: `NormalizeVerifySignature(\\\"failed after 0.016 seconds with 1 issue\\\")` equals `NormalizeVerifySignature(\\\"failed after 0.019 seconds with 1 issue\\\")`.\\n- `NormalizeVerifySignature_DifferentTestNames_StayDistinct`: `NormalizeVerifySignature(\\\"Failed FooTest after 0.1 seconds\\\")` does NOT equal `NormalizeVerifySignature(\\\"Failed BarTest after 0.1 seconds\\\")`.\\n- `NormalizeVerifySignature_StripsIsoTimestamp`: verify ISO-8601 timestamps are stripped.\\n- `NormalizeVerifySignature_StripsOutputFile`: verify `\\\"outputFile\\\": \\\"\u2026\\\"` values are stripped.\\n\\n### 6b. Tree-trigger incident replay\\n- `VerifyFixLoop_IdenticalTreeHashDifferentText_FiresTreeTrigger`: 3 fix-verify attempts, `ScriptedSubagentRunner` (no files \u2192 equal tree hashes), test outputs `\\\"Failed FooTest\\\"` / `\\\"Failed BarTest\\\"` / `\\\"Failed BazTest\\\"` (different test names survive normalization). Assert reason contains `\\\"tree unchanged across all attempts\\\"`, does NOT contain `\\\"identical failure across all attempts\\\"`, one `verify_identical_failures` event with `trigger=tree`.\\n\\n### 6c. Text-trigger with digit variants\\n- `VerifyFixLoop_DigitVariantReasonsDistinctTrees_FiresTextTrigger`: 3 fix-verify attempts, `WriteEachAttemptSubagentRunner` (different tree hashes), test outputs differ only in digit runs: `\\\"Failed after 0.016 seconds with 1 issue\\\"` / `\\\"Failed after 0.019 seconds with 1 issue\\\"` / `\\\"Failed after 0.022 seconds with 1 issue\\\"`. Assert reason contains `\\\"identical failure across all attempts\\\"`, does NOT contain `\\\"tree unchanged across all attempts\\\"`, one event with `trigger=text`.\\n\\n### 6d. Negative: different failures + different trees \u2192 silent\\n- `VerifyFixLoop_DifferentFailuresDifferentTrees_NoAdvisory`: `WriteEachAttemptSubagentRunner` + different test names. Assert no advisory wording in reason, no `verify_identical_failures` event.\\n\\n## Step 7: Verify\\n\\n- Run `./visual-relay check` \u2014 full test suite must be green.\",\n  \"manifest\": [\n    \"src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs\",\n    \"+src/VisualRelay.Core/Execution/RelayDriver.VerifyFailureAdvisor.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs\"\n  ]\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"testFiles\": string[], \"rationale\": string }",
+  "model": "balanced",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 128000,
+    "files": "all",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "Good \u2014 297 lines, under the 300-line file guard. All prerequisites are in place and tests fail as expected. Here's the summary:\n\n```json\n{\n  \"testFiles\": [\n    \"tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs\",\n    \"tests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs\"\n  ],\n  \"rationale\": \"Production prerequisites (tuple extension, treeHash capture, internal static NormalizeVerifySignature) enable test compilation. Eight new test cases added across two test files: NormalizeVerifySignature unit tests (digit masking, different-test-name distinctness, ISO stripping, outputFile stripping), tree-trigger incident replay, text-trigger digit-variant, and negative/different-failures-different-trees. Two existing tests updated: DifferingFailureSignatures switched to WriteEachAttemptSubagentRunner (different tree hashes, no false positive from tree trigger), StableFailureSignature and RedTreeUnchanged both assert trigger=text,tree. All 5 new assertions correctly fail before implementation \u2014 digit masking not implemented, tree trigger not implemented, trigger field not in event payload. Build clean, VerifyFix.cs at 297 lines (under 300-line guard).\"\n}\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 48,
+    "tool_calls_total": 61,
+    "tool_calls_succeeded": 61,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "read_file": {
+        "succeeded": 26,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 15,
+        "failed": 0
+      },
+      "list_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "todo": {
+        "succeeded": 4,
+        "failed": 0
+      },
+      "edit_file": {
+        "succeeded": 10,
+        "failed": 0
+      },
+      "run_command": {
+        "succeeded": 4,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 48,
+    "total_llm_time_s": 383.322,
+    "prompt_cache": {
+      "cached_tokens": 2562688,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 26.994,
+    "skills_used": [],
+    "review_rounds": 0,
+    "todo": {
+      "added": 8,
+      "completed": 8,
+      "remaining": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 5.778,
+      "prompt_tokens_est": 10886,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 18428
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.RepoGuards.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12553
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12106
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 10836
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 4.381,
+      "prompt_tokens_est": 23867,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverTestHelpers.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3644
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Domain/RelayEvent.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2040
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyObservability.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 9608
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 3.677,
+      "prompt_tokens_est": 27802,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class ScriptedSubagentRunner",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.185,
+      "result_length": 141
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "class InMemoryRelayEventSink",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.232,
+      "result_length": 129
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "ExtractFailureReason",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.175,
+      "result_length": 4310
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 3.394,
+      "prompt_tokens_est": 29026,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13645
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.Diagnostics.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 12791
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/ProcessRunners.FailureDistiller.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 8494
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 4.082,
+      "prompt_tokens_est": 37604,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "TrimForTail",
+        "include": "*.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.176,
+      "result_length": 1358
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/SubagentRunnerTestDoubles.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 14450
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 15.271,
+      "prompt_tokens_est": 41623,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "dotnet test",
+        "include": "*.{sh,ps1,md,toml,json,Makefile,yml,yaml}",
+        "path": "/Users/admin/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.123,
+      "result_length": 17
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "*.sh",
+        "path": "/Users/admin/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.141,
+      "result_length": 13
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 3.192,
+      "prompt_tokens_est": 42336,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/test.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 729
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/me.sh"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 908
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "list_files",
+      "arguments": {
+        "pattern": "tests/VisualRelay.Tests/*.csproj",
+        "path": "/Users/admin/Dev/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.151,
+      "result_length": 48
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 3.124,
+      "prompt_tokens_est": 42938,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/VisualRelay.Tests.csproj"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2661
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/visual-relay"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 5560
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 4.082,
+      "prompt_tokens_est": 45625,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\"check\"",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 234
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 2.645,
+      "prompt_tokens_est": 45801,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "CheckCommand",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 205
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 2.13,
+      "prompt_tokens_est": 45919,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands/CheckCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3504
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 13.441,
+      "prompt_tokens_est": 46913,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "\"test\"",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 154
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 2.914,
+      "prompt_tokens_est": 47725,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TestCommand",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli"
+      },
+      "succeeded": true,
+      "duration_s": 0.005,
+      "result_length": 206
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 2.189,
+      "prompt_tokens_est": 47839,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/Commands/TestCommand.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 470
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 2.792,
+      "prompt_tokens_est": 48014,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestRunner",
+        "path": "/Users/admin/Dev/visual-relay/tools"
+      },
+      "succeeded": true,
+      "duration_s": 0.031,
+      "result_length": 93
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 2.516,
+      "prompt_tokens_est": 48089,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 16,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Cli/TestRunner.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 6509
+    },
+    {
+      "turn": 17,
+      "type": "llm_call",
+      "duration_s": 24.97,
+      "prompt_tokens_est": 49744,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 17,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "add",
+        "tasks": [
+          "Make NormalizeVerifySignature internal static",
+          "Extend verifySignatures tuple to include TreeHash (lines 60, 186, 191, 235)",
+          "Write NormalizeVerifySignature unit tests (digit masking, different test names, ISO stripping, outputFile stripping)",
+          "Write tree-trigger incident replay test",
+          "Write text-trigger digit-variant test",
+          "Write negative test: different failures + different trees \u2192 silent",
+          "Compile and run targeted tests to verify they fail",
+          "Update existing tests for new tuple shape and trigger field assertions"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 791
+    },
+    {
+      "turn": 18,
+      "type": "llm_call",
+      "duration_s": 3.618,
+      "prompt_tokens_est": 51513,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 18,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "old_string": "        var verifySignatures = new List<(string Reason, string OutputPath)>();",
+        "new_string": "        var verifySignatures = new List<(string Reason, string OutputPath, string TreeHash)>();"
+      },
+      "succeeded": true,
+      "duration_s": 0.004,
+      "result_length": 112
+    },
+    {
+      "turn": 19,
+      "type": "llm_call",
+      "duration_s": 4.742,
+      "prompt_tokens_est": 51675,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 19,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "old_string": "            var (attemptVerifyOutputPath, _, _, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);",
+        "new_string": "            var (attemptVerifyOutputPath, _, treeHash, verifyReason) = await PublishVerifyResultAsync(rootPath, runId, taskId, taskDirectory, stage, run, config, testResult, manifest, cancellationToken, overrideCheck: check, combinedFailureOutput: attemptFullOutput, setupChecks: attemptSetupChecks);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 112
+    },
+    {
+      "turn": 20,
+      "type": "llm_call",
+      "duration_s": 3.26,
+      "prompt_tokens_est": 51905,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 20,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "new_string": "                verifySignatures.Add((verifyReason, attemptVerifyOutputPath ?? string.Empty, treeHash));",
+        "old_string": "                verifySignatures.Add((verifyReason, attemptVerifyOutputPath ?? string.Empty));"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 21,
+      "type": "llm_call",
+      "duration_s": 3.054,
+      "prompt_tokens_est": 52119,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 21,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "offset": 230,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2445
+    },
+    {
+      "turn": 22,
+      "type": "llm_call",
+      "duration_s": 3.569,
+      "prompt_tokens_est": 52728,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 22,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "old_string": "            var (lastReason, lastOutputPath) = verifySignatures[^1];",
+        "new_string": "            var (lastReason, lastOutputPath, _) = verifySignatures[^1];"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 23,
+      "type": "llm_call",
+      "duration_s": 2.44,
+      "prompt_tokens_est": 52920,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 23,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "old_string": "    private static string NormalizeVerifySignature(string reason)",
+        "new_string": "    internal static string NormalizeVerifySignature(string reason)"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 112
+    },
+    {
+      "turn": 24,
+      "type": "llm_call",
+      "duration_s": 36.336,
+      "prompt_tokens_est": 53100,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 24,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunIsolatedVerifyAsync"
+      },
+      "succeeded": true,
+      "duration_s": 0.186,
+      "result_length": 818
+    },
+    {
+      "turn": 25,
+      "type": "llm_call",
+      "duration_s": 2.664,
+      "prompt_tokens_est": 55540,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 25,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyWorktree.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 17334
+    },
+    {
+      "turn": 26,
+      "type": "llm_call",
+      "duration_s": 3.053,
+      "prompt_tokens_est": 59609,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 26,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RunTestCommandWithRetryAsync",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core"
+      },
+      "succeeded": true,
+      "duration_s": 0.014,
+      "result_length": 589
+    },
+    {
+      "turn": 27,
+      "type": "llm_call",
+      "duration_s": 21.169,
+      "prompt_tokens_est": 59887,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 27,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.Bootstrap.cs",
+        "offset": 60,
+        "limit": 60
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2749
+    },
+    {
+      "turn": 28,
+      "type": "llm_call",
+      "duration_s": 10.625,
+      "prompt_tokens_est": 61818,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 28,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "RetryFlakyVerify"
+      },
+      "succeeded": true,
+      "duration_s": 0.179,
+      "result_length": 1194
+    },
+    {
+      "turn": 29,
+      "type": "llm_call",
+      "duration_s": 2.567,
+      "prompt_tokens_est": 62754,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 29,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "class TestRunResult"
+      },
+      "succeeded": true,
+      "duration_s": 0.177,
+      "result_length": 17
+    },
+    {
+      "turn": 30,
+      "type": "llm_call",
+      "duration_s": 2.468,
+      "prompt_tokens_est": 62850,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 30,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "pattern": "TestRunResult",
+        "path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Domain"
+      },
+      "succeeded": true,
+      "duration_s": 0.003,
+      "result_length": 180
+    },
+    {
+      "turn": 31,
+      "type": "llm_call",
+      "duration_s": 49.337,
+      "prompt_tokens_est": 62939,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 31,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Make NormalizeVerifySignature internal static",
+          "Extend verifySignatures tuple to include TreeHash (lines 60, 186, 191, 235)"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 790
+    },
+    {
+      "turn": 32,
+      "type": "llm_call",
+      "duration_s": 14.214,
+      "prompt_tokens_est": 66419,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 32,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs",
+        "old_string": "    [Fact]\n    public async Task VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"npm test\", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);\n        repo.WriteTask(\"diff-sig\", \"# Diff sig\\n\");\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var tests = new ScriptedTestRunner(\n            new TestRunResult(1, \"red\"),                                    // stage 5\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 first\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 retry\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 gate\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 retry\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 gate\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 retry\n            new TestRunResult(1, MochaNotFound),                            // fv-3 gate\n            new TestRunResult(1, MochaNotFound));                           // fv-3 retry\n        var sink = new InMemoryRelayEventSink();\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"diff-sig\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.NotNull(outcome.Reason);\n        Assert.Contains(\"verify failed after 3 fix-verify attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.Contains(\" \u2014 last: \", outcome.Reason, StringComparison.Ordinal);\n        Assert.Contains(\"mocha: command not found\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"identical failure across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"verify_identical_failures\");\n    }",
+        "new_string": "    [Fact]\n    public async Task VerifyFixLoop_DifferingFailureSignatures_CarriesLastSignatureOnly()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"npm test\", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);\n        repo.WriteTask(\"diff-sig\", \"# Diff sig\\n\");\n        // WriteEachAttemptSubagentRunner writes distinct content each stage-11\n        // invocation so tree hashes DIFFER \u2014 the tree trigger stays silent and only\n        // the text trigger is tested. (A plain ScriptedSubagentRunner writes no\n        // files \u2192 equal tree hashes \u2192 tree trigger would fire when text doesn't,\n        // which is a different scenario.)\n        var runner = new WriteEachAttemptSubagentRunner(repo.Root, \"src/app.cs\");\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var tests = new ScriptedTestRunner(\n            new TestRunResult(1, \"red\"),                                    // stage 5\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 first\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 retry\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 gate\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 retry\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 gate\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 retry\n            new TestRunResult(1, MochaNotFound),                            // fv-3 gate\n            new TestRunResult(1, MochaNotFound));                           // fv-3 retry\n        var sink = new InMemoryRelayEventSink();\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"diff-sig\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.NotNull(outcome.Reason);\n        Assert.Contains(\"verify failed after 3 fix-verify attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.Contains(\" \u2014 last: \", outcome.Reason, StringComparison.Ordinal);\n        Assert.Contains(\"mocha: command not found\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"identical failure across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"tree unchanged across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"verify_identical_failures\");\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 33,
+      "type": "llm_call",
+      "duration_s": 4.584,
+      "prompt_tokens_est": 67701,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 33,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs",
+        "new_string": "        var warn = sink.Events.FirstOrDefault(e => e.Level == \"warn\" && e.EventName == \"verify_identical_failures\");\n        Assert.NotNull(warn);\n        // ScriptedSubagentRunner writes no files \u2192 equal tree hashes AND identical\n        // text \u2192 both triggers fire.\n        Assert.Equal(\"text,tree\", warn!.Data![\"trigger\"]);\n    }",
+        "old_string": "        var warn = sink.Events.FirstOrDefault(e => e.Level == \"warn\" && e.EventName == \"verify_identical_failures\");\n        Assert.NotNull(warn);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 34,
+      "type": "llm_call",
+      "duration_s": 2.946,
+      "prompt_tokens_est": 67948,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 34,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs",
+        "offset": 1,
+        "limit": 55
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 3605
+    },
+    {
+      "turn": 35,
+      "type": "llm_call",
+      "duration_s": 5.509,
+      "prompt_tokens_est": 69015,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 35,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverVerifyFixConvergenceGuardTests.cs",
+        "new_string": "        var flagged = sink.Events.Single(e => e.EventName == \"flagged\");\n        Assert.Contains(\"after 3 fix-verify\", flagged.Data?[\"reason\"] ?? \"\", StringComparison.OrdinalIgnoreCase);\n        // ScriptedSubagentRunner writes no files \u2192 equal tree hashes AND identical text \u2192 both triggers fire.\n        var warn = sink.Events.FirstOrDefault(e => e.EventName == \"verify_identical_failures\");\n        Assert.NotNull(warn);\n        Assert.Equal(\"text,tree\", warn!.Data![\"trigger\"]);\n    }",
+        "old_string": "        var flagged = sink.Events.Single(e => e.EventName == \"flagged\");\n        Assert.Contains(\"after 3 fix-verify\", flagged.Data?[\"reason\"] ?? \"\", StringComparison.OrdinalIgnoreCase);\n    }"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 125
+    },
+    {
+      "turn": 36,
+      "type": "llm_call",
+      "duration_s": 4.997,
+      "prompt_tokens_est": 69296,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 36,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs",
+        "offset": 196
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 544
+    },
+    {
+      "turn": 37,
+      "type": "llm_call",
+      "duration_s": 23.12,
+      "prompt_tokens_est": 69678,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 37,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RelayDriverBaselineVerifyTests.cs",
+        "new_string": "        Assert.Contains(\"mocha: command not found\", item.ReviewReason!, StringComparison.Ordinal);\n    }\n\n    // \u2500\u2500 NormalizeVerifySignature unit tests \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public void NormalizeVerifySignature_MasksDigitRuns()\n    {\n        var a = RelayDriver.NormalizeVerifySignature(\"failed after 0.016 seconds with 1 issue\");\n        var b = RelayDriver.NormalizeVerifySignature(\"failed after 0.019 seconds with 1 issue\");\n        Assert.Equal(a, b);\n    }\n\n    [Fact]\n    public void NormalizeVerifySignature_DifferentTestNames_StayDistinct()\n    {\n        var a = RelayDriver.NormalizeVerifySignature(\"Failed FooTest after 0.1 seconds\");\n        var b = RelayDriver.NormalizeVerifySignature(\"Failed BarTest after 0.1 seconds\");\n        Assert.NotEqual(a, b);\n    }\n\n    [Fact]\n    public void NormalizeVerifySignature_StripsIsoTimestamp()\n    {\n        var a = RelayDriver.NormalizeVerifySignature(\"2025-01-15T10:30:00Z failed TestX\");\n        Assert.DoesNotContain(\"2025\", a, StringComparison.Ordinal);\n        Assert.Contains(\"failed TestX\", a, StringComparison.Ordinal);\n    }\n\n    [Fact]\n    public void NormalizeVerifySignature_StripsOutputFile()\n    {\n        var a = RelayDriver.NormalizeVerifySignature(\n            \"failed FooTest \\\"outputFile\\\": \\\"/tmp/stuff.txt\\\" done\");\n        Assert.DoesNotContain(\"outputFile\", a, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"/tmp/stuff.txt\", a, StringComparison.Ordinal);\n        Assert.Contains(\"failed FooTest\", a, StringComparison.Ordinal);\n        Assert.Contains(\"done\", a, StringComparison.Ordinal);\n    }\n\n    // \u2500\u2500 Tree-trigger incident replay \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task VerifyFixLoop_IdenticalTreeHashDifferentText_FiresTreeTrigger()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"npm test\", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);\n        repo.WriteTask(\"tree-trigger\", \"# Tree trigger\\n\");\n        // ScriptedSubagentRunner writes no files \u2192 equal tree hashes.\n        // Test outputs differ in the test name, so text normalization won't equalize them.\n        var runner = new ScriptedSubagentRunner();\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        var tests = new ScriptedTestRunner(\n            new TestRunResult(1, \"red\"),                                    // stage 5\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 first\n            new TestRunResult(1, \"Failed FooTest\"),                         // stage 10 retry\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 gate\n            new TestRunResult(1, \"Failed BarTest\"),                         // fv-1 retry\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 gate\n            new TestRunResult(1, \"Failed BazTest\"),                         // fv-2 retry\n            new TestRunResult(1, MochaNotFound),                            // fv-3 gate\n            new TestRunResult(1, MochaNotFound));                           // fv-3 retry\n        var sink = new InMemoryRelayEventSink();\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"tree-trigger\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.NotNull(outcome.Reason);\n        Assert.Contains(\"tree unchanged across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"identical failure across all attempts\", outcome.Reason, StringComparison.Ordinal);\n\n        var warn = sink.Events.SingleOrDefault(e => e.EventName == \"verify_identical_failures\");\n        Assert.NotNull(warn);\n        Assert.Equal(\"tree\", warn!.Data![\"trigger\"]);\n    }\n\n    // \u2500\u2500 Text-trigger with digit variants \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task VerifyFixLoop_DigitVariantReasonsDistinctTrees_FiresTextTrigger()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"npm test\", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);\n        repo.WriteTask(\"text-trigger\", \"# Text trigger\\n\");\n        // WriteEachAttemptSubagentRunner writes distinct content \u2192 tree hashes differ.\n        var runner = new WriteEachAttemptSubagentRunner(repo.Root, \"src/app.cs\");\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        // Test outputs differ ONLY in digit runs \u2014 after digit masking they normalize equal.\n        var tests = new ScriptedTestRunner(\n            new TestRunResult(1, \"red\"),                                    // stage 5\n            new TestRunResult(1, \"Failed after 0.016 seconds with 1 issue\"), // stage 10 first\n            new TestRunResult(1, \"Failed after 0.016 seconds with 1 issue\"), // stage 10 retry\n            new TestRunResult(1, \"Failed after 0.019 seconds with 1 issue\"), // fv-1 gate\n            new TestRunResult(1, \"Failed after 0.019 seconds with 1 issue\"), // fv-1 retry\n            new TestRunResult(1, \"Failed after 0.022 seconds with 1 issue\"), // fv-2 gate\n            new TestRunResult(1, \"Failed after 0.022 seconds with 1 issue\"), // fv-2 retry\n            new TestRunResult(1, \"Failed after 0.025 seconds with 1 issue\"), // fv-3 gate\n            new TestRunResult(1, \"Failed after 0.025 seconds with 1 issue\"));// fv-3 retry\n        var sink = new InMemoryRelayEventSink();\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"text-trigger\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.NotNull(outcome.Reason);\n        Assert.Contains(\"identical failure across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"tree unchanged across all attempts\", outcome.Reason, StringComparison.Ordinal);\n\n        var warn = sink.Events.SingleOrDefault(e => e.EventName == \"verify_identical_failures\");\n        Assert.NotNull(warn);\n        Assert.Equal(\"text\", warn!.Data![\"trigger\"]);\n    }\n\n    // \u2500\u2500 Negative: different failures + different trees \u2192 silent \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n    [Fact]\n    public async Task VerifyFixLoop_DifferentFailuresDifferentTrees_NoAdvisory()\n    {\n        using var repo = TestRepository.Create();\n        repo.WriteConfig(\"npm test\", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);\n        repo.WriteTask(\"no-advisory\", \"# No advisory\\n\");\n        // WriteEachAttemptSubagentRunner \u2192 different tree hashes.\n        var runner = new WriteEachAttemptSubagentRunner(repo.Root, \"src/app.cs\");\n        runner.SeedHappyPath(\"src/app.cs\", \"tests/app.tests.cs\");\n        // Different test names AND different tree hashes \u2192 both triggers stay silent.\n        var tests = new ScriptedTestRunner(\n            new TestRunResult(1, \"red\"),                                    // stage 5\n            new TestRunResult(1, \"Failed AlphaTest\"),                       // stage 10 first\n            new TestRunResult(1, \"Failed AlphaTest\"),                       // stage 10 retry\n            new TestRunResult(1, \"Failed BetaTest\"),                        // fv-1 gate\n            new TestRunResult(1, \"Failed BetaTest\"),                        // fv-1 retry\n            new TestRunResult(1, \"Failed GammaTest\"),                       // fv-2 gate\n            new TestRunResult(1, \"Failed GammaTest\"),                       // fv-2 retry\n            new TestRunResult(1, MochaNotFound),                            // fv-3 gate\n            new TestRunResult(1, MochaNotFound));                           // fv-3 retry\n        var sink = new InMemoryRelayEventSink();\n        var driver = new RelayDriver(\n            RelayDriverTestHelpers.DepsFor(repo, runner, tests, sink),\n            RelayDriverOptions.NoGitCommit);\n\n        var outcome = await driver.RunTaskAsync(repo.Root, \"no-advisory\");\n\n        Assert.Equal(RelayTaskOutcomeStatus.Flagged, outcome.Status);\n        Assert.NotNull(outcome.Reason);\n        Assert.DoesNotContain(\"identical failure across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(\"tree unchanged across all attempts\", outcome.Reason, StringComparison.Ordinal);\n        Assert.DoesNotContain(sink.Events, e => e.EventName == \"verify_identical_failures\");\n    }\n}",
+        "old_string": "        Assert.Contains(\"mocha: command not found\", item.ReviewReason!, StringComparison.Ordinal);\n    }\n}"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 114
+    },
+    {
+      "turn": 38,
+      "type": "llm_call",
+      "duration_s": 17.795,
+      "prompt_tokens_est": 72001,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 38,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Write NormalizeVerifySignature unit tests (digit masking, different test names, ISO stripping, outputFile stripping)",
+          "Write tree-trigger incident replay test",
+          "Write text-trigger digit-variant test",
+          "Write negative test: different failures + different trees \u2192 silent",
+          "Update existing tests for new tuple shape and trigger field assertions"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 785
+    },
+    {
+      "turn": 39,
+      "type": "llm_call",
+      "duration_s": 3.561,
+      "prompt_tokens_est": 73216,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 39,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "build",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 4.511,
+      "result_length": 1435
+    },
+    {
+      "turn": 40,
+      "type": "llm_call",
+      "duration_s": 7.452,
+      "prompt_tokens_est": 73750,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 40,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 196,
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "limit": 20
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1334
+    },
+    {
+      "turn": 41,
+      "type": "llm_call",
+      "duration_s": 8.063,
+      "prompt_tokens_est": 74433,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 41,
+      "type": "tool_call",
+      "name": "edit_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "new_string": "            var artifactHash = Hashing.Sha256Hex(stage.Number.ToString(), stage.Name, body);",
+        "old_string": "            var treeHash = WorkingTreeHash(rootPath, manifest);\n            var artifactHash = Hashing.Sha256Hex(stage.Number.ToString(), stage.Name, body);"
+      },
+      "succeeded": true,
+      "duration_s": 0.002,
+      "result_length": 112
+    },
+    {
+      "turn": 42,
+      "type": "llm_call",
+      "duration_s": 11.14,
+      "prompt_tokens_est": 74950,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 42,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "build",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 17.813,
+      "result_length": 1591
+    },
+    {
+      "turn": 43,
+      "type": "llm_call",
+      "duration_s": 4.283,
+      "prompt_tokens_est": 76078,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 43,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "dotnet",
+          "test",
+          "tests/VisualRelay.Tests/VisualRelay.Tests.csproj",
+          "-m:1",
+          "-p:UseSharedCompilation=false",
+          "--filter",
+          "FullyQualifiedName~RelayDriverBaselineVerify|FullyQualifiedName~RelayDriverVerifyFixConvergence",
+          "--no-build"
+        ],
+        "timeout": 120
+      },
+      "succeeded": true,
+      "duration_s": 2.814,
+      "result_length": 4326
+    },
+    {
+      "turn": 44,
+      "type": "llm_call",
+      "duration_s": 10.403,
+      "prompt_tokens_est": 77315,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 44,
+      "type": "tool_call",
+      "name": "todo",
+      "arguments": {
+        "action": "done",
+        "tasks": [
+          "Compile and run targeted tests to verify they fail"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 784
+    },
+    {
+      "turn": 45,
+      "type": "llm_call",
+      "duration_s": 3.172,
+      "prompt_tokens_est": 78149,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 45,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "offset": 55,
+        "limit": 10
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 707
+    },
+    {
+      "turn": 46,
+      "type": "llm_call",
+      "duration_s": 2.996,
+      "prompt_tokens_est": 78425,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 46,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "offset": 183,
+        "file_path": "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs",
+        "limit": 30
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2076
+    },
+    {
+      "turn": 47,
+      "type": "llm_call",
+      "duration_s": 3.382,
+      "prompt_tokens_est": 78941,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 47,
+      "type": "tool_call",
+      "name": "run_command",
+      "arguments": {
+        "command": [
+          "wc",
+          "-l",
+          "/Users/admin/Dev/visual-relay/src/VisualRelay.Core/Execution/RelayDriver.VerifyFix.cs"
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.04,
+      "result_length": 95
+    },
+    {
+      "turn": 48,
+      "type": "llm_call",
+      "duration_s": 6.224,
+      "prompt_tokens_est": 79065,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -115,6 +115,9 @@ public sealed class RelayDriverBaselineVerifyTests
 
         var warn = sink.Events.FirstOrDefault(e => e.Level == "warn" && e.EventName == "verify_identical_failures");
         Assert.NotNull(warn);
+        // ScriptedSubagentRunner writes no files → equal tree hashes AND identical
+        // text → both triggers fire.
+        Assert.Equal("text,tree", warn!.Data!["trigger"]);
     }
 
     [Fact]
@@ -123,7 +126,12 @@ public sealed class RelayDriverBaselineVerifyTests
         using var repo = TestRepository.Create();
         repo.WriteConfig("npm test", [], baselineVerify: false, enableFixVerify: true, maxStageFailures: 3);
         repo.WriteTask("diff-sig", "# Diff sig\n");
-        var runner = new ScriptedSubagentRunner();
+        // WriteEachAttemptSubagentRunner writes distinct content each stage-11
+        // invocation so tree hashes DIFFER — the tree trigger stays silent and only
+        // the text trigger is tested. (A plain ScriptedSubagentRunner writes no
+        // files → equal tree hashes → tree trigger would fire when text doesn't,
+        // which is a different scenario.)
+        var runner = new WriteEachAttemptSubagentRunner(repo.Root, "src/app.cs");
         runner.SeedHappyPath("src/app.cs", "tests/app.tests.cs");
         var tests = new ScriptedTestRunner(
             new TestRunResult(1, "red"),                                    // stage 5
@@ -148,6 +156,7 @@ public sealed class RelayDriverBaselineVerifyTests
         Assert.Contains(" — last: ", outcome.Reason, StringComparison.Ordinal);
         Assert.Contains("mocha: command not found", outcome.Reason, StringComparison.Ordinal);
         Assert.DoesNotContain("identical failure across all attempts", outcome.Reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("tree unchanged across all attempts", outcome.Reason, StringComparison.Ordinal);
         Assert.DoesNotContain(sink.Events, e => e.EventName == "verify_identical_failures");
     }
 
@@ -193,4 +202,5 @@ public sealed class RelayDriverBaselineVerifyTests
         Assert.True(item.NeedsReview);
         Assert.Contains("mocha: command not found", item.ReviewReason!, StringComparison.Ordinal);
     }
+
 }
