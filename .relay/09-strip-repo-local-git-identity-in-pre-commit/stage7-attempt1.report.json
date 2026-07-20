@@ -1,0 +1,487 @@
+{
+  "version": 1,
+  "mode": "oneshot",
+  "timestamp": "2026-07-20T05:00:50.602018+00:00",
+  "task": "# Relay stage 7: Review\nTask: 09-strip-repo-local-git-identity-in-pre-commit\nWorking directory: /Users/admin/Dev/visual-relay/\nProtected paths (queue bookkeeping \u2014 never part of this task's diff): llm-tasks/, .relay/, .swival/\nWrite throwaway artifacts (screenshots, probes, temporary files) to .relay/scratch/.\n\n## Task input\n# Task: Strip repo-local git identity in the pre-commit hook\n\nSomething keeps writing `[user] name/email` into this repo's `.git/config`.\nEvery commit made on any machine \u2014 including automated commits from guest\nVMs and driver runs \u2014 is then stamped `Nicholas-Westby\n<nicholas-westby@users.noreply.github.com>`, because commit authorship is\nplain config metadata: no key, no signature, nothing cryptographic is\ninvolved. The repo must not carry a pinned identity. Make the existing\n`.githooks/pre-commit` self-heal: unset repo-local `user.name` and\n`user.email` on every commit attempt so each machine's own default\nidentity is what lands. This is for the Visual Relay repository ONLY \u2014\nthe hooks Visual Relay provisions into target repositories are untouched.\n\n### Evidence (2026-07-19 guest-VM identity investigation)\n\n- `git config --show-origin --get-all user.name` \u2192 `file:.git/config`\n  is the ONLY source; the guest's global `~/.gitconfig` has no `user.*`\n  section at all. Every recent commit is unsigned (`git log\n  --format='%G?'` \u2192 `N` across the board).\n- `.git/config` mtime was 14:27 the same day \u2014 the values get re-written\n  by something (SmartGit runs in-guest; the setter was not identified).\n  Hunting the setter is OUT of scope: a self-healing hook makes the\n  setter irrelevant.\n- Delivery mechanism already exists: `core.hooksPath` points at\n  `$repo/.githooks` (`pre-commit`, `commit-msg`, `command-guard`). The\n  current `pre-commit` does commit-authority enforcement plus\n  `bump-version`, and sits at **19 logic lines against the 24-line\n  ceiling** (`ShellSizeGuard.DefaultLimit`,\n  `tools/VisualRelay.Guards/ShellSizeGuard.cs:10`; counting rules in\n  `ShellScriptLineCounter.cs` \u2014 blanks, full-line comments, and here-doc\n  bodies are free). The addition has ~5 logic lines of headroom.\n- git reads config once at process start: an unset performed by\n  pre-commit CANNOT change the identity of the in-flight commit. The\n  contract is therefore explicitly **one-commit lag** \u2014 the commit that\n  triggers the strip still carries the stale identity; every commit\n  after it uses the machine default. This is accepted (see decision 2).\n- The machine default is real even with NO `user.*` config anywhere:\n  verified on the guest that a fresh-repo commit succeeds with git's\n  auto-detected ident `Managed via Tart\n  <admin@Manageds-Virtual-Machine.local>` (GECOS full name +\n  `username@hostname`, plus git's one-time advice message). git refuses\n  to commit only where the hostname yields no domain part\n  (`\u2026@host.(none)`), so post-strip commits keep working on these\n  machines \u2014 just distinguishably.\n\n### What to build\n\n1. **Strip at the top of `.githooks/pre-commit`, unconditionally.**\n   Immediately after `repo_root` resolution and BEFORE the active-run\n   branch and `bump-version`, unset repo-local identity so every path \u2014\n   developer commit, driver sealed commit, even a commit the authority\n   check is about to reject \u2014 heals the config. Under `set -euo\n   pipefail`, `git config --local --unset` exits 5 when the key is\n   absent; use the tolerant idiom:\n\n   ```bash\n   stripped=0\n   git config --local --unset user.name 2>/dev/null && stripped=1 || true\n   git config --local --unset user.email 2>/dev/null && stripped=1 || true\n   [[ \"$stripped\" = 0 ]] || echo \"Visual Relay: removed repo-local user.name/user.email \u2014 this commit kept the old identity; the machine default applies from the next commit.\" >&2\n   ```\n\n   Four logic lines, 23/24 total. Keep the warning on ONE physical line:\n   the counter counts backslash-continued lines individually, and shfmt\n   does not enforce line length. If later work needs the headroom back,\n   extract to a tracked `.githooks/identity-guard` helper with its own\n   24-line budget \u2014 do NOT raise the ceiling.\n2. **Strip-and-continue, uniformly. No blocking, no path-splitting.**\n   Rejecting the commit (exit 1, \"re-run\") would make the current commit\n   clean too, but it converts a hygiene event into a failed driver run \u2014\n   `GitCommitter` fails fast on hook rejection by design \u2014 and the house\n   precedent in this exact hook (`bump-version`) is self-heal-and-allow.\n   One lagging commit per re-infection is the accepted cost; the stderr\n   warning above is the audit trail. Do not make this configurable.\n3. **Warn only when something was stripped.** The no-op path stays\n   silent \u2014 this hook runs on every commit and its output is read by\n   humans and by driver logs.\n4. **Nothing else.** No handling of `user.signingkey`, `author.*`,\n   `committer.*`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env overrides; no\n   identity chooser; no `--no-verify` countermeasure (bypass is accepted,\n   same as for the authority check).\n\n### Constraints\n\n- `ShellScriptSizeGuardTests.AllTrackedShellScripts_AreWithinTheLimit`\n  enforces the 24-logic-line ceiling and `ShellFormatGuard` enforces\n  shfmt formatting (tabs) \u2014 both must pass with zero exemptions added.\n- The existing commit-authority behavior (nonce/`RELAY_COMMIT_TOKEN`)\n  and `bump-version` staging are byte-for-byte preserved apart from the\n  inserted block; their tests keep passing.\n- Visual Relay's target-repo hook provisioning is NOT touched. The strip\n  lives only in this repo's own `.githooks/pre-commit`.\n- Scratch/test repos deliberately set local identities\n  (`tests/VisualRelay.Tests/ScratchRepo.cs:27-28` and friends) \u2014 those\n  repos do not use this repo's hooksPath and must remain unaffected.\n\n### Tests (red first)\n\nReal-git integration tests in the style of\n`RealGitIntegrationDriverTests.cs`: temp repo, `core.hooksPath` pointed\nat the real `.githooks`, and \u2014 critical for determinism on machines with\nand without a personal identity \u2014 `GIT_CONFIG_GLOBAL` pinned to a\ntest-owned file and `GIT_CONFIG_SYSTEM=/dev/null` on every git call.\n\n- Infected repo: set local `user.name`/`user.email`, commit. Assert the\n  commit succeeds, stderr carries the warning, and the local config no\n  longer contains either key.\n- Lag contract pinned: with a distinct identity in the test's global\n  config, the first (triggering) commit's author is the OLD local\n  identity and the second commit's author is the global one.\n- Clean repo: no local identity \u2192 commit succeeds, no warning emitted.\n- No-default machine: empty test global config \u2192 assert only the\n  contract that matters and is machine-independent: the post-strip\n  commit NEVER carries the stripped identity. Whether git auto-detects\n  `username@hostname` (macOS `.local` hosts) or refuses (`\u2026@host.(none)`\n  hosts) is hostname-dependent \u2014 accept either outcome, assert the\n  stripped name/email appear in neither the commit nor the error path.\n\n### Verification\n\n- `./visual-relay check` fully green (size guard, shfmt guard, and the\n  authority-hook tests all count as regressions here).\n\n### Operator note (not part of the implementation)\n\nNo machine needs identity setup for this to land: the guest has no\nglobal `user.*` and still commits fine via git's auto-detected\n`Managed via Tart <admin@Manageds-Virtual-Machine.local>` \u2014 which is\nexactly the desired outcome, guest commits become visibly guest-authored.\nOptionally set an explicit global identity in the guest image to pin the\nwording and silence git's one-time auto-ident advice message; that is\npolish, not a prerequisite.\n\n\n## Manifest\n.githooks/pre-commit\ntests/VisualRelay.Tests/PreCommitHookTests.cs\n\n## Prior stages\n## Stage 1 - Ideate\n\n{\n  \"summary\": \"Insert 4 logic lines into `.githooks/pre-commit` (after `repo_root` resolution, before active-run branch) that unconditionally unset repo-local `user.name`/`user.email` with tolerant idiom (`git config --local --unset \u2026 2>/dev/null && stripped=1 || true`), emit a single-physical-line stderr warning only when something was stripped, and continue. This lands at 23/24 logic lines, passes shell size/shfmt guards, and accepts a one-commit lag per re-infection as the architectural trade-off.\",\n  \"options\": [\n    \"Option A \u2014 Inline the 4-line strip block after repo_root resolution (recommended, matches the spec precisely, preserves all existing behaviour, 23/24 logic lines)\",\n    \"Option B \u2014 Extract to a tracked `.githooks/identity-guard` helper immediately (deviates from the spec's 'don't pre-extract' guidance; adds a second file but keeps `pre-commit` headroom for future work)\",\n    \"Option C \u2014 Reject the commit after stripping so the trigger commit is also clean (rejected by the spec: breaks `GitCommitter` fail-fast in driver runs, contravenes bump-version self-heal precedent)\"\n  ]\n}\n\n## Stage 2 - Research\n\n{\n  \"findings\": \"The `.githooks/pre-commit` file (47 lines total, 19 logic lines per ShellScriptLineCounter \u2014 shebang/blank/full-comment/here-doc bodies are free) currently does repo_root resolution \u2192 active-run branch \u2192 bump-version (no-active-run path) \u2192 nonce extraction/token matching \u2192 rejection. The `HookInstaller.cs` contains a *separate* hardcoded simpler hook (lines 15-51) that is installed into *target repos* \u2014 it is NOT touched by this task. The delivery mechanism (`core.hooksPath` \u2192 `.githooks/`) is already in place. The `ShellSizeGuard.DefaultLimit` (24) and `ShellFormatGuard` (shfmt tabs) both enforce on the real `.githooks/pre-commit` via `ShellScriptSizeGuardTests.AllTrackedShellScripts_AreWithinTheLimit`. The `PreCommitHookTests.cs` copies `.githooks/pre-commit` via `RepoSetup.InstallPreCommitHook()` and runs git against it. `RealGitIntegrationTests` already uses `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null` hermetic pattern. `ScratchRepo.cs` lines 27-28 set local identity for *test repos* that do NOT use this repo's hooksPath \u2014 unaffected. The 4-line tolerant-unset idiom (with `stripped=0` guard and single-physical-line stderr warning) adds exactly 4 logic lines, bringing the hook from 19 \u2192 23/24, well under the ceiling.\",\n  \"constraints\": [\n    \"Insertion point: immediately after `repo_root` resolution (line 13) and BEFORE the active-run branch (line 15). The block runs unconditionally on every commit.\",\n    \"Must use tolerant idiom: `git config --local --unset user.name 2>/dev/null && stripped=1 || true` (exit 5 when key absent is harmless).\",\n    \"Warning must be on ONE physical line (backslash continuation counts individually, shfmt does not enforce line length).\",\n    \"No-op path stays completely silent \u2014 warn only when something was actually stripped.\",\n    \"Existing commit-authority behavior (nonce/RELAY_COMMIT_TOKEN) and bump-version staging must be byte-for-byte preserved (tests keep passing).\",\n    \"ShellScriptSizeGuardTests.AllTrackedShellScripts_AreWithinTheLimit must pass with zero exemptions \u2014 23/24 logic lines total.\",\n    \"ShellFormatGuard (shfmt --diff, tabs) must pass \u2014 formatting must use tabs, not spaces.\",\n    \"PreCommitHookTests.cs (NoOp when no active run, rejection/acceptance with token, etc.) must continue passing unchanged.\",\n    \"HookInstaller.cs (target-repo provisioning) is NOT touched \u2014 only this repo's own `.githooks/pre-commit` is modified.\",\n    \"ScratchRepo.cs (sets local identity for test repos) must remain unaffected \u2014 those repos don't use this repo's hooksPath.\",\n    \"No handling of user.signingkey, author.*, committer.*, or GIT_AUTHOR_*/GIT_COMMITTER_* env overrides.\",\n    \"No --no-verify countermeasure \u2014 bypass is accepted.\",\n    \"Not configurable \u2014 unconditional strip-and-continue, never blocking.\",\n    \"One-commit lag is the accepted architectural trade-off: the triggering commit keeps the old identity.\"\n  ]\n}\n\n## Stage 3 - Diagnose\n\n{\n  \"evidence\": \"The `.githooks/pre-commit` hook (47 physical lines, 19 logic lines per ShellScriptLineCounter) needs exactly 4 logic lines inserted between line 13 (`active_info=\u2026`) and line 14 (blank before the active-run branch). The insertion is: `stripped=0`, two `git config --local --unset \u2026 2>/dev/null && stripped=1 || true` lines for user.name/user.email, and a single-physical-line `[[ \\\"$stripped\\\" = 0 ]] || echo \u2026 >&2` warning. The tolerant idiom (`|| true`) avoids `set -euo pipefail` killing the hook when keys are absent (git exits 5). Counting: the 4 lines are all logic lines (none is blank/full-comment/here-doc-body), bringing the total to 23/24 \u2014 under ShellSizeGuard.DefaultLimit (24, pinned at ShellSizeGuard.cs:10 and tested at ShellScriptSizeGuardTests.cs:44). The ShellScriptSizeGuardTests.AllTrackedShellScripts_AreWithinTheLimit test walks all repo files, classifies via ShellScriptClassifier, counts via ShellScriptLineCounter, and asserts all tracked shell scripts \u2264 24 logic lines. ShellFormatGuard runs `shfmt --diff` (no style flags \u2192 tabs). The current file already uses tabs; the new block uses no indentation. The HookInstaller.cs (lines 15-51) contains a SEPARATE hardcoded hook string installed into TARGET repos \u2014 it is NOT modified. PreCommitHookTests.cs and RelayDriverGitCommitTests.cs are exempted from TestRealGitGuard (lines 56,58-60). The repo's `.git/config` currently contains `[user] name= Nicholas-Westby, email= nicholas-westby@users.noreply.github.com` \u2014 the ONLY source of user.name/user.email (`git config --show-origin` confirms `file:.git/config`). The last commit is unsigned (`%G?` \u2192 `N`). `core.hooksPath` is `.githooks/`. The new tests must be hermetic: `GIT_CONFIG_GLOBAL` pinned to a temp file, `GIT_CONFIG_SYSTEM=/dev/null`, following the pattern in RealGitIntegrationTests.cs:46-49. The PreCommitHookTests.RunGitCapture method (lines 140-173) does NOT currently set these env vars, so new tests in that file need to add them. ScratchRepo.cs lines 27-28 set local identity via `git config` for test repos that do NOT use this repo's hooksPath \u2014 unaffected.\",\n  \"excerpts\": [\n    \".githooks/pre-commit:12-20 \u2014 The insertion point. Line 12 resolves repo_root, line 13 sets active_info, line 15 begins the active-run branch. The new 4-line block goes between lines 13 and 14.\",\n    \"tools/VisualRelay.Guards/ShellSizeGuard.cs:10 \u2014 `public const int DefaultLimit = 24;` \u2014 the ceiling enforced by the guard-as-test.\",\n    \"tools/VisualRelay.Guards/ShellScriptLineCounter.cs:46-56 \u2014 Blank lines (trimmed length 0) and full-line comments (trimmed[0]=='#') are excluded from the logic-line count. Here-doc bodies (lines 40-44) are also excluded. Everything else counts.\",\n    \"tests/VisualRelay.Tests/ShellScriptSizeGuardTests.cs:23-31 \u2014 `AllTrackedShellScripts_AreWithinTheLimit()` walks the entire repo, classifies shell scripts, and asserts zero violations at the resolved limit. This test will fail if the insertion exceeds 24 logic lines.\",\n    \"tools/VisualRelay.Guards/ShellFormatGuard.cs:5-10 \u2014 Runs `shfmt --diff` with no style flags, enforcing shfmt defaults (tabs). The insertion must use tabs for any indentation.\",\n    \"src/VisualRelay.Core/Init/HookInstaller.cs:15-51 \u2014 A SEPARATE hardcoded `HookContent` string (the hook installed into TARGET repos). Has its own copy of the pre-commit logic without bump-version. NOT touched by this task.\",\n    \"tests/VisualRelay.Tests/RealGitIntegrationTests.cs:42-49 \u2014 Hermetic git pattern: `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_TERMINAL_PROMPT=0`. The new identity-strip tests must follow this pattern.\",\n    \"tests/VisualRelay.Tests/PreCommitHookTests.cs:95-124 \u2014 `CreateRepoWithHook()` uses `TestRepository.Create()`, `git init`, `git config user.name/email` (writes to repo-local `.git/config`), then `RepoSetup.InstallPreCommitHook()` which copies `.githooks/pre-commit` into `.git/hooks/`. The `RunGitCapture` method (lines 140-173) does NOT set GIT_CONFIG_GLOBAL/SYSTEM \u2014 new tests using this helper must add them.\",\n    \"tests/VisualRelay.Tests/ScratchRepo.cs:24-29 \u2014 `InitAsync` calls `git config user.name`/`user.email` which writes to repo-local `.git/config`. These repos do NOT use this repo's hooksPath and are unaffected.\",\n    \"tools/VisualRelay.Guards/TestRealGitGuard.cs:35-67 \u2014 PreCommitHookTests.cs is in the exempt list (line 56), confirming real-git usage in that file is allowed.\"\n  ],\n  \"repro\": \"1. Read `.githooks/pre-commit`: 47 lines, insertion point is between line 13 `active_info=\u2026` and line 14 (blank).\\n2. Trace through ShellScriptLineCounter logic: hashbang (free), full-line comments (free), blanks (free), here-doc body lines 42-45 (free), everything else counts \u2192 19 logic lines.\\n3. The 4-line block: `stripped=0` (logic), `git config --local --unset user.name 2>/dev/null && stripped=1 || true` (logic), `git config --local --unset user.email 2>/dev/null && stripped=1 || true` (logic), `[[ \\\"$stripped\\\" = 0 ]] || echo \\\"\u2026\\\" >&2` (logic) \u2192 4 logic lines. 19+4=23 \u2264 24.\\n4. Run `./visual-relay check` after insertion: ShellScriptSizeGuardTests asserts 23 \u2264 24 \u2192 passes. ShellFormatGuard runs shfmt --diff \u2192 must produce no diff.\\n5. PreCommitHookTests existing suite must continue passing: the strip runs BEFORE the active-run branch, so it runs unconditionally on every commit path \u2014 no path-splitting, no blocking.\\n6. New tests: temp repo, `core.hooksPath` \u2192 real `.githooks/`, `GIT_CONFIG_GLOBAL` pinned to test-owned file, `GIT_CONFIG_SYSTEM=/dev/null`. Infected repo \u2192 commit succeeds, stderr carries warning, `.git/config` no longer has user.name/email. Clean repo \u2192 no warning. Lag contract \u2192 first commit carries old identity, second carries new identity.\"\n}\n\n## Stage 4 - Plan\n\n{\n  \"plan\": \"1. Insert 4-logic-line identity-strip block (plus 3 free comment lines + blank) into `.githooks/pre-commit` after line 13 (`active_info=\u2026`), before the active-run `if`. The block unconditionally unsets repo-local `user.name`/`user.email` using the tolerant `2>/dev/null && stripped=1 || true` idiom, emits a single-physical-line stderr warning only when something was stripped, and continues. Total: 23/24 logic lines. 2. Add four real-git integration tests to `PreCommitHookTests.cs` (already exempt from TestRealGitGuard): infected-repo-strip-with-warning, one-commit-lag contract, clean-repo-silent, no-default-machine-stripped-identity-never-appears. Add `WriteGlobalGitConfig` helper and refactor `CreateRepoWithHook` with an optional `configureLocalIdentity` parameter (default true, all existing callers unaffected). All new tests use `GIT_CONFIG_GLOBAL=<temp-file>` + `GIT_CONFIG_SYSTEM=/dev/null` for hermetic determinism.\",\n  \"manifest\": [\n    \".githooks/pre-commit\",\n    \"tests/VisualRelay.Tests/PreCommitHookTests.cs\"\n  ]\n}\n\n> **Worktree filter (stage 5)**: discarded tracked reverted: 1.\n\n## Stage 5 - Author-tests\n\n{\n  \"testFiles\": [\"tests/VisualRelay.Tests/PreCommitHookTests.cs\"],\n  \"rationale\": \"Four real-git hermetic tests in PreCommitHookTests.cs verify the identity-strip behavior: StripIdentity_InfectedRepo_StripsLocalIdentityAndWarns (local identity removed + warning emitted), StripIdentity_LagContract_FirstCommitKeepsOldIdentity_SecondCommitUsesGlobal (one-commit lag proven with GIT_CONFIG_GLOBAL), StripIdentity_CleanRepo_NoWarning (no-op path stays silent), StripIdentity_NoDefaultMachine_StrippedIdentityNeverAppears (stripped identity never appears in commit or error on a machine with no global config). All tests pin GIT_CONFIG_GLOBAL to a temp file and GIT_CONFIG_SYSTEM=/dev/null for hermetic determinism. The hook change itself (4 logic lines inserted into .githooks/pre-commit) was verified by these tests passing.\"\n}\n\n## Stage 6 - Implement\n\n{\n  \"summary\": \"Implemented repo-local git identity stripping in .githooks/pre-commit (4 logic lines inserted at lines 15-21 after repo_root/active_info resolution, before active-run branch). Uses tolerant unset idiom (2>/dev/null && stripped=1 || true) with single-physical-line stderr warning only when keys were removed. Total: 23/24 logic lines under the ShellSizeGuard ceiling. Split 4 identity-strip tests + helpers from PreCommitHookTests.cs (which was 426 lines) into new PreCommitHookIdentityStripTests.cs (223 lines), keeping original at 208 lines \u2014 both under the 300-line file-size limit. Added new test file to TestRealGitGuard exemptions list. Full suite: 3357 passed, 0 failed, 115 skipped.\"\n}\n\n\n\nEnd your reply with a single fenced ```json block, nothing after it, matching: { \"verdict\": \"pass\"|\"changes\", \"issues\": [] }",
+  "model": "frontier",
+  "provider": "generic",
+  "settings": {
+    "temperature": null,
+    "top_p": null,
+    "seed": null,
+    "max_turns": 200,
+    "max_output_tokens": 32768,
+    "context_length": 200000,
+    "files": "some",
+    "commands": "all",
+    "max_review_rounds": 15,
+    "skills_discovered": [
+      "nono-sandbox"
+    ],
+    "instructions_loaded": []
+  },
+  "sandbox": {
+    "mode": "builtin"
+  },
+  "result": {
+    "outcome": "success",
+    "answer": "I've completed a thorough review of the diff. Here's my assessment:\n\n## Hook implementation (`.githooks/pre-commit`)\n- \u2705 Inserted exactly at the spec'd location: after `repo_root`/`active_info` resolution (line 13), before the active-run branch (line 23). This means it runs unconditionally on every commit path \u2014 including ones the authority check will reject \u2014 as required.\n- \u2705 4 logic lines added (`stripped=0`, two `git config --local --unset \u2026 2>/dev/null && stripped=1 || true`, one conditional echo). Verified via a Python reimplementation of `ShellScriptLineCounter`: **23/24 logic lines**, under the ceiling.\n- \u2705 Tolerant idiom correct under `set -euo pipefail`: `|| true` guarantees exit 0 whether the key was present (`stripped=1`) or absent (`git` exits 5, falls through to `|| true`).\n- \u2705 No-op path silent (`stripped` stays 0 \u2192 no echo). Warning only when something was stripped.\n- \u2705 Warning on one physical line (no backslash continuation \u2014 would count individually if present).\n- \u2705 Block uses no indentation (file's existing lines use tabs; shfmt not installed locally but the new lines need no indentation to satisfy it).\n\n## Tests (`PreCommitHookIdentityStripTests.cs` + refactored `PreCommitHookTests.cs`)\n- \u2705 Four hermetic tests matching the spec's \"red-first\" list: infected-strip-warns, one-commit-lag contract (first commit keeps old identity, second uses global), clean-silent, no-default-machine-stripped-identity-never-appears (accepts either auto-detect or refusal).\n- \u2705 `GIT_CONFIG_GLOBAL` pinned to a temp file + `GIT_CONFIG_SYSTEM=/dev/null` + `GIT_TERMINAL_PROMPT=0` \u2014 follows the `RealGitIntegrationTests.cs:46-49` hermetic pattern.\n- \u2705 Lag contract test is sound: git reads config at process start, so the in-flight commit keeps the old identity (the spec's accepted one-commit lag).\n- \u2705 `CreateRepoWithHook` refactor adds `configureLocalIdentity` param (default `true`) \u2014 all existing callers untouched. Helpers made `internal` (was `private`) cleanly.\n- \u2705 New file 223 lines, original 208 lines \u2014 both under the 300-line `FileSizeGuard` limit. Justified split.\n- \u2705 New file correctly added to `TestRealGitGuard` exemptions (required since it uses `ProcessStartInfo(\"git\")`).\n\n## Spec compliance\n- \u2705 Existing commit-authority (nonce/`RELAY_COMMIT_TOKEN`) and `bump-version` staging byte-for-byte preserved.\n- \u2705 `HookInstaller.cs` (target-repo provisioning) NOT touched.\n- \u2705 No handling of `user.signingkey`, `author.*`, `committer.*`, or `GIT_AUTHOR_*`/`GIT_COMMITTER_*` env overrides.\n- \u2705 No `--no-verify` countermeasure; not configurable.\n- \u2705 No stray files (`llm-tasks/09` is a protected path).\n- \u2705 Manifest satisfied (`.githooks/pre-commit` + test file); the extra test file + `TestRealGitGuard` exemption are necessary consequences of the 300-line limit and the guard's real-git scanner.\n\n```json\n{ \"verdict\": \"pass\", \"issues\": [] }\n```",
+    "exit_code": 0
+  },
+  "stats": {
+    "turns": 16,
+    "tool_calls_total": 21,
+    "tool_calls_succeeded": 21,
+    "tool_calls_failed": 0,
+    "tool_calls_by_name": {
+      "run_shell_command": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "read_multiple_files": {
+        "succeeded": 2,
+        "failed": 0
+      },
+      "read_file": {
+        "succeeded": 6,
+        "failed": 0
+      },
+      "grep": {
+        "succeeded": 5,
+        "failed": 0
+      },
+      "python": {
+        "succeeded": 1,
+        "failed": 0
+      },
+      "snapshot": {
+        "succeeded": 2,
+        "failed": 0
+      }
+    },
+    "compactions": 0,
+    "turn_drops": 0,
+    "guardrail_interventions": 0,
+    "recovered_responses": 0,
+    "truncation_repairs": 0,
+    "scavenged_calls": 0,
+    "stormed_calls": 0,
+    "llm_calls": 16,
+    "total_llm_time_s": 670.255,
+    "prompt_cache": {
+      "cached_tokens": 345088,
+      "cache_write_tokens": 0
+    },
+    "total_tool_time_s": 0.943,
+    "skills_used": [],
+    "review_rounds": 0,
+    "snapshot": {
+      "saves": 1,
+      "restores": 0,
+      "cancels": 1,
+      "blocked": 0,
+      "force_restores": 0,
+      "tokens_saved": 0
+    }
+  },
+  "timeline": [
+    {
+      "turn": 1,
+      "type": "llm_call",
+      "duration_s": 8.402,
+      "prompt_tokens_est": 9302,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 1,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && git status && echo \"---DIFF---\" && git diff HEAD"
+      },
+      "succeeded": true,
+      "duration_s": 0.122,
+      "result_length": 4591
+    },
+    {
+      "turn": 2,
+      "type": "llm_call",
+      "duration_s": 6.203,
+      "prompt_tokens_est": 10567,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 2,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/PreCommitHookIdentityStripTests.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/.githooks/pre-commit"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 13488
+    },
+    {
+      "turn": 3,
+      "type": "llm_call",
+      "duration_s": 6.501,
+      "prompt_tokens_est": 14079,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 3,
+      "type": "tool_call",
+      "name": "read_multiple_files",
+      "arguments": {
+        "files": [
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/PreCommitHookTests.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/TestRealGitGuard.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/ShellScriptLineCounter.cs"
+          },
+          {
+            "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/ShellSizeGuard.cs"
+          }
+        ]
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 25461
+    },
+    {
+      "turn": 4,
+      "type": "llm_call",
+      "duration_s": 66.454,
+      "prompt_tokens_est": 20604,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RepoSetup.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 1627
+    },
+    {
+      "turn": 4,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "pattern": "300|FileLength|FileLine|MaxLine|FileSize|LineLimit|file.length|\\.Length",
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 3909
+    },
+    {
+      "turn": 5,
+      "type": "llm_call",
+      "duration_s": 11.859,
+      "prompt_tokens_est": 26421,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "python",
+      "arguments": {
+        "code": "import re\n\nwith open('/Users/admin/Dev/visual-relay/.githooks/pre-commit') as f:\n    lines = f.read().split('\\n')\n\n# Replicate ShellScriptLineCounter.CountLogicLines\nHereDocStart = re.compile(r\"<<(-)?\\s*(['\\\"]?)([A-Za-z_]\\w*)\\2\")\ncount = 0\nhereDocs = []  # list of (word, stripTabs)\n\ndef is_here_doc_closing(line, hereDocs):\n    trimmed = line.strip()\n    tab_stripped = line.lstrip('\\t')\n    for i in range(len(hereDocs) - 1, -1, -1):\n        word, stripTabs = hereDocs[i]\n        candidate = tab_stripped if stripTabs else trimmed\n        if candidate == word:\n            del hereDocs[i]\n            return True\n    return False\n\nfor raw in lines:\n    if hereDocs and is_here_doc_closing(raw, hereDocs):\n        continue\n    if hereDocs:\n        continue\n    trimmed = raw.lstrip()\n    if len(trimmed) == 0:\n        continue\n    if trimmed[0] == '#':\n        continue\n    count += 1\n    m = HereDocStart.search(raw)\n    while m:\n        stripTabs = m.group(1) is not None\n        word = m.group(3)\n        hereDocs.append((word, stripTabs))\n        m = HereDocStart.search(raw, m.end())\n\nprint(f\"Total physical lines: {len(lines)}\")\nprint(f\"Logic lines: {count}\")\nprint(f\"Limit: 24\")\nprint(f\"Within limit: {count <= 24}\")\n"
+      },
+      "succeeded": true,
+      "duration_s": 0.085,
+      "result_length": 70
+    },
+    {
+      "turn": 5,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && wc -l tests/VisualRelay.Tests/PreCommitHookTests.cs tests/VisualRelay.Tests/PreCommitHookIdentityStripTests.cs && echo \"---shfmt check---\" && which shfmt && shfmt --diff .githooks/pre-commit; echo \"shfmt exit: $?\""
+      },
+      "succeeded": true,
+      "duration_s": 0.048,
+      "result_length": 170
+    },
+    {
+      "turn": 6,
+      "type": "llm_call",
+      "duration_s": 9.46,
+      "prompt_tokens_est": 27066,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 6,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && shfmt --diff .githooks/pre-commit 2>&1; echo \"===exit: $?===\"; echo \"---try without diff---\"; shfmt .githooks/pre-commit 2>&1 | head -40; echo \"===exit: $?===\""
+      },
+      "succeeded": true,
+      "duration_s": 0.051,
+      "result_length": 121
+    },
+    {
+      "turn": 7,
+      "type": "llm_call",
+      "duration_s": 11.014,
+      "prompt_tokens_est": 27326,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && cat -A .githooks/pre-commit | sed -n '14,22p'"
+      },
+      "succeeded": true,
+      "duration_s": 0.054,
+      "result_length": 59
+    },
+    {
+      "turn": 7,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards",
+        "pattern": "shfmt|ShellFormat"
+      },
+      "succeeded": true,
+      "duration_s": 0.007,
+      "result_length": 2080
+    },
+    {
+      "turn": 8,
+      "type": "llm_call",
+      "duration_s": 6.745,
+      "prompt_tokens_est": 28096,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "run_shell_command",
+      "arguments": {
+        "command": "cd /Users/admin/Dev/visual-relay && awk 'NR>=14 && NR<=22 {gsub(/\\t/,\"<TAB>\"); print NR\": \"$0}' .githooks/pre-commit"
+      },
+      "succeeded": true,
+      "duration_s": 0.056,
+      "result_length": 560
+    },
+    {
+      "turn": 8,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/ShellFormatGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2755
+    },
+    {
+      "turn": 9,
+      "type": "llm_call",
+      "duration_s": 72.182,
+      "prompt_tokens_est": 29050,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tools/VisualRelay.Guards/FileSizeGuard.cs"
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4269
+    },
+    {
+      "turn": 9,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay",
+        "pattern": "PreCommitHook|FileSize.*exempt|exempt.*File"
+      },
+      "succeeded": true,
+      "duration_s": 0.25,
+      "result_length": 5202
+    },
+    {
+      "turn": 10,
+      "type": "llm_call",
+      "duration_s": 130.199,
+      "prompt_tokens_est": 36120,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 10,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/PreCommitHookIdentityStripTests.cs",
+        "offset": 39,
+        "limit": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 2316
+    },
+    {
+      "turn": 11,
+      "type": "llm_call",
+      "duration_s": 6.85,
+      "prompt_tokens_est": 36827,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 11,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.cs",
+        "path": "/Users/admin/Dev/visual-relay",
+        "pattern": "class TestRepository"
+      },
+      "succeeded": true,
+      "duration_s": 0.228,
+      "result_length": 116
+    },
+    {
+      "turn": 12,
+      "type": "llm_call",
+      "duration_s": 6.622,
+      "prompt_tokens_est": 36908,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 12,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/TestDoubles.cs",
+        "offset": 1,
+        "limit": 90
+      },
+      "succeeded": true,
+      "duration_s": 0.001,
+      "result_length": 4392
+    },
+    {
+      "turn": 13,
+      "type": "llm_call",
+      "duration_s": 182.75,
+      "prompt_tokens_est": 38020,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "grep",
+      "arguments": {
+        "include": "*.csproj",
+        "path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests",
+        "pattern": "Compile|Include|PreCommitHook"
+      },
+      "succeeded": true,
+      "duration_s": 0.028,
+      "result_length": 2237
+    },
+    {
+      "turn": 13,
+      "type": "tool_call",
+      "name": "read_file",
+      "arguments": {
+        "file_path": "/Users/admin/Dev/visual-relay/tests/VisualRelay.Tests/RealGitIntegrationTests.cs",
+        "limit": 60,
+        "offset": 40
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 2755
+    },
+    {
+      "turn": 14,
+      "type": "llm_call",
+      "duration_s": 112.403,
+      "prompt_tokens_est": 42879,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 14,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "save",
+        "label": "review-09-complete",
+        "summary": "Reviewed task 09-strip-repo-local-git-identity-in-pre-commit. Diff: .githooks/pre-commit (+8 lines: 3 comment + 1 blank + 4 logic), PreCommitHookTests.cs (visibility internal + configureLocalIdentity param), new PreCommitHookIdentityStripTests.cs (223 lines, 4 hermetic tests), TestRealGitGuard.cs (added new file to exemptions). Verified: 23/24 logic lines (Python reimpl of ShellScriptLineCounter), shfmt not installed locally but new block has no indentation (tabs only needed for indented lines, file uses tabs elsewhere), both .cs files under 300 lines, lag contract test logic is sound (git reads config at process start so in-flight commit keeps old identity), tolerant idiom correct under set -euo pipefail (|| true ensures exit 0), no-op path silent, warning on one physical line. No stray files. llm-tasks/09 is protected path. Verdict: pass."
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 77
+    },
+    {
+      "turn": 15,
+      "type": "llm_call",
+      "duration_s": 7.352,
+      "prompt_tokens_est": 50275,
+      "finish_reason": "tool_calls",
+      "is_retry": false
+    },
+    {
+      "turn": 15,
+      "type": "tool_call",
+      "name": "snapshot",
+      "arguments": {
+        "action": "cancel",
+        "label": "review-09-complete"
+      },
+      "succeeded": true,
+      "duration_s": 0.0,
+      "result_length": 72
+    },
+    {
+      "turn": 16,
+      "type": "llm_call",
+      "duration_s": 25.259,
+      "prompt_tokens_est": 50318,
+      "finish_reason": "stop",
+      "is_retry": false
+    }
+  ]
+}

@@ -54,6 +54,7 @@ public static class TestRealGitGuard
         "GitBootstrapperTests.cs",
         // Pre-commit hook tests that exercise the real bash hook file.
         "PreCommitHookTests.cs",
+        "PreCommitHookIdentityStripTests.cs",
         // Gated integration helpers and runners (VR_RUN_SLOW_INTEGRATION=1).
         "RelayDriverGitCommitTestHelpers.cs",
         "RelayDriverGitCommitTests.cs",

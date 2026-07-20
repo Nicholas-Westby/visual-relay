@@ -92,7 +92,9 @@ public sealed class PreCommitHookTests
         Assert.Equal(0, exitCode);
     }
 
-    private static TestRepo CreateRepoWithHook()
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    internal static TestRepo CreateRepoWithHook(bool configureLocalIdentity = true)
     {
         var repo = TestRepository.Create();
         // Initialize a git repository.
@@ -113,9 +115,12 @@ public sealed class PreCommitHookTests
         initProcess.WaitForExit();
         Assert.True(initProcess.ExitCode == 0, "git init failed");
 
-        // Configure a dummy user for commits.
-        RunGit(repo.Root, ["config", "user.email", "test@example.test"]);
-        RunGit(repo.Root, ["config", "user.name", "Test User"]);
+        if (configureLocalIdentity)
+        {
+            // Configure a dummy user for commits.
+            RunGit(repo.Root, ["config", "user.email", "test@example.test"]);
+            RunGit(repo.Root, ["config", "user.name", "Test User"]);
+        }
 
         // Install the project's pre-commit hook into this repo.
         RepoSetup.InstallPreCommitHook(repo.Root);
@@ -131,7 +136,7 @@ public sealed class PreCommitHookTests
         File.WriteAllText(Path.Combine(activeDir, "info.json"), info);
     }
 
-    private static void RunGit(string rootPath, string[] arguments)
+    internal static void RunGit(string rootPath, string[] arguments)
     {
         var (exitCode, stderr) = RunGitCapture(rootPath, arguments);
         Assert.True(exitCode == 0, $"git {string.Join(' ', arguments)} failed: {stderr}");
@@ -176,7 +181,7 @@ public sealed class PreCommitHookTests
     /// Wraps TestRepository so the hook is cleaned up on disposal even if the
     /// hook file is read-only after chmod.
     /// </summary>
-    private sealed class TestRepo(TestRepository repo) : IDisposable
+    internal sealed class TestRepo(TestRepository repo) : IDisposable
     {
         public string Root => repo.Root;
 
